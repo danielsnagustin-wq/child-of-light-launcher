@@ -56,6 +56,30 @@ android {
             cmake {
                 path = file("src/main/cpp/CMakeLists.txt")
                 version = "3.22.1+"
+                // Toolchain de vcpkg: DEBE cargarse en project().
+                // El de Vita3K (cmake/vcpkg_android.cmake) lo asigna
+                // demasiado tarde (add_subdirectory, tras project())
+                // y Gradle pasa el del NDK; sin el toolchain de
+                // vcpkg, find_package no ve lo instalado (Boost,
+                // curl, openssl, zlib) y la configuración falla en
+                // get_boost() con "Could NOT find Boost". Los
+                // argumentos del usuario van después de los de
+                // Gradle, así que este CMAKE_TOOLCHAIN_FILE gana al
+                // del NDK; el del NDK se encadena con
+                // VCPKG_CHAINLOAD_TOOLCHAIN_FILE. El manifiesto está
+                // en el árbol Vita3K: el workflow instala sus
+                // dependencias en modo manifiesto (vcpkg_installed/
+                // junto a vcpkg.json), por eso VCPKG_MANIFEST_DIR.
+                val vcpkgRoot = System.getenv("VCPKG_ROOT")
+                    ?: error("VCPKG_ROOT no definido (lo pone el workflow)")
+                val androidNdkHome = System.getenv("ANDROID_NDK_HOME")
+                    ?: error("ANDROID_NDK_HOME no definido (lo pone el workflow)")
+                arguments(
+                    "-DCMAKE_TOOLCHAIN_FILE=$vcpkgRoot/scripts/buildsystems/vcpkg.cmake",
+                    "-DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$androidNdkHome/build/cmake/android.toolchain.cmake",
+                    "-DVCPKG_TARGET_TRIPLET=arm64-android",
+                    "-DVCPKG_MANIFEST_DIR=${file("src/main/cpp/vita3k").absolutePath}",
+                )
             }
         }
         packaging {
