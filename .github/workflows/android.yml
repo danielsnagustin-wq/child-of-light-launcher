@@ -103,6 +103,12 @@ jobs:
           # Vita3K comprueba submódulos con ${CMAKE_SOURCE_DIR}/.gitmodules, pero aquí CMAKE_SOURCE_DIR es app/src/main/cpp (adaptador). Reescribimos rutas con prefijo vita3k/.
           sed 's|^\(\s*path = \)|\1vita3k/|' .gitmodules > ../.gitmodules
           echo "Submódulos reescritos en ../.gitmodules: $(grep -c 'path = vita3k/' ../.gitmodules)"
+          # Vita3K usa ${CMAKE_SOURCE_DIR} (= adaptador) para tools/, i18n/, external/, data/. Enlaces al árbol Vita3K.
+          ln -s vita3k/tools ../tools
+          ln -s vita3k/i18n ../i18n
+          ln -s vita3k/external ../external
+          ln -s vita3k/data ../data
+          ls -l ../tools ../i18n ../external ../data         
           echo "Vita3K en ${VITA3K_PIN} con submódulos."
 
       - name: Cache vcpkg (binaria, como upstream)
