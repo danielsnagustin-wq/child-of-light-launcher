@@ -78,6 +78,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
           yes | sdkmanager --licenses > /dev/null
           sdkmanager --install "platforms;android-35" "build-tools;36.0.0" "ndk;${ANDROID_NDK_VERSION}"
           echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
