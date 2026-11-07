@@ -73,6 +73,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: "8.7"
+      - name: Set VCPKG_ROOT (lo exige vita3k/cmake/vcpkg_android.cmake)
+        run: |
+          echo "VCPKG_ROOT=$(dirname "$(command -v vcpkg)")" >> "$GITHUB_ENV"            
 
       - name: Install NDK 29 + build tools (como .ci/setup-android.sh de upstream)
         run: |
