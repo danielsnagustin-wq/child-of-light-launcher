@@ -67,9 +67,6 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
     val pickUpdate = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) vm.importUpdate(uri)
     }
-    val pickFirmware = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) vm.importFirmware(uri)
-    }
 
     val gameCard: @Composable () -> Unit = {
         Card(
@@ -88,7 +85,6 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
                         Text("PS Vita · Ubisoft · UbiArt", style = MaterialTheme.typography.bodySmall)
                         Text("${strings.state}: ${status.installedLabel}", style = MaterialTheme.typography.bodyMedium)
                         Text("${strings.dlcs}: ${status.dlcCount} · ${strings.update}: ${if (status.updateInstalled) "sí" else "no"}", style = MaterialTheme.typography.bodyMedium)
-                        Text("${strings.firmware}: ${if (status.firmwareInstalled) "${strings.installed} (${status.firmwareName ?: ""})" else strings.notInstalled}", style = MaterialTheme.typography.bodyMedium)
                         if (uiPrefs?.showAchievementsOnHome != false) {
                             Text("${strings.achievements}: ${achievements.count { it.unlocked }}/27 (${trophyProgressPercent(achievements)}%)", style = MaterialTheme.typography.bodyMedium)
                         }
@@ -108,10 +104,9 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
                     OutlinedButton(onClick = { pickDlc.launch("*/*") }, modifier = Modifier.weight(1f)) { Text(strings.importDlc) }
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { pickUpdate.launch("*/*") }, modifier = Modifier.weight(1f)) { Text(strings.importUpdate) }
-                    OutlinedButton(onClick = { pickFirmware.launch("*/*") }, modifier = Modifier.weight(1f)) { Text(strings.importFirmware) }
+                    OutlinedButton(onClick = { pickUpdate.launch("*/*") }, modifier = Modifier.fillMaxWidth()) { Text(strings.importUpdate) }
                 }
-                NoteText("Importa tu propia copia legal (.zip / .vpk / .pkg). Solo se aceptan PCSE00480 (US) y PCSB00598 (EU). El launcher no incluye juego, firmware ni claves.")
+                NoteText("Importa tu propia copia legal (.zip / .vpk / .pkg). Solo se aceptan PCSE00480 (US) y PCSB00598 (EU). El primer uso solo pide juego + DLCs: el firmware nunca es un paso inicial. El launcher no incluye juego, firmware ni claves.")
             }
         }
     }

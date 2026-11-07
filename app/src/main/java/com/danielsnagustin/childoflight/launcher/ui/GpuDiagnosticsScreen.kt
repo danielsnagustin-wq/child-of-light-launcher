@@ -82,6 +82,8 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         SectionTitle("Núcleo")
         Text("Núcleo embebido (Etapa 2): ${if (vm.embeddedCorePresent()) "presente" else "NO presente"}")
         Text("Vita3K externo: ${vm.externalVita3kVersion() ?: "no instalado"}")
+        Text("Firmware: ${vm.firmwareStatusLabel()}")
+        NoteText("El firmware nunca es un paso inicial: el primer uso solo pide juego + DLCs. Importarlo es una opción avanzada en Ajustes.")
         Text("Backend: ${settings?.backend?.label ?: "—"} · Driver: ${settings?.gpuDriver ?: "—"}${if (settings?.turnipInstalled == true) " (${settings?.turnipVersion})" else ""}")
         Text("Resolución: ${settings?.resolutionLabel ?: "—"} · FPS overlay: ${if (settings?.showFpsOverlay == true) "ON" else "OFF"}")
 

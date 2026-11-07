@@ -106,7 +106,7 @@ class GameLibraryRepository(private val context: Context) {
                 sizeBytes = it.length(),
                 lastModifiedMillis = it.lastModified(),
             )
-        }.sortedBy { it.name }
+        }.sortedBy { it.name }.toList()
     }
 
     // ------------------------------------------------------------------

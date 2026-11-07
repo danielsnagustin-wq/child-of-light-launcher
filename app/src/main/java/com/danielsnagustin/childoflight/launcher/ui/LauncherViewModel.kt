@@ -8,9 +8,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.danielsnagustin.childoflight.launcher.data.AchievementRepository
 import com.danielsnagustin.childoflight.launcher.data.ControlProfile
+import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
+import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
 import com.danielsnagustin.childoflight.launcher.data.GpuDetector
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
+import com.danielsnagustin.childoflight.launcher.data.SessionManager
 import com.danielsnagustin.childoflight.launcher.data.SettingsRepository
 import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
 import com.danielsnagustin.childoflight.launcher.data.TrophyStoreReader
@@ -51,6 +54,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val turnipRepo = TurnipDriverRepository(context)
     private val launcher = Vita3KLauncher(context)
     private val uiRepo = UiPreferencesRepository(context)
+    private val sessionManager = SessionManager(context, library, achievementsRepo, touchRepo)
 
     val settingsFlow = settingsRepo.settingsFlow
     val gpuFlow = settingsRepo.gpuInfoFlow
@@ -60,6 +64,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val activeProfileIdFlow = touchRepo.activeProfileIdFlow
     val achievementsFlow = achievementsRepo.progressFlow
     val uiFlow = uiRepo.uiFlow
+    val sessionsFlow = sessionManager.sessionsFlow
+    val activeSessionIdFlow = sessionManager.activeSessionIdFlow
+
+    private val _firmwareStatus = MutableStateFlow<FirmwareStatus>(FirmwareStatus.Missing)
+    val firmwareStatusFlow: StateFlow<FirmwareStatus> = _firmwareStatus.asStateFlow()
+
+    /** Texto corto del firmware para Diagnóstico (sin pedir nada al usuario). */
+    fun firmwareStatusLabel(): String = FirmwareResolver.label(_firmwareStatus.value)
 
     private val _status = MutableStateFlow(GameStatus())
     val status: StateFlow<GameStatus> = _status.asStateFlow()
@@ -86,6 +98,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     init {
         refreshStatus()
         refreshLog()
+        viewModelScope.launch(Dispatchers.IO) { sessionManager.ensureDefaultSession() }
         viewModelScope.launch {
             val gpu = settingsRepo.gpuInfoFlow.first()
             if (gpu == null) detectGpu()
@@ -98,6 +111,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun refreshStatus() {
         viewModelScope.launch(Dispatchers.IO) {
             _status.value = library.scanStatus()
+            _firmwareStatus.value = FirmwareResolver.resolve(library.vitaRoot)
             val title = _status.value.titleId?.id
             _trophyScan.value = if (title != null) {
                 TrophyStoreReader.scan(library.vitaRoot, title)
@@ -285,15 +299,131 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun play() {
         viewModelScope.launch(Dispatchers.IO) {
             val settings = settingsRepo.settingsFlow.first()
-            val outcome = launcher.launch(library, settings)
+            val outcome = launcher.launch(library, settings, sessionManager)
+            if (outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternal ||
+                outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ||
+                outcome is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded
+            ) {
+                sessionManager.notePlayStarted()
+            }
             withContext(Dispatchers.Main) {
                 _message.value = when (outcome) {
                     is Vita3KLauncher.LaunchOutcome.LaunchedExternal ->
                         "Vita3K abierto. Config escrita en ${outcome.configPath}."
+                    is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ->
+                        Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL
+                    is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded ->
+                        "Núcleo embebido: juego lanzado (${outcome.configPath})."
                     is Vita3KLauncher.LaunchOutcome.EmbeddedCorePresent ->
                         "Núcleo embebido detectado, pero falta el punto de entrada JNI (Etapa 2)."
                     is Vita3KLauncher.LaunchOutcome.Blocked -> outcome.reason
                 }
+            }
+            refreshStatus()
+        }
+    }
+
+    /**
+     * Al volver del juego (MainActivity.onResume): cierra la medición
+     * de tiempo de la sesión activa y guarda el snapshot de lo jugado.
+     * No hace nada si no hay una partida en curso registrada.
+     */
+    fun noteReturnedFromGame() {
+        viewModelScope.launch(Dispatchers.IO) {
+            sessionManager.notePlayEnded()
+            refreshStatus()
+        }
+    }
+
+    // --- Sesiones / partidas ---
+
+    fun createSession(name: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = sessionManager.createSession(name)
+            withContext(Dispatchers.Main) {
+                _message.value = result.fold(
+                    onSuccess = { "Nueva sesión \"${it.name}\" creada y activa. La anterior quedó guardada: la viva empieza vacía." },
+                    onFailure = { "No se pudo crear la sesión: ${it.message}" },
+                )
+            }
+            refreshStatus()
+        }
+    }
+
+    fun switchSession(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = sessionManager.switchTo(id)
+            withContext(Dispatchers.Main) {
+                _message.value = result.fold(
+                    onSuccess = { "Sesión activa: \"${it.name}\". Su savedata, logros y controles están cargados." },
+                    onFailure = { "No se pudo cambiar de sesión: ${it.message}" },
+                )
+            }
+            refreshStatus()
+        }
+    }
+
+    fun renameSession(id: String, name: String, chapter: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = sessionManager.renameSession(id, name, chapter)
+            withContext(Dispatchers.Main) {
+                _message.value = result.fold(
+                    onSuccess = { "Sesión renombrada." },
+                    onFailure = { "No se pudo renombrar: ${it.message}" },
+                )
+            }
+        }
+    }
+
+    fun duplicateSession(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = sessionManager.duplicateSession(id)
+            withContext(Dispatchers.Main) {
+                _message.value = result.fold(
+                    onSuccess = { "Sesión duplicada: \"${it.name}\"." },
+                    onFailure = { "No se pudo duplicar: ${it.message}" },
+                )
+            }
+        }
+    }
+
+    fun deleteSession(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = sessionManager.deleteSession(id)
+            withContext(Dispatchers.Main) {
+                _message.value = result.fold(
+                    onSuccess = { "Sesión borrada." },
+                    onFailure = { "No se pudo borrar: ${it.message}" },
+                )
+            }
+            refreshStatus()
+        }
+    }
+
+    fun exportSession(uri: Uri, session: com.danielsnagustin.childoflight.launcher.model.GameSession) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = context.contentResolver.openOutputStream(uri)?.use { out ->
+                sessionManager.exportSession(session.id, out)
+            } ?: Result.failure(IllegalStateException("No se pudo abrir el destino."))
+            withContext(Dispatchers.Main) {
+                _message.value = result.fold(
+                    onSuccess = { "Sesión \"${session.name}\" exportada." },
+                    onFailure = { "No se pudo exportar la sesión: ${it.message}" },
+                )
+            }
+        }
+    }
+
+    fun importSession(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = context.contentResolver.openInputStream(uri)?.use { input ->
+                sessionManager.importSession(input)
+            } ?: Result.failure(IllegalStateException("No se pudo abrir el archivo."))
+            withContext(Dispatchers.Main) {
+                _message.value = result.fold(
+                    onSuccess = { "Sesión importada: \"${it.name}\"." },
+                    onFailure = { "No se pudo importar la sesión: ${it.message}" },
+                )
             }
             refreshStatus()
         }
@@ -318,11 +448,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 note = "Prueba de 30 s con preset ${settings.activeProfile.label}. FPS sin medir: anota el FPS del overlay al volver.",
             )
             _pendingBenchmark.value = run
-            val outcome = launcher.launch(library, settings)
+            val outcome = launcher.launch(library, settings, sessionManager)
+            if (outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternal ||
+                outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ||
+                outcome is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded
+            ) {
+                sessionManager.notePlayStarted()
+            }
             withContext(Dispatchers.Main) {
                 _message.value = when (outcome) {
                     is Vita3KLauncher.LaunchOutcome.LaunchedExternal ->
                         "Prueba de 30 s en marcha. Juega 30 segundos, mira el FPS del overlay y al volver regístralo aquí."
+                    is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ->
+                        "Prueba de 30 s en marcha. ${Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL}"
+                    is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded ->
+                        "Prueba de 30 s en marcha (núcleo embebido). Juega 30 segundos y al volver registra el FPS."
                     is Vita3KLauncher.LaunchOutcome.Blocked -> {
                         _pendingBenchmark.value = null
                         outcome.reason
@@ -578,8 +718,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             val title = _status.value.titleId?.id ?: return@launch
             val ok = library.deleteSavesOnly(title)
+            // Sin resurrección: también se borra la copia guardada de la sesión activa.
+            sessionManager.clearActiveSessionSavedata()
             withContext(Dispatchers.Main) {
-                _message.value = if (ok) "Saves borrados. El juego y los DLCs siguen instalados." else "No había saves que borrar."
+                _message.value = if (ok) "Saves borrados (también de la sesión activa). El juego y los DLCs siguen instalados." else "No había saves que borrar."
             }
             refreshStatus()
         }
@@ -650,8 +792,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             val title = _status.value.titleId?.id ?: return@launch
             val deleted = library.deleteGameData(title)
+            sessionManager.deleteAllSessions()
             withContext(Dispatchers.Main) {
-                _message.value = "Datos borrados: ${deleted.joinToString(", ")}. El launcher queda vacío, listo para importar de nuevo."
+                _message.value = "Datos borrados: ${deleted.joinToString(", ")} + todas las sesiones. El launcher queda vacío, listo para importar de nuevo."
             }
             refreshStatus()
         }

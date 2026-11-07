@@ -33,6 +33,13 @@ y lanza el juego. Sin biblioteca de emulador, sin lista de juegos.
 - **No es Vita3K.** En Etapa 1 el núcleo Vita3K **no está embebido**:
   JUGAR escribe `config.yml` y abre Vita3K oficial si está instalado
   (`org.vita3k.emulator`). No se finge que el juego corre sin núcleo.
+  El esqueleto JNI de Etapa 2 ya existe (ver abajo), pero sin `.so`
+  no se activa.
+- **El primer uso solo pide juego + DLCs, nada más.** El firmware
+  nunca es un paso visible inicial: el launcher lo resuelve por dentro
+  (usa el que ya tengas guardado o el de Vita3K) y solo existe como
+  opción avanzada en Ajustes → Diagnóstico. Si falta de verdad, lo
+  dice en una frase, sin pedirte que lo busques por internet.
 - **No sincroniza logros con PSN / PlayStation Network ni Steam.**
   Los 27 logros son locales del launcher.
 - **No hay platino.** El juego no tiene platino en PS4 (20 trofeos)
@@ -42,13 +49,12 @@ y lanza el juego. Sin biblioteca de emulador, sin lista de juegos.
 
 ## Cómo importar juego + DLCs (paso a paso)
 
+**El primer uso solo pide juego + DLCs, nada más.** No hay paso de
+firmware en la pantalla principal ni en el primer arranque.
+
 1. Instala el APK y abre el launcher. En el primer arranque detecta
    tu GPU y aplica el preset recomendado.
-2. **Importar firmware:** botón en la portada → elige tu
-   `PSVUPDAT.PUP` (el firmware de tu Vita). Se guarda en
-   `<vita_fs>/firmware/` con un marcador. La extracción real a `vs0/`
-   la hace Vita3K (Etapa 2).
-3. **Importar juego:** botón en la portada → elige tu `.zip` o `.vpk`
+2. **Importar juego:** botón en la portada → elige tu `.zip` o `.vpk`
    (un `.vpk` es un zip). El launcher valida antes de instalar nada:
    - La carpeta principal del zip debe ser **PCSE00480 (US)** o
      **PCSB00598 (EU)**. Cualquier otro Title ID se rechaza con el
@@ -58,18 +64,34 @@ y lanza el juego. Sin biblioteca de emulador, sin lista de juegos.
      como el Title ID, como exige Vita3K).
    - Si el juego trae su `TROPHY.TRP`, se anota; si no, se usa la
      lista bundled de 27 trofeos.
-4. **Importar DLC:** elige el `.zip`/`.vpk` del DLC. Debe traer la
+3. **Importar DLC:** elige el `.zip`/`.vpk` del DLC. Debe traer la
    ruta `<TITLE_ID>/addcont/<DLC_ID>/...` dentro del zip. Se instala
    en `ux0/addcont/<TITLE_ID>/<DLC_ID>/`.
-5. **Importar update:** elige el `.zip`/`.vpk` con la carpeta
+4. **Importar update:** elige el `.zip`/`.vpk` con la carpeta
    `<TITLE_ID>` como principal. Se instala en `ux0/patch/<TITLE_ID>/`.
-6. **Archivos `.pkg`:** no se pueden inspeccionar sin un parser de
+5. **Archivos `.pkg`:** no se pueden inspeccionar sin un parser de
    paquetes de Vita. Se aceptan solo si el nombre del archivo contiene
    el Title ID y se guardan en `import_pending/` con el aviso claro
    de que su instalación real la hace Vita3K (Etapa 2). **Nunca** se
    muestran como "juego instalado".
-7. Pulsa **JUGAR**. Si falta el juego o el firmware, el launcher lo
-   dice con el motivo exacto en vez de fallar en silencio.
+6. Pulsa **JUGAR**. Si falta el juego, el launcher lo dice con el
+   motivo exacto en vez de fallar en silencio.
+
+### Firmware (sin pedirlo nunca al inicio)
+
+- El launcher **resuelve el firmware por dentro**: si ya tienes
+  `PSVUPDAT.PUP` guardado o un `vs0/` extraído en el launcher, lo usa;
+  si Vita3K externo ya tiene firmware instalado, usa el suyo al
+  arrancar (el launcher no puede ver el almacenamiento privado de
+  otra app, así que no lo comprueba: solo avisa con una frase si
+  falta el local y lanza igual).
+- Si falta de verdad, el launcher lo explica **en una sola frase**,
+  sin pedirte que lo busques por internet.
+- Importar firmware solo existe como **opción avanzada oculta** en
+  Ajustes → Avanzado — Firmware (y su estado se ve en GPU y
+  diagnóstico). Nunca es un paso obligatorio inicial.
+- El launcher no incluye firmware, ni juego, ni claves, y no descarga
+  firmware de internet.
 
 ## Estructura de archivos (dentro del almacenamiento privado de la app)
 
@@ -77,14 +99,20 @@ y lanza el juego. Sin biblioteca de emulador, sin lista de juegos.
 <filesDir>/vita3k/
   config.yml                  <- generado desde Ajustes
   launcher.log                <- log propio del launcher
-  firmware/PSVUPDAT.PUP       <- tu firmware (importado)
+  firmware/PSVUPDAT.PUP       <- tu firmware (solo opción avanzada)
   firmware/installed.json     <- marcador
   drivers/turnip/*.zip        <- driver Turnip (solo Adreno)
   ux0/app/PCSE00480/          <- juego (o PCSB00598)
   ux0/addcont/PCSE00480/<DLC>/
   ux0/patch/PCSE00480/
-  ux0/user/00/savedata/PCSE00480/
+  ux0/user/00/savedata/PCSE00480/   <- savedata VIVA (sesión activa)
   ux0/user/00/trophy/PCSE00480/
+  sessions/                   <- sesiones / partidas
+    index.txt                 <- índice de sesiones
+    active.txt                <- id de la sesión activa
+    <id>/savedata/            <- copia de savedata de esa sesión
+    <id>/achievements.txt     <- logros locales de esa sesión
+    <id>/control-profile.txt  <- perfil de control de esa sesión
   import_pending/             <- .pkg guardados sin instalar
 ```
 
@@ -302,12 +330,47 @@ Stick izquierdo para Aurora · A/B/X/Y · Start · zona táctil para
 Igniculus (la luciérnaga). El layout se edita en la pantalla
 Controles táctiles y se guarda por perfil en DataStore.
 
+## Sesiones / partidas múltiples (nuevo juego sin perder lo anterior)
+
+En Vita el guardado es una sola carpeta
+(`ux0/user/00/savedata/<TITLE_ID>/`), así que el launcher gestiona
+varias sesiones por separado. Cada sesión tiene: nombre, fecha de
+creación, última vez jugado, tiempo jugado, capítulo/progreso
+(manual, ver abajo) y su propia copia de savedata + progreso de
+logros locales + perfil de control, en `sessions/<id>/`.
+
+- **Pantalla Guardados → Sesiones / partidas:** lista de sesiones con
+  cuál es la activa (★ ACTIVA).
+- **Nueva sesión:** crea una sesión vacía nueva SIN borrar la
+  anterior. Antes de crearla, hace un snapshot automático de la
+  sesión actual (savedata + logros + controles) y luego la viva
+  empieza vacía: nuevo juego desde cero, sin perder lo anterior.
+- **Continuar:** carga la sesión seleccionada (restaura su savedata
+  a la carpeta viva). **Cambiar sesión:** guarda la actual y carga
+  la otra. Nunca se sobrescribe sin avisar.
+- **Por sesión:** renombrar (+ capítulo), duplicar, exportar (.zip),
+  importar (.zip), borrar (con confirmación; nunca la única sesión
+  sin avisar: si solo queda una, se advierte antes de borrarla).
+- **Seguridad:** antes de lanzar el juego, el launcher activa la
+  sesión correcta (snapshot de la viva + restore de la activa). Al
+  volver del juego, suma el tiempo jugado y guarda el snapshot de lo
+  jugado. Si el juego intenta sobrescribir el save, la sesión
+  anterior sigue guardada en `sessions/<sesión>/`.
+- **Capítulo/progreso:** campo manual (lo escribe el usuario). Los
+  saves de Vita son binarios y el launcher no decodifica el capítulo
+  desde ellos; no se inventa un capítulo leído del save.
+- **Borrar saves** borra también la copia guardada de la sesión
+  activa (para que el borrado no "resucite" al lanzar). **Borrar
+  datos del juego** borra juego + update + DLCs + saves + TODAS las
+  sesiones.
+
 ## Guardados
 
-Carpeta: `ux0/user/00/savedata/<TITLE_ID>/`. Botones Exportar
-(zip por SAF) / Importar saves (.zip) / Borrar datos del juego
-(con confirmación: borra juego + update + DLCs + saves). El progreso
-de logros se exporta/importa junto con los saves.
+Carpeta viva: `ux0/user/00/savedata/<TITLE_ID>/` (siempre la sesión
+activa). Botones Exportar (zip por SAF) / Importar saves (.zip) /
+Borrar datos del juego (con confirmación: borra juego + update +
+DLCs + saves + sesiones). El progreso de logros se exporta/importa
+junto con los saves.
 
 ---
 
@@ -330,18 +393,41 @@ el Gradle instalado por `gradle/actions/setup-gradle`.
 
 ---
 
-## Plan Etapa 2 (pendiente, no en este APK)
+## Etapa 2 (investigación + esqueleto, no funcional aún)
 
-1. **Embeber el núcleo Vita3K (.so):** compilar Vita3K para Android
-   (NDK + vcpkg, `arm64-v8a`) y cargarlo con JNI desde el launcher.
-   El punto de entrada es el hueco marcado en `Vita3KLauncher`
-   (`EmbeddedCorePresent` / TODO JNI). Sin esto, JUGAR abre Vita3K
+Documento completo: [`docs/etapa2/ETAPA2-PLAN.md`](docs/etapa2/ETAPA2-PLAN.md).
+
+Verificado contra el código público de Vita3K (master, 2026-11-07)
+y contra EmuCoreV (el fork con núcleo embebido en Android):
+
+- Upstream **no** expone un `loadGame(titleId)` público: el arranque
+  real es `SDL_main` con argv `{"-r", "<TITLE_ID>"}` y el bootstrap
+  es `NativeLib.init(storagePath)`; las JNI de upstream están ligadas
+  a `org.vita3k.emulator.NativeLib`, así que hace falta una capa
+  adaptadora propia (modelo EmuCoreV: árbol Vita3K vendorizado +
+  puente JNI en nuestro paquete).
+- Esqueleto ya creado (sin romper Etapa 1, sin `.so` no se activa):
+  `core/Vita3kCoreBridge.kt` (Kotlin, `init`/`loadGame`/`getFps`/
+  `shutdown`, devuelve `NOT_IMPLEMENTED` sin núcleo),
+  `app/src/main/cpp/CMakeLists.txt` + `Vita3kBridge.cpp` (stubs JNI
+  `TODO-ETAPA2`), y `Vita3KLauncher` ya los usa con fallback a Vita3K
+  externo.
+- Siguiente paso concreto: añadir el submódulo Vita3K en
+  `app/src/main/cpp/vita3k`, escribir el adaptador mínimo, cablear
+  NDK 29 + CMake 3.22.1 + vcpkg en Actions y medir el tamaño del
+  `.so`. Todo el detalle (archivos, riesgos, qué no se puede hacer
+  en esta VM) está en el plan.
+
+## Plan Etapa 2 (resto, pendiente, no en este APK)
+
+1. **Embeber el núcleo Vita3K (.so):** ver sección Etapa 2 y
+   `docs/etapa2/ETAPA2-PLAN.md`. Sin esto, JUGAR abre Vita3K
    externo si está instalado.
 2. **Deep-link verificado** para arrancar un Title ID concreto en
    Vita3K externo (hoy se lanza el Intent MAIN sin extras: no hay
    deep-link documentado verificado).
 3. **Extracción real del firmware** `.PUP` a `vs0/` (hoy solo se
-   guarda el PUP + marcador).
+   guarda el PUP + marcador; la extracción la hace Vita3K).
 4. **Medición automática de FPS** en la prueba de 30 s (hoy el FPS
    se registra manualmente desde el overlay) y detección automática
    de desbloqueo de logros durante la partida (hoy se marca desde

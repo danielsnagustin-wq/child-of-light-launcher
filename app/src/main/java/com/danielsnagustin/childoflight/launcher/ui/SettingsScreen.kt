@@ -57,6 +57,9 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
     val pickTurnip = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) vm.installTurnip(uri)
     }
+    val pickFirmware = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) vm.importFirmware(uri)
+    }
 
     val s = settings
     Column(
@@ -228,6 +231,17 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
         SectionTitle("Limpiar no usados")
         OutlinedButton(onClick = { onNavigate(Screen.CLEANUP) }, modifier = Modifier.fillMaxWidth()) { Text("Limpiar no usados…") }
         NoteText("Botones ocultos, perfiles sin usar, presets sin usar, Turnip sin usar, DLCs y saves.")
+
+        // --- Avanzado: firmware (nunca un paso inicial) ---
+        SectionTitle("Avanzado — Firmware")
+        Text("Firmware: ${vm.firmwareStatusLabel()}", style = MaterialTheme.typography.bodyMedium)
+        OutlinedButton(onClick = { pickFirmware.launch("*/*") }, modifier = Modifier.fillMaxWidth()) { Text("Importar firmware (.PUP, avanzado)") }
+        NoteText(
+            "Opción avanzada, nunca obligatoria: el primer uso solo pide juego + DLCs. " +
+                "El launcher detecta solo el firmware que ya tengas guardado (PSVUPDAT.PUP o vs0 extraído); " +
+                "si Vita3K ya tiene firmware instalado, usa el suyo. Esto solo guarda una copia local " +
+                "para el núcleo embebido (Etapa 2). El launcher no incluye firmware ni claves.",
+        )
 
         Spacer(modifier = Modifier.height(16.dp))
         OutlinedButton(

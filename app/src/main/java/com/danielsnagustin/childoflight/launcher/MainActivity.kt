@@ -90,9 +90,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Al volver del juego, refrescar estado y log.
+        // Al volver del juego, refrescar estado y log, y cerrar la
+        // medición de tiempo de la sesión activa (snapshot guardado).
         vm.refreshStatus()
         vm.refreshLog()
+        vm.noteReturnedFromGame()
     }
 }
 

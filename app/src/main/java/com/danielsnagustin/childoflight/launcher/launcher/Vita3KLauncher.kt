@@ -8,28 +8,41 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import com.danielsnagustin.childoflight.launcher.core.Vita3kCoreBridge
+import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
+import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
-import com.danielsnagustin.childoflight.launcher.data.Vita3kConfigGenerator
+import com.danielsnagustin.childoflight.launcher.data.SessionManager
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 
 /**
  * Lanzador del juego.
  *
- * Flujo real en Etapa 1:
- * 1. Verifica prerrequisitos: juego instalado + firmware guardado.
- * 2. Si el ajuste lo pide, cierra apps en segundo plano (best-effort).
- * 3. Escribe config.yml con los ajustes actuales.
- * 4. Intenta el núcleo embebido: comprueba si existe la librería
- *    nativa "vita3k" (System.loadLibrary). En Etapa 1 NO existe:
- *    embeber el .so de Vita3K es la Etapa 2, y aquí NO se finge
- *    que el juego ya corre sin núcleo.
- * 5. Fallback honesto: lanza la app externa org.vita3k.emulator
+ * Flujo real (Etapa 1 + sesiones + firmware simplificado):
+ * 1. Verifica prerrequisitos: SOLO el juego instalado. El firmware
+ *    NO bloquea el primer uso: el launcher solo pide juego + DLCs.
+ * 2. Activa la sesión correcta (SessionManager): snapshot de la
+ *    sesión actual y restore de la activa en la savedata viva. Si
+ *    falla, NO se lanza (mejor no lanzar con la savedata equivocada).
+ * 3. Si lo pide el ajuste, cierra apps en segundo plano (best-effort).
+ * 4. Escribe config.yml con los ajustes actuales.
+ * 5. Núcleo embebido (Etapa 2, esqueleto): si Vita3kCoreBridge está
+ *    disponible, se intenta init + loadGame(titleId). Sin .so, el
+ *    puente devuelve NOT_IMPLEMENTED y se sigue con el fallback.
+ *    El núcleo embebido SÍ necesita firmware local: sin él, se
+ *    bloquea con UNA frase (no hay otra fuente de firmware dentro
+ *    de la app).
+ * 6. Fallback honesto: lanza la app externa org.vita3k.emulator
  *    (Vita3K oficial de Android) si está instalada, con un Intent
  *    MAIN normal. No se inventa un deep-link para arrancar un Title
- *    ID concreto: no hay uno documentado que se haya verificado en
- *    Etapa 1 (TODO-VERIFY en Etapa 2).
- * 6. Si ni siquiera está la app externa, devuelve el error con
+ *    ID concreto: no hay uno documentado verificado (TODO-VERIFY).
+ *    Si falta firmware LOCAL, solo se AVISA con una frase y se lanza
+ *    igual: Vita3K externo gestiona su propio firmware al arrancar
+ *    (tiene su propio instalador) y el launcher no puede ver su
+ *    almacenamiento privado. Nunca se le pide al usuario que busque
+ *    firmware por internet.
+ * 7. Si ni siquiera está la app externa, devuelve el error con
  *    instrucciones claras en vez de fallar en silencio.
  */
 class Vita3KLauncher(private val context: Context) {
@@ -37,12 +50,29 @@ class Vita3KLauncher(private val context: Context) {
     companion object {
         const val VITA3K_PACKAGE = "org.vita3k.emulator"
         const val EMBEDDED_LIB_NAME = "vita3k"
+
+        /**
+         * Una frase, sin pedir que se busque nada por internet.
+         * Para el lanzamiento externo (Vita3K gestiona su firmware).
+         */
+        const val FIRMWARE_WARNING_EXTERNAL =
+            "Falta el firmware de Vita en el launcher: Vita3K lo gestiona al arrancar, " +
+                "o puedes importarlo en Ajustes → Diagnóstico (opción avanzada)."
+
+        /** Una frase. Para el núcleo embebido (sin otra fuente de firmware). */
+        const val FIRMWARE_BLOCKED_EMBEDDED =
+            "Falta el firmware de Vita: el núcleo embebido no puede arrancar el juego sin él " +
+                "(Ajustes → Diagnóstico → Firmware, opción avanzada)."
     }
 
     sealed class LaunchOutcome {
         /** config.yml escrito; se lanzó la app externa de Vita3K. */
         data class LaunchedExternal(val configPath: String) : LaunchOutcome()
-        /** El núcleo embebido existe (Etapa 2). Sin punto de entrada JNI aún. */
+        /** Se lanzó Vita3K externo sin firmware local (Vita3K lo gestiona). */
+        data class LaunchedExternalFirmwareWarning(val configPath: String) : LaunchOutcome()
+        /** El núcleo embebido arrancó el juego (Etapa 2, aún no funcional). */
+        data class LaunchedEmbedded(val configPath: String) : LaunchOutcome()
+        /** El núcleo embebido existe. Sin punto de entrada JNI aún. */
         data class EmbeddedCorePresent(val configPath: String) : LaunchOutcome()
         data class Blocked(val reason: String) : LaunchOutcome()
     }
@@ -51,35 +81,73 @@ class Vita3KLauncher(private val context: Context) {
         val gameInstalled: Boolean,
         val titleId: String?,
         val firmwareInstalled: Boolean,
+        val firmwareStatus: FirmwareStatus,
         val missing: List<String>,
     ) {
-        val ready: Boolean get() = missing.isEmpty()
+        /** Solo el juego es obligatorio. El firmware es aviso, no bloqueo. */
+        val ready: Boolean get() = gameInstalled
     }
 
     fun checkPrerequisites(library: GameLibraryRepository): Prerequisites {
         val status = library.scanStatus()
+        val firmwareStatus = FirmwareResolver.resolve(library.vitaRoot)
         val missing = mutableListOf<String>()
         if (!status.gameInstalled) {
             missing.add("El juego no está instalado. Importa tu copia de Child of Light (PCSE00480 o PCSB00598).")
         }
-        if (!status.firmwareInstalled) {
-            missing.add("El firmware de Vita no está guardado. Importa el PSVUPDAT.PUP de tu Vita.")
-        }
-        return Prerequisites(status.gameInstalled, status.titleId?.id, status.firmwareInstalled, missing)
+        return Prerequisites(
+            status.gameInstalled,
+            status.titleId?.id,
+            firmwareStatus.ready,
+            firmwareStatus,
+            missing,
+        )
     }
 
-    fun launch(library: GameLibraryRepository, settings: LauncherSettings): LaunchOutcome {
+    suspend fun launch(
+        library: GameLibraryRepository,
+        settings: LauncherSettings,
+        sessionManager: SessionManager? = null,
+    ): LaunchOutcome {
         val pre = checkPrerequisites(library)
         if (!pre.ready) {
             return LaunchOutcome.Blocked(pre.missing.joinToString("\n"))
+        }
+        // Sesión correcta ANTES de tocar nada: si falla, no se lanza.
+        if (sessionManager != null) {
+            val activated = sessionManager.activateForLaunch()
+            if (activated.isFailure) {
+                return LaunchOutcome.Blocked(
+                    activated.exceptionOrNull()?.message ?: "No se pudo activar la sesión.",
+                )
+            }
         }
         if (settings.closeBackgroundApps) {
             val killed = closeBackgroundApps()
             LauncherLog.append(context, "launch", "Apps en segundo plano cerradas (best-effort): $killed procesos")
         }
         val configFile = Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot)
+        val titleId = pre.titleId ?: return LaunchOutcome.Blocked("No se pudo determinar el Title ID instalado.")
+
+        // 5. Núcleo embebido (Etapa 2): puente JNI si el .so existe.
+        if (Vita3kCoreBridge.available) {
+            if (!pre.firmwareStatus.ready) {
+                return LaunchOutcome.Blocked(FIRMWARE_BLOCKED_EMBEDDED)
+            }
+            val initRc = Vita3kCoreBridge.init(library.vitaRoot.absolutePath)
+            if (initRc == Vita3kCoreBridge.OK) {
+                val loadRc = Vita3kCoreBridge.loadGame(titleId)
+                if (loadRc == Vita3kCoreBridge.OK) {
+                    LauncherLog.append(context, "launch", "Núcleo embebido lanzó $titleId")
+                    return LaunchOutcome.LaunchedEmbedded(configFile.absolutePath)
+                }
+                LauncherLog.append(context, "launch", "Puente embebido: loadGame devolvió $loadRc; fallback a externo")
+            } else {
+                LauncherLog.append(context, "launch", "Puente embebido: init devolvió $initRc; fallback a externo")
+            }
+        }
         if (embeddedCorePresent()) {
-            // Etapa 2: aquí irá la llamada JNI al núcleo embebido.
+            // .so presente pero sin puente JNI funcional (Etapa 2 en curso).
             LauncherLog.append(context, "launch", "Núcleo embebido detectado; falta el punto de entrada JNI (Etapa 2).")
             return LaunchOutcome.EmbeddedCorePresent(configFile.absolutePath)
         }
@@ -92,8 +160,13 @@ class Vita3KLauncher(private val context: Context) {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return try {
             context.startActivity(intent)
-            LauncherLog.append(context, "launch", "Vita3K externo lanzado; config en ${configFile.absolutePath}")
-            LaunchOutcome.LaunchedExternal(configFile.absolutePath)
+            if (!pre.firmwareStatus.ready) {
+                LauncherLog.append(context, "launch", "Vita3K externo lanzado sin firmware local (aviso mostrado)")
+                LaunchOutcome.LaunchedExternalFirmwareWarning(configFile.absolutePath)
+            } else {
+                LauncherLog.append(context, "launch", "Vita3K externo lanzado; config en ${configFile.absolutePath}")
+                LaunchOutcome.LaunchedExternal(configFile.absolutePath)
+            }
         } catch (e: Exception) {
             LaunchOutcome.Blocked("No se pudo abrir Vita3K: ${e.message}")
         }

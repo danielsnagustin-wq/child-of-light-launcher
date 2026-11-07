@@ -76,6 +76,19 @@ class AchievementRepository(private val context: Context) {
         return prefs[Keys.UNLOCKED] ?: ""
     }
 
+    /**
+     * REEMPLAZA el progreso por el texto dado (lo usa el cambio de
+     * sesión: cada sesión tiene sus propios logros). Las entradas
+     * inválidas se descartan; no fusiona con lo anterior, a diferencia
+     * de importText. Un texto vacío deja 0/27.
+     */
+    suspend fun replaceAll(raw: String) {
+        val valid = decode(raw).filterKeys { n -> TROPHIES_27.any { it.number == n } }
+        context.achievementsDataStore.edit { prefs ->
+            prefs[Keys.UNLOCKED] = encode(valid)
+        }
+    }
+
     /** Importa progreso exportado. Las entradas inválidas se ignoran, las válidas se fusionan. */
     suspend fun importText(raw: String): ImportAchievementsResult {
         val incoming = decode(raw)

@@ -55,8 +55,13 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     ) {
         Text("Guardados y datos", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         val title = status.titleId?.id
+
+        // Sesiones / partidas: la gestión de saves vive aquí, ampliada a
+        // sesiones, no duplicada en otra pantalla.
+        SessionsSection(vm)
+
         Text(
-            "Carpeta de saves: ux0/user/00/savedata/${title ?: "<TITLE_ID>"}",
+            "Carpeta de saves (sesión activa): ux0/user/00/savedata/${title ?: "<TITLE_ID>"}",
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold,
         )
@@ -89,7 +94,7 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         OutlinedButton(onClick = { importTrophies.launch("*/*") }, modifier = Modifier.fillMaxWidth()) { Text("Importar progreso de logros") }
 
         SectionTitle("Borrar datos del juego")
-        NoteText("Borra el juego, el update, los DLCs y los saves de ${title ?: "Child of Light"}. Esta acción no se puede deshacer. Exporta tus saves y logros antes si los quieres conservar.")
+        NoteText("Borra el juego, el update, los DLCs, los saves y TODAS las sesiones de ${title ?: "Child of Light"}. Esta acción no se puede deshacer. Exporta tus saves, sesiones y logros antes si los quieres conservar.")
         OutlinedButton(
             onClick = { showDeleteConfirm = true },
             modifier = Modifier.fillMaxWidth(),
@@ -105,7 +110,7 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
             title = { Text("¿Borrar todos los datos del juego?") },
-            text = { Text("Se borrarán el juego, el update, los DLCs y los saves de ${status.titleId?.id ?: "Child of Light"}. Exporta antes tus saves y logros si los quieres conservar.") },
+            text = { Text("Se borrarán el juego, el update, los DLCs, los saves y TODAS las sesiones de ${status.titleId?.id ?: "Child of Light"}. Exporta antes tus saves, sesiones y logros si los quieres conservar.") },
             confirmButton = {
                 TextButton(onClick = { vm.deleteGameData(); showDeleteConfirm = false }) { Text("Borrar todo") }
             },
