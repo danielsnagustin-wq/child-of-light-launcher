@@ -1,0 +1,26 @@
+<!--
+  Icono placeholder de trofeo, generado. Diseño propio y simple:
+  una copa dorada. No usa imágenes de Ubisoft, Sony ni de GameFAQs.
+  Se usa como icono genérico de logro (con tinte gris si bloqueado,
+  dorado si desbloqueado — el tinte se aplica en la UI si se usa
+  como drawable; en Etapa 1 la lista usa emoji 🏆/🔒 como placeholder
+  de texto y este vector queda disponible para la Etapa 2).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#F2B705"
+        android:pathData="M14,6h20v6a10,10 0 0,1 -20,0z" />
+    <path
+        android:fillColor="#F2B705"
+        android:pathData="M14,8H6a8,8 0 0,0 8,8zM34,8h8a8,8 0 0,1 -8,8z" />
+    <path
+        android:fillColor="#F2B705"
+        android:pathData="M22,26h4v8h-4zM16,36h16v4H16z" />
+    <path
+        android:fillColor="#F5F0E1"
+        android:pathData="M24,12l1.5,3.2 3.5,0.5 -2.5,2.4 0.6,3.5 -3.1,-1.6 -3.1,1.6 0.6,-3.5 -2.5,-2.4 3.5,-0.5z" />
+</vector>

@@ -1,0 +1,119 @@
+package com.danielsnagustin.childoflight.launcher.data
+
+import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import com.danielsnagustin.childoflight.launcher.model.TROPHIES_27
+import com.danielsnagustin.childoflight.launcher.model.TrophyProgress
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+
+private val Context.achievementsDataStore: DataStore<Preferences> by preferencesDataStore(name = "col_achievements")
+
+/**
+ * Progreso de logros LOCAL, en DataStore.
+ *
+ * Formato guardado: una línea por trofeo desbloqueado,
+ * "numero|epochMillis", separadas por ";".
+ * Es el mismo formato que se exporta/importa junto con los saves,
+ * para que el usuario pueda respaldar su progreso.
+ *
+ * La fuente de verdad para MOSTRAR el progreso es este DataStore.
+ * El directorio de trofeos de Vita3K (ux0/user/00/trophy/) se lee
+ * solo como referencia (ver TrophyStoreReader): Vita3K tiene soporte
+ * parcial de trofeos y su formato TROPHY.TRP no se decodifica en
+ * Etapa 1, así que no se promete sincronización automática con él.
+ */
+class AchievementRepository(private val context: Context) {
+
+    private object Keys {
+        val UNLOCKED = stringPreferencesKey("unlocked_trophies")
+    }
+
+    val progressFlow: Flow<List<TrophyProgress>> = context.achievementsDataStore.data.map { prefs ->
+        val unlocked = decode(prefs[Keys.UNLOCKED] ?: "")
+        TROPHIES_27.map { trophy ->
+            TrophyProgress(trophy, unlocked.containsKey(trophy.number), unlocked[trophy.number])
+        }
+    }
+
+    /** Desbloquea un trofeo. Devuelve true solo si estaba bloqueado (es un desbloqueo nuevo). */
+    suspend fun unlock(number: Int, atMillis: Long = System.currentTimeMillis()): Boolean {
+        if (TROPHIES_27.none { it.number == number }) return false
+        var isNew = false
+        context.achievementsDataStore.edit { prefs ->
+            val map = decode(prefs[Keys.UNLOCKED] ?: "").toMutableMap()
+            if (!map.containsKey(number)) {
+                map[number] = atMillis
+                isNew = true
+            }
+            prefs[Keys.UNLOCKED] = encode(map)
+        }
+        return isNew
+    }
+
+    suspend fun lock(number: Int) {
+        context.achievementsDataStore.edit { prefs ->
+            val map = decode(prefs[Keys.UNLOCKED] ?: "").toMutableMap()
+            map.remove(number)
+            prefs[Keys.UNLOCKED] = encode(map)
+        }
+    }
+
+    suspend fun resetAll() {
+        context.achievementsDataStore.edit { prefs ->
+            prefs[Keys.UNLOCKED] = ""
+        }
+    }
+
+    /** Exporta el progreso en el formato "numero|epochMillis;...". */
+    suspend fun exportText(): String {
+        val prefs = context.achievementsDataStore.data.first()
+        return prefs[Keys.UNLOCKED] ?: ""
+    }
+
+    /** Importa progreso exportado. Las entradas inválidas se ignoran, las válidas se fusionan. */
+    suspend fun importText(raw: String): ImportAchievementsResult {
+        val incoming = decode(raw)
+        val valid = incoming.filterKeys { n -> TROPHIES_27.any { it.number == n } }
+        val ignored = incoming.size - valid.size
+        var added = 0
+        context.achievementsDataStore.edit { prefs ->
+            val map = decode(prefs[Keys.UNLOCKED] ?: "").toMutableMap()
+            for ((number, at) in valid) {
+                if (!map.containsKey(number)) added++
+                map[number] = map[number] ?: at
+            }
+            prefs[Keys.UNLOCKED] = encode(map)
+        }
+        return ImportAchievementsResult(addedOrKept = valid.size, ignoredInvalid = ignored, newlyUnlocked = added)
+    }
+
+    companion object {
+        fun encode(map: Map<Int, Long>): String =
+            map.entries.sortedBy { it.key }.joinToString(";") { "${it.key}|${it.value}" }
+
+        fun decode(raw: String): Map<Int, Long> {
+            if (raw.isBlank()) return emptyMap()
+            val out = mutableMapOf<Int, Long>()
+            for (entry in raw.split(";")) {
+                val parts = entry.split("|")
+                if (parts.size != 2) continue
+                val number = parts[0].toIntOrNull() ?: continue
+                val at = parts[1].toLongOrNull() ?: continue
+                out[number] = at
+            }
+            return out
+        }
+    }
+}
+
+data class ImportAchievementsResult(
+    val addedOrKept: Int,
+    val ignoredInvalid: Int,
+    val newlyUnlocked: Int,
+)
