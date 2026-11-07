@@ -14,6 +14,7 @@ import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.data.SessionManager
+import com.danielsnagustin.childoflight.launcher.data.Vita3kConfigGenerator
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 
 /**
