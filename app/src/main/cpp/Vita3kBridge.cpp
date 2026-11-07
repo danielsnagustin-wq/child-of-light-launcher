@@ -66,3 +66,116 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeShutd
     LOGW("nativeShutdown STUB (TODO-ETAPA2): núcleo no embebido");
     return kNotImplemented;
 }
+
+// --- Etapa 2 (fundación): instalación + sesión + prepareFrontend ---
+// Mismo contrato que el adaptador real (app/src/main/cpp/launcher/):
+// sin núcleo, todos devuelven el valor de "no implementado" sin llamar
+// a nativo. El stub existe para que libvita3k-bridge.so implemente el
+// contrato JNI completo aunque el árbol Vita3K no esté presente.
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativePrepareFrontend(
+    JNIEnv * /* env */, jobject /* thiz */) {
+    LOGW("nativePrepareFrontend STUB (TODO-ETAPA2): núcleo no embebido");
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInstallPkg(
+    JNIEnv * /* env */, jobject /* thiz */, jstring /* pkgPath */, jstring /* zrif */, jobject /* callback */) {
+    LOGW("nativeInstallPkg STUB (TODO-ETAPA2): núcleo no embebido");
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInstallArchive(
+    JNIEnv * /* env */, jobject /* thiz */, jstring /* archivePath */, jobject /* callback */, jboolean /* forceReinstall */) {
+    LOGW("nativeInstallArchive STUB (TODO-ETAPA2): núcleo no embebido");
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInstallFirmware(
+    JNIEnv *env, jobject /* thiz */, jstring /* pupPath */, jobject /* callback */) {
+    LOGW("nativeInstallFirmware STUB (TODO-ETAPA2): núcleo no embebido");
+    return env->NewStringUTF("");
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeCopyLicense(
+    JNIEnv * /* env */, jobject /* thiz */, jstring /* licensePath */) {
+    LOGW("nativeCopyLicense STUB (TODO-ETAPA2): núcleo no embebido");
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeCreateLicense(
+    JNIEnv * /* env */, jobject /* thiz */, jstring /* zrif */) {
+    LOGW("nativeCreateLicense STUB (TODO-ETAPA2): núcleo no embebido");
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeFindPkgZrif(
+    JNIEnv *env, jobject /* thiz */, jstring /* pkgPath */) {
+    LOGW("nativeFindPkgZrif STUB (TODO-ETAPA2): núcleo no embebido");
+    return env->NewStringUTF("");
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeConvertRifToZrif(
+    JNIEnv *env, jobject /* thiz */, jstring /* licensePath */) {
+    LOGW("nativeConvertRifToZrif STUB (TODO-ETAPA2): núcleo no embebido");
+    return env->NewStringUTF("");
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeIsAppRunning(
+    JNIEnv * /* env */, jobject /* thiz */) {
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeRequestAppQuit(
+    JNIEnv * /* env */, jobject /* thiz */) {
+    LOGW("nativeRequestAppQuit STUB (TODO-ETAPA2): núcleo no embebido");
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeIsAppPaused(
+    JNIEnv * /* env */, jobject /* thiz */) {
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetRunningAppTitle(
+    JNIEnv *env, jobject /* thiz */) {
+    return env->NewStringUTF("");
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetFirmwareInstallStateMask(
+    JNIEnv * /* env */, jobject /* thiz */) {
+    return 0;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeRefreshAppsList(
+    JNIEnv * /* env */, jobject /* thiz */) {
+    LOGW("nativeRefreshAppsList STUB (TODO-ETAPA2): núcleo no embebido");
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeSetPauseReasonEnabled(
+    JNIEnv * /* env */, jobject /* thiz */, jint /* reasonMask */, jboolean /* enabled */) {
+    LOGW("nativeSetPauseReasonEnabled STUB (TODO-ETAPA2): núcleo no embebido");
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeSetInputIntercepted(
+    JNIEnv * /* env */, jobject /* thiz */, jboolean /* intercepted */) {
+    LOGW("nativeSetInputIntercepted STUB (TODO-ETAPA2): núcleo no embebido");
+    return JNI_FALSE;
+}

@@ -51,11 +51,12 @@ data class SaveInfo(
  * - EXTRAÍDO: ux0/app/<TITLE>/ con eboot.bin (zip/.vpk o carpeta).
  *   Es lo único que el núcleo embebido (Etapa 2) puede arrancar y lo
  *   único de lo que el launcher gestiona saves/sesiones.
- * - .PKG: ux0/pkg/<TITLE>.pkg + <TITLE>.work.bin (licencia). El
- *   launcher NO puede desencriptarlo ni extraerlo: solo Vita3K
- *   externo lo instala. Por eso gameExtracted y pkgTitleId van
- *   por separado: muchas pantallas (saves, sesiones) solo tienen
- *   sentido con el juego extraído.
+ * - .PKG: ux0/pkg/<TITLE>.pkg + <TITLE>.work.bin (licencia). En
+ *   Etapa 1 solo Vita3K externo lo instala (el launcher lo entrega
+ *   a Descargas). Con el núcleo embebido (Etapa 2), el propio núcleo
+ *   lo instala (EmbeddedPkgInstaller). Por eso gameExtracted y
+ *   pkgTitleId van por separado: muchas pantallas (saves, sesiones)
+ *   solo tienen sentido con el juego extraído.
  */
 data class GameStatus(
     /** Title ID efectivo: el extraído si lo hay, si no el del .pkg. */

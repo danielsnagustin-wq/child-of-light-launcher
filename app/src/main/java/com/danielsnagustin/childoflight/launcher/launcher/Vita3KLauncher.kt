@@ -12,6 +12,10 @@ import android.os.Environment
 import android.os.PowerManager
 import android.provider.MediaStore
 import android.provider.Settings
+import com.danielsnagustin.childoflight.launcher.core.EmbeddedCoreLayout
+import com.danielsnagustin.childoflight.launcher.core.EmbeddedGameActivity
+import com.danielsnagustin.childoflight.launcher.core.EmbeddedGameLauncher
+import com.danielsnagustin.childoflight.launcher.core.EmbeddedPkgInstaller
 import com.danielsnagustin.childoflight.launcher.core.Vita3kCoreBridge
 import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
 import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
@@ -20,6 +24,7 @@ import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.data.SessionManager
 import com.danielsnagustin.childoflight.launcher.data.Vita3kConfigGenerator
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
+import com.danielsnagustin.childoflight.launcher.model.TitleId
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -37,13 +42,16 @@ import java.io.FileOutputStream
  *    el launcher (vive en Vita3K) y no hay sesión que activar.
  * 3. Si lo pide el ajuste, cierra apps en segundo plano (best-effort).
  * 4. Escribe config.yml con los ajustes actuales.
- * 5. Núcleo embebido (Etapa 2, esqueleto): si Vita3kCoreBridge está
- *    disponible, se intenta init + loadGame(titleId). Sin .so, el
- *    puente devuelve NOT_IMPLEMENTED y se sigue con el fallback.
- *    El núcleo embebido SÍ necesita firmware local: sin él, se
- *    bloquea con UNA frase (no hay otra fuente de firmware dentro
- *    de la app). Con un .pkg no se intenta el núcleo embebido: no
- *    hay juego extraído que cargar.
+ * 5. Núcleo embebido (Etapa 2, fundación): si el .so existe, se
+ *    intenta JUGAR DENTRO del launcher (EmbeddedGameActivity, SDL):
+ *    la decisión es pura (EmbeddedGameLauncher.decide) y aquí solo
+ *    se ejecuta. Con juego solo en .pkg, primero se instala el .pkg
+ *    con el propio núcleo (EmbeddedPkgInstaller) y luego se arranca.
+ *    Si el intento embebido falla, se sigue con el fallback a
+ *    Vita3K externo (nunca se bloquea pudiendo jugar por fuera).
+ *    Sin firmware local, decide() devuelve vía externa (Vita3K
+ *    gestiona su propio firmware); solo si TAMPOCO está Vita3K
+ *    externo se bloquea al final con la frase de firmware.
  * 6. Fallback honesto: lanza la app externa org.vita3k.emulator
  *    (Vita3K oficial de Android) si está instalada, con un Intent
  *    MAIN normal. No se inventa un deep-link para arrancar un Title
@@ -92,7 +100,7 @@ class Vita3KLauncher(private val context: Context) {
         data class LaunchedExternalFirmwareWarning(val configPath: String) : LaunchOutcome()
         /** El núcleo embebido arrancó el juego (Etapa 2, aún no funcional). */
         data class LaunchedEmbedded(val configPath: String) : LaunchOutcome()
-        /** El núcleo embebido existe. Sin punto de entrada JNI aún. */
+        /** El núcleo embebido existe. Sin punto de entrada JNI aún. Reservado: launchImpl ya no lo devuelve (el fallback externo cubre ese caso mejor); el ViewModel lo sigue manejando por si vuelve a usarse. */
         data class EmbeddedCorePresent(val configPath: String) : LaunchOutcome()
         data class Blocked(val reason: String) : LaunchOutcome()
     }
@@ -252,42 +260,54 @@ class Vita3KLauncher(private val context: Context) {
         val configFile = Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot)
         val titleId = pre.titleId ?: return LaunchOutcome.Blocked("No se pudo determinar el Title ID instalado.")
 
-        // 5. Núcleo embebido (Etapa 2): puente JNI si el .so existe.
-        // H3: si el intento embebido ya falló (init/loadGame devolvieron
-        // error), NO se devuelve EmbeddedCorePresent: ese estado es un
-        // callejón sin salida y nunca probaba Vita3K externo. Se salta
-        // directo al intent externo.
-        var embeddedAttemptFailed = false
-        // Con un .pkg no se intenta el núcleo embebido: no hay juego
-        // extraído que cargar (loadGame necesitaría eboot.bin).
-        if (Vita3kCoreBridge.available && !pre.pkgOnly) {
-            if (!pre.firmwareStatus.ready) {
-                return LaunchOutcome.Blocked(FIRMWARE_BLOCKED_EMBEDDED)
+        // 5. Núcleo embebido (Etapa 2): JUGAR DENTRO del launcher.
+        //    La decisión es pura (EmbeddedGameLauncher.decide); aquí
+        //    solo se ejecuta. Si el intento embebido falla, se sigue
+        //    con el fallback a Vita3K externo (nunca se bloquea
+        //    pudiendo jugar por fuera). EmbeddedCorePresent ya no se
+        //    devuelve: era un callejón sin salida (H3) y el fallback
+        //    externo cubre ese caso mejor.
+        val status = library.scanStatus()
+        when (val decision = EmbeddedGameLauncher.decide(status, Vita3kCoreBridge.available, pre.firmwareStatus.ready)) {
+            is EmbeddedGameLauncher.Decision.UseEmbedded -> {
+                val launched = tryLaunchEmbedded(library, titleId, configFile.absolutePath)
+                if (launched != null) return launched
+                LauncherLog.append(context, "launch", "Intento embebido falló; fallback a externo")
             }
-            val initRc = Vita3kCoreBridge.init(library.vitaRoot.absolutePath)
-            if (initRc == Vita3kCoreBridge.OK) {
-                val loadRc = Vita3kCoreBridge.loadGame(titleId)
-                if (loadRc == Vita3kCoreBridge.OK) {
-                    LauncherLog.append(context, "launch", "Núcleo embebido lanzó $titleId")
-                    return LaunchOutcome.LaunchedEmbedded(configFile.absolutePath)
+            is EmbeddedGameLauncher.Decision.UseEmbeddedPkg -> {
+                // Instalar el .pkg con el propio núcleo y luego arrancar.
+                // Si la instalación falla, se sigue con la vía externa
+                // (.pkg entregado a Vita3K) como en Etapa 1.
+                val embeddedTitle = TitleId.fromString(decision.titleId)
+                val installed = embeddedTitle != null && installPkgWithEmbeddedCore(library, embeddedTitle)
+                if (installed) {
+                    val launched = tryLaunchEmbedded(library, titleId, configFile.absolutePath)
+                    if (launched != null) return launched
+                    LauncherLog.append(context, "launch", "Intento embebido falló tras instalar el .pkg; fallback a externo")
+                } else {
+                    LauncherLog.append(context, "launch", "Instalación .pkg embebida falló; fallback a externo")
                 }
-                LauncherLog.append(context, "launch", "Puente embebido: loadGame devolvió $loadRc; fallback a externo")
-                embeddedAttemptFailed = true
-            } else {
-                LauncherLog.append(context, "launch", "Puente embebido: init devolvió $initRc; fallback a externo")
-                embeddedAttemptFailed = true
             }
-        }
-        if (embeddedCorePresent() && !embeddedAttemptFailed && !pre.pkgOnly) {
-            // .so presente pero sin puente JNI funcional (Etapa 2 en curso).
-            LauncherLog.append(context, "launch", "Núcleo embebido detectado; falta el punto de entrada JNI (Etapa 2).")
-            return LaunchOutcome.EmbeddedCorePresent(configFile.absolutePath)
+            is EmbeddedGameLauncher.Decision.Blocked -> {
+                return LaunchOutcome.Blocked(decision.reason)
+            }
+            is EmbeddedGameLauncher.Decision.UseExternal -> {
+                LauncherLog.append(context, "launch", "Vía externa: ${decision.reason}")
+            }
         }
         val intent = context.packageManager.getLaunchIntentForPackage(VITA3K_PACKAGE)
             ?: return LaunchOutcome.Blocked(
-                "Núcleo embebido no presente (Etapa 2) y Vita3K no está instalado.\n\n" +
-                    "Instala Vita3K para Android (org.vita3k.emulator) desde su GitHub oficial " +
-                    "para jugar mientras llega la Etapa 2. El config.yml ya quedó escrito en:\n${configFile.absolutePath}",
+                when {
+                    Vita3kCoreBridge.available && !pre.firmwareStatus.ready -> FIRMWARE_BLOCKED_EMBEDDED
+                    Vita3kCoreBridge.available ->
+                        "El núcleo embebido está presente pero no pudo arrancar el juego, y Vita3K no está instalado.\n\n" +
+                            "Instala Vita3K para Android (org.vita3k.emulator) desde su GitHub oficial para jugar. " +
+                            "El config.yml ya quedó escrito en:\n${configFile.absolutePath}"
+                    else ->
+                        "Núcleo embebido no presente (Etapa 2) y Vita3K no está instalado.\n\n" +
+                            "Instala Vita3K para Android (org.vita3k.emulator) desde su GitHub oficial " +
+                            "para jugar mientras llega la Etapa 2. El config.yml ya quedó escrito en:\n${configFile.absolutePath}"
+                },
             )
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return try {
@@ -302,6 +322,70 @@ class Vita3KLauncher(private val context: Context) {
         } catch (e: Exception) {
             LaunchOutcome.Blocked("No se pudo abrir Vita3K: ${e.message}")
         }
+    }
+
+    /**
+     * Intenta el lanzamiento embebido: migra el layout una vez
+     * (ux0 -> vita/ux0), inicializa el núcleo, valida el Title ID y
+     * abre EmbeddedGameActivity (el hilo SDL arranca el juego).
+     * Devuelve LaunchedEmbedded si la Activity se abrió, o null si
+     * algo falló (el llamador sigue con el fallback externo).
+     * Nunca lanza excepciones ni bloquea: cualquier fallo es null.
+     */
+    private fun tryLaunchEmbedded(
+        library: GameLibraryRepository,
+        titleId: String,
+        configPath: String,
+    ): LaunchOutcome? {
+        return try {
+            when (val migration = EmbeddedCoreLayout.migrateToEmbeddedLayout(library.vitaRoot)) {
+                is EmbeddedCoreLayout.MigrationResult.Conflict -> {
+                    LauncherLog.append(context, "launch", "Migración embebida en conflicto: ${migration.reason}; fallback a externo")
+                    return null
+                }
+                is EmbeddedCoreLayout.MigrationResult.Migrated -> {
+                    LauncherLog.append(context, "launch", "Layout migrado a vita/ux0 (${migration.filesMoved} archivos)")
+                }
+                else -> { /* AlreadyMigrated / NothingToMigrate: nada que hacer */ }
+            }
+            val initRc = Vita3kCoreBridge.init(library.vitaRoot.absolutePath)
+            if (initRc != Vita3kCoreBridge.OK) {
+                LauncherLog.append(context, "launch", "Puente embebido: init devolvió $initRc; fallback a externo")
+                return null
+            }
+            val loadRc = Vita3kCoreBridge.loadGame(titleId)
+            if (loadRc != Vita3kCoreBridge.OK) {
+                LauncherLog.append(context, "launch", "Puente embebido: loadGame devolvió $loadRc; fallback a externo")
+                return null
+            }
+            val intent = EmbeddedGameActivity.createLaunchIntent(context, titleId, "Child of Light")
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+            LauncherLog.append(context, "launch", "Núcleo embebido lanzó $titleId (EmbeddedGameActivity)")
+            LaunchOutcome.LaunchedEmbedded(configPath)
+        } catch (e: Exception) {
+            LauncherLog.append(context, "launch", "No se pudo abrir EmbeddedGameActivity: ${e.message}; fallback a externo")
+            null
+        }
+    }
+
+    /**
+     * Instala el .pkg del juego con el propio núcleo embebido
+     * (EmbeddedPkgInstaller). El progreso detallado aún no se muestra
+     * en UI (TODO: cablear el progreso a la pantalla de JUGAR);
+     * por ahora solo se registra inicio y fin en el log.
+     */
+    private suspend fun installPkgWithEmbeddedCore(
+        library: GameLibraryRepository,
+        titleId: TitleId,
+    ): Boolean {
+        LauncherLog.append(context, "pkg", "Instalando .pkg en el núcleo embebido: ${titleId.id}")
+        val installer = EmbeddedPkgInstaller(library)
+        val result = installer.installGamePkg(titleId) { _, _ -> /* progreso: TODO mostrar en UI */ }
+        result.onFailure {
+            LauncherLog.append(context, "pkg", "Instalación .pkg embebida falló: ${it.message}")
+        }
+        return result.isSuccess
     }
 
     /** ¿Existe la librería nativa del núcleo embebido? En Etapa 1, no. Se cachea: loadLibrary no debe intentarse en cada recomposición. */

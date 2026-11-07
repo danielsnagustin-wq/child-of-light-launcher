@@ -11,3 +11,9 @@ local.properties
 *.keystore
 *.jks
 app/build/
+# Etapa 2: el árbol Vita3K (app/src/main/cpp/vita3k/) lo clona CI en
+# cada build (commit fijado, ver docs/etapa2/). Nunca se commitea:
+# son cientos de MB con sus submódulos y el push por API no maneja
+# submódulos. La capa adaptadora propia (app/src/main/cpp/launcher/)
+# SÍ se commitea.
+app/src/main/cpp/vita3k/

@@ -38,6 +38,24 @@ object Vita3kCoreBridge {
     const val OK = 0
     const val NOT_IMPLEMENTED = -1
 
+    /**
+     * Bits de motivo de pausa (iguales que NativeLib de upstream).
+     * PAUSE_REASON_USER = el usuario pausó (botón guía / menú).
+     */
+    const val PAUSE_REASON_USER = 1
+    const val PAUSE_REASON_MENU = 2
+    const val PAUSE_REASON_BACKGROUND = 4
+
+    /**
+     * Callback de progreso de instalación. El nativo lo llama por
+     * duck-typing: busca el método onProgress(int, String) en el
+     * objeto (ver ScopedJniCallback en upstream). Por eso el método
+     * se llama EXACTAMENTE onProgress y tiene ESTA firma.
+     */
+    fun interface EmbeddedInstallCallback {
+        fun onProgress(percent: Int, status: String)
+    }
+
     /** ¿Hay algún .so del núcleo cargable? En Etapa 1, no. */
     val available: Boolean by lazy {
         loadLibrary("vita3k") || loadLibrary("vita3k-bridge")
@@ -69,8 +87,12 @@ object Vita3kCoreBridge {
     }
 
     /**
-     * Arranca el juego con el Title ID dado. Equivale al argv
-     * {"-r", titleId} de SDL_main + AppLaunchRequest{app_path=titleId}.
+     * Valida que el juego con el Title ID dado se puede arrancar con el
+     * núcleo embebido (sesión inicializada + Title ID instalado).
+     * NO arranca el juego: el arranque real lo hace el hilo SDL de
+     * EmbeddedGameActivity (SDL_main con argv {"-r", titleId}).
+     * Devuelve OK si la validación pasa; -2 si no hay sesión, -3 si el
+     * juego no está instalado en el núcleo.
      */
     fun loadGame(titleId: String): Int {
         if (!available) return NOT_IMPLEMENTED
@@ -101,8 +123,196 @@ object Vita3kCoreBridge {
         }
     }
 
+    // --- Etapa 2 (fundación): prepareFrontend + instalación + sesión ---
+    // Todas siguen el mismo contrato: sin .so devuelven el valor de
+    // "no implementado" sin llamar a nativo; con .so reenvían a las
+    // funciones JNI de upstream (ver app/src/main/cpp/launcher/).
+    // La instalación (.pkg/.zip/PUP) es lo que permite que el launcher
+    // "solo acepte el juego": sin núcleo, el instalador devuelve
+    // failure y el llamador usa la vía de Etapa 1 (Vita3K externo).
+
+    /**
+     * Prepara el frontend SDL (SDL_SetMainReady + metadatos + cámara).
+     * Upstream lo llama desde MainActivity ANTES de arrancar Emulator;
+     * EmbeddedGameActivity lo llama antes de super.onCreate().
+     */
+    fun prepareFrontend(): Boolean {
+        if (!available) return false
+        return try {
+            nativePrepareFrontend()
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Instala un .pkg con su zRIF ("" = sin licencia). true si se instaló. */
+    fun installPkg(pkgPath: String, zrif: String, callback: EmbeddedInstallCallback): Boolean {
+        if (!available) return false
+        return try {
+            nativeInstallPkg(pkgPath, zrif, callback)
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Instala un .zip/.vpk. forceReinstall = reinstalar sin preguntar si ya existe. */
+    fun installArchive(archivePath: String, callback: EmbeddedInstallCallback, forceReinstall: Boolean): Boolean {
+        if (!available) return false
+        return try {
+            nativeInstallArchive(archivePath, callback, forceReinstall)
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Instala el firmware PUP. Devuelve la versión ("3.74") o "" si falló. */
+    fun installFirmware(pupPath: String, callback: EmbeddedInstallCallback): String {
+        if (!available) return ""
+        return try {
+            nativeInstallFirmware(pupPath, callback)
+        } catch (_: UnsatisfiedLinkError) {
+            ""
+        }
+    }
+
+    /** Copia una licencia .rif/.bin (work.bin) a su sitio dentro del núcleo. */
+    fun copyLicense(licensePath: String): Boolean {
+        if (!available) return false
+        return try {
+            nativeCopyLicense(licensePath)
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Crea e instala una licencia a partir de un zRIF. */
+    fun createLicense(zrif: String): Boolean {
+        if (!available) return false
+        return try {
+            nativeCreateLicense(zrif)
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Busca el zRIF de un .pkg entre las licencias ya instaladas ("" si no hay). */
+    fun findPkgZrif(pkgPath: String): String {
+        if (!available) return ""
+        return try {
+            nativeFindPkgZrif(pkgPath)
+        } catch (_: UnsatisfiedLinkError) {
+            ""
+        }
+    }
+
+    /** Convierte un .bin/.rif (work.bin) a zRIF ("" si no se pudo). */
+    fun convertRifToZrif(licensePath: String): String {
+        if (!available) return ""
+        return try {
+            nativeConvertRifToZrif(licensePath)
+        } catch (_: UnsatisfiedLinkError) {
+            ""
+        }
+    }
+
+    /** true si hay una partida en curso en el núcleo. */
+    fun isAppRunning(): Boolean {
+        if (!available) return false
+        return try {
+            nativeIsAppRunning()
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Pide el cierre limpio de la partida en curso. */
+    fun requestAppQuit(): Boolean {
+        if (!available) return false
+        return try {
+            nativeRequestAppQuit()
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** true si la partida está en pausa. */
+    fun isAppPaused(): Boolean {
+        if (!available) return false
+        return try {
+            nativeIsAppPaused()
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Title ID de la partida en curso ("" si no hay). */
+    fun getRunningAppTitle(): String {
+        if (!available) return ""
+        return try {
+            nativeGetRunningAppTitle()
+        } catch (_: UnsatisfiedLinkError) {
+            ""
+        }
+    }
+
+    /** Máscara de estado del firmware instalado (bits de upstream). */
+    fun getFirmwareInstallStateMask(): Int {
+        if (!available) return 0
+        return try {
+            nativeGetFirmwareInstallStateMask()
+        } catch (_: UnsatisfiedLinkError) {
+            0
+        }
+    }
+
+    /** Re-escanea la lista de apps instaladas en el núcleo. */
+    fun refreshAppsList() {
+        if (!available) return
+        try {
+            nativeRefreshAppsList()
+        } catch (_: UnsatisfiedLinkError) {
+            // Sin núcleo: no hay nada que refrescar.
+        }
+    }
+
+    /** Activa o quita un motivo de pausa (PAUSE_REASON_*). */
+    fun setPauseReasonEnabled(reasonMask: Int, enabled: Boolean): Boolean {
+        if (!available) return false
+        return try {
+            nativeSetPauseReasonEnabled(reasonMask, enabled)
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Bloquea o libera la entrada del juego sin cambiar la pausa. */
+    fun setInputIntercepted(intercepted: Boolean): Boolean {
+        if (!available) return false
+        return try {
+            nativeSetInputIntercepted(intercepted)
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
     private external fun nativeInit(storagePath: String): Int
     private external fun nativeLoadGame(titleId: String): Int
     private external fun nativeGetFps(): Float
     private external fun nativeShutdown(): Int
+    private external fun nativePrepareFrontend(): Boolean
+    private external fun nativeInstallPkg(pkgPath: String, zrif: String, callback: EmbeddedInstallCallback): Boolean
+    private external fun nativeInstallArchive(archivePath: String, callback: EmbeddedInstallCallback, forceReinstall: Boolean): Boolean
+    private external fun nativeInstallFirmware(pupPath: String, callback: EmbeddedInstallCallback): String
+    private external fun nativeCopyLicense(licensePath: String): Boolean
+    private external fun nativeCreateLicense(zrif: String): Boolean
+    private external fun nativeFindPkgZrif(pkgPath: String): String
+    private external fun nativeConvertRifToZrif(licensePath: String): String
+    private external fun nativeIsAppRunning(): Boolean
+    private external fun nativeRequestAppQuit(): Boolean
+    private external fun nativeIsAppPaused(): Boolean
+    private external fun nativeGetRunningAppTitle(): String
+    private external fun nativeGetFirmwareInstallStateMask(): Int
+    private external fun nativeRefreshAppsList()
+    private external fun nativeSetPauseReasonEnabled(reasonMask: Int, enabled: Boolean): Boolean
+    private external fun nativeSetInputIntercepted(intercepted: Boolean): Boolean
 }

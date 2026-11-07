@@ -466,30 +466,44 @@ el Gradle instalado por `gradle/actions/setup-gradle`.
 
 ---
 
-## Etapa 2 (investigación + esqueleto, no funcional aún)
+## Etapa 2 (fundación lista en local, núcleo aún no embebido)
 
 Documento completo: [`docs/etapa2/ETAPA2-PLAN.md`](docs/etapa2/ETAPA2-PLAN.md).
+Estado de la fundación: [`docs/etapa2/ETAPA2-ESTADO.md`](docs/etapa2/ETAPA2-ESTADO.md).
 
-Verificado contra el código público de Vita3K (master, 2026-11-07)
-y contra EmuCoreV (el fork con núcleo embebido en Android):
+Meta: una sola app — poner el juego y jugar, sin instalar ni abrir
+Vita3K aparte ni pasos manuales.
+
+Verificado contra el código público de Vita3K (master 3e43bc80,
+2026-11-07) y contra EmuCoreV (el fork con núcleo embebido en Android):
 
 - Upstream **no** expone un `loadGame(titleId)` público: el arranque
   real es `SDL_main` con argv `{"-r", "<TITLE_ID>"}` y el bootstrap
   es `NativeLib.init(storagePath)`; las JNI de upstream están ligadas
   a `org.vita3k.emulator.NativeLib`, así que hace falta una capa
-  adaptadora propia (modelo EmuCoreV: árbol Vita3K vendorizado +
-  puente JNI en nuestro paquete).
-- Esqueleto ya creado (sin romper Etapa 1, sin `.so` no se activa):
-  `core/Vita3kCoreBridge.kt` (Kotlin, `init`/`loadGame`/`getFps`/
-  `shutdown`, devuelve `NOT_IMPLEMENTED` sin núcleo),
-  `app/src/main/cpp/CMakeLists.txt` + `Vita3kBridge.cpp` (stubs JNI
-  `TODO-ETAPA2`), y `Vita3KLauncher` ya los usa con fallback a Vita3K
-  externo.
-- Siguiente paso concreto: añadir el submódulo Vita3K en
-  `app/src/main/cpp/vita3k`, escribir el adaptador mínimo, cablear
-  NDK 29 + CMake 3.22.1 + vcpkg en Actions y medir el tamaño del
-  `.so`. Todo el detalle (archivos, riesgos, qué no se puede hacer
-  en esta VM) está en el plan.
+  adaptadora propia (modelo EmuCoreV: árbol Vita3K + puente JNI en
+  nuestro paquete).
+- **La fundación ya está construida (solo en local, sin push):**
+  SDL3 Java vendorizado (`org/libsdl/app/`, commit fa2c02b),
+  `core/EmbeddedGameActivity.kt` (SDLActivity con `{"-r", titleId}`),
+  `core/EmbeddedCoreLayout.kt` (migración `ux0` → `vita/ux0`),
+  `core/EmbeddedGameLauncher.kt` (decisión embebido/externo),
+  `core/EmbeddedPkgInstaller.kt` (instalar `.pkg` + `work.bin` con
+  el propio núcleo: `installPkg` + `convertRifToZrif`),
+  `core/Vita3kCoreBridge.kt` ampliado (instalación + sesión + pausa),
+  `app/src/main/cpp/launcher/` (adaptador JNI que reenvía a las
+  funciones de upstream), CMake condicional (sin árbol, Etapa 1
+  intacta) y `build.gradle.kts` condicional (NDK 29 + arm64-v8a solo
+  si el árbol existe).
+- **El núcleo NO está embebido todavía** (no hay `.so`): sin árbol
+  Vita3K, todo lo anterior es código que no se ejecuta
+  (`Vita3kCoreBridge.available` es false y JUGAR sigue abriendo
+  Vita3K externo). El árbol lo clona CI en cada build (commit
+  fijado); el repo no usa submódulos (el push por API no los maneja).
+- Siguiente paso: activar el workflow borrador
+  (`docs/etapa2/workflow-android-native.yml`, por navegador) y leer
+  el log de la primera build nativa. Todo el detalle (archivos,
+  riesgos, qué falta) está en `ETAPA2-ESTADO.md`.
 
 ## Plan Etapa 2 (resto, pendiente, no en este APK)
 
@@ -508,7 +522,10 @@ y contra EmuCoreV (el fork con núcleo embebido en Android):
 5. **Decodificar `TROPHY.TRP`** para validar/sincronizar el progreso
    de trofeos con Vita3K (hoy solo se lee su existencia).
 6. **Parser de `.pkg`** para instalar paquetes sin depender del
-   nombre del archivo.
+   nombre del archivo. **HECHO en Etapa 1** (`PkgHeaderParser`,
+   Content ID del header → Title ID; `work.bin` validado por
+   contenido). Con el núcleo embebido, además, el propio núcleo
+   instala el `.pkg` (`EmbeddedPkgInstaller`).
 7. Traducción completa ES/EN de las notas técnicas de ajustes.
 8. Arrastrar con dos dedos / gestos en el editor táctil (hoy: un
    dedo, tamaño por slider).

@@ -41,5 +41,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Etapa 2: Activity SDL del núcleo embebido. Solo la abre el
+             launcher (exported=false) cuando el núcleo está presente;
+             sin núcleo no se lanza nunca. launchMode y configChanges
+             como el Emulator de Vita3K upstream. -->
+        <activity
+            android:name=".core.EmbeddedGameActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:theme="@style/Theme.ChildOfLightLauncher" />
     </application>
 </manifest>

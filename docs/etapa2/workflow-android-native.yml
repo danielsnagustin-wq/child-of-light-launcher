@@ -1,0 +1,165 @@
+# BORRADOR — NO ACTIVO. No copiar a .github/workflows/ hasta que la
+# fundación de Etapa 2 esté revisada y se quiera la primera build nativa.
+#
+# Qué es: el workflow actual de Etapa 1 (job `build`, sin tocar) MÁS
+# un job `build-native` que clona Vita3K (commit fijado), instala NDK 29
+# + vcpkg, copia los assets del núcleo y compila el APK con el núcleo
+# embebido (libvita3k.so, solo arm64-v8a).
+#
+# Por qué un job aparte y no modificar `build`: el build de Etapa 1
+# debe seguir funcionando aunque el nativo falle (el usuario sigue
+# jugando con Vita3K externo). Cuando el nativo esté verde de forma
+# estable, se podrá fusionar en un solo job.
+#
+# Cómo activarlo (por NAVEGADOR, no por API: el push por API no puede
+# modificar .github/workflows/android.yml):
+# 1. Copiar este archivo a .github/workflows/android.yml (reemplazando
+#    el actual) con el botón "Add file" de GitHub, o fusionar solo el
+#    job build-native en el workflow actual.
+# 2. Hacer push de los archivos de la fundación de Etapa 2 (el job
+#    build-native clona el árbol; el repo NO lo contiene).
+# 3. Leer el log de la primera build: casi seguro habrá que ajustar
+#    algo (submódulos, vcpkg, enlace de SDL3). Ver
+#    docs/etapa2/ETAPA2-ESTADO.md §6.
+#
+# Commit fijado de Vita3K: 3e43bc803a04c775737a3474e0d54f3e10ca61bf
+# (master, 2026-11-07). Para actualizarlo: cambiar VITA3K_PIN abajo
+# Y el Java de SDL vendorizado (app/src/main/java/org/libsdl/app/)
+# al commit fijado como external/sdl en ese pin, o la interfaz
+# Java<->nativa de SDL puede no coincidir.
+
+name: Android CI — Child of Light Launcher (sin PC)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  VITA3K_PIN: 3e43bc803a04c775737a3474e0d54f3e10ca61bf
+  ANDROID_NDK_VERSION: 29.0.14206865
+
+jobs:
+  # --- Etapa 1, sin tocar (sigue verde aunque el nativo falle) ---
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.7"
+
+      - name: Run unit tests
+        run: gradle :app:testDebugUnitTest --stacktrace
+
+      - name: Build debug APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Build release APK (sin firmar en Etapa 1)
+        run: gradle :app:assembleRelease --stacktrace
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: child-of-light-launcher-apks
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: error
+
+  # --- Etapa 2: núcleo Vita3K embebido ---
+  build-native:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout launcher
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.7"
+
+      - name: Install NDK 29 + build tools (como .ci/setup-android.sh de upstream)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager --install "platforms;android-35" "build-tools;36.0.0" "ndk;${ANDROID_NDK_VERSION}"
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Clone Vita3K (commit fijado) + submódulos
+        run: |
+          git clone --depth 1 https://github.com/Vita3K/Vita3K.git app/src/main/cpp/vita3k
+          cd app/src/main/cpp/vita3k
+          HEAD_SHA=$(git rev-parse HEAD)
+          if [ "$HEAD_SHA" != "${VITA3K_PIN}" ]; then
+            echo "ERROR: el clon de Vita3K está en $HEAD_SHA, se esperaba ${VITA3K_PIN}. Actualiza VITA3K_PIN (y el Java de SDL vendorizado) o fija el clon."
+            exit 1
+          fi
+          git submodule update --init --recursive --depth 1
+          echo "Vita3K en ${VITA3K_PIN} con submódulos."
+
+      - name: Cache vcpkg (binaria, como upstream)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/vcpkg
+            ${{ env.VCPKG_ROOT }}/installed
+          key: vcpkg-arm64-${{ hashFiles('app/src/main/cpp/vita3k/vcpkg.json', 'app/src/main/cpp/vita3k/CMakeLists.txt') }}
+          restore-keys: |
+            vcpkg-arm64-
+
+      - name: Install vcpkg deps (triplet arm64-android)
+        run: |
+          cd app/src/main/cpp/vita3k
+          vcpkg install --triplet arm64-android
+
+      - name: Copy core assets (como .ci/build-android.sh de upstream)
+        run: |
+          mkdir -p app/src/main/assets
+          rm -rf app/src/main/assets/data app/src/main/assets/shaders-builtin
+          cp -r app/src/main/cpp/vita3k/data app/src/main/assets/data
+          cp -r app/src/main/cpp/vita3k/vita3k/shaders-builtin app/src/main/assets/shaders-builtin
+
+      - name: Run unit tests
+        run: gradle :app:testDebugUnitTest --stacktrace
+
+      - name: Build debug APK (con núcleo)
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Build release APK (sin firmar)
+        run: gradle :app:assembleRelease --stacktrace
+
+      - name: Report native lib size
+        run: |
+          find app/build -name "libvita3k.so" -exec ls -lh {} \;
+          find app/build -name "libSDL3.so" -exec ls -lh {} \;
+          ls -lh app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/release/app-release-unsigned.apk
+
+      - name: Upload APKs (núcleo embebido)
+        uses: actions/upload-artifact@v4
+        with:
+          name: child-of-light-launcher-apks-native
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: error

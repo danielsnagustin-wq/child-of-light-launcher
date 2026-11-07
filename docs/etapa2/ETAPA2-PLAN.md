@@ -195,7 +195,7 @@ Lo no verificado se marca `TODO-VERIFY`.
 child-of-light-launcher/
   app/src/main/cpp/
     CMakeLists.txt            <- entrada: add_subdirectory(vita3k) + adaptador
-    vita3k/                   <- árbol Vita3K vendorizado (submódulo git, solo lectura)
+    vita3k/                   <- árbol Vita3K (lo clona CI, commit fijado; NO es submódulo ni se commitea)
     launcher/                 <- capa adaptadora propia (bridge JNI + filtros)
       CMakeLists.txt
       include/launcher_bridge.h
@@ -254,15 +254,15 @@ child-of-light-launcher/
 
 | Archivo | Acción |
 |---|---|
-| `app/src/main/cpp/vita3k/` | Añadir como submódulo git de `Vita3K/Vita3K` (pin a un commit probado) + sus submódulos recursivos (`external/sdl`, vcpkg…). |
+| `app/src/main/cpp/vita3k/` | NO se commitea: lo clona CI en cada build (commit fijado `3e43bc80` + submódulos recursivos). El push por API no maneja submódulos git (ver `ETAPA2-ESTADO.md` §2). `.gitignore` lo excluye. |
 | `app/src/main/cpp/CMakeLists.txt` | Reemplazar el stub: `add_subdirectory(vita3k)` + `add_subdirectory(launcher)` + flags 16 KiB. |
 | `app/src/main/cpp/launcher/` | Nuevo: capa adaptadora (runtime/input/install bridge). |
 | `app/src/main/cpp/Vita3kBridge.cpp` | Reemplazar el stub por el puente real (o moverlo a `launcher/src/`). |
-| `app/build.gradle.kts` | Añadir `ndkVersion "29.0.14206865"`, `externalNativeBuild { cmake { path = "src/main/cpp/CMakeLists.txt"; version = "3.22.1+" } }`, `abiFilters "arm64-v8a"` (solo arm64: el G99 es arm64 y ahorra tamaño), `packaging.jniLibs.useLegacyPackaging = true`. `TODO-VERIFY`: cómo Vita3K pasa `VCPKG_ROOT`/toolchain a Gradle (leer `.ci/setup-android.sh` antes de escribir el workflow). |
-| `.github/workflows/android.yml` | Nuevo job `build-native` (o ampliar el actual): checkout con `submodules: recursive`, caché vcpkg, JDK 21 (EmuCoreV) o 17 (CI Vita3K) — decidir en la primera build, NDK 29, copiar `data/` + `shaders-builtin` a `assets/`, `assembleDebug`/`assembleRelease`, subir APK + medir tamaño del `.so`. |
-| `app/src/main/java/.../core/Vita3kCoreBridge.kt` | Ya existe (esqueleto). Sin cambios de firmas; el adaptador real las implementa. |
-| `app/src/main/java/.../launcher/Vita3KLauncher.kt` | Ya cableado: usa el puente si `available`, fallback a externo. Sin cambios salvo pulir mensajes. |
-| `GameLibraryRepository.kt` | Migración de layout si se elige §3.1 punto 4 opción (a). |
+| `app/build.gradle.kts` | Cableado nativo CONDICIONAL (hecho en la fundación): `ndkVersion "29.0.14206865"`, `externalNativeBuild { cmake { path = "src/main/cpp/CMakeLists.txt"; version = "3.22.1+" } }`, `abiFilters "arm64-v8a"` (solo arm64: el procesador objetivo es arm64 y ahorra tamaño), `packaging.jniLibs.useLegacyPackaging = true` — todo solo si existe `src/main/cpp/vita3k/CMakeLists.txt`. `VCPKG_ROOT` lo aporta el runner de CI (vcpkg preinstalado) y el workflow hace `vcpkg install --triplet arm64-android` (ver borrador). |
+| `.github/workflows/android.yml` | Job `build-native` (borrador en `docs/etapa2/workflow-android-native.yml`, por navegador): clon de Vita3K con commit fijado + `submodule update --init --recursive`, caché vcpkg, JDK 17, NDK 29, copiar `data/` + `shaders-builtin` a `assets/`, `assembleDebug`/`assembleRelease`, subir APK + medir tamaño del `.so`. |
+| `app/src/main/java/.../core/Vita3kCoreBridge.kt` | Ampliado en la fundación: `prepareFrontend`, instalación (7 fns) y sesión (8 fns) + `EmbeddedInstallCallback` y `PAUSE_REASON_*`. Sin `.so`, todo devuelve el valor de "no implementado". |
+| `app/src/main/java/.../launcher/Vita3KLauncher.kt` | Cableado en la fundación: `decide()` -> embebido (migra layout + instala .pkg con el núcleo + abre `EmbeddedGameActivity`) o fallback a externo. Sin firmware local ya NO bloquea: usa la vía externa. |
+| `GameLibraryRepository.kt` | Migración de layout hecha en la fundación (`core/EmbeddedCoreLayout.kt`, opción (a) del §3.1 punto 4: `ux0` -> `vita/ux0`, idempotente). |
 | `COPYING.txt` + README | Incluir GPLv2 + atribución a Vita3K (obligatorio al embeber). |
 
 ### 3.4 Dependencias NDK / CMake / vcpkg
@@ -314,9 +314,10 @@ child-of-light-launcher/
    la capa adaptadora. Es el mayor riesgo de integración después del
    propio build. `TODO-VERIFY` con la primera build que arranque el
    juego.
-8. **Tamaño del repo:** el árbol vendorizado + submódulos es grande
-   (cientos de MB con historial). Usar submódulo git (sin clonar en
-   esta VM) y `fetch-depth` parcial en Actions si hace falta.
+8. **Tamaño del repo:** el árbol Vita3K + submódulos es grande
+   (cientos de MB con historial). NO se commitea: lo clona CI en
+   cada build (commit fijado) y `.gitignore` lo excluye; el repo
+   solo guarda la capa adaptadora propia.
 
 ---
 
@@ -326,8 +327,9 @@ child-of-light-launcher/
   el `.so` ni el APK aquí. La primera compilación real es en GitHub
   Actions (que sí tiene SDK/NDK).
 - No se puede clonar el árbol Vita3K completo aquí (submódulos
-  grandes: SDL, vcpkg, etc.). Se añade como submódulo en el repo y
-  lo resuelve Actions.
+  grandes: SDL, vcpkg, etc.). Se verificó con un clon superficial
+  en /tmp (solo para leer el código); el repo NO lo contiene: lo
+  clona CI en cada build (commit fijado).
 - No se puede probar en dispositivo real (sin GPU Mali, sin teléfono):
   el arranque `-r PCSE00480`, el rendimiento en G99 y el overlay
   táctil solo se verifican instalando el APK en un dispositivo con Helio G99.
@@ -339,43 +341,62 @@ child-of-light-launcher/
 
 ---
 
-## 6. Estado actual (esqueleto, 2026-11-07)
+## 6. Estado actual (fundación, 2026-11-07)
 
 - `app/src/main/java/.../core/Vita3kCoreBridge.kt`: interfaz Kotlin
   con `available` (carga `vita3k` y luego `vita3k-bridge`), `init`,
-  `loadGame`, `getFps`, `shutdown`. Sin `.so` devuelve
-  `NOT_IMPLEMENTED` (-1) / -1.0f. No finge que el núcleo funciona.
-- `app/src/main/cpp/CMakeLists.txt` + `Vita3kBridge.cpp`: stub JNI
-  con las 4 funciones documentadas como `TODO-ETAPA2`, devolviendo
-  -1 explícitamente. `app/build.gradle.kts` NO lo referencia todavía
-  (para no romper la build de Etapa 1).
-- `Vita3KLauncher`: usa el puente si `available` (con bloqueo por
-  firmware local ausente en una frase) y si no, fallback a Vita3K
-  externo (con aviso de firmware en una frase si falta el local).
+  `loadGame`, `getFps`, `shutdown` + `prepareFrontend`,
+  instalación (`installPkg`/`installArchive`/`installFirmware`/
+  `copyLicense`/`createLicense`/`findPkgZrif`/`convertRifToZrif`)
+  y sesión (`isAppRunning`/`requestAppQuit`/`isAppPaused`/
+  `getRunningAppTitle`/máscara de firmware/`refreshAppsList`/
+  `setPauseReasonEnabled`/`setInputIntercepted`). Sin `.so` devuelve
+  `NOT_IMPLEMENTED` (-1) / false / "" / -1.0f. No finge que el
+  núcleo funciona.
+- `app/src/main/java/org/libsdl/app/`: pegamento Java de SDL3
+  vendorizado (commit fa2c02b = SDL 3.4.16, el fijado por Vita3K).
+- `core/EmbeddedGameActivity.kt`: SDLActivity del juego
+  (`{"-r", titleId}`, `getLibraries() -> {"vita3k"}`,
+  `setCurrentGameId` / `openPauseMenuFromController` (pausa) /
+  `getNativeDisplayRotation` con las firmas exactas que exige
+  `main_android.cpp`).
+- `core/EmbeddedCoreLayout.kt`: migración `ux0 -> vita/ux0`
+  (idempotente, con `Conflict` si hay dos instalaciones).
+- `core/EmbeddedGameLauncher.kt`: `decide()` pura (UseEmbedded /
+  UseEmbeddedPkg / UseExternal / Blocked). Sin firmware local NO se
+  bloquea: se usa Vita3K externo (cambio de política vs §3.2, ver
+  ETAPA2-ESTADO.md §4).
+- `core/EmbeddedPkgInstaller.kt`: instala .pkg/.zip/PUP con el
+  núcleo (work.bin -> zRIF -> installPkg).
+- `app/src/main/cpp/CMakeLists.txt` + `launcher/`: CMake
+  condicional (con árbol -> núcleo real + adaptador; sin árbol ->
+  solo stub) y adaptador JNI que reenvía a las funciones de
+  upstream (`runtime_bridge.cpp`, `install_bridge.cpp`,
+  `session_bridge.cpp`).
+- `app/src/main/cpp/Vita3kBridge.cpp`: stub JNI con las 21
+  funciones del contrato (todas NOT_IMPLEMENTED sin núcleo).
+- `app/build.gradle.kts`: cableado nativo CONDICIONAL (NDK 29 +
+  arm64-v8a + externalNativeBuild solo si el árbol existe).
+- `Vita3KLauncher`: usa el puente si `available` (con migración de
+  layout + instalación .pkg embebida) y si no, fallback a Vita3K
+  externo. La rama `EmbeddedCorePresent` se eliminó (callejón sin
+  salida); el tipo sigue existiendo por compatibilidad.
 - Sesiones (`SessionManager`/`SessionRepository`) y firmware
   (`FirmwareResolver`) ya están implementados del lado del launcher y
   no necesitan cambios JNI.
+- Estado completo, verificación contra upstream, decisión del
+  submódulo (clon en CI, no submódulo) y pasos que faltan:
+  [`docs/etapa2/ETAPA2-ESTADO.md`](ETAPA2-ESTADO.md).
 
 ## 7. Siguiente paso concreto (primera build del `.so` en Actions)
 
-1. Añadir el submódulo: `git submodule add
-   https://github.com/Vita3K/Vita3K.git app/src/main/cpp/vita3k`
-   (pin a un commit concreto probado) + `git submodule update
-   --init --recursive`. **Hacerlo en el repo con git, no en esta VM.**
-2. Leer `.ci/setup-android.sh` de upstream para copiar el cableado
-   exacto de vcpkg/NDK a Gradle.
-3. Crear `app/src/main/cpp/launcher/` con el adaptador mínimo:
-   solo `runtime_bridge.cpp` con `nativeInit` (llamando a
-   `initialize_session`) y `nativeLoadGame` (argv `-r` + `run`).
-   Sin input ni install todavía.
-4. Reemplazar `app/src/main/cpp/CMakeLists.txt` por el de §3.3 y
-   cablear `externalNativeBuild` + `ndkVersion 29.0.14206865` +
-   `abiFilters "arm64-v8a"` en `app/build.gradle.kts`.
-5. Añadir al workflow el job de build nativo (checkout recursivo,
-   caché vcpkg, JDK 21, NDK 29, copiar `data/` +
-   `shaders-builtin` a `assets/`, `assembleDebug`).
-6. Hacer push y leer el log de Actions: si compila, medir el tamaño
-   de `libvita3k.so` y del APK. Si falla, el error dirá qué falta
-   (normalmente un submódulo, vcpkg o la toolchain).
-7. Solo cuando el `.so` compile, escribir la Activity SDL y probar
-   en un dispositivo con Helio G99 el arranque `-r PCSE00480`.
+1. Activar el workflow borrador
+   (`docs/etapa2/workflow-android-native.yml`, POR NAVEGADOR: el
+   push por API no puede modificar `.github/workflows/`) y hacer
+   push de los archivos de la fundación.
+2. Leer el log de Actions: si compila, medir el tamaño de
+   `libvita3k.so` y del APK. Si falla, el error dirá qué falta
+   (normalmente un submódulo del clon, vcpkg o la toolchain).
+3. Solo cuando el `.so` compile, probar en un dispositivo con
+   Helio G99 el arranque `-r PCSB00598` (instalar el .pkg con el
+   núcleo, jugar, pausa, salir) y luego integrar el overlay táctil.
