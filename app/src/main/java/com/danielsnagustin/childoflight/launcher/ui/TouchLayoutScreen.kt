@@ -126,6 +126,10 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
     ) {
         ScreenHeader("Controles táctiles", "Arrastra los botones en la vista previa para moverlos. Toca uno en la lista para editarlo: tamaño, opacidad, color, forma, etiqueta, remap y visibilidad.")
+        NoteText(
+            "En Etapa 1 este layout solo se GUARDA aquí: el overlay táctil aparecerá dentro del juego cuando llegue el núcleo embebido (Etapa 2). " +
+                "Por ahora, Vita3K externo usa sus propios controles táctiles y los ajustes de aquí no se ven en el juego.",
+        )
 
         // Vista previa con arrastre real.
         Box(

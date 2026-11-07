@@ -32,6 +32,27 @@ object ImportFileGuide {
     fun isPackage(fileName: String): Boolean =
         extensionOf(fileName) in setOf("zip", "vpk", "pkg")
 
+    /**
+     * Magia ZIP ("PK" + 0x03 0x04, o zip vacío 0x05 0x06): un .vpk ES
+     * un zip, así que ambos comparten la misma magia. Sirve para
+     * reconocer el paquete aunque el selector devuelva el archivo sin
+     * extensión en el nombre (algunos gestores devuelven un ID de
+     * documento en vez del nombre real).
+     */
+    fun looksLikeZipMagic(firstBytes: ByteArray): Boolean {
+        if (firstBytes.size < 4) return false
+        return firstBytes[0] == 0x50.toByte() && firstBytes[1] == 0x4B.toByte() &&
+            ((firstBytes[2] == 0x03.toByte() && firstBytes[3] == 0x04.toByte()) ||
+                (firstBytes[2] == 0x05.toByte() && firstBytes[3] == 0x06.toByte()))
+    }
+
+    /** Magia de un PUP de firmware de Vita ("SCEUF" al inicio). */
+    fun looksLikePupMagic(firstBytes: ByteArray): Boolean {
+        val magic = byteArrayOf(0x53, 0x43, 0x45, 0x55, 0x46) // "SCEUF"
+        if (firstBytes.size < magic.size) return false
+        return magic.indices.all { firstBytes[it] == magic[it] }
+    }
+
     /** Mensaje claro en español cuando el usuario elige un .bin suelto. */
     fun bareBinHelp(what: String): String = when (what) {
         "DLC" -> "Elegiste un archivo .bin suelto. Ese archivo solo no instala el DLC: " +
@@ -65,8 +86,11 @@ object ImportFileGuide {
  * así que no necesita permisos de almacenamiento.
  *
  * Validación real de .zip/.vpk (un .vpk ES un zip):
- * - La primera carpeta del zip debe ser PCSE00480 o PCSB00598.
- * - Debe contener <TITLE_ID>/eboot.bin (el ejecutable del juego).
+ * - Dentro del archivo debe haber una carpeta PCSE00480 o PCSB00598
+ *   (puede ir anidada: "Child of Light/PCSB00598/...", habitual en
+ *   paquetes EU) y esa carpeta debe contener eboot.bin (sin distinguir
+ *   mayúsculas: EBOOT.BIN vale). La extensión se resuelve por nombre,
+ *   tipo MIME o magia del archivo, no solo por el nombre.
  * - Si no, se rechaza con el motivo exacto. No se instala nada a medias:
  *   la extracción va a una carpeta temporal y solo se mueve al destino
  *   si la validación pasa.
@@ -97,7 +121,10 @@ class GameLibraryRepository(private val context: Context) {
         var installedCount = 0
         for (candidate in TitleId.entries) {
             val dir = appDir(candidate.id)
-            if (dir.exists() && File(dir, "eboot.bin").exists()) {
+            // "No lo reconoce": el eboot puede venir como EBOOT.BIN
+            // (mayúsculas, habitual en dumps). La comprobación era
+            // sensible al caso y el juego instalado no se reconocía.
+            if (dir.exists() && ImportTreeSearch.findEboot(dir) != null) {
                 installedCount++
                 if (title == null) {
                     title = candidate
@@ -177,10 +204,43 @@ class GameLibraryRepository(private val context: Context) {
         return importArchive(uri, fileName, ImportKind.UPDATE)
     }
 
+    /**
+     * Extensión del archivo elegido, sin fiarse solo del nombre:
+     * 1) extensión del nombre (lo habitual),
+     * 2) tipo MIME que devuelve el proveedor SAF,
+     * 3) magia de los primeros bytes (PK = zip/.vpk).
+     * Sin esto, un archivo válido sin extensión en el nombre se
+     * rechazaba con "Formato no aceptado" y el usuario no sabía por qué.
+     */
+    private fun detectArchiveExtension(uri: Uri, fileName: String): String {
+        val byName = ImportFileGuide.extensionOf(fileName)
+        if (byName in setOf("zip", "vpk", "pkg", "bin", "pup")) return byName
+        val mime = runCatching { context.contentResolver.getType(uri) }.getOrNull()
+        if (mime == "application/zip" || mime == "application/x-zip-compressed") return "zip"
+        // Si el nombre no trae extensión conocida, se husmea la magia del
+        // archivo (8 bytes): PK = zip/.vpk, SCEUF = .PUP. Sin esto, el
+        // proveedor que devuelve otro MIME dejaba el archivo sin reconocer.
+        val head = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val buf = ByteArray(8)
+                val read = input.read(buf)
+                if (read >= 4) buf else null
+            }
+        }.getOrNull()
+        if (head != null && ImportFileGuide.looksLikeZipMagic(head)) return "zip"
+        if (head != null && ImportFileGuide.looksLikePupMagic(head)) return "pup"
+        return byName
+    }
+
     private enum class ImportKind { GAME, DLC, UPDATE }
 
     private fun importArchive(uri: Uri, fileName: String, kind: ImportKind): ImportResult {
-        val ext = fileName.substringAfterLast('.', "").lowercase()
+        // "Al cargar no funciona": la extensión se sacaba SOLO del nombre
+        // que devuelve el selector. Algunos gestores devuelven un ID de
+        // documento sin extensión (o un nombre sin punto) y el .zip/.vpk
+        // válido se rechazaba con "Formato no aceptado". Se resuelve por
+        // nombre, tipo MIME y, en último caso, magia del archivo (PK = zip).
+        val ext = detectArchiveExtension(uri, fileName)
         // El .bin suelto (eboot.bin) NO se rechaza en genérico: se explica
         // en español qué falta y qué archivo hay que elegir.
         if (ext == "bin") {
@@ -231,60 +291,45 @@ class GameLibraryRepository(private val context: Context) {
                 ImportResult.Failed("No se pudo guardar el .pkg: ${e.message}")
             }
         }
-        // .zip / .vpk: inspeccionar antes de instalar nada.
+        // .zip / .vpk: extraer UNA sola vez y validar sobre el árbol
+        // extraído. Antes se leía el zip DOS veces (listado + extracción)
+        // sin mostrar nada: con ~2 GB el usuario veía minutos de silencio
+        // y creía que "al cargar no funciona". La carpeta del Title ID se
+        // busca en el árbol (ImportTreeSearch): los paquetes EU anidados
+        // ("Child of Light/PCSB00598/...") ya no se rechazan con
+        // "no contiene eboot.bin".
         // M19: limpiar temporales de importaciones anteriores que fallaron
         // a mitad (extractZip lanzó y el tmp quedó en cacheDir).
         cleanImportTemps()
+        val tmp = File(context.cacheDir, "import_${kind.name.lowercase()}_${System.currentTimeMillis()}")
         return try {
-            val entries = listZipEntries(uri)
-            if (entries.isEmpty()) return ImportResult.Rejected("El archivo está vacío o no es un zip válido.")
-            // BUG (auditoría) + M10: la primera entrada con '/' podía ser
-            // "__MACOSX/..." o "readme.txt" y el juego se rechazaba aunque
-            // fuera válido. Se busca un segmento que sea un Title ID válido
-            // en TODAS las entradas, no solo la primera carpeta.
-            val firstFolder = entries.firstOrNull { '/' in it }?.substringBefore('/')?.uppercase()
-            val topFolder = entries.asSequence()
-                .flatMap { it.split('/') }
-                .firstOrNull { TitleId.fromString(it) != null }
-                ?.uppercase()
-                ?: return ImportResult.Rejected(
-                    "Title ID no aceptado: la carpeta principal del archivo es \"${firstFolder ?: "-"}\". " +
-                        "Este launcher solo acepta Child of Light: PCSE00480 (US) o PCSB00598 (EU).",
+            tmp.deleteRecursively()
+            extractZip(uri, tmp)
+            val found = ImportTreeSearch.findTitleDir(tmp)
+            if (found == null) {
+                val topNames = ImportTreeSearch.topLevelDirNames(tmp)
+                ImportResult.Rejected(
+                    "Title ID no aceptado: dentro del archivo no hay una carpeta PCSE00480 (US) ni PCSB00598 (EU). " +
+                        if (topNames.isEmpty()) "El archivo parece vacío."
+                        else "Las carpetas principales son: ${topNames.joinToString(", ")}. " +
+                            "Este launcher solo acepta Child of Light: PCSE00480 (US) o PCSB00598 (EU).",
                 )
-            val title = TitleId.fromString(topFolder)
-                ?: return ImportResult.Rejected(
-                    "Title ID no aceptado: la carpeta principal del archivo es \"$topFolder\". " +
-                        "Este launcher solo acepta Child of Light: PCSE00480 (US) o PCSB00598 (EU).",
-                )
+            } else {
+                val (title, titleDir) = found
             when (kind) {
                 ImportKind.GAME -> {
-                    val hasEboot = entries.any { it.equals("${title.id}/eboot.bin", ignoreCase = true) }
-                    if (!hasEboot) {
-                        return ImportResult.Rejected(
-                            "El archivo no contiene ${title.id}/eboot.bin. No parece el juego completo.",
-                        )
-                    }
-                    val tmp = File(context.cacheDir, "import_game_${title.id}")
-                    tmp.deleteRecursively()
-                    extractZip(uri, tmp)
-                    val src = File(tmp, title.id)
-                    if (!src.exists()) {
-                        tmp.deleteRecursively()
-                        return ImportResult.Failed("Extracción incompleta: no apareció la carpeta ${title.id}.")
-                    }
                     // H4: verificar eboot.bin TAMBIÉN tras extraer: un zip
                     // truncado instalaba una carpeta sin ejecutable y el
                     // juego quedaba "instalado" pero sin arrancar.
-                    if (!File(src, "eboot.bin").exists()) {
-                        tmp.deleteRecursively()
-                        return ImportResult.Failed("Extracción incompleta: no apareció ${title.id}/eboot.bin. El archivo puede estar truncado.")
-                    }
+                    // Sin distinguir mayúsculas: EBOOT.BIN también vale.
+                    if (ImportTreeSearch.findEboot(titleDir) == null) {
+                        ImportResult.Failed("Extracción incompleta: no apareció ${title.id}/eboot.bin. El archivo puede estar truncado.")
+                    } else {
                     val dest = appDir(title.id)
                     // BUG (auditoría): antes se borraba el juego viejo ANTES
                     // de copiar el nuevo; si la copia fallaba (disco lleno),
                     // el juego se perdía y el docstring de atomicidad mentía.
-                    installDirAtomic(src, dest)
-                    tmp.deleteRecursively()
+                    installDirAtomic(titleDir, dest)
                     val trp = TrophyStoreReader.gameBundledTrp(dest)
                     val detail = if (trp != null) {
                         "Juego instalado. Traía su TROPHY.TRP (${trp.length()} bytes); la lista de 27 trofeos queda validada como referencia."
@@ -293,32 +338,26 @@ class GameLibraryRepository(private val context: Context) {
                     }
                     LauncherLog.append(context, "import", "Juego ${title.id} instalado (${dest.length()} bytes aprox.)")
                     ImportResult.Success(title, detail)
+                    }
                 }
                 ImportKind.DLC -> {
-                    val addcontEntry = entries.firstOrNull { "/addcont/" in it.lowercase() }
+                    val srcAddcont = ImportTreeSearch.findAddcontDir(titleDir)
                         ?: return ImportResult.Rejected(
-                            "El DLC no trae la ruta addcont/ dentro del zip. Se esperaba " +
-                                "<TITLE_ID>/addcont/<DLC_ID>/... dentro del archivo.",
+                            "El DLC no trae la ruta addcont/ dentro del archivo. Se esperaba " +
+                                "${title.id}/addcont/<DLC_ID>/... dentro del paquete.",
                         )
-                    val parts = addcontEntry.split('/')
-                    val dlcIndex = parts.indexOfFirst { it.equals("addcont", ignoreCase = true) }
-                    val dlcId = parts.getOrNull(dlcIndex + 1)
-                        ?: return ImportResult.Rejected("No se pudo leer el ID del DLC en la ruta addcont/.")
                     // BUG (auditoría): un dlcId "." o ".." haría que el borrado
                     // y el respaldo apuntaran fuera de addcont/. Se rechaza.
-                    if (dlcId.isBlank() || dlcId == "." || dlcId == ".." ||
-                        '/' in dlcId || '\\' in dlcId
-                    ) {
-                        return ImportResult.Rejected("ID de DLC no válido: \"$dlcId\".")
-                    }
-                    val tmp = File(context.cacheDir, "import_dlc_${title.id}")
-                    tmp.deleteRecursively()
-                    extractZip(uri, tmp)
-                    val srcAddcont = File(tmp, "${title.id}/addcont")
-                    if (!srcAddcont.exists()) {
-                        tmp.deleteRecursively()
-                        return ImportResult.Failed("Extracción incompleta: no apareció ${title.id}/addcont.")
-                    }
+                    val dlcIds = srcAddcont.listFiles()
+                        ?.filter { it.isDirectory }
+                        ?.map { it.name }
+                        .orEmpty()
+                    val badId = dlcIds.firstOrNull { it.isBlank() || it == "." || it == ".." || '/' in it || '\\' in it }
+                    if (badId != null) {
+                        ImportResult.Rejected("ID de DLC no válido: \"$badId\".")
+                    } else if (dlcIds.isEmpty()) {
+                        ImportResult.Rejected("La carpeta addcont/ está vacía: no había ningún DLC dentro.")
+                    } else {
                     val destBase = addcontDir(title.id)
                     destBase.mkdirs()
                     // Se instala cada DLC de la carpeta addcont/ con respaldo
@@ -329,45 +368,39 @@ class GameLibraryRepository(private val context: Context) {
                         ?.onEach { dlcDir -> installDlcDir(dlcDir, destBase, dlcDir.name) }
                         ?.map { it.name }
                         .orEmpty()
-                    tmp.deleteRecursively()
-                    LauncherLog.append(context, "import", "DLC $dlcId instalado para ${title.id} (${installedDlcs.size} en el zip)")
-                    // M11: si el zip traía varios DLCs se instalaban todos
+                    LauncherLog.append(context, "import", "DLC ${dlcIds.first()} instalado para ${title.id} (${installedDlcs.size} en el archivo)")
+                    // M11: si el archivo traía varios DLCs se instalaban todos
                     // pero solo se reportaba el primero. Ahora se listan.
-                    return if (installedDlcs.size > 1) {
+                    if (installedDlcs.size > 1) {
                         ImportResult.Success(title, "DLCs instalados: ${installedDlcs.joinToString(", ")}.")
                     } else {
-                        ImportResult.DlcSuccess(title, dlcId)
+                        ImportResult.DlcSuccess(title, dlcIds.first())
+                    }
                     }
                 }
                 ImportKind.UPDATE -> {
-                    val tmp = File(context.cacheDir, "import_patch_${title.id}")
-                    tmp.deleteRecursively()
-                    extractZip(uri, tmp)
-                    val src = File(tmp, title.id)
-                    if (!src.exists()) {
-                        tmp.deleteRecursively()
-                        return ImportResult.Rejected("El update no trae la carpeta ${title.id} como carpeta principal.")
-                    }
                     // M12: un update vacío (carpeta sin archivos) no debe
                     // instalarse ni borrar el update anterior.
-                    if (src.listFiles()?.isEmpty() != false) {
-                        tmp.deleteRecursively()
-                        return ImportResult.Rejected("El update está vacío: la carpeta ${title.id} no trae archivos.")
-                    }
+                    if (titleDir.listFiles()?.isEmpty() != false) {
+                        ImportResult.Rejected("El update está vacío: la carpeta ${title.id} no trae archivos.")
+                    } else {
                     val dest = patchDir(title.id)
                     // BUG (auditoría): igual que el juego — se borraba el
                     // update viejo antes de copiar el nuevo (pérdida de datos
                     // si la copia fallaba). Instalación atómica con respaldo.
-                    installDirAtomic(src, dest)
-                    tmp.deleteRecursively()
+                    installDirAtomic(titleDir, dest)
                     LauncherLog.append(context, "import", "Update instalado para ${title.id}")
                     ImportResult.UpdateSuccess(title)
+                    }
                 }
+            }
             }
         } catch (e: Exception) {
             // M19: si extractZip lanzó, el tmp quedó en cacheDir; se limpia.
             cleanImportTemps()
             ImportResult.Failed("Error al importar: ${e.message}")
+        } finally {
+            tmp.deleteRecursively()
         }
     }
 
@@ -450,8 +483,9 @@ class GameLibraryRepository(private val context: Context) {
             val eboot = findChildIgnoreCase(root, "eboot.bin")
             if (eboot == null || !eboot.isFile) {
                 return ImportResult.Rejected(
-                    "La carpeta ${title.id} no contiene eboot.bin. Elige la carpeta del juego " +
-                        "que tiene eboot.bin dentro (normalmente junto a la carpeta sce_sys).",
+                    "La carpeta ${title.id} no contiene eboot.bin (o no se pudo leer su contenido). Elige la carpeta del juego " +
+                        "que tiene eboot.bin dentro (normalmente junto a la carpeta sce_sys). " +
+                        "Si la carpeta está en la tarjeta SD o en Drive y no se lee, muévela al almacenamiento interno o a Descargas e inténtalo de nuevo.",
                 )
             }
             val tmp = File(context.cacheDir, "import_folder_${title.id}")
@@ -460,7 +494,10 @@ class GameLibraryRepository(private val context: Context) {
             val staged = File(tmp, title.id)
             staged.mkdirs()
             copyDocumentTree(root, staged)
-            if (!File(staged, "eboot.bin").exists()) {
+            // Sin distinguir mayúsculas: el pre-chequeo (findChildIgnoreCase)
+            // acepta EBOOT.BIN, pero este post-chequeo era sensible al caso
+            // y una carpeta válida se rechazaba con "Copia incompleta".
+            if (ImportTreeSearch.findEboot(staged) == null) {
                 tmp.deleteRecursively()
                 return ImportResult.Failed("Copia incompleta: no apareció eboot.bin tras copiar la carpeta.")
             }
@@ -542,7 +579,8 @@ class GameLibraryRepository(private val context: Context) {
         }
     }
     fun importFirmware(uri: Uri, fileName: String): ImportResult {
-        val ext = fileName.substringAfterLast('.', "").lowercase()
+        // Igual que los paquetes: no fiarse solo del nombre del selector.
+        val ext = detectArchiveExtension(uri, fileName)
         if (ext != "pup") {
             return ImportResult.Rejected("Firmware no aceptado: se esperaba un archivo .PUP (PSVUPDAT.PUP), no .$ext.")
         }
@@ -683,21 +721,6 @@ class GameLibraryRepository(private val context: Context) {
         } ?: throw IllegalStateException("No se pudo abrir el archivo elegido.")
     }
 
-    private fun listZipEntries(uri: Uri): List<String> {
-        val out = mutableListOf<String>()
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            ZipInputStream(input).use { zip ->
-                var entry = zip.nextEntry
-                while (entry != null) {
-                    if (!entry.isDirectory) out.add(entry.name)
-                    zip.closeEntry()
-                    entry = zip.nextEntry
-                }
-            }
-        }
-        return out
-    }
-
     private fun extractZip(uri: Uri, destDir: File) {
         if (!destDir.exists()) destDir.mkdirs()
         context.contentResolver.openInputStream(uri)?.use { input ->
@@ -711,7 +734,12 @@ class GameLibraryRepository(private val context: Context) {
                     entries++
                     if (entries > 100_000) throw IllegalArgumentException("El archivo trae demasiadas entradas (> 100.000).")
                     if (!entry.isDirectory) {
-                        val dest = File(destDir, entry.name)
+                        // Zips creados en Windows a veces usan '\' como
+                        // separador: en Android '\' es un carácter de nombre
+                        // válido, no un separador, y la carpeta del juego
+                        // no aparecía tras extraer ("Extracción incompleta").
+                        val entryName = entry.name.replace('\\', '/')
+                        val dest = File(destDir, entryName)
                         requireInside(destDir, dest)
                         dest.parentFile?.mkdirs()
                         FileOutputStream(dest).use { out ->

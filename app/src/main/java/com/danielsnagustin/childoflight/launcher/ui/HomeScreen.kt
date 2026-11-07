@@ -1,6 +1,5 @@
 package com.danielsnagustin.childoflight.launcher.ui
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,7 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -24,23 +23,23 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.danielsnagustin.childoflight.launcher.R
 import com.danielsnagustin.childoflight.launcher.model.HomeSection
 import com.danielsnagustin.childoflight.launcher.model.trophyProgressPercent
 
 /**
  * Pantalla principal: mínima y premium (rediseño 2026-11-07).
  *
- * En la Home SOLO queda: tarjeta del juego (arte vectorial propio con
- * marco, estado, DLCs), botón JUGAR grande y dorado, insignia de GPU
- * y tarjeta compacta de logros (X/27 + barra; toca para ver la lista
- * completa). Nada más: sin botones de importar, sin 5 botones grandes,
- * sin párrafos largos.
+ * En la Home SOLO queda: tarjeta del juego (banner con degradado +
+ * título grande, estado, DLCs), botón JUGAR grande y dorado, insignia
+ * de GPU, tarjeta compacta de logros (X/27 + barra; toca para ver la
+ * lista completa) y tarjeta "Para jugar" (qué falta para jugar, con la
+ * acción directa). Nada más: sin botones de importar, sin 5 botones
+ * grandes, sin párrafos largos, sin texto de desarrollador.
  *
  * Todo lo demás vive en Configuración (engranaje ⚙ arriba a la derecha):
  * importar juego/DLC/update/carpeta, sesiones, rendimiento, GPU,
@@ -48,8 +47,8 @@ import com.danielsnagustin.childoflight.launcher.model.trophyProgressPercent
  * igual; la Home ya no muestra esos botones.
  *
  * La portada oficial vive SOLO en el icono de la app (imagen mandada
- * por el usuario, mipmap/ic_launcher). La Home usa el arte vectorial
- * propio, nunca la portada.
+ * por el usuario, mipmap/ic_launcher). La Home usa un banner con
+ * degradado, nunca la portada.
  */
 @Composable
 fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
@@ -67,26 +66,23 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
 
     val gameCard: @Composable () -> Unit = {
         PremiumCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(88.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(ColNight)
-                        .padding(6.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.ic_col_foreground),
-                        contentDescription = "Arte del launcher (vectorial propio, sin arte de Ubisoft)",
-                        modifier = Modifier.size(76.dp),
-                    )
-                }
-                Column(modifier = Modifier.padding(start = 14.dp).weight(1f)) {
-                    Text("Child of Light", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color.White)
-                    Text("PS Vita · Ubisoft · UbiArt", style = MaterialTheme.typography.bodySmall, color = ColMutedText)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text("${strings.state}: ${status.installedLabel}", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+            // Banner premium: degradado noche→violeta con el título grande.
+            // Sin el arte vectorial cutre (sol/estrella) y SIN la portada
+            // oficial: la portada vive solo en el icono de la app
+            // (decisión del usuario). Sin texto "Etapa 1...": la
+            // explicación técnica vive en Configuración → GPU y diagnóstico.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Brush.verticalGradient(listOf(ColViolet, ColNight, ColVioletDeep)))
+                    .padding(horizontal = 16.dp, vertical = 18.dp),
+            ) {
+                Column {
+                    Text("Child of Light", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text("PS Vita · Ubisoft · UbiArt", style = MaterialTheme.typography.bodyMedium, color = ColMutedText)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text("${strings.state}: ${status.installedLabel}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = Color.White)
                     Text(
                         "${strings.dlcs}: ${status.dlcCount} · ${strings.update}: ${if (status.updateInstalled) "sí" else "no"}",
                         style = MaterialTheme.typography.bodySmall,
@@ -99,12 +95,6 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
             }
             Spacer(modifier = Modifier.height(16.dp))
             GoldButton(strings.play, onClick = { vm.play() })
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                "Etapa 1: JUGAR escribe config.yml y abre Vita3K si está instalado.",
-                style = MaterialTheme.typography.bodySmall,
-                color = ColMutedText,
-            )
         }
     }
 
@@ -146,8 +136,59 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
                         Spacer(modifier = Modifier.height(6.dp))
                         GoldProgressBar(progress = if (achievements.isEmpty()) 0f else unlocked / 27f)
                     }
+                    // El chevron iba pegado a la barra y parecía montarse
+                    // sobre ella (además del punto dorado de la barra).
+                    Spacer(modifier = Modifier.width(12.dp))
                     Text("›", style = MaterialTheme.typography.headlineMedium, color = ColMutedText)
                 }
+            }
+        }
+    }
+
+    // Tarjeta "Para jugar": lo que falta para poder jugar, con la acción
+    // directa. La Home quedaba medio vacía y el usuario no veía por qué
+    // JUGAR no hacía nada: el juego y Vita3K son dos pasos separados y
+    // aquí se ven los dos. Sin esto, el estado real solo vivía en
+    // Diagnóstico, donde el usuario no mira.
+    val playStatusCard: @Composable () -> Unit = {
+        val vita3k by vm.externalVita3k.collectAsState()
+        val gameOk = status.gameInstalled
+        val vitaOk = vita3k != null
+        PremiumCard {
+            Text("Para jugar", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                if (gameOk) "✓ Juego instalado (${status.titleId?.id ?: ""})" else "✗ Juego sin instalar",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (gameOk) ColSuccessGreen else Color.White,
+            )
+            Text(
+                if (vitaOk) "✓ Vita3K instalado ($vita3k)" else "✗ Vita3K no instalado",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (vitaOk) ColSuccessGreen else Color.White,
+            )
+            if (!gameOk || !vitaOk) {
+                Spacer(modifier = Modifier.height(12.dp))
+                if (!gameOk) {
+                    SecondaryButton("Importar juego", onClick = { onNavigate(Screen.SETTINGS) })
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                if (!vitaOk) {
+                    SecondaryButton("Instalar Vita3K", onClick = { vm.openVita3kReleases() })
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                Text(
+                    "El juego instalado en el launcher no lo ve Vita3K: hay que importar la copia también dentro de Vita3K.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ColMutedText,
+                )
+            } else {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Todo listo: pulsa JUGAR. Recuerda importar tu copia también dentro de Vita3K.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ColMutedText,
+                )
             }
         }
     }
@@ -190,6 +231,8 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
                 }
             }
             achievementsCard()
+            Spacer(modifier = Modifier.height(16.dp))
+            playStatusCard()
             Spacer(modifier = Modifier.height(24.dp))
         }
     }

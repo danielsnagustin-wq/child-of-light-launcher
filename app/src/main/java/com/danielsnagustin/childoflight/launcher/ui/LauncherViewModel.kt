@@ -1,6 +1,7 @@
 package com.danielsnagustin.childoflight.launcher.ui
 
 import android.app.Application
+import android.content.Intent
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
@@ -44,6 +45,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/** Acción que puede ofrecer el diálogo de aviso importante. */
+enum class AlertAction { INSTALL_VITA3K, GO_IMPORT }
+
+/**
+ * Mensaje importante que la UI muestra como DIÁLOGO (no como Snackbar
+ * fugaz): el usuario debe poder leerlo entero y actuar. Los errores de
+ * importar y de JUGAR llegaban solo como Snackbar de 4 segundos: el
+ * usuario veía "no pasa nada" y no sabía qué había fallado.
+ */
+data class AlertInfo(val text: String, val action: AlertAction? = null)
 
 class LauncherViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -90,6 +102,33 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
+    /** Aviso importante (diálogo, no Snackbar): errores de importar y de JUGAR. */
+    private val _alert = MutableStateFlow<AlertInfo?>(null)
+    val alert: StateFlow<AlertInfo?> = _alert.asStateFlow()
+
+    /** true mientras hay una importación en curso (para mostrar progreso y bloquear dobles toques). */
+    private val _importing = MutableStateFlow(false)
+    val importing: StateFlow<Boolean> = _importing.asStateFlow()
+
+    /** Versión de Vita3K externo instalado, o null si no está instalado (para la Home). */
+    private val _externalVita3k = MutableStateFlow<String?>(null)
+    val externalVita3k: StateFlow<String?> = _externalVita3k.asStateFlow()
+
+    fun clearMessage() { _message.value = null }
+    fun clearAlert() { _alert.value = null }
+
+    /** Abre la página oficial de releases de Vita3K para instalarlo. */
+    fun openVita3kReleases() {
+        runCatching {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Vita3K/Vita3K/releases")).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        }.onFailure {
+            _message.value = "No se pudo abrir el navegador. Busca «Vita3K releases» en GitHub."
+        }
+    }
+
     /** Trofeo recién desbloqueado: la UI muestra popup + sonido. */
     private val _justUnlocked = MutableStateFlow<TrophyProgress?>(null)
     val justUnlocked: StateFlow<TrophyProgress?> = _justUnlocked.asStateFlow()
@@ -121,7 +160,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun clearMessage() { _message.value = null }
     fun clearJustUnlocked() { _justUnlocked.value = null }
 
     fun refreshStatus() {
@@ -134,6 +172,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 .onFailure { LauncherLog.append(context, "status", "No se pudo escanear el estado: ${it.message}") }
             runCatching { FirmwareResolver.resolve(library.vitaRoot) }
                 .onSuccess { _firmwareStatus.value = it }
+            _externalVita3k.value =
+                runCatching { launcher.externalVita3kVersion() }.getOrNull()
             _batteryOptDisabled.value =
                 runCatching { launcher.isBatteryOptimizationDisabled() }.getOrDefault(false)
             val title = _status.value.titleId?.id
@@ -275,19 +315,60 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     /** Importar el juego desde una carpeta (debe llamarse PCSE00480/PCSB00598 y tener eboot.bin). */
     fun importGameFolder(uri: Uri) {
+        if (!beginImport()) return
         viewModelScope.launch(Dispatchers.IO) {
-            val result = library.importGameFolder(uri)
-            withContext(Dispatchers.Main) { _message.value = importResultMessage(result) }
-            refreshStatus()
+            try {
+                val result = library.importGameFolder(uri)
+                withContext(Dispatchers.Main) { showImportResult(result) }
+            } finally {
+                endImport()
+            }
         }
     }
 
     /** Importar DLCs desde una carpeta (debe tener addcont/ dentro). */
     fun importDlcFolder(uri: Uri) {
+        if (!beginImport()) return
         viewModelScope.launch(Dispatchers.IO) {
-            val result = library.importDlcFolder(uri)
-            withContext(Dispatchers.Main) { _message.value = importResultMessage(result) }
-            refreshStatus()
+            try {
+                val result = library.importDlcFolder(uri)
+                withContext(Dispatchers.Main) { showImportResult(result) }
+            } finally {
+                endImport()
+            }
+        }
+    }
+
+    /**
+     * Marca el inicio de una importación. Sin esta guarda, tocar dos
+     * veces el botón lanzaba dos importaciones a la vez sobre el mismo
+     * temporal: se pisaban entre sí y el resultado era silencio o error.
+     */
+    private fun beginImport(): Boolean {
+        if (_importing.value) {
+            _message.value = "Ya hay una importación en curso. Espera a que termine."
+            return false
+        }
+        _importing.value = true
+        return true
+    }
+
+    private fun endImport() {
+        _importing.value = false
+        refreshStatus()
+    }
+
+    /**
+     * Los resultados de importar: el éxito corto va a Snackbar; todo lo
+     * que el usuario tiene que LEER (rechazo, fallo, .pkg) va al diálogo
+     * de aviso. Antes todo iba a una Snackbar de 4 segundos y el usuario
+     * solo veía que "no pasa nada".
+     */
+    private fun showImportResult(result: ImportResult) {
+        when (result) {
+            is ImportResult.Rejected, is ImportResult.Failed, is ImportResult.PkgStored ->
+                _alert.value = AlertInfo(importResultMessage(result))
+            else -> _message.value = importResultMessage(result)
         }
     }
 
@@ -296,20 +377,26 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         is ImportResult.DlcSuccess -> "DLC ${result.dlcId} instalado para ${result.titleId.id}."
         is ImportResult.UpdateSuccess -> "Update instalado para ${result.titleId.id}."
         is ImportResult.FirmwareSuccess -> "Firmware ${result.fileName} guardado."
-        is ImportResult.PkgStored -> ".pkg guardado en ${result.storedPath}. " +
-            "Su instalación real la hace Vita3K (Etapa 2): NO se muestra como juego instalado."
-        is ImportResult.Rejected -> "No se instaló nada: ${result.reason}"
-        is ImportResult.Failed -> "Error: ${result.reason}"
+        is ImportResult.PkgStored -> ".pkg guardado en ${result.storedPath}, pero esta versión NO puede instalar .pkg: " +
+            "no hay parser de paquetes de Vita, y Vita3K externo tampoco ve esa carpeta (es privada del launcher).\n\n" +
+            "Para instalar el juego usa el .zip o .vpk completo, o la carpeta ${result.titleId.id} con eboot.bin dentro. " +
+            "El .pkg queda guardado por si Vita3K lo instala en el futuro."
+        is ImportResult.Rejected -> "No se instaló nada:\n\n${result.reason}"
+        is ImportResult.Failed -> "No se pudo importar:\n\n${result.reason}\n\nSi el archivo es grande, espera sin cerrar la app: la copia puede tardar varios minutos."
     }
 
     private fun importWith(uri: Uri, block: (String) -> ImportResult) {
+        if (!beginImport()) return
         viewModelScope.launch(Dispatchers.IO) {
-            val name = fileNameOf(uri)
-            val result = block(name)
-            withContext(Dispatchers.Main) {
-                _message.value = importResultMessage(result)
+            try {
+                val name = fileNameOf(uri)
+                val result = block(name)
+                withContext(Dispatchers.Main) {
+                    showImportResult(result)
+                }
+            } finally {
+                endImport()
             }
-            refreshStatus()
         }
     }
 
@@ -376,20 +463,42 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 sessionManager.notePlayStarted()
             }
             withContext(Dispatchers.Main) {
-                _message.value = when (outcome) {
+                when (outcome) {
                     is Vita3KLauncher.LaunchOutcome.LaunchedExternal ->
                         // H8: el config.yml escrito vive en el almacenamiento
                         // privado del launcher; Vita3K externo no puede
                         // leerlo (sandbox Android). Solo lo usa el núcleo
                         // embebido: se dice para no prometer lo que no es.
-                        "Vita3K abierto. El config.yml escrito solo lo usa el núcleo embebido; Vita3K externo usa su propia configuración (${outcome.configPath})."
+                        // Y el juego TAMPOCO lo ve Vita3K externo: hay que
+                        // importarlo también dentro de Vita3K. Antes esto
+                        // era una Snackbar fugaz y el usuario solo veía que
+                        // JUGAR "no hacía nada".
+                        _alert.value = AlertInfo(
+                            "Vita3K abierto.\n\n" +
+                                "IMPORTANTE: el juego que instalaste en el launcher vive en su almacenamiento privado y Vita3K no lo ve. " +
+                                "Para jugar, importa tu copia también dentro de Vita3K (su biblioteca).\n\n" +
+                                "Los ajustes del launcher (config.yml) tampoco los lee Vita3K externo: configúralo dentro de Vita3K.",
+                        )
                     is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ->
-                        Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL
+                        _alert.value = AlertInfo(
+                            Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL + "\n\n" +
+                                "El juego que instalaste en el launcher vive en su almacenamiento privado y Vita3K no lo ve: " +
+                                "importa tu copia también dentro de Vita3K (su biblioteca).",
+                        )
                     is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded ->
-                        "Núcleo embebido: juego lanzado (${outcome.configPath})."
+                        _message.value = "Núcleo embebido: juego lanzado (${outcome.configPath})."
                     is Vita3KLauncher.LaunchOutcome.EmbeddedCorePresent ->
-                        "Núcleo embebido detectado, pero falta el punto de entrada JNI (Etapa 2)."
-                    is Vita3KLauncher.LaunchOutcome.Blocked -> outcome.reason
+                        _message.value = "Núcleo embebido detectado, pero falta el punto de entrada JNI (Etapa 2)."
+                    is Vita3KLauncher.LaunchOutcome.Blocked -> {
+                        // El diálogo ofrece la acción que resuelve el bloqueo:
+                        // instalar Vita3K, o ir a importar el juego.
+                        val action = when {
+                            outcome.reason.contains("Vita3K no está instalado") -> AlertAction.INSTALL_VITA3K
+                            outcome.reason.contains("El juego no está instalado") -> AlertAction.GO_IMPORT
+                            else -> null
+                        }
+                        _alert.value = AlertInfo(outcome.reason, action)
+                    }
                 }
             }
             refreshStatus()

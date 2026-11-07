@@ -46,7 +46,7 @@ import com.danielsnagustin.childoflight.launcher.model.ScreenFilter
  * La sección GPU es CONDICIONAL según la GPU detectada:
  * - Adreno: muestra Turnip (instalar / versión / sistema).
  * - Mali: OCULTA Turnip y avisa que solo funciona en Adreno.
- * - G99/Mali-G57: muestra el aviso de dispositivo verificado.
+ * - G99/Mali-G57: muestra el aviso de procesador verificado.
  */
 @Composable
 fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Screen) -> Unit) {
@@ -55,6 +55,10 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
     val uiPrefs by vm.uiFlow.collectAsState(initial = null)
     // B3: el firmware se lee como flujo (antes llamada plana sin refresco).
     val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
+    // Importación en curso: se muestra el progreso y se bloquean los
+    // botones (antes no se veía NADA mientras copiaba ~2 GB y el usuario
+    // creía que "al cargar no funciona").
+    val importing by vm.importing.collectAsState()
     var showConfig by remember { mutableStateOf(false) }
     var showResetConfirm by remember { mutableStateOf(false) }
     val configText by vm.generatedConfig.collectAsState()
@@ -92,7 +96,7 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
         ScreenHeader("Configuración", "Todo lo del launcher, en un solo lugar.")
         Text("Perfil activo: ${s?.activeProfile?.label ?: "—"}", style = MaterialTheme.typography.bodyMedium, color = ColMutedText)
         if (gpu?.isUserVerifiedDevice == true) {
-            NoteText("✓ Helio G99 · Mali-G57 MC2 — dispositivo verificado por ti. El preset por defecto es G99 Recomendado: 1x estable, sin recortar de más.")
+            NoteText("✓ Helio G99 · Mali-G57 MC2 — procesador verificado por ti. El preset por defecto es G99 Recomendado: 1x estable, sin recortar de más.")
         }
         if (s == null) {
             Text("Cargando ajustes…")
@@ -109,19 +113,28 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
                 color = Color.White,
             )
             Spacer(modifier = Modifier.height(12.dp))
-            SecondaryButton("Importar juego (.zip / .vpk / .pkg)", onClick = { pickGame.launch("*/*") })
+            if (importing) {
+                Text(
+                    "⏳ Importando… no cierres la app. Un juego completo puede tardar varios minutos.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ColGold,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+            SecondaryButton("Importar juego (.zip / .vpk / .pkg)", onClick = { pickGame.launch("*/*") }, enabled = !importing)
             NoteText("Elige el .zip o .vpk COMPLETO del juego (dentro lleva eboot.bin). Un eboot.bin suelto no basta.")
             Spacer(modifier = Modifier.height(8.dp))
-            SecondaryButton("Importar carpeta del juego", onClick = { pickGameFolder.launch(null) })
+            SecondaryButton("Importar carpeta del juego", onClick = { pickGameFolder.launch(null) }, enabled = !importing)
             NoteText("Elige la carpeta PCSE00480 o PCSB00598 que contiene eboot.bin dentro.")
             Spacer(modifier = Modifier.height(8.dp))
-            SecondaryButton("Importar DLC (.zip)", onClick = { pickDlc.launch("*/*") })
+            SecondaryButton("Importar DLC (.zip)", onClick = { pickDlc.launch("*/*") }, enabled = !importing)
             NoteText("Elige el .zip del DLC (con la ruta addcont/ dentro).")
             Spacer(modifier = Modifier.height(8.dp))
-            SecondaryButton("Importar carpeta de DLC", onClick = { pickDlcFolder.launch(null) })
+            SecondaryButton("Importar carpeta de DLC", onClick = { pickDlcFolder.launch(null) }, enabled = !importing)
             NoteText("Elige la carpeta del juego que contiene addcont/ dentro.")
             Spacer(modifier = Modifier.height(8.dp))
-            SecondaryButton("Importar update (.zip / .vpk)", onClick = { pickUpdate.launch("*/*") })
+            SecondaryButton("Importar update (.zip / .vpk)", onClick = { pickUpdate.launch("*/*") }, enabled = !importing)
             NoteText("Elige el .zip o .vpk del update.")
         }
 

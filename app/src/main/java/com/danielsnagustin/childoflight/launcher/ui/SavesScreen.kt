@@ -59,6 +59,10 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
     ) {
         ScreenHeader("Guardados y datos", "Sesiones, saves y logros, en un solo lugar.")
+        NoteText(
+            "Las sesiones y los saves de aquí viven en el almacenamiento privado del launcher: solo los usará el núcleo embebido (Etapa 2). " +
+                "Con Vita3K externo, los saves viven dentro de Vita3K y cambiar de sesión aquí no cambia el juego.",
+        )
         val title = status.titleId?.id
 
         // Sesiones / partidas: la gestión de saves vive aquí, ampliada a

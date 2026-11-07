@@ -1,6 +1,8 @@
 package com.danielsnagustin.childoflight.launcher.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -16,7 +18,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
@@ -29,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -159,12 +161,21 @@ fun BackButton(onBack: () -> Unit) {
 /** Barra de progreso dorada (logros). */
 @Composable
 fun GoldProgressBar(progress: Float, modifier: Modifier = Modifier) {
-    LinearProgressIndicator(
-        progress = { progress.coerceIn(0f, 1f) },
-        modifier = modifier.fillMaxWidth().height(8.dp),
-        color = ColGold,
-        trackColor = ColCard,
-    )
+    // Antes era LinearProgressIndicator: con progreso 0 dibujaba un
+    // punto dorado (la tapa redondeada del indicador) y parecía un error
+    // de la barra. Barra propia: sin punto cuando no hay progreso.
+    val p = progress.coerceIn(0f, 1f)
+    Box(
+        modifier = modifier.fillMaxWidth().height(8.dp)
+            .clip(RoundedCornerShape(4.dp)).background(ColCard),
+    ) {
+        if (p > 0f) {
+            Box(
+                modifier = Modifier.fillMaxWidth(p).height(8.dp)
+                    .clip(RoundedCornerShape(4.dp)).background(ColGold),
+            )
+        }
+    }
 }
 
 @Composable

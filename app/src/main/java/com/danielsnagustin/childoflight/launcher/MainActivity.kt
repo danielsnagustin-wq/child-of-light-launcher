@@ -8,7 +8,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -33,6 +36,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.sp
 import com.danielsnagustin.childoflight.launcher.model.ThemeMode
 import com.danielsnagustin.childoflight.launcher.ui.AchievementsScreen
+import com.danielsnagustin.childoflight.launcher.ui.AlertAction
 import com.danielsnagustin.childoflight.launcher.ui.CleanupScreen
 import com.danielsnagustin.childoflight.launcher.ui.GpuDiagnosticsScreen
 import com.danielsnagustin.childoflight.launcher.ui.HomeScreen
@@ -113,6 +117,7 @@ private fun LauncherApp(vm: LauncherViewModel) {
     }
     val snackbarHostState = remember { SnackbarHostState() }
     val message by vm.message.collectAsState()
+    val alert by vm.alert.collectAsState()
     val justUnlocked by vm.justUnlocked.collectAsState()
     val settings by vm.settingsFlow.collectAsState(initial = null)
 
@@ -145,6 +150,33 @@ private fun LauncherApp(vm: LauncherViewModel) {
                 Screen.CLEANUP -> CleanupScreen(vm) { screenName = Screen.SETTINGS.name }
             }
         }
+    }
+
+    // Aviso importante (diálogo, no Snackbar): errores de importar y de
+    // JUGAR, con la acción que los resuelve. El texto puede ser largo:
+    // va con scroll para poder leerlo entero.
+    alert?.let { info ->
+        AlertDialog(
+            onDismissRequest = { vm.clearAlert() },
+            title = { Text("Child of Light") },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    Text(info.text)
+                }
+            },
+            confirmButton = {
+                when (info.action) {
+                    AlertAction.INSTALL_VITA3K -> TextButton(onClick = { vm.clearAlert(); vm.openVita3kReleases() }) { Text("Instalar Vita3K") }
+                    AlertAction.GO_IMPORT -> TextButton(onClick = { vm.clearAlert(); screenName = Screen.SETTINGS.name }) { Text("Ir a importar") }
+                    null -> TextButton(onClick = { vm.clearAlert() }) { Text("Entendido") }
+                }
+            },
+            dismissButton = if (info.action != null) {
+                { TextButton(onClick = { vm.clearAlert() }) { Text("Cerrar") } }
+            } else {
+                null
+            },
+        )
     }
 
     // Popup de logro desbloqueado (el sonido ya sonó en el ViewModel).
