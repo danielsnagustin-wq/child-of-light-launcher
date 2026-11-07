@@ -104,13 +104,32 @@ class SessionRepositoryTest {
     fun snapshotOfEmptyLiveSavedataClearsSessionCopy() {
         val r = repo()
         val vitaRoot = File(tmp.root, "vita3k")
+        // La carpeta viva EXISTE pero está vacía: el snapshot refleja ese
+        // vacío y limpia la copia guardada de la sesión.
+        val live = File(vitaRoot, "ux0/user/00/savedata/PCSE00480")
+        live.mkdirs()
         val sessionSave = File(r.sessionDir("s1"), "savedata")
         sessionSave.mkdirs()
         File(sessionSave, "old.bin").writeText("VIEJO")
-        // No hay carpeta viva: el snapshot deja la sesión vacía.
         val (files, _) = r.snapshotSavedata("PCSE00480", "s1")
         assertEquals(0, files)
         assertFalse(File(sessionSave, "old.bin").exists())
+    }
+
+    @Test
+    fun snapshotWithNoLiveSavedataKeepsSessionCopy() {
+        val r = repo()
+        // H1 (auditoría): si la carpeta viva NO existe (el juego aún no
+        // creó savedata), la copia guardada de la sesión NO se toca:
+        // borrarla aquí perdería los saves de una partida anterior.
+        // El snapshot devuelve las estadísticas de lo guardado.
+        val sessionSave = File(r.sessionDir("s1"), "savedata")
+        sessionSave.mkdirs()
+        File(sessionSave, "old.bin").writeText("VIEJO")
+        val (files, bytes) = r.snapshotSavedata("PCSE00480", "s1")
+        assertEquals(1, files)
+        assertTrue(bytes > 0)
+        assertEquals("VIEJO", File(sessionSave, "old.bin").readText())
     }
 
     @Test
