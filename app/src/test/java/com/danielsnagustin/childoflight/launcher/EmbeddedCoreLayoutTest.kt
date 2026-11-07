@@ -111,4 +111,28 @@ class EmbeddedCoreLayoutTest {
             root.deleteRecursively()
         }
     }
+
+    @Test
+    fun `resolveUx0Dir usa el ux0 antiguo sin migrar`() {
+        val root = tempRoot()
+        try {
+            assertEquals(File(root, "ux0"), EmbeddedCoreLayout.resolveUx0Dir(root))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `resolveUx0Dir usa vita ux0 tras migrar`() {
+        val root = tempRoot()
+        try {
+            val eboot = File(root, "ux0/app/PCSB00598/eboot.bin")
+            eboot.parentFile.mkdirs()
+            eboot.writeText("falso eboot")
+            EmbeddedCoreLayout.migrateToEmbeddedLayout(root)
+            assertEquals(File(root, "vita/ux0"), EmbeddedCoreLayout.resolveUx0Dir(root))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 }

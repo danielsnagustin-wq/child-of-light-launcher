@@ -1,5 +1,6 @@
 package com.danielsnagustin.childoflight.launcher.data
 
+import com.danielsnagustin.childoflight.launcher.core.EmbeddedCoreLayout
 import java.io.File
 
 /**
@@ -27,7 +28,7 @@ data class TrophyStoreScan(
 object TrophyStoreReader {
 
     fun scan(vitaRoot: File, titleId: String): TrophyStoreScan {
-        val dir = File(vitaRoot, "ux0/user/00/trophy/$titleId")
+        val dir = File(EmbeddedCoreLayout.resolveUx0Dir(vitaRoot), "user/00/trophy/$titleId")
         if (!dir.exists() || !dir.isDirectory) {
             return TrophyStoreScan(
                 trophyDirExists = false,

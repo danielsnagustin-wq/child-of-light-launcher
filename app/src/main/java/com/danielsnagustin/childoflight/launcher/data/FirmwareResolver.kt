@@ -154,13 +154,17 @@ object FirmwareResolver {
      */
     fun deleteFirmware(vitaRoot: File): Boolean {
         var deleted = false
-        if (pupFile(vitaRoot).delete()) deleted = true
-        if (installedMarkerFile(vitaRoot).delete()) deleted = true
-        if (coreVs0Dir(vitaRoot).deleteRecursively()) deleted = true
+        // exists() ANTES de borrar: deleteRecursively() devuelve true
+        // aunque el dir no exista, y el contrato es "true si se borró
+        // algo" (la segunda llamada debe devolver false).
+        if (pupFile(vitaRoot).exists() && pupFile(vitaRoot).delete()) deleted = true
+        if (installedMarkerFile(vitaRoot).exists() && installedMarkerFile(vitaRoot).delete()) deleted = true
+        if (coreVs0Dir(vitaRoot).exists() && coreVs0Dir(vitaRoot).deleteRecursively()) deleted = true
         // Ruta antigua (vitaRoot/vs0): nunca la escribe el núcleo, pero
         // si alguien la creó a mano, borrarla evita un "instalado"
         // fantasma en diagnósticos viejos.
-        if (File(vitaRoot, "vs0").deleteRecursively()) deleted = true
+        val legacyVs0 = File(vitaRoot, "vs0")
+        if (legacyVs0.exists() && legacyVs0.deleteRecursively()) deleted = true
         return deleted
     }
 

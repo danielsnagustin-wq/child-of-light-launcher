@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.documentfile.provider.DocumentFile
+import com.danielsnagustin.childoflight.launcher.core.EmbeddedCoreLayout
 import com.danielsnagustin.childoflight.launcher.model.DlcInfo
 import com.danielsnagustin.childoflight.launcher.model.GameStatus
 import com.danielsnagustin.childoflight.launcher.model.ImportResult
@@ -232,12 +233,12 @@ class GameLibraryRepository(private val context: Context) {
                     else if (".bak-" in f.name) f.deleteRecursively()
                 }
             }
-            listOf(File(vitaRoot, "ux0/app"), File(vitaRoot, "ux0/patch")).forEach { base ->
+            listOf(File(ux0Dir, "app"), File(ux0Dir, "patch")).forEach { base ->
                 base.listFiles()?.forEach { f ->
                     if (".bak-" in f.name) f.deleteRecursively()
                 }
             }
-            File(vitaRoot, "ux0/addcont").listFiles()?.forEach { titleDir ->
+            File(ux0Dir, "addcont").listFiles()?.forEach { titleDir ->
                 titleDir.listFiles()?.forEach { f ->
                     if (".bak-" in f.name) f.deleteRecursively()
                 }
@@ -246,19 +247,21 @@ class GameLibraryRepository(private val context: Context) {
     }
 
     val vitaRoot: File get() = File(context.filesDir, "vita3k")
+    /** ux0 efectivo: vita/ux0 si ya se migró al layout del núcleo, si no el ux0 antiguo. */
+    val ux0Dir: File get() = EmbeddedCoreLayout.resolveUx0Dir(vitaRoot)
     val configFile: File get() = File(vitaRoot, "config.yml")
 
-    fun appDir(titleId: String): File = File(vitaRoot, "ux0/app/$titleId")
-    fun addcontDir(titleId: String): File = File(vitaRoot, "ux0/addcont/$titleId")
-    fun patchDir(titleId: String): File = File(vitaRoot, "ux0/patch/$titleId")
-    fun saveDir(titleId: String): File = File(vitaRoot, "ux0/user/00/savedata/$titleId")
-    fun trophyDir(titleId: String): File = File(vitaRoot, "ux0/user/00/trophy/$titleId")
+    fun appDir(titleId: String): File = File(ux0Dir, "app/$titleId")
+    fun addcontDir(titleId: String): File = File(ux0Dir, "addcont/$titleId")
+    fun patchDir(titleId: String): File = File(ux0Dir, "patch/$titleId")
+    fun saveDir(titleId: String): File = File(ux0Dir, "user/00/savedata/$titleId")
+    fun trophyDir(titleId: String): File = File(ux0Dir, "user/00/trophy/$titleId")
     fun firmwareDir(): File = File(vitaRoot, "firmware")
     fun driversDir(): File = File(vitaRoot, "drivers/turnip")
 
     // --- Almacenamiento de .pkg (ver PkgHeaderParser) ---
     /** Carpeta de .pkg guardados: ux0/pkg/. El nombre del .pkg original no se conserva: se guarda por Title ID. */
-    fun pkgDir(): File = File(vitaRoot, "ux0/pkg")
+    fun pkgDir(): File = File(ux0Dir, "pkg")
     fun pkgGameFile(titleId: String): File = File(pkgDir(), "$titleId.pkg")
     fun pkgWorkBinFile(titleId: String): File = File(pkgDir(), "$titleId.work.bin")
     fun pkgDlcDir(): File = File(pkgDir(), "dlc")

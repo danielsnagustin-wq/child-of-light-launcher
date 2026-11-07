@@ -1,5 +1,6 @@
 package com.danielsnagustin.childoflight.launcher.data
 
+import com.danielsnagustin.childoflight.launcher.core.EmbeddedCoreLayout
 import com.danielsnagustin.childoflight.launcher.model.GameSession
 import com.danielsnagustin.childoflight.launcher.model.TitleId
 import java.io.File
@@ -365,7 +366,7 @@ class SessionRepository(private val vitaRoot: File) {
         // H5: punto único de acceso a la savedata viva; un titleId inválido
         // nunca llega a formar una ruta fuera de savedata/.
         require(TitleId.fromString(titleId) != null) { "Title ID no válido: \"$titleId\"." }
-        return File(vitaRoot, "ux0/user/00/savedata/$titleId")
+        return File(EmbeddedCoreLayout.resolveUx0Dir(vitaRoot), "user/00/savedata/$titleId")
     }
 
     private fun sanitizeId(id: String): String {

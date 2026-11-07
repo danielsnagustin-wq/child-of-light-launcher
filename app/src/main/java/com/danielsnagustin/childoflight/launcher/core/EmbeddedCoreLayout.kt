@@ -44,6 +44,16 @@ object EmbeddedCoreLayout {
     fun needsMigration(storageRoot: File): Boolean =
         legacyUx0Dir(storageRoot).isDirectory && !isMigrated(storageRoot)
 
+    /**
+     * ux0 efectivo para TODO el launcher (juego, DLCs, updates, saves,
+     * trofeos, .pkg): `vita/ux0` si ya se migró al layout del núcleo,
+     * si no el `ux0` antiguo de Etapa 1. Los repositorios deben usar
+     * este dir, no construir `File(vitaRoot, "ux0/...")` a mano, o
+     * "perderían" el juego tras la primera migración.
+     */
+    fun resolveUx0Dir(storageRoot: File): File =
+        if (isMigrated(storageRoot)) embeddedUx0Dir(storageRoot) else legacyUx0Dir(storageRoot)
+
     sealed class MigrationResult {
         /** Se movió ux0 -> vita/ux0. filesMoved = nº de archivos movidos. */
         data class Migrated(val filesMoved: Int) : MigrationResult()
