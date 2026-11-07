@@ -11,6 +11,8 @@ import com.danielsnagustin.childoflight.launcher.model.TrophyProgress
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 private val Context.achievementsDataStore: DataStore<Preferences> by preferencesDataStore(name = "col_achievements")
 
@@ -41,19 +43,25 @@ class AchievementRepository(private val context: Context) {
         }
     }
 
+    /** Serializa unlock(): sin él, dos desbloqueos concurrentes del mismo
+     * trofeo podían devolver true los dos (el lambda de edit{} puede
+     * reejecutarse en escrituras concurrentes) y sonar dos veces. */
+    private val unlockMutex = Mutex()
+
     /** Desbloquea un trofeo. Devuelve true solo si estaba bloqueado (es un desbloqueo nuevo). */
     suspend fun unlock(number: Int, atMillis: Long = System.currentTimeMillis()): Boolean {
         if (TROPHIES_27.none { it.number == number }) return false
-        var isNew = false
-        context.achievementsDataStore.edit { prefs ->
-            val map = decode(prefs[Keys.UNLOCKED] ?: "").toMutableMap()
-            if (!map.containsKey(number)) {
-                map[number] = atMillis
-                isNew = true
+        return unlockMutex.withLock {
+            if (progressFlow.first().any { it.trophy.number == number && it.unlocked }) return@withLock false
+            context.achievementsDataStore.edit { prefs ->
+                val map = decode(prefs[Keys.UNLOCKED] ?: "").toMutableMap()
+                if (!map.containsKey(number)) {
+                    map[number] = atMillis
+                    prefs[Keys.UNLOCKED] = encode(map)
+                }
             }
-            prefs[Keys.UNLOCKED] = encode(map)
+            true
         }
-        return isNew
     }
 
     suspend fun lock(number: Int) {

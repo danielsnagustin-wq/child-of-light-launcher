@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -92,11 +94,21 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     var renameText by remember { mutableStateOf("") }
     var exportTarget by remember { mutableStateOf<ControlProfile?>(null) }
 
-    val selected = layout.firstOrNull { it.id == selectedId } ?: layout.firstOrNull()
-    val gamepads = remember { vm.connectedGamepads() }
+    // B5 (auditoría UI): durante el arrastre los cambios van a un layout
+    // local (dragLayout) y solo se guardan en DataStore al soltar
+    // (onDragEnd). Antes cada evento de arrastre escribía en DataStore.
+    var dragLayout by remember { mutableStateOf<List<TouchControl>?>(null) }
+    val displayLayout = dragLayout ?: layout
+    val selected = displayLayout.firstOrNull { it.id == selectedId } ?: displayLayout.firstOrNull()
+    // B3: los mandos se leen como flujo y se refrescan al entrar en la
+    // pantalla (antes remember una sola vez: obsoleto si se conectaba
+    // un mando después).
+    val gamepads by vm.gamepadsFlow.collectAsState()
+    LaunchedEffect(Unit) { vm.refreshGamepads() }
 
     val exportProfile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
-        if (uri != null && exportTarget != null) vm.exportControlProfile(uri, exportTarget!!)
+        val target = exportTarget
+        if (uri != null && target != null) vm.exportControlProfile(uri, target)
         exportTarget = null
     }
     val importProfile = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -104,18 +116,21 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     }
 
     fun updateControl(newControl: TouchControl) {
-        vm.saveTouchLayout(layout.map { if (it.id == newControl.id) newControl else it })
+        vm.saveTouchLayout(displayLayout.map { if (it.id == newControl.id) newControl else it })
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+    Box(
+        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
     ) {
-        Text("Controles táctiles", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        NoteText("Arrastra los botones en la vista previa para moverlos. Toca un botón en la lista para editarlo: tamaño, opacidad, color, forma, etiqueta, remap y visibilidad.")
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+    ) {
+        ScreenHeader("Controles táctiles", "Arrastra los botones en la vista previa para moverlos. Toca uno en la lista para editarlo: tamaño, opacidad, color, forma, etiqueta, remap y visibilidad.")
 
         // Vista previa con arrastre real.
         Box(
             modifier = Modifier.fillMaxWidth().height(300.dp).background(ColCard)
+                .clipToBounds()
                 .onSizeChanged { previewSize = it },
         ) {
             val hideAll = settings?.hideTouchWhenGamepadConnected == true && gamepads.isNotEmpty()
@@ -125,7 +140,7 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                     modifier = Modifier.align(Alignment.Center).padding(16.dp),
                 )
             } else {
-                layout.filter { it.visible }.forEach { control ->
+                displayLayout.filter { it.visible }.forEach { control ->
                     val size = control.sizeDp.dp
                     val shape = if (control.shape == ControlShape.CIRCLE) CircleShape else RoundedCornerShape(8.dp)
                     val density = LocalDensity.current
@@ -133,22 +148,37 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                     Box(
                         modifier = Modifier
                             .offset {
+                                // B4 (auditoría UI): antes solo había tope
+                                // izquierdo/superior y el botón se salía por
+                                // derecha/abajo (hasta sizePx/2 fuera).
                                 IntOffset(
-                                    x = ((control.xFraction * previewSize.width) - sizePx / 2).toInt().coerceAtLeast(0),
-                                    y = ((control.yFraction * previewSize.height) - sizePx / 2).toInt().coerceAtLeast(0),
+                                    x = ((control.xFraction * previewSize.width) - sizePx / 2).toInt()
+                                        .coerceIn(0, (previewSize.width - sizePx).toInt().coerceAtLeast(0)),
+                                    y = ((control.yFraction * previewSize.height) - sizePx / 2).toInt()
+                                        .coerceIn(0, (previewSize.height - sizePx).toInt().coerceAtLeast(0)),
                                 )
                             }
                             .size(size)
                             .alpha(control.opacity)
                             .background(parseHex(control.colorHex), shape)
                             .pointerInput(control.id) {
-                                detectDragGestures { change, dragAmount ->
+                                detectDragGestures(
+                                    onDragEnd = {
+                                        dragLayout?.let { vm.saveTouchLayout(it) }
+                                        dragLayout = null
+                                    },
+                                    onDragCancel = { dragLayout = null },
+                                ) { change, dragAmount ->
                                     change.consume()
                                     if (previewSize.width > 0 && previewSize.height > 0) {
-                                        val nx = (control.xFraction + dragAmount.x / previewSize.width).coerceIn(0f, 1f)
-                                        val ny = (control.yFraction + dragAmount.y / previewSize.height).coerceIn(0f, 1f)
+                                        val base = dragLayout ?: layout
+                                        val current = base.firstOrNull { it.id == control.id } ?: control
+                                        val nx = (current.xFraction + dragAmount.x / previewSize.width).coerceIn(0f, 1f)
+                                        val ny = (current.yFraction + dragAmount.y / previewSize.height).coerceIn(0f, 1f)
                                         selectedId = control.id
-                                        updateControl(control.copy(xFraction = nx, yFraction = ny))
+                                        dragLayout = base.map {
+                                            if (it.id == control.id) it.copy(xFraction = nx, yFraction = ny) else it
+                                        }
                                     }
                                 }
                             },
@@ -180,6 +210,10 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         OutlinedButton(onClick = { showCreateProfile = true }, modifier = Modifier.fillMaxWidth()) { Text("Crear perfil nuevo (copia del activo)") }
         OutlinedButton(onClick = { importProfile.launch("*/*") }, modifier = Modifier.fillMaxWidth()) { Text("Importar perfil") }
         OutlinedButton(onClick = { vm.resetTouchLayout() }, modifier = Modifier.fillMaxWidth()) { Text("Restablecer los 3 perfiles predefinidos") }
+        // M29: restoreBuiltIns() no tenía ninguna llamada; este botón repone
+        // solo los predefinidos que falten, sin borrar los personalizados
+        // (el de arriba los restablece todos y borra los personalizados).
+        OutlinedButton(onClick = { vm.restoreBuiltInProfiles() }, modifier = Modifier.fillMaxWidth()) { Text("Restaurar predefinidos que falten") }
 
         // --- Elegir botón ---
         SectionTitle("Elegir botón")
@@ -290,9 +324,8 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             ) { Text("🗑 Borrar este botón") }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Volver") }
-        Spacer(modifier = Modifier.height(24.dp))
+        BackButton(onBack)
+    }
     }
 
     deleteTarget?.let { control ->
@@ -310,7 +343,7 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { deleteProfileTarget = null },
             title = { Text("¿Borrar el perfil ${profile.name}?") },
-            text = { Text("Se borra el perfil de control. Si era el activo, se activa \"Por defecto G99\".") },
+            text = { Text("Se borra el perfil de control. Si era el activo, se activa el primer perfil que queda.") },
             confirmButton = {
                 TextButton(onClick = { vm.deleteControlProfile(profile.id); deleteProfileTarget = null }) { Text("Borrar") }
             },

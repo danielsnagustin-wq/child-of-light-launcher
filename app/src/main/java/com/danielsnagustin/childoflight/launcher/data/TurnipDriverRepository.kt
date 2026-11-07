@@ -34,12 +34,26 @@ class TurnipDriverRepository(private val context: Context) {
         return try {
             val dir = File(context.filesDir, "vita3k/drivers/turnip")
             if (!dir.exists()) dir.mkdirs()
-            // Solo se guarda el último driver instalado.
-            dir.listFiles()?.forEach { it.delete() }
-            val dest = File(dir, fileName)
+            // BUG (auditoría): antes se borraban TODOS los drivers y luego
+            // se copiaba el nuevo; si openInputStream devolvía null o la
+            // copia fallaba, el driver viejo (que funcionaba) ya estaba
+            // perdido. Ahora se copia a temporal y solo se sustituye al final.
+            val tmp = File(dir, "$fileName.tmp")
             context.contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(dest).use { out -> input.copyTo(out) }
+                FileOutputStream(tmp).use { out -> input.copyTo(out) }
             } ?: return Result.failure(IllegalStateException("No se pudo abrir el zip."))
+            val dest = File(dir, fileName)
+            var renamed = tmp.renameTo(dest)
+            if (!renamed && dest.exists()) {
+                dest.delete()
+                renamed = tmp.renameTo(dest)
+            }
+            if (!renamed) {
+                tmp.delete()
+                return Result.failure(IllegalStateException("No se pudo guardar el driver."))
+            }
+            // Solo se guarda el último driver instalado.
+            dir.listFiles()?.forEach { if (it != dest) it.delete() }
             LauncherLog.append(context, "driver", "Turnip instalado: $fileName (${dest.length()} bytes)")
             Result.success(fileName)
         } catch (e: Exception) {
@@ -75,7 +89,9 @@ class TurnipDriverRepository(private val context: Context) {
         val candidates = listOf(
             File(vitaRoot, "shader_cache"),
             File(vitaRoot, "cache/shaders"),
-            File(vitaRoot, "cache"),
+            // M27: antes se borraba también vita3k/cache/ entero, que es
+            // caché genérica (no solo shaders) pese a lo que decía el
+            // comentario. Ya no se toca.
         )
         for (dir in candidates) {
             if (dir.exists()) {

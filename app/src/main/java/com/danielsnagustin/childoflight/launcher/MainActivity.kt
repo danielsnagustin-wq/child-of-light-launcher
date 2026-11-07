@@ -3,6 +3,7 @@ package com.danielsnagustin.childoflight.launcher
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -24,6 +25,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -100,7 +102,15 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun LauncherApp(vm: LauncherViewModel) {
-    var screen by remember { mutableStateOf(Screen.HOME) }
+    // B2 (auditoría UI): antes la pantalla se guardaba con remember (se
+    // perdía al rotar) y no había BackHandler: atrás cerraba la app desde
+    // cualquier pantalla. Ahora la pantalla sobrevive a rotación y atrás
+    // vuelve a Home (desde Limpiar, vuelve a Configuración).
+    var screenName by rememberSaveable { mutableStateOf(Screen.HOME.name) }
+    val screen = runCatching { Screen.valueOf(screenName) }.getOrDefault(Screen.HOME)
+    BackHandler(enabled = screen != Screen.HOME) {
+        screenName = if (screen == Screen.CLEANUP) Screen.SETTINGS.name else Screen.HOME.name
+    }
     val snackbarHostState = remember { SnackbarHostState() }
     val message by vm.message.collectAsState()
     val justUnlocked by vm.justUnlocked.collectAsState()
@@ -126,13 +136,13 @@ private fun LauncherApp(vm: LauncherViewModel) {
     Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
         Box(modifier = Modifier.padding(padding)) {
             when (screen) {
-                Screen.HOME -> HomeScreen(vm) { screen = it }
-                Screen.SETTINGS -> SettingsScreen(vm, { screen = Screen.HOME }, { screen = it })
-                Screen.GPU -> GpuDiagnosticsScreen(vm) { screen = Screen.HOME }
-                Screen.TOUCH -> TouchLayoutScreen(vm) { screen = Screen.HOME }
-                Screen.SAVES -> SavesScreen(vm) { screen = Screen.HOME }
-                Screen.ACHIEVEMENTS -> AchievementsScreen(vm) { screen = Screen.HOME }
-                Screen.CLEANUP -> CleanupScreen(vm) { screen = Screen.SETTINGS }
+                Screen.HOME -> HomeScreen(vm) { screenName = it.name }
+                Screen.SETTINGS -> SettingsScreen(vm, { screenName = Screen.HOME.name }, { screenName = it.name })
+                Screen.GPU -> GpuDiagnosticsScreen(vm) { screenName = Screen.HOME.name }
+                Screen.TOUCH -> TouchLayoutScreen(vm) { screenName = Screen.HOME.name }
+                Screen.SAVES -> SavesScreen(vm) { screenName = Screen.HOME.name }
+                Screen.ACHIEVEMENTS -> AchievementsScreen(vm) { screenName = Screen.HOME.name }
+                Screen.CLEANUP -> CleanupScreen(vm) { screenName = Screen.SETTINGS.name }
             }
         }
     }

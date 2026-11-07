@@ -28,6 +28,7 @@ import com.danielsnagustin.childoflight.launcher.model.BenchmarkSource
 import com.danielsnagustin.childoflight.launcher.model.GameStatus
 import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
+import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.ImportResult
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.TROPHIES_27
@@ -70,8 +71,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _firmwareStatus = MutableStateFlow<FirmwareStatus>(FirmwareStatus.Missing)
     val firmwareStatusFlow: StateFlow<FirmwareStatus> = _firmwareStatus.asStateFlow()
 
-    /** Texto corto del firmware para Diagnóstico (sin pedir nada al usuario). */
-    fun firmwareStatusLabel(): String = FirmwareResolver.label(_firmwareStatus.value)
+    // B3 (auditoría UI): la batería y los mandos se leían con llamadas
+    // planas y la UI no se enteraba del cambio. Ahora son StateFlow.
+    private val _batteryOptDisabled = MutableStateFlow(false)
+    val batteryOptDisabledFlow: StateFlow<Boolean> = _batteryOptDisabled.asStateFlow()
+
+    private val _gamepads = MutableStateFlow<List<String>>(emptyList())
+    val gamepadsFlow: StateFlow<List<String>> = _gamepads.asStateFlow()
+
+    /** Refresca la lista de mandos físicos conectados (InputDevice). */
+    fun refreshGamepads() {
+        _gamepads.value = launcher.connectedGamepads()
+    }
 
     private val _status = MutableStateFlow(GameStatus())
     val status: StateFlow<GameStatus> = _status.asStateFlow()
@@ -100,8 +111,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         refreshLog()
         viewModelScope.launch(Dispatchers.IO) { sessionManager.ensureDefaultSession() }
         viewModelScope.launch {
-            val gpu = settingsRepo.gpuInfoFlow.first()
-            if (gpu == null) detectGpu()
+            // M37: si el DataStore está corrupto, first() lanza y tumbaba
+            // esta corrutina sin aviso. Best-effort: sin GPU, se usa el
+            // preset G99 por defecto.
+            runCatching {
+                val gpu = settingsRepo.gpuInfoFlow.first()
+                if (gpu == null) detectGpu()
+            }
         }
     }
 
@@ -110,11 +126,19 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun refreshStatus() {
         viewModelScope.launch(Dispatchers.IO) {
-            _status.value = library.scanStatus()
-            _firmwareStatus.value = FirmwareResolver.resolve(library.vitaRoot)
+            // BUG (auditoría): scanStatus() hace I/O y puede lanzar; se llama
+            // desde init/onResume sin protección. Si falla, se conserva el
+            // estado anterior en vez de tumbar la corrutina.
+            runCatching { library.scanStatus() }
+                .onSuccess { _status.value = it }
+                .onFailure { LauncherLog.append(context, "status", "No se pudo escanear el estado: ${it.message}") }
+            runCatching { FirmwareResolver.resolve(library.vitaRoot) }
+                .onSuccess { _firmwareStatus.value = it }
+            _batteryOptDisabled.value =
+                runCatching { launcher.isBatteryOptimizationDisabled() }.getOrDefault(false)
             val title = _status.value.titleId?.id
             _trophyScan.value = if (title != null) {
-                TrophyStoreReader.scan(library.vitaRoot, title)
+                runCatching { TrophyStoreReader.scan(library.vitaRoot, title) }.getOrNull()
             } else null
         }
     }
@@ -134,15 +158,23 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val gpu = GpuDetector.detect(context)
             settingsRepo.saveGpuInfo(gpu)
             val current = settingsRepo.settingsFlow.first()
-            // Primer arranque: aplicar el preset del GPU detectado.
-            val profile = defaultProfileFor(gpu)
-            settingsRepo.applyPreset(profile, keepDriver = true, current = current)
+            // M34: el preset solo se aplica automáticamente en el primer
+            // arranque real. Si el usuario ya personalizó sus ajustes,
+            // re-detectar no debe sobrescribirlos.
+            val appliedPreset = if (!settingsRepo.isPresetApplied()) {
+                val profile = defaultProfileFor(gpu)
+                settingsRepo.applyPreset(profile, current = current)
+                true
+            } else {
+                false
+            }
             withContext(Dispatchers.Main) {
                 _message.value = if (gpu.isUserVerifiedDevice) {
                     "GPU detectada: Helio G99 · Mali-G57 MC2. Dispositivo verificado por ti: " +
-                        "Child of Light va muy bien. Preset aplicado: G99 / Mali-G57 — Recomendado."
+                        if (appliedPreset) "preset G99 Recomendado aplicado." else "tus ajustes personalizados no se tocaron."
                 } else {
-                    "GPU detectada: ${gpu.shortLabel}. Preset aplicado: ${defaultProfileFor(gpu).label}."
+                    "GPU detectada: ${gpu.shortLabel}. " +
+                        if (appliedPreset) "Preset ${defaultProfileFor(gpu).label} aplicado." else "Tus ajustes personalizados no se tocaron."
                 }
             }
             LauncherLog.append(context, "gpu", "Detectada: ${gpu.renderer} | SoC ${gpu.socModel} | ${gpu.vulkanVersionLabel}")
@@ -158,7 +190,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun applyPreset(profile: GpuProfileId) {
         viewModelScope.launch {
             val current = settingsRepo.settingsFlow.first()
-            settingsRepo.applyPreset(profile, keepDriver = true, current = current)
+            settingsRepo.applyPreset(profile, current = current)
             _message.value = "Preset aplicado: ${profile.label}"
             LauncherLog.append(context, "preset", "Preset aplicado: ${profile.name}")
         }
@@ -241,21 +273,41 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun importUpdate(uri: Uri) = importWith(uri) { name -> library.importUpdate(uri, name) }
     fun importFirmware(uri: Uri) = importWith(uri) { name -> library.importFirmware(uri, name) }
 
+    /** Importar el juego desde una carpeta (debe llamarse PCSE00480/PCSB00598 y tener eboot.bin). */
+    fun importGameFolder(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = library.importGameFolder(uri)
+            withContext(Dispatchers.Main) { _message.value = importResultMessage(result) }
+            refreshStatus()
+        }
+    }
+
+    /** Importar DLCs desde una carpeta (debe tener addcont/ dentro). */
+    fun importDlcFolder(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = library.importDlcFolder(uri)
+            withContext(Dispatchers.Main) { _message.value = importResultMessage(result) }
+            refreshStatus()
+        }
+    }
+
+    private fun importResultMessage(result: ImportResult): String = when (result) {
+        is ImportResult.Success -> result.detail
+        is ImportResult.DlcSuccess -> "DLC ${result.dlcId} instalado para ${result.titleId.id}."
+        is ImportResult.UpdateSuccess -> "Update instalado para ${result.titleId.id}."
+        is ImportResult.FirmwareSuccess -> "Firmware ${result.fileName} guardado."
+        is ImportResult.PkgStored -> ".pkg guardado en ${result.storedPath}. " +
+            "Su instalación real la hace Vita3K (Etapa 2): NO se muestra como juego instalado."
+        is ImportResult.Rejected -> "No se instaló nada: ${result.reason}"
+        is ImportResult.Failed -> "Error: ${result.reason}"
+    }
+
     private fun importWith(uri: Uri, block: (String) -> ImportResult) {
         viewModelScope.launch(Dispatchers.IO) {
             val name = fileNameOf(uri)
             val result = block(name)
             withContext(Dispatchers.Main) {
-                _message.value = when (result) {
-                    is ImportResult.Success -> result.detail
-                    is ImportResult.DlcSuccess -> "DLC ${result.dlcId} instalado para ${result.titleId.id}."
-                    is ImportResult.UpdateSuccess -> "Update instalado para ${result.titleId.id}."
-                    is ImportResult.FirmwareSuccess -> "Firmware ${result.fileName} guardado."
-                    is ImportResult.PkgStored -> ".pkg guardado en ${result.storedPath}. " +
-                        "Su instalación real la hace Vita3K (Etapa 2): NO se muestra como juego instalado."
-                    is ImportResult.Rejected -> "No se instaló nada: ${result.reason}"
-                    is ImportResult.Failed -> "Error: ${result.reason}"
-                }
+                _message.value = importResultMessage(result)
             }
             refreshStatus()
         }
@@ -269,16 +321,33 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val result = turnipRepo.installDriverZip(uri, name)
             val current = settingsRepo.settingsFlow.first()
             result.onSuccess { savedName ->
-                settingsRepo.save(
-                    current.copy(
-                        turnipInstalled = true,
-                        turnipVersion = savedName,
-                        customDriverName = savedName.removeSuffix(".zip"),
-                        gpuDriver = com.danielsnagustin.childoflight.launcher.model.GpuDriver.TURNIP,
-                    ),
-                )
-                withContext(Dispatchers.Main) {
-                    _message.value = "Turnip instalado: $savedName. Vita3K limpiará la caché de shaders al arrancar con el nuevo driver."
+                // H7: Turnip solo funciona en Adreno/Snapdragon. En Mali
+                // (G99) instalar el zip no activa nada: el driver del
+                // sistema sigue siendo el que manda.
+                val gpu = settingsRepo.gpuInfoFlow.first()
+                if (gpu?.vendor == GpuVendor.ADRENO) {
+                    settingsRepo.save(
+                        current.copy(
+                            turnipInstalled = true,
+                            turnipVersion = savedName,
+                            customDriverName = savedName.substringBeforeLast("."),
+                            gpuDriver = com.danielsnagustin.childoflight.launcher.model.GpuDriver.TURNIP,
+                        ),
+                    )
+                    withContext(Dispatchers.Main) {
+                        _message.value = "Turnip instalado: $savedName. Vita3K limpiará la caché de shaders al arrancar con el nuevo driver."
+                    }
+                } else {
+                    settingsRepo.save(
+                        current.copy(
+                            turnipInstalled = true,
+                            turnipVersion = savedName,
+                            customDriverName = savedName.substringBeforeLast("."),
+                        ),
+                    )
+                    withContext(Dispatchers.Main) {
+                        _message.value = "Turnip guardado ($savedName), pero NO activado: tu GPU es ${gpu?.shortLabel ?: "Mali"} y Turnip solo funciona en Adreno/Snapdragon. Se sigue usando el driver del sistema."
+                    }
                 }
             }.onFailure { e ->
                 withContext(Dispatchers.Main) { _message.value = "No se instaló Turnip: ${e.message}" }
@@ -309,7 +378,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             withContext(Dispatchers.Main) {
                 _message.value = when (outcome) {
                     is Vita3KLauncher.LaunchOutcome.LaunchedExternal ->
-                        "Vita3K abierto. Config escrita en ${outcome.configPath}."
+                        // H8: el config.yml escrito vive en el almacenamiento
+                        // privado del launcher; Vita3K externo no puede
+                        // leerlo (sandbox Android). Solo lo usa el núcleo
+                        // embebido: se dice para no prometer lo que no es.
+                        "Vita3K abierto. El config.yml escrito solo lo usa el núcleo embebido; Vita3K externo usa su propia configuración (${outcome.configPath})."
                     is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ->
                         Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL
                     is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded ->
@@ -467,8 +540,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         _pendingBenchmark.value = null
                         outcome.reason
                     }
-                    is Vita3KLauncher.LaunchOutcome.EmbeddedCorePresent ->
+                    is Vita3KLauncher.LaunchOutcome.EmbeddedCorePresent -> {
+                        // M32: la prueba nunca empezó (falta el JNI); sin
+                        // limpiar el pendiente, recordBenchmarkFps registraría
+                        // un FPS de una partida que no ocurrió.
+                        _pendingBenchmark.value = null
                         "Núcleo embebido detectado, falta el punto de entrada JNI (Etapa 2)."
+                    }
                 }
             }
         }
@@ -482,14 +560,23 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      */
     fun recordBenchmarkFps(fps: Float) {
         val pending = _pendingBenchmark.value ?: return
+        // M25: un FPS inválido (negativo, NaN, absurdo) no se guarda ni se
+        // usa para decidir el auto-revert; el pendiente se conserva para
+        // poder reintentarlo.
+        if (!fps.isFinite() || fps < 1f || fps > 240f) {
+            _message.value = "FPS no válido: $fps. Anota el FPS del overlay (entre 1 y 240)."
+            return
+        }
         viewModelScope.launch {
             val settings = settingsRepo.settingsFlow.first()
-            val revert = shouldAutoRevertTo1x(fps, pending.profile, settings.autoRevertTo1xIfBelow28Fps)
+            // M25: el auto-revert se decide con el perfil ACTUAL, no con el
+            // de cuando empezó la prueba (el usuario pudo cambiarlo).
+            val revert = shouldAutoRevertTo1x(fps, settings.activeProfile, settings.autoRevertTo1xIfBelow28Fps)
             val completed = pending.copy(fpsAvg = fps, source = BenchmarkSource.MANUAL_OVERLAY, autoReverted = revert)
             settingsRepo.recordBenchmark(completed)
             _pendingBenchmark.value = null
             if (revert) {
-                settingsRepo.applyPreset(GpuProfileId.G99_RECOMMENDED, keepDriver = true, current = settings)
+                settingsRepo.applyPreset(GpuProfileId.G99_RECOMMENDED, current = settings)
                 _message.value = "FPS medio: $fps. Menos de 28 fps con Calidad 2x: vuelto a 1x automáticamente (preset G99 Recomendado)."
             } else {
                 _message.value = "Prueba registrada: $fps fps medios con ${pending.profile.label}."
@@ -556,8 +643,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText() ?: ""
                 val result = achievementsRepo.importText(text)
                 withContext(Dispatchers.Main) {
+                    // BUG (auditoría): addedOrKept es el nº de entradas VÁLIDAS
+                    // del archivo, no el total de logros desbloqueados.
                     _message.value = "Logros importados: ${result.newlyUnlocked} nuevos, " +
-                        "${result.addedOrKept} en total, ${result.ignoredInvalid} entradas inválidas ignoradas."
+                        "${result.addedOrKept} entradas válidas, ${result.ignoredInvalid} inválidas ignoradas."
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { _message.value = "No se pudo importar logros: ${e.message}" }
@@ -643,6 +732,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /** Restaura los perfiles predefinidos que falten (G99, Calidad, Adreno). */
+    fun restoreBuiltInProfiles() {
+        viewModelScope.launch {
+            touchRepo.restoreBuiltIns()
+            _message.value = "Perfiles predefinidos restaurados."
+        }
+    }
+
     fun exportControlProfile(uri: Uri, profile: ControlProfile) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -687,7 +784,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun deleteDlc(dlcId: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            val title = _status.value.titleId?.id ?: return@launch
+            // BUG (auditoría): si el estado aún no tenía Title ID, el borrado
+            // no hacía nada en silencio, sin avisar al usuario.
+            val title = _status.value.titleId?.id
+            if (title == null) {
+                withContext(Dispatchers.Main) { _message.value = "No hay juego instalado: no hay DLC que borrar." }
+                return@launch
+            }
             val ok = library.deleteDlc(title, dlcId)
             withContext(Dispatchers.Main) {
                 _message.value = if (ok) "DLC $dlcId borrado de ux0/addcont." else "No se pudo borrar el DLC $dlcId."
@@ -716,10 +819,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun deleteSavesOnly() {
         viewModelScope.launch(Dispatchers.IO) {
-            val title = _status.value.titleId?.id ?: return@launch
+            val title = _status.value.titleId?.id
+            if (title == null) {
+                withContext(Dispatchers.Main) { _message.value = "No hay juego instalado: no hay saves que borrar." }
+                return@launch
+            }
             val ok = library.deleteSavesOnly(title)
-            // Sin resurrección: también se borra la copia guardada de la sesión activa.
-            sessionManager.clearActiveSessionSavedata()
+            // H6: la copia guardada de la sesión activa solo se borra si
+            // realmente había saves vivos que borrar. Antes se borraba
+            // siempre, incluso cuando el mensaje decía "No había saves".
+            if (ok) sessionManager.clearActiveSessionSavedata()
             withContext(Dispatchers.Main) {
                 _message.value = if (ok) "Saves borrados (también de la sesión activa). El juego y los DLCs siguen instalados." else "No había saves que borrar."
             }
@@ -753,9 +862,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     // --- Saves ---
 
+    /** Title ID fresco (no el estado de la UI, que puede ir desactualizado). */
+    private fun freshTitleId(): String? =
+        runCatching { library.scanStatus().titleId?.id }.getOrNull()
+
     fun exportSaves(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
-            val title = _status.value.titleId?.id
+            val title = freshTitleId()
             if (title == null) {
                 withContext(Dispatchers.Main) { _message.value = "No hay juego instalado: no hay saves que exportar." }
                 return@launch
@@ -772,9 +885,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun importSaves(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
-            val title = _status.value.titleId?.id
+            // M36: el Title ID se lee fresco de disco, no del estado de la
+            // UI (puede ir desactualizado si cambió el juego).
+            val title = freshTitleId()
             if (title == null) {
                 withContext(Dispatchers.Main) { _message.value = "Instala primero el juego para importar saves." }
+                return@launch
+            }
+            // M14: respaldo de la sesión activa ANTES de importar: si el
+            // zip trae saves corruptos, la partida anterior sigue guardada
+            // en su sesión y se puede recuperar cambiando de sesión.
+            if (!sessionManager.backupActiveSession()) {
+                withContext(Dispatchers.Main) { _message.value = "No se pudo respaldar la sesión activa: no se importan los saves." }
                 return@launch
             }
             val result = library.importSaves(title, uri)
@@ -790,7 +912,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun deleteGameData() {
         viewModelScope.launch(Dispatchers.IO) {
-            val title = _status.value.titleId?.id ?: return@launch
+            val title = _status.value.titleId?.id
+            if (title == null) {
+                withContext(Dispatchers.Main) { _message.value = "No hay juego instalado: no hay datos que borrar." }
+                return@launch
+            }
             val deleted = library.deleteGameData(title)
             sessionManager.deleteAllSessions()
             withContext(Dispatchers.Main) {
@@ -811,6 +937,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val current = settingsRepo.settingsFlow.first()
             settingsRepo.save(current.copy(batteryOptimizationDisabled = true))
+            _batteryOptDisabled.value = launcher.isBatteryOptimizationDisabled()
         }
     }
 

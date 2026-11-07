@@ -1,5 +1,7 @@
 package com.danielsnagustin.childoflight.launcher.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -55,11 +57,13 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     val turnipUnused = settings?.turnipInstalled == true &&
         settings?.gpuDriver?.name == "SYSTEM"
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+    Box(
+        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
     ) {
-        Text("Limpiar no usados", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        NoteText("Todo lo que se borra aquí se puede volver a crear o importar, salvo los DLCs y saves: esos solo vuelven si importas de nuevo tu copia o tu respaldo.")
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+    ) {
+        ScreenHeader("Limpiar no usados", "Todo lo que se borra aquí se puede volver a crear o importar, salvo DLCs y saves.")
 
         SectionTitle("Botones táctiles ocultos (${hiddenButtons.size})")
         if (hiddenButtons.isEmpty()) Text("Ninguno: todos los botones están visibles.")
@@ -122,9 +126,8 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         }
         NoteText("En lote: borra botones ocultos, perfiles sin usar, oculta presets sin usar y borra el Turnip sin usar. NO borra DLCs ni saves: esos siempre se borran uno a uno con confirmación.")
 
-        Spacer(modifier = Modifier.height(12.dp))
-        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Volver") }
-        Spacer(modifier = Modifier.height(24.dp))
+        BackButton(onBack)
+    }
     }
 
     if (showBatchConfirm) {
@@ -154,7 +157,7 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { deleteDlcTarget = null },
             title = { Text("¿Borrar el DLC $dlcId?") },
-            text = { Text("Se borra de ux0/addcont/${status.titleId?.id}/$dlcId/. Solo vuelve si importas de nuevo tu copia del DLC.") },
+            text = { Text("Se borra de ux0/addcont/${status.titleId?.id ?: "—"}/$dlcId/. Solo vuelve si importas de nuevo tu copia del DLC.") },
             confirmButton = {
                 TextButton(onClick = { vm.deleteDlc(dlcId); deleteDlcTarget = null }) { Text("Borrar DLC") }
             },

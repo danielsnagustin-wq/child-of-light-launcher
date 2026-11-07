@@ -2,6 +2,8 @@ package com.danielsnagustin.childoflight.launcher.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -40,8 +41,12 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     val benchmarks by vm.benchmarksFlow.collectAsState(initial = emptyList())
     val logText by vm.logText.collectAsState()
     val pending by vm.pendingBenchmark.collectAsState()
+    // B3: firmware y batería se leen como flujo, no con llamada plana.
+    val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
+    val batteryOptDisabled by vm.batteryOptDisabledFlow.collectAsState()
     var fpsInput by remember { mutableStateOf("") }
     var showFpsDialog by remember { mutableStateOf(false) }
+    var fpsError by remember { mutableStateOf(false) }
     var showBatteryDialog by remember { mutableStateOf(false) }
 
     val exportBug = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
@@ -53,10 +58,13 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         vm.refreshLog()
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+    Box(
+        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
     ) {
-        Text("GPU y diagnóstico", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+    ) {
+        ScreenHeader("GPU y diagnóstico", "Tu GPU, el núcleo y la prueba de 30 segundos.")
         val g = gpu
         if (g == null) {
             Text("Detectando GPU…")
@@ -82,14 +90,14 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         SectionTitle("Núcleo")
         Text("Núcleo embebido (Etapa 2): ${if (vm.embeddedCorePresent()) "presente" else "NO presente"}")
         Text("Vita3K externo: ${vm.externalVita3kVersion() ?: "no instalado"}")
-        Text("Firmware: ${vm.firmwareStatusLabel()}")
+        Text("Firmware: ${com.danielsnagustin.childoflight.launcher.data.FirmwareResolver.label(firmwareStatus)}")
         NoteText("El firmware nunca es un paso inicial: el primer uso solo pide juego + DLCs. Importarlo es una opción avanzada en Ajustes.")
         Text("Backend: ${settings?.backend?.label ?: "—"} · Driver: ${settings?.gpuDriver ?: "—"}${if (settings?.turnipInstalled == true) " (${settings?.turnipVersion})" else ""}")
         Text("Resolución: ${settings?.resolutionLabel ?: "—"} · FPS overlay: ${if (settings?.showFpsOverlay == true) "ON" else "OFF"}")
 
         SectionTitle("Prueba de 30 segundos")
         NoteText("Lanza el juego con el preset actual. Juega 30 segundos mirando el FPS del overlay y al volver regístralo. Si es G99 Calidad (2x) y baja de 28 fps, vuelve a 1x automáticamente.")
-        Button(onClick = { vm.startBenchmark() }, modifier = Modifier.fillMaxWidth()) { Text("Probar 30 segundos") }
+        GoldButton("Probar 30 segundos", onClick = { vm.startBenchmark() })
         if (pending != null) {
             Text("Prueba en marcha: ${pending?.profile?.label}. Al volver, registra el FPS.", fontWeight = FontWeight.Bold)
             OutlinedButton(onClick = { showFpsDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("Registrar FPS visto en el overlay") }
@@ -100,7 +108,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         }
 
         SectionTitle("Batería y rendimiento")
-        Text("Optimización de batería desactivada: ${if (vm.isBatteryOptimizationDisabled()) "sí" else "no"}")
+        Text("Optimización de batería desactivada: ${if (batteryOptDisabled) "sí" else "no"}")
         OutlinedButton(
             onClick = { showBatteryDialog = true },
             modifier = Modifier.fillMaxWidth(),
@@ -114,34 +122,52 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             onClick = { exportBug.launch("col-bug-report.txt") },
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Reportar bug (exportar log + ajustes + dispositivo)") }
-        Spacer(modifier = Modifier.height(12.dp))
-        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Volver") }
-        Spacer(modifier = Modifier.height(24.dp))
+        BackButton(onBack)
+    }
     }
 
     if (showFpsDialog) {
         AlertDialog(
-            onDismissRequest = { showFpsDialog = false },
+            onDismissRequest = { showFpsDialog = false; fpsError = false },
             title = { Text("FPS medio de la prueba") },
             text = {
                 Column {
                     Text("Escribe el FPS medio que viste en el overlay durante los 30 segundos (por ejemplo: 30).")
                     androidx.compose.material3.OutlinedTextField(
                         value = fpsInput,
-                        onValueChange = { fpsInput = it.filter { c -> c.isDigit() || c == '.' } },
+                        onValueChange = { fpsInput = it.filter { c -> c.isDigit() || c == '.' }; fpsError = false },
                         label = { Text("FPS medio") },
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    // B6 (auditoría UI): antes un valor inválido (vacío o
+                    // ".") se descartaba en silencio y el diálogo se
+                    // cerraba igual. Ahora no se registra nada inválido.
+                    if (fpsError) {
+                        Text(
+                            "Escribe un número válido (por ejemplo: 30).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ColGold,
+                        )
+                    }
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    fpsInput.toFloatOrNull()?.let { vm.recordBenchmarkFps(it) }
-                    fpsInput = ""
-                    showFpsDialog = false
-                }) { Text("Registrar") }
+                TextButton(
+                    enabled = fpsInput.toFloatOrNull() != null,
+                    onClick = {
+                        val fps = fpsInput.toFloatOrNull()
+                        if (fps == null) {
+                            fpsError = true
+                        } else {
+                            vm.recordBenchmarkFps(fps)
+                            fpsInput = ""
+                            fpsError = false
+                            showFpsDialog = false
+                        }
+                    },
+                ) { Text("Registrar") }
             },
-            dismissButton = { TextButton(onClick = { showFpsDialog = false }) { Text("Cancelar") } },
+            dismissButton = { TextButton(onClick = { showFpsDialog = false; fpsError = false }) { Text("Cancelar") } },
         )
     }
     if (showBatteryDialog) {

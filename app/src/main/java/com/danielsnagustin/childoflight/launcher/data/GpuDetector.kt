@@ -48,7 +48,10 @@ object GpuDetector {
         val v = vendor.uppercase()
         return when {
             r.contains("ADRENO") || v.contains("QUALCOMM") -> GpuVendor.ADRENO
-            r.contains("MALI") || r.contains("IMMORTALIS") || v.contains("ARM") -> GpuVendor.MALI
+            // M24: antes bastaba vendor.contains("ARM") para ser Mali; cualquier
+            // GPU ARM no-Mali se clasificaba mal. Ahora solo el renderer manda
+            // (Mali/Immortalis); un vendor ARM con otro renderer es OTHER.
+            r.contains("MALI") || r.contains("IMMORTALIS") -> GpuVendor.MALI
             r.isBlank() -> GpuVendor.UNKNOWN
             else -> GpuVendor.OTHER
         }

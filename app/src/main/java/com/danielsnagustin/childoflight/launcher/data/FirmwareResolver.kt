@@ -39,7 +39,10 @@ object FirmwareResolver {
 
     fun resolve(vitaRoot: File): FirmwareStatus {
         val vs0 = File(vitaRoot, "vs0")
-        if (vs0.isDirectory && (vs0.listFiles()?.isNotEmpty() == true)) {
+        // M20: antes bastaba cualquier archivo en vs0/ (incluso basura) para
+        // decir Ready. El firmware extraído siempre trae subdirectorios
+        // (sys/, data/, ...); un archivo suelto no es firmware.
+        if (vs0.isDirectory && (vs0.listFiles()?.any { it.isDirectory } == true)) {
             return FirmwareStatus.Ready("extraído (vs0)")
         }
         val pup = File(vitaRoot, "firmware/PSVUPDAT.PUP")
@@ -47,7 +50,11 @@ object FirmwareResolver {
             return FirmwareStatus.Ready("PSVUPDAT.PUP guardado")
         }
         val marker = File(vitaRoot, "firmware/installed.json")
-        if (marker.isFile) {
+        // BUG (auditoría): un installed.json vacío (o que quedara tras
+        // borrar el PUP) se daba por firmware instalado aunque no hubiera
+        // nada. Se exige contenido no vacío.
+        val markerText = runCatching { marker.takeIf { it.isFile }?.readText()?.trim() }.getOrNull()
+        if (!markerText.isNullOrBlank()) {
             return FirmwareStatus.Ready("marcador de instalación")
         }
         return FirmwareStatus.Missing

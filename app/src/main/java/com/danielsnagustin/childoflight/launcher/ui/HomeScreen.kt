@@ -1,10 +1,9 @@
 package com.danielsnagustin.childoflight.launcher.ui
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,32 +13,43 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.danielsnagustin.childoflight.launcher.R
 import com.danielsnagustin.childoflight.launcher.model.HomeSection
 import com.danielsnagustin.childoflight.launcher.model.trophyProgressPercent
 
 /**
- * Pantalla principal: UNA sola tarjeta de juego, Child of Light.
- * Sin biblioteca, sin lista de emulador: es un launcher de un solo juego.
+ * Pantalla principal: mínima y premium (rediseño 2026-11-07).
  *
- * Personalización aplicada aquí: fondo elegido, idioma (portada y
- * navegación), mostrar/ocultar FPS y logros, y orden de secciones.
+ * En la Home SOLO queda: tarjeta del juego (arte vectorial propio con
+ * marco, estado, DLCs), botón JUGAR grande y dorado, insignia de GPU
+ * y tarjeta compacta de logros (X/27 + barra; toca para ver la lista
+ * completa). Nada más: sin botones de importar, sin 5 botones grandes,
+ * sin párrafos largos.
+ *
+ * Todo lo demás vive en Configuración (engranaje ⚙ arriba a la derecha):
+ * importar juego/DLC/update/carpeta, sesiones, rendimiento, GPU,
+ * controles, guardados, avanzado. La navegación (Navigation.kt) sigue
+ * igual; la Home ya no muestra esos botones.
+ *
+ * La portada oficial vive SOLO en el icono de la app (imagen mandada
+ * por el usuario, mipmap/ic_launcher). La Home usa el arte vectorial
+ * propio, nunca la portada.
  */
 @Composable
 fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
@@ -51,109 +61,136 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
     val benchmarks by vm.benchmarksFlow.collectAsState(initial = emptyList())
 
     val strings = stringsFor(uiPrefs?.language ?: com.danielsnagustin.childoflight.launcher.model.AppLanguage.SPANISH)
-    val background = try {
-        Color(android.graphics.Color.parseColor(uiPrefs?.homeBackground?.hex ?: "#0E1420"))
-    } catch (_: Exception) {
-        ColNight
-    }
     val lastFps = benchmarks.firstOrNull()?.fpsAvg
-
-    val pickGame = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) vm.importGame(uri)
-    }
-    val pickDlc = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) vm.importDlc(uri)
-    }
-    val pickUpdate = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) vm.importUpdate(uri)
-    }
+    val unlocked = achievements.count { it.unlocked }
+    val percent = trophyProgressPercent(achievements)
 
     val gameCard: @Composable () -> Unit = {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = ColCard),
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+        PremiumCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(88.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(ColNight)
+                        .padding(6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
                     Image(
                         painter = painterResource(id = R.drawable.ic_col_foreground),
-                        contentDescription = "Portada del launcher (icono original, sin arte de Ubisoft)",
-                        modifier = Modifier.size(72.dp),
+                        contentDescription = "Arte del launcher (vectorial propio, sin arte de Ubisoft)",
+                        modifier = Modifier.size(76.dp),
                     )
-                    Column(modifier = Modifier.padding(start = 12.dp)) {
-                        Text("Child of Light", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text("PS Vita · Ubisoft · UbiArt", style = MaterialTheme.typography.bodySmall)
-                        Text("${strings.state}: ${status.installedLabel}", style = MaterialTheme.typography.bodyMedium)
-                        Text("${strings.dlcs}: ${status.dlcCount} · ${strings.update}: ${if (status.updateInstalled) "sí" else "no"}", style = MaterialTheme.typography.bodyMedium)
-                        if (uiPrefs?.showAchievementsOnHome != false) {
-                            Text("${strings.achievements}: ${achievements.count { it.unlocked }}/27 (${trophyProgressPercent(achievements)}%)", style = MaterialTheme.typography.bodyMedium)
-                        }
-                        if (uiPrefs?.showFpsOnHome != false && lastFps != null) {
-                            Text("FPS (última prueba): $lastFps", style = MaterialTheme.typography.bodyMedium)
-                        }
+                }
+                Column(modifier = Modifier.padding(start = 14.dp).weight(1f)) {
+                    Text("Child of Light", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text("PS Vita · Ubisoft · UbiArt", style = MaterialTheme.typography.bodySmall, color = ColMutedText)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("${strings.state}: ${status.installedLabel}", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+                    Text(
+                        "${strings.dlcs}: ${status.dlcCount} · ${strings.update}: ${if (status.updateInstalled) "sí" else "no"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ColMutedText,
+                    )
+                    if (uiPrefs?.showFpsOnHome != false && lastFps != null) {
+                        Text("FPS (última prueba): $lastFps", style = MaterialTheme.typography.bodySmall, color = ColMutedText)
                     }
                 }
-                Spacer(modifier = Modifier.height(12.dp))
-                Button(
-                    onClick = { vm.play() },
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                ) { Text(strings.play, style = MaterialTheme.typography.titleMedium) }
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { pickGame.launch("*/*") }, modifier = Modifier.weight(1f)) { Text(strings.importGame) }
-                    OutlinedButton(onClick = { pickDlc.launch("*/*") }, modifier = Modifier.weight(1f)) { Text(strings.importDlc) }
-                }
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { pickUpdate.launch("*/*") }, modifier = Modifier.fillMaxWidth()) { Text(strings.importUpdate) }
-                }
-                NoteText("Importa tu propia copia legal (.zip / .vpk / .pkg). Solo se aceptan PCSE00480 (US) y PCSB00598 (EU). El primer uso solo pide juego + DLCs: el firmware nunca es un paso inicial. El launcher no incluye juego, firmware ni claves.")
             }
+            Spacer(modifier = Modifier.height(16.dp))
+            GoldButton(strings.play, onClick = { vm.play() })
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "Etapa 1: JUGAR escribe config.yml y abre Vita3K si está instalado.",
+                style = MaterialTheme.typography.bodySmall,
+                color = ColMutedText,
+            )
         }
     }
 
-    val gpuCard: @Composable () -> Unit = {
+    val gpuBadge: @Composable () -> Unit = {
         gpu?.let { g ->
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Tu GPU: ${g.shortLabel}", fontWeight = FontWeight.Bold)
-                    if (g.isUserVerifiedDevice) {
-                        Text("✓ Dispositivo verificado por ti: Child of Light va muy bien en este teléfono.", color = ColGold)
+            PremiumCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("✓", color = ColSuccessGreen, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Column(modifier = Modifier.padding(start = 10.dp).weight(1f)) {
+                        Text(
+                            g.shortLabel,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                        )
+                        Text(
+                            "Perfil: ${settings?.activeProfile?.label ?: "—"} · ${settings?.resolutionLabel ?: ""}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ColMutedText,
+                        )
                     }
-                    Text("SoC: ${g.socModel.ifBlank { "no detectado" }} · ${g.vulkanVersionLabel}")
-                    Text("Perfil activo: ${settings?.activeProfile?.label ?: "—"} · ${settings?.resolutionLabel ?: ""}")
                 }
             }
         }
     }
 
-    val navButtons: @Composable () -> Unit = {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            OutlinedButton(onClick = { onNavigate(Screen.SETTINGS) }, modifier = Modifier.fillMaxWidth()) { Text(strings.settings) }
-            OutlinedButton(onClick = { onNavigate(Screen.GPU) }, modifier = Modifier.fillMaxWidth()) { Text(strings.gpuAndDiagnostics) }
-            OutlinedButton(onClick = { onNavigate(Screen.ACHIEVEMENTS) }, modifier = Modifier.fillMaxWidth()) { Text(strings.achievements) }
-            OutlinedButton(onClick = { onNavigate(Screen.TOUCH) }, modifier = Modifier.fillMaxWidth()) { Text(strings.touchControls) }
-            OutlinedButton(onClick = { onNavigate(Screen.SAVES) }, modifier = Modifier.fillMaxWidth()) { Text(strings.savesAndData) }
+    val achievementsCard: @Composable () -> Unit = {
+        if (uiPrefs?.showAchievementsOnHome != false) {
+            PremiumCard(onClick = { onNavigate(Screen.ACHIEVEMENTS) }) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("🏆", fontSize = 28.sp)
+                    Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
+                        Text(
+                            "${strings.achievements}  $unlocked/27 ($percent%)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        GoldProgressBar(progress = if (achievements.isEmpty()) 0f else unlocked / 27f)
+                    }
+                    Text("›", style = MaterialTheme.typography.headlineMedium, color = ColMutedText)
+                }
+            }
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().background(background).verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.Top,
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(homeBackgroundBrush(uiPrefs?.homeBackground?.hex)),
     ) {
-        Text("Child of Light", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text(strings.appSubtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(modifier = Modifier.height(12.dp))
-
-        val order = uiPrefs?.sectionOrder ?: HomeSection.entries.toList()
-        order.forEach { section ->
-            when (section) {
-                HomeSection.GAME_CARD -> { gameCard(); Spacer(modifier = Modifier.height(12.dp)) }
-                HomeSection.GPU_CARD -> { gpuCard(); Spacer(modifier = Modifier.height(12.dp)) }
-                HomeSection.NAV_BUTTONS -> navButtons()
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.Top,
+        ) {
+            // Barra superior: título + engranaje de Configuración.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Child of Light", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text(strings.appSubtitle, style = MaterialTheme.typography.bodyMedium, color = ColMutedText)
+                }
+                TextButton(onClick = { onNavigate(Screen.SETTINGS) }) {
+                    Text("⚙", fontSize = 28.sp, color = Color.White)
+                }
             }
-        }
+            Spacer(modifier = Modifier.height(20.dp))
 
-        Spacer(modifier = Modifier.height(16.dp))
-        NoteText("Etapa 1: el núcleo Vita3K aún no está embebido. JUGAR escribe config.yml y abre Vita3K si está instalado. Ver README → Etapa 2.")
+            // El orden de secciones lo elige el usuario (GAME_CARD / GPU_CARD);
+            // NAV_BUTTONS ya no se muestra en Home: vive en Configuración.
+            val order = uiPrefs?.sectionOrder ?: HomeSection.entries.toList()
+            order.forEach { section ->
+                when (section) {
+                    HomeSection.GAME_CARD -> { gameCard(); Spacer(modifier = Modifier.height(16.dp)) }
+                    HomeSection.GPU_CARD -> { gpuBadge(); Spacer(modifier = Modifier.height(16.dp)) }
+                    HomeSection.NAV_BUTTONS -> { /* En Configuración (engranaje). */ }
+                }
+            }
+            achievementsCard()
+            Spacer(modifier = Modifier.height(24.dp))
+        }
     }
 }

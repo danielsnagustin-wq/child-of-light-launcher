@@ -189,10 +189,15 @@ fun SessionsSection(vm: LauncherViewModel) {
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    vm.renameSession(target.id, renameName, renameChapter)
-                    renameTarget = null
-                }) { Text("Guardar") }
+                // B8 (auditoría UI): no permitir guardar con el nombre vacío
+                // (el SessionManager ya lo rechaza, pero la UI no lo impedía).
+                TextButton(
+                    enabled = renameName.isNotBlank(),
+                    onClick = {
+                        vm.renameSession(target.id, renameName, renameChapter)
+                        renameTarget = null
+                    },
+                ) { Text("Guardar") }
             },
             dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Cancelar") } },
         )

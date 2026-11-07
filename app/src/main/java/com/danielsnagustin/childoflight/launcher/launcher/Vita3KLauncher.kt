@@ -110,6 +110,21 @@ class Vita3KLauncher(private val context: Context) {
         settings: LauncherSettings,
         sessionManager: SessionManager? = null,
     ): LaunchOutcome {
+        // BUG (auditoría): writeConfig (file.writeText) y checkPrerequisites
+        // pueden lanzar IOException y tumbar la corrutina del ViewModel en
+        // play()/startBenchmark(). El lanzamiento nunca debe lanzar.
+        return try {
+            launchImpl(library, settings, sessionManager)
+        } catch (e: Exception) {
+            LaunchOutcome.Blocked("No se pudo lanzar: ${e.message}")
+        }
+    }
+
+    private suspend fun launchImpl(
+        library: GameLibraryRepository,
+        settings: LauncherSettings,
+        sessionManager: SessionManager? = null,
+    ): LaunchOutcome {
         val pre = checkPrerequisites(library)
         if (!pre.ready) {
             return LaunchOutcome.Blocked(pre.missing.joinToString("\n"))
@@ -131,6 +146,11 @@ class Vita3KLauncher(private val context: Context) {
         val titleId = pre.titleId ?: return LaunchOutcome.Blocked("No se pudo determinar el Title ID instalado.")
 
         // 5. Núcleo embebido (Etapa 2): puente JNI si el .so existe.
+        // H3: si el intento embebido ya falló (init/loadGame devolvieron
+        // error), NO se devuelve EmbeddedCorePresent: ese estado es un
+        // callejón sin salida y nunca probaba Vita3K externo. Se salta
+        // directo al intent externo.
+        var embeddedAttemptFailed = false
         if (Vita3kCoreBridge.available) {
             if (!pre.firmwareStatus.ready) {
                 return LaunchOutcome.Blocked(FIRMWARE_BLOCKED_EMBEDDED)
@@ -143,11 +163,13 @@ class Vita3KLauncher(private val context: Context) {
                     return LaunchOutcome.LaunchedEmbedded(configFile.absolutePath)
                 }
                 LauncherLog.append(context, "launch", "Puente embebido: loadGame devolvió $loadRc; fallback a externo")
+                embeddedAttemptFailed = true
             } else {
                 LauncherLog.append(context, "launch", "Puente embebido: init devolvió $initRc; fallback a externo")
+                embeddedAttemptFailed = true
             }
         }
-        if (embeddedCorePresent()) {
+        if (embeddedCorePresent() && !embeddedAttemptFailed) {
             // .so presente pero sin puente JNI funcional (Etapa 2 en curso).
             LauncherLog.append(context, "launch", "Núcleo embebido detectado; falta el punto de entrada JNI (Etapa 2).")
             return LaunchOutcome.EmbeddedCorePresent(configFile.absolutePath)

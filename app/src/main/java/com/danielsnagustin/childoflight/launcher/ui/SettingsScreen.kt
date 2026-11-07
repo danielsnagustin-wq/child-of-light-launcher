@@ -2,6 +2,8 @@ package com.danielsnagustin.childoflight.launcher.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.model.AudioBackend
@@ -50,6 +53,8 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
     val settings by vm.settingsFlow.collectAsState(initial = null)
     val gpu by vm.gpuFlow.collectAsState(initial = null)
     val uiPrefs by vm.uiFlow.collectAsState(initial = null)
+    // B3: el firmware se lee como flujo (antes llamada plana sin refresco).
+    val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
     var showConfig by remember { mutableStateOf(false) }
     var showResetConfirm by remember { mutableStateOf(false) }
     val configText by vm.generatedConfig.collectAsState()
@@ -60,19 +65,76 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
     val pickFirmware = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) vm.importFirmware(uri)
     }
+    // Importación (antes en la Home; ahora toda aquí, en Configuración).
+    val pickGame = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) vm.importGame(uri)
+    }
+    val pickDlc = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) vm.importDlc(uri)
+    }
+    val pickUpdate = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) vm.importUpdate(uri)
+    }
+    val pickGameFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) vm.importGameFolder(uri)
+    }
+    val pickDlcFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) vm.importDlcFolder(uri)
+    }
 
     val s = settings
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+    Box(
+        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
     ) {
-        Text("Ajustes", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("Perfil activo: ${s?.activeProfile?.label ?: "—"}", style = MaterialTheme.typography.bodyMedium)
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+    ) {
+        ScreenHeader("Configuración", "Todo lo del launcher, en un solo lugar.")
+        Text("Perfil activo: ${s?.activeProfile?.label ?: "—"}", style = MaterialTheme.typography.bodyMedium, color = ColMutedText)
         if (gpu?.isUserVerifiedDevice == true) {
             NoteText("✓ Helio G99 · Mali-G57 MC2 — dispositivo verificado por ti. El preset por defecto es G99 Recomendado: 1x estable, sin recortar de más.")
         }
         if (s == null) {
             Text("Cargando ajustes…")
             return@Column
+        }
+
+        // --- Importar (antes en la Home; ahora toda aquí) ---
+        SectionTitle("Importar")
+        PremiumCard {
+            Text(
+                "Juego y DLCs: solo se aceptan PCSE00480 (US) y PCSB00598 (EU).",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            SecondaryButton("Importar juego (.zip / .vpk / .pkg)", onClick = { pickGame.launch("*/*") })
+            NoteText("Elige el .zip o .vpk COMPLETO del juego (dentro lleva eboot.bin). Un eboot.bin suelto no basta.")
+            Spacer(modifier = Modifier.height(8.dp))
+            SecondaryButton("Importar carpeta del juego", onClick = { pickGameFolder.launch(null) })
+            NoteText("Elige la carpeta PCSE00480 o PCSB00598 que contiene eboot.bin dentro.")
+            Spacer(modifier = Modifier.height(8.dp))
+            SecondaryButton("Importar DLC (.zip)", onClick = { pickDlc.launch("*/*") })
+            NoteText("Elige el .zip del DLC (con la ruta addcont/ dentro).")
+            Spacer(modifier = Modifier.height(8.dp))
+            SecondaryButton("Importar carpeta de DLC", onClick = { pickDlcFolder.launch(null) })
+            NoteText("Elige la carpeta del juego que contiene addcont/ dentro.")
+            Spacer(modifier = Modifier.height(8.dp))
+            SecondaryButton("Importar update (.zip / .vpk)", onClick = { pickUpdate.launch("*/*") })
+            NoteText("Elige el .zip o .vpk del update.")
+        }
+
+        // --- Secciones del launcher (antes botones en la Home) ---
+        SectionTitle("Secciones")
+        PremiumCard {
+            SecondaryButton("Sesiones y guardados", onClick = { onNavigate(Screen.SAVES) })
+            Spacer(modifier = Modifier.height(8.dp))
+            SecondaryButton("Logros (27)", onClick = { onNavigate(Screen.ACHIEVEMENTS) })
+            Spacer(modifier = Modifier.height(8.dp))
+            SecondaryButton("Controles táctiles", onClick = { onNavigate(Screen.TOUCH) })
+            Spacer(modifier = Modifier.height(8.dp))
+            SecondaryButton("GPU y diagnóstico", onClick = { onNavigate(Screen.GPU) })
         }
 
         // --- Presets ---
@@ -205,6 +267,7 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
                 vm.saveUiPrefs(ui.copy(showAchievementsOnHome = it))
             }
             Text("Orden de secciones en la portada", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            NoteText("Los botones de navegación ya no se muestran en la portada: viven en Configuración → Secciones.")
             ui.sectionOrder.forEachIndexed { index, section ->
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("${index + 1}. ${section.label}", modifier = Modifier.weight(1f))
@@ -234,7 +297,7 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
 
         // --- Avanzado: firmware (nunca un paso inicial) ---
         SectionTitle("Avanzado — Firmware")
-        Text("Firmware: ${vm.firmwareStatusLabel()}", style = MaterialTheme.typography.bodyMedium)
+        Text("Firmware: ${com.danielsnagustin.childoflight.launcher.data.FirmwareResolver.label(firmwareStatus)}", style = MaterialTheme.typography.bodyMedium)
         OutlinedButton(onClick = { pickFirmware.launch("*/*") }, modifier = Modifier.fillMaxWidth()) { Text("Importar firmware (.PUP, avanzado)") }
         NoteText(
             "Opción avanzada, nunca obligatoria: el primer uso solo pide juego + DLCs. " +
@@ -252,8 +315,8 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
             onClick = { showResetConfirm = true },
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Restablecer ajustes (preset de tu GPU)") }
-        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Volver") }
-        Spacer(modifier = Modifier.height(24.dp))
+        BackButton(onBack)
+    }
     }
 
     if (showConfig) {

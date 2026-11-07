@@ -2,6 +2,8 @@ package com.danielsnagustin.childoflight.launcher.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -50,10 +52,13 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         if (uri != null) vm.importAchievements(uri)
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+    Box(
+        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
     ) {
-        Text("Guardados y datos", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+    ) {
+        ScreenHeader("Guardados y datos", "Sesiones, saves y logros, en un solo lugar.")
         val title = status.titleId?.id
 
         // Sesiones / partidas: la gestión de saves vive aquí, ampliada a
@@ -101,9 +106,8 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             enabled = status.gameInstalled,
         ) { Text("Borrar datos del juego…") }
 
-        Spacer(modifier = Modifier.height(12.dp))
-        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Volver") }
-        Spacer(modifier = Modifier.height(24.dp))
+        BackButton(onBack)
+    }
     }
 
     if (showDeleteConfirm) {

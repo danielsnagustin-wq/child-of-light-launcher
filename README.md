@@ -47,15 +47,44 @@ y lanza el juego. Sin biblioteca de emulador, sin lista de juegos.
 
 ---
 
+## Icono de la app (portada, SOLO icono)
+
+- El icono del launcher es la **portada oficial del juego mandada
+  por el usuario** (`workspace/user/files/48885_0_yt9s.png`,
+  720x1080). **No se descargó de internet**: la imagen la mandó el
+  usuario y solo vive en el repo como PNGs de icono generados a partir
+  de ella.
+- Archivos generados 2026-11-07 (recorte cuadrado superior de la
+  portada: título + Aurora + castillo):
+  `mipmap-mdpi/hdpi/xhdpi/xxhdpi/xxxhdpi/ic_launcher.png` (48/72/96/
+  144/192 px) + `ic_launcher_round.png` en las mismas densidades,
+  `mipmap-xxxhdpi/ic_launcher_foreground.png` (432x432),
+  `mipmap-anydpi-v26/ic_launcher.xml` e `ic_launcher_round.xml`
+  (apuntan a `@mipmap/ic_launcher_foreground` con fondo
+  `@color/ic_launcher_background` `#0E1420` en `values/colors.xml`).
+  `AndroidManifest` ya usa `@mipmap/ic_launcher`.
+- **La portada vive SOLO en el icono, nunca en la interfaz.** La Home
+  usa el arte vectorial propio (`drawable/ic_col_foreground.xml`:
+  sol/luna/estrella, sin arte de Ubisoft). No hay "Elegir portada" en
+  Configuración: la portada no se elige dentro de la app.
+- Si el usuario manda otra imagen de portada, el siguiente paso es
+  generar los PNGs desde ella en los mismos slots de `mipmap-*` (mismo
+  recorte cuadrado superior) y reconstruir. No se toca el código.
+
 ## Cómo importar juego + DLCs (paso a paso)
 
 **El primer uso solo pide juego + DLCs, nada más.** No hay paso de
 firmware en la pantalla principal ni en el primer arranque.
 
+La importación vive en **Configuración (engranaje ⚙ arriba a la
+derecha) → Importar**. La Home es mínima: solo tarjeta del juego,
+JUGAR, insignia GPU y tarjeta de logros.
+
 1. Instala el APK y abre el launcher. En el primer arranque detecta
    tu GPU y aplica el preset recomendado.
-2. **Importar juego:** botón en la portada → elige tu `.zip` o `.vpk`
-   (un `.vpk` es un zip). El launcher valida antes de instalar nada:
+2. **Importar juego:** Configuración → Importar juego → elige tu
+   `.zip` o `.vpk` (un `.vpk` es un zip). El launcher valida antes de
+   instalar nada:
    - La carpeta principal del zip debe ser **PCSE00480 (US)** o
      **PCSB00598 (EU)**. Cualquier otro Title ID se rechaza con el
      motivo exacto.
@@ -67,6 +96,8 @@ firmware en la pantalla principal ni en el primer arranque.
 3. **Importar DLC:** elige el `.zip`/`.vpk` del DLC. Debe traer la
    ruta `<TITLE_ID>/addcont/<DLC_ID>/...` dentro del zip. Se instala
    en `ux0/addcont/<TITLE_ID>/<DLC_ID>/`.
+   - **O carpeta de DLC:** Configuración → Importar carpeta de DLC →
+     elige la carpeta del juego que contiene `addcont/` dentro.
 4. **Importar update:** elige el `.zip`/`.vpk` con la carpeta
    `<TITLE_ID>` como principal. Se instala en `ux0/patch/<TITLE_ID>/`.
 5. **Archivos `.pkg`:** no se pueden inspeccionar sin un parser de
@@ -74,7 +105,18 @@ firmware en la pantalla principal ni en el primer arranque.
    el Title ID y se guardan en `import_pending/` con el aviso claro
    de que su instalación real la hace Vita3K (Etapa 2). **Nunca** se
    muestran como "juego instalado".
-6. Pulsa **JUGAR**. Si falta el juego, el launcher lo dice con el
+6. **Importar carpeta del juego:** Configuración → Importar carpeta
+   del juego → elige la carpeta `PCSE00480` o `PCSB00598` que contiene
+   `eboot.bin` dentro. Es la vía para quien tiene el juego
+   descomprimido (no un .zip/.vpk).
+7. **¿Por qué te pedía un `.bin`?** El selector de archivos muestra
+   todos los archivos, incluido `eboot.bin`. Pero **un eboot.bin
+   suelto no basta**: el juego necesita su carpeta completa (sce_sys,
+   módulos, datos). Si eliges un `.bin`, el launcher ya no lo rechaza
+   en genérico: te explica en español que elijas el `.zip`/`.vpk`
+   completo o la carpeta del juego con `eboot.bin` dentro. Lo mismo
+   para DLCs (el `.zip` con `addcont/` o la carpeta con `addcont/`).
+8. Pulsa **JUGAR**. Si falta el juego, el launcher lo dice con el
    motivo exacto en vez de fallar en silencio.
 
 ### Firmware (sin pedirlo nunca al inicio)

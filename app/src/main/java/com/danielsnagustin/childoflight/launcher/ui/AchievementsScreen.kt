@@ -1,5 +1,7 @@
 package com.danielsnagustin.childoflight.launcher.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,9 +24,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.danielsnagustin.childoflight.launcher.model.TrophyProgress
 import com.danielsnagustin.childoflight.launcher.model.trophyProgressPercent
 import java.text.SimpleDateFormat
@@ -58,11 +63,28 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     val unlocked = progress.count { it.unlocked }
     val percent = trophyProgressPercent(progress)
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+    Box(
+        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
     ) {
-        Text("Logros", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("27 trofeos de la versión Vita · $unlocked/27 desbloqueados ($percent%)", fontWeight = FontWeight.SemiBold)
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+    ) {
+        ScreenHeader("Logros", "27 trofeos de la versión Vita · $unlocked/27 desbloqueados ($percent%)")
+        PremiumCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("🏆", fontSize = 28.sp)
+                Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
+                    Text(
+                        "$unlocked/27 desbloqueados ($percent%)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    GoldProgressBar(progress = if (progress.isEmpty()) 0f else unlocked / 27f)
+                }
+            }
+        }
         NoteText("Logros LOCALES del launcher: no se sincronizan con PSN / PlayStation Network ni con Steam. No hay platino en este juego (ni en PS4 ni en Vita).")
         scan?.let { s ->
             NoteText("Vita3K (ux0/user/00/trophy/): ${s.note}")
@@ -73,7 +95,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             Card(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = if (item.unlocked) ColCard else MaterialTheme.colorScheme.surfaceVariant,
+                    containerColor = if (item.unlocked) ColCardElevated else MaterialTheme.colorScheme.surfaceVariant,
                 ),
                 onClick = { selected = item },
             ) {
@@ -100,8 +122,8 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
 
         Spacer(modifier = Modifier.height(12.dp))
         OutlinedButton(onClick = { showResetConfirm = true }, modifier = Modifier.fillMaxWidth()) { Text("Borrar progreso de logros") }
-        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Volver") }
-        Spacer(modifier = Modifier.height(24.dp))
+        BackButton(onBack)
+    }
     }
 
     selected?.let { item ->

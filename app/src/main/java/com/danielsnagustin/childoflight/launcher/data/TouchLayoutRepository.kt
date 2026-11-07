@@ -141,6 +141,18 @@ class TouchLayoutRepository(private val context: Context) {
     suspend fun save(layout: List<TouchControl>) {
         val profiles = currentProfiles()
         val activeId = currentActiveId()
+        if (profiles.none { it.id == activeId }) {
+            // BUG (auditoría): si el perfil activo había sido borrado (antes
+            // del fix de deleteProfile), save() no guardaba nada en silencio.
+            // Auto-reparación: se guarda en el primer perfil y se activa.
+            if (profiles.isEmpty()) return
+            val updated = profiles.mapIndexed { index, p ->
+                if (index == 0) p.copy(controls = layout) else p
+            }
+            saveProfiles(updated)
+            setActiveProfile(profiles.first().id)
+            return
+        }
         val updated = profiles.map { if (it.id == activeId) it.copy(controls = layout) else it }
         saveProfiles(updated)
     }
@@ -157,7 +169,7 @@ class TouchLayoutRepository(private val context: Context) {
     suspend fun createProfile(name: String, fromControls: List<TouchControl>): ControlProfile {
         val cleanName = sanitizeName(name).ifBlank { "Perfil nuevo" }
         val profile = ControlProfile(
-            id = "custom-${System.currentTimeMillis()}",
+            id = newProfileId(),
             name = cleanName,
             isBuiltIn = false,
             controls = fromControls.map { it.copy() },
@@ -170,7 +182,7 @@ class TouchLayoutRepository(private val context: Context) {
     suspend fun duplicateProfile(id: String): ControlProfile? {
         val source = currentProfiles().firstOrNull { it.id == id } ?: return null
         val copy = source.copy(
-            id = "custom-${System.currentTimeMillis()}",
+            id = newProfileId(),
             name = sanitizeName("${source.name} (copia)"),
             isBuiltIn = false,
         )
@@ -189,14 +201,18 @@ class TouchLayoutRepository(private val context: Context) {
 
     /**
      * Borra un perfil. No se puede borrar el último perfil que quede;
-     * si se borra el activo, el activo pasa a "Por defecto G99".
+     * si se borra el activo, el activo pasa al primer perfil que queda.
      */
     suspend fun deleteProfile(id: String): Boolean {
         val profiles = currentProfiles()
         if (profiles.size <= 1) return false
         if (profiles.none { it.id == id }) return false
-        saveProfiles(profiles.filter { it.id != id })
-        if (currentActiveId() == id) setActiveProfile("default-g99")
+        val remaining = profiles.filter { it.id != id }
+        saveProfiles(remaining)
+        // BUG (auditoría): antes se forzaba "default-g99" como activo; si
+        // ese perfil ya había sido borrado, el activo apuntaba a un perfil
+        // inexistente y save() no guardaba nada en silencio.
+        if (currentActiveId() == id) setActiveProfile(remaining.first().id)
         return true
     }
 
@@ -207,7 +223,7 @@ class TouchLayoutRepository(private val context: Context) {
     suspend fun importProfileText(raw: String): ControlProfile? {
         val parsed = decodeProfile(raw.trim()) ?: return null
         val profile = parsed.copy(
-            id = "custom-${System.currentTimeMillis()}",
+            id = newProfileId(),
             isBuiltIn = false,
             name = sanitizeName(parsed.name).ifBlank { "Perfil importado" },
         )
@@ -237,14 +253,28 @@ class TouchLayoutRepository(private val context: Context) {
     }
 
     companion object {
+        // BUG (auditoría): "custom-" + currentTimeMillis() colisiona si se
+        // crean dos perfiles en el mismo milisegundo. Se añade nanoTime.
+        private fun newProfileId(): String =
+            "custom-${System.currentTimeMillis()}-${System.nanoTime() % 100000}"
+
         fun sanitizeName(name: String): String =
             name.replace('|', ' ').replace(';', ' ').replace('#', ' ')
                 .replace('\n', ' ').replace('\r', ' ').trim().take(40)
 
+        /** Saneado para campos del formato (sin quitar '#': colorHex lo usa). */
+        private fun sanitizeField(value: String): String =
+            value.replace('|', ' ').replace(';', ' ')
+                .replace('\n', ' ').replace('\r', ' ').trim()
+
         fun encodeControl(c: TouchControl): String = listOf(
-            c.id, c.label, c.kind, c.vitaButton.name,
+            // BUG (auditoría): label y colorHex no se saneaban, pero el
+            // formato usa '|' y ';' como separadores; una etiqueta con '|'
+            // o ';' (editable por el usuario) corrompía el perfil y el
+            // control desaparecía silenciosamente al decodificar.
+            c.id, sanitizeField(c.label), c.kind, c.vitaButton.name,
             c.xFraction.toString(), c.yFraction.toString(), c.sizeDp.toString(),
-            c.opacity.toString(), c.colorHex, c.shape.name, c.visible.toString(),
+            c.opacity.toString(), sanitizeField(c.colorHex), c.shape.name, c.visible.toString(),
             c.stickMode.name, c.igniculusMode.name, c.sensitivity.toString(),
         ).joinToString("|")
 
@@ -263,6 +293,27 @@ class TouchLayoutRepository(private val context: Context) {
                         stickMode = StickMode.valueOf(p[11]),
                         igniculusMode = IgniculusMode.valueOf(p[12]),
                         sensitivity = p[13].toFloat(),
+                    )
+                } else if (p.size >= 8) {
+                    // M28: formato intermedio (8-13 campos): los campos
+                    // presentes se leen con los índices del formato de 14;
+                    // lo que falta toma el valor por defecto. Antes caía en
+                    // la rama antigua (7 campos) y p[3] (nombre de botón
+                    // Vita) se parseaba como Float -> el control se
+                    // descartaba en silencio.
+                    TouchControl(
+                        id = p[0], label = p[1], kind = p[2],
+                        vitaButton = runCatching { VitaButton.valueOf(p[3]) }.getOrDefault(VitaButton.NONE),
+                        xFraction = p[4].toFloatOrNull() ?: 0.5f,
+                        yFraction = p[5].toFloatOrNull() ?: 0.5f,
+                        sizeDp = p[6].toIntOrNull() ?: 64,
+                        opacity = p[7].toFloatOrNull() ?: 0.8f,
+                        colorHex = p.getOrNull(8) ?: "#F2B705",
+                        shape = p.getOrNull(9)?.let { runCatching { ControlShape.valueOf(it) }.getOrNull() } ?: ControlShape.CIRCLE,
+                        visible = p.getOrNull(10)?.toBooleanStrictOrNull() ?: true,
+                        stickMode = p.getOrNull(11)?.let { runCatching { StickMode.valueOf(it) }.getOrNull() } ?: StickMode.ANALOG,
+                        igniculusMode = p.getOrNull(12)?.let { runCatching { IgniculusMode.valueOf(it) }.getOrNull() } ?: IgniculusMode.DIRECT_TOUCH,
+                        sensitivity = p.getOrNull(13)?.toFloatOrNull() ?: 1.0f,
                     )
                 } else {
                     // Formato antiguo (7 campos): valores por defecto para lo nuevo.

@@ -1,6 +1,7 @@
 package com.danielsnagustin.childoflight.launcher.data
 
 import com.danielsnagustin.childoflight.launcher.model.GameSession
+import com.danielsnagustin.childoflight.launcher.model.TitleId
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -42,7 +43,9 @@ class SessionRepository(private val vitaRoot: File) {
     fun sessionDir(id: String): File = File(sessionsRoot, sanitizeId(id))
 
     /** Id nuevo, seguro para usar como nombre de carpeta. */
-    fun newSessionId(): String = "s${System.currentTimeMillis()}"
+    // BUG (auditoría): solo currentTimeMillis() colisiona si se crean dos
+    // sesiones en el mismo milisegundo. Se añade nanoTime como sufijo.
+    fun newSessionId(): String = "s${System.currentTimeMillis()}-${System.nanoTime() % 100000}"
 
     fun listSessions(): List<GameSession> {
         if (!indexFile.isFile) return emptyList()
@@ -55,7 +58,7 @@ class SessionRepository(private val vitaRoot: File) {
 
     fun saveSessions(sessions: List<GameSession>) {
         sessionsRoot.mkdirs()
-        indexFile.writeText(sessions.joinToString("\n") { formatLine(it) })
+        writeTextAtomic(indexFile, sessions.joinToString("\n") { formatLine(it) })
     }
 
     fun getActiveSessionId(): String? {
@@ -71,7 +74,21 @@ class SessionRepository(private val vitaRoot: File) {
         if (id == null) {
             activeFile.delete()
         } else {
-            activeFile.writeText(id)
+            writeTextAtomic(activeFile, id)
+        }
+    }
+
+    /**
+     * Escritura atómica de texto: se escribe a un temporal y se renombra
+     * sobre el destino. Un corte a mitad (cierre, batería) nunca deja el
+     * archivo a medias: el índice entero no se corrompe (H/M3).
+     */
+    private fun writeTextAtomic(file: File, text: String) {
+        val tmp = File(file.parentFile, file.name + ".tmp-" + System.currentTimeMillis())
+        tmp.writeText(text)
+        if (!tmp.renameTo(file)) {
+            tmp.delete()
+            throw IllegalStateException("No se pudo guardar ${file.name}.")
         }
     }
 
@@ -81,12 +98,28 @@ class SessionRepository(private val vitaRoot: File) {
         val dest = File(sessionDir(sessionId), "savedata")
         val live = liveSaveDir(titleId)
         if (!live.isDirectory) {
-            dest.deleteRecursively()
-            return 0 to 0L
+            // H1: si la viva no existe (el juego aún no creó savedata), la
+            // copia guardada de la sesión NO se toca: borrarla aquí perdería
+            // los saves de una partida anterior. Se devuelve lo guardado.
+            return savedataStats(sessionId)
         }
-        dest.deleteRecursively()
-        dest.mkdirs()
-        live.copyRecursively(dest, overwrite = true)
+        // BUG (auditoría): antes se borraba la copia guardada de la sesión
+        // ANTES de copiar; si la copia fallaba, la sesión perdía sus saves.
+        // Ahora se respalda y se restaura si la copia falla.
+        val backup = File(sessionDir(sessionId), "savedata.bak-" + System.currentTimeMillis())
+        val hadDest = dest.exists()
+        if (hadDest && !dest.renameTo(backup)) {
+            throw IllegalStateException("No se pudo respaldar la savedata de la sesión.")
+        }
+        try {
+            dest.mkdirs()
+            live.copyRecursively(dest, overwrite = true)
+            if (hadDest) backup.deleteRecursively()
+        } catch (e: Exception) {
+            dest.deleteRecursively()
+            if (hadDest) backup.renameTo(dest)
+            throw e
+        }
         return savedataStats(sessionId)
     }
 
@@ -95,10 +128,28 @@ class SessionRepository(private val vitaRoot: File) {
         require(titleId.isNotBlank()) { "Title ID vacío: no se puede localizar la savedata." }
         val src = File(sessionDir(sessionId), "savedata")
         val live = liveSaveDir(titleId)
-        live.deleteRecursively()
-        if (!src.isDirectory) return 0 to 0L
-        live.mkdirs()
-        src.copyRecursively(live, overwrite = true)
+        // BUG (auditoría): antes se borraba la savedata viva ANTES de
+        // comprobar que existiera la copia de la sesión y antes de copiar;
+        // si la copia fallaba, la partida viva se perdía. Primero se
+        // comprueba la copia; la viva se respalda y se restaura si falla.
+        if (!src.isDirectory) {
+            live.deleteRecursively()
+            return 0 to 0L
+        }
+        val backup = File(live.parentFile, live.name + ".bak-" + System.currentTimeMillis())
+        val hadLive = live.exists()
+        if (hadLive && !live.renameTo(backup)) {
+            throw IllegalStateException("No se pudo respaldar la savedata viva antes de restaurar.")
+        }
+        try {
+            live.mkdirs()
+            src.copyRecursively(live, overwrite = true)
+            if (hadLive) backup.deleteRecursively()
+        } catch (e: Exception) {
+            live.deleteRecursively()
+            if (hadLive) backup.renameTo(live)
+            throw e
+        }
         return savedataStats(sessionId)
     }
 
@@ -123,9 +174,9 @@ class SessionRepository(private val vitaRoot: File) {
     fun writeSessionExtras(sessionId: String, achievementsText: String, controlProfileId: String?) {
         val dir = sessionDir(sessionId)
         dir.mkdirs()
-        File(dir, "achievements.txt").writeText(achievementsText)
+        writeTextAtomic(File(dir, "achievements.txt"), achievementsText)
         val profileFile = File(dir, "control-profile.txt")
-        if (controlProfileId.isNullOrBlank()) profileFile.delete() else profileFile.writeText(controlProfileId)
+        if (controlProfileId.isNullOrBlank()) profileFile.delete() else writeTextAtomic(profileFile, controlProfileId)
     }
 
     fun readAchievementsText(sessionId: String): String {
@@ -150,6 +201,8 @@ class SessionRepository(private val vitaRoot: File) {
     }
 
     fun duplicateSessionDir(fromId: String, toId: String) {
+        // M1: si los ids coinciden, el borrado del destino borraría el origen.
+        require(fromId != toId) { "No se puede duplicar una sesión sobre sí misma." }
         val src = sessionDir(fromId)
         val dest = sessionDir(toId)
         dest.deleteRecursively()
@@ -197,12 +250,21 @@ class SessionRepository(private val vitaRoot: File) {
         try {
             ZipInputStream(input).use { zip ->
                 var entry = zip.nextEntry
+                var entries = 0
+                var totalBytes = 0L
                 while (entry != null) {
+                    // M7: tope anti zip-bomb / llenar disco (una sesión son
+                    // saves de KBs-MBs; 1 GB y 10.000 entradas sobran).
+                    entries++
+                    if (entries > 10_000) throw IllegalArgumentException("El zip trae demasiadas entradas (> 10.000).")
                     if (!entry.isDirectory) {
                         val dest = File(tmp, entry.name)
                         requireInside(tmp, dest)
                         dest.parentFile?.mkdirs()
-                        dest.outputStream().use { out -> zip.copyTo(out) }
+                        dest.outputStream().use { out ->
+                            totalBytes += zip.copyTo(out)
+                            if (totalBytes > 1_000_000_000L) throw IllegalArgumentException("El zip es demasiado grande (> 1 GB).")
+                        }
                     }
                     zip.closeEntry()
                     entry = zip.nextEntry
@@ -255,17 +317,35 @@ class SessionRepository(private val vitaRoot: File) {
             val parts = line.split("|")
             if (parts.size != 10) return null
             return try {
+                // H5/M4: el índice es un archivo editable/importable; un
+                // titleId o id malicioso ("../../x") haría que snapshot/
+                // restore borraran fuera de savedata/. Se valida todo y se
+                // descarta la línea si algo no cuadra (nunca se rompe el
+                // índice entero por una línea mala).
+                val id = parts[0].takeIf { it.isNotBlank() } ?: return null
+                // Misma regla que sanitizeId(): solo letras, dígitos, '-' y '_'.
+                if (id.any { !(it.isLetterOrDigit() || it == '-' || it == '_') }) return null
+                val titleId = parts[2]
+                if (TitleId.fromString(titleId) == null) return null
+                val created = parts[3].toLong()
+                val lastPlayed = parts[4].toLong()
+                val playTime = parts[5].toLong()
+                val files = parts[7].toInt()
+                val bytes = parts[8].toLong()
+                val trophies = parts[9].toInt()
+                if (created < 0 || lastPlayed < 0 || playTime < 0 || files < 0 || bytes < 0) return null
+                if (trophies !in 0..27) return null
                 GameSession(
-                    id = parts[0].takeIf { it.isNotBlank() } ?: return null,
+                    id = id,
                     name = unescape(parts[1]),
-                    titleId = parts[2],
-                    createdAtMillis = parts[3].toLong(),
-                    lastPlayedAtMillis = parts[4].toLong(),
-                    playTimeMillis = parts[5].toLong(),
+                    titleId = titleId,
+                    createdAtMillis = created,
+                    lastPlayedAtMillis = lastPlayed,
+                    playTimeMillis = playTime,
                     chapter = unescape(parts[6]),
-                    savedataFiles = parts[7].toInt(),
-                    savedataBytes = parts[8].toLong(),
-                    unlockedTrophies = parts[9].toInt(),
+                    savedataFiles = files,
+                    savedataBytes = bytes,
+                    unlockedTrophies = trophies,
                 )
             } catch (_: Exception) {
                 null
@@ -281,8 +361,12 @@ class SessionRepository(private val vitaRoot: File) {
 
     // --- Utilidades ---
 
-    private fun liveSaveDir(titleId: String): File =
-        File(vitaRoot, "ux0/user/00/savedata/$titleId")
+    private fun liveSaveDir(titleId: String): File {
+        // H5: punto único de acceso a la savedata viva; un titleId inválido
+        // nunca llega a formar una ruta fuera de savedata/.
+        require(TitleId.fromString(titleId) != null) { "Title ID no válido: \"$titleId\"." }
+        return File(vitaRoot, "ux0/user/00/savedata/$titleId")
+    }
 
     private fun sanitizeId(id: String): String {
         val clean = id.filter { it.isLetterOrDigit() || it == '-' || it == '_' }

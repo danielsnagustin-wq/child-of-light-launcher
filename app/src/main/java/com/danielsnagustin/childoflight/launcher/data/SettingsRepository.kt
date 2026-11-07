@@ -24,6 +24,7 @@ import com.danielsnagustin.childoflight.launcher.model.ScreenFilter
 import com.danielsnagustin.childoflight.launcher.model.defaultProfileFor
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "col_launcher_settings")
@@ -68,6 +69,8 @@ class SettingsRepository(private val context: Context) {
         val SAFE_MODE = booleanPreferencesKey("safe_mode")
         val CLOSE_BACKGROUND = booleanPreferencesKey("close_background_apps")
         val HIDE_TOUCH_GAMEPAD = booleanPreferencesKey("hide_touch_when_gamepad")
+        // M34: true cuando ya se guardó alguna configuración (preset o ajuste).
+        val PRESET_APPLIED = booleanPreferencesKey("preset_applied")
         // GPU detectada
         val GPU_DETECTED = booleanPreferencesKey("gpu_detected")
         val GPU_VENDOR = stringPreferencesKey("gpu_vendor")
@@ -85,10 +88,12 @@ class SettingsRepository(private val context: Context) {
 
     val settingsFlow: Flow<LauncherSettings> = context.settingsDataStore.data.map { p ->
         LauncherSettings(
+            // M22: los valores leídos se clampan: un DataStore editado a mano
+            // (o corrupto) no debe pasar 0 / -1 / 99 / NaN al config.yml.
             backend = runCatching { GpuBackend.valueOf(p[Keys.BACKEND] ?: "VULKAN") }.getOrDefault(GpuBackend.VULKAN),
-            resolutionMultiplier = p[Keys.RESOLUTION] ?: 1f,
+            resolutionMultiplier = clampResolution(p[Keys.RESOLUTION] ?: 1f),
             screenFilter = runCatching { ScreenFilter.valueOf(p[Keys.SCREEN_FILTER] ?: "BILINEAR") }.getOrDefault(ScreenFilter.BILINEAR),
-            anisotropicFiltering = p[Keys.ANISO] ?: 1,
+            anisotropicFiltering = clampAniso(p[Keys.ANISO] ?: 1),
             vSync = p[Keys.VSYNC] ?: false,
             asyncPipelineCompilation = p[Keys.ASYNC] ?: true,
             highAccuracy = p[Keys.HIGH_ACCURACY] ?: false,
@@ -98,7 +103,7 @@ class SettingsRepository(private val context: Context) {
             shaderCache = p[Keys.SHADER_CACHE] ?: true,
             cpuOpt = p[Keys.CPU_OPT] ?: true,
             fpsHack = p[Keys.FPS_HACK] ?: false,
-            fileLoadingDelay = p[Keys.FILE_LOADING_DELAY] ?: 0,
+            fileLoadingDelay = (p[Keys.FILE_LOADING_DELAY] ?: 0).coerceAtLeast(0),
             audioVolume = (p[Keys.AUDIO_VOLUME] ?: 100).coerceIn(0, 100),
             audioBackend = runCatching { com.danielsnagustin.childoflight.launcher.model.AudioBackend.valueOf(p[Keys.AUDIO_BACKEND] ?: "SDL") }.getOrDefault(com.danielsnagustin.childoflight.launcher.model.AudioBackend.SDL),
             ngsEnable = p[Keys.NGS_ENABLE] ?: true,
@@ -143,9 +148,10 @@ class SettingsRepository(private val context: Context) {
     suspend fun save(settings: LauncherSettings) {
         context.settingsDataStore.edit { p ->
             p[Keys.BACKEND] = settings.backend.name
-            p[Keys.RESOLUTION] = settings.resolutionMultiplier
+            // M22: mismo clamp que en lectura, antes de escribir.
+            p[Keys.RESOLUTION] = clampResolution(settings.resolutionMultiplier)
             p[Keys.SCREEN_FILTER] = settings.screenFilter.name
-            p[Keys.ANISO] = settings.anisotropicFiltering
+            p[Keys.ANISO] = clampAniso(settings.anisotropicFiltering)
             p[Keys.VSYNC] = settings.vSync
             p[Keys.ASYNC] = settings.asyncPipelineCompilation
             p[Keys.HIGH_ACCURACY] = settings.highAccuracy
@@ -155,7 +161,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.SHADER_CACHE] = settings.shaderCache
             p[Keys.CPU_OPT] = settings.cpuOpt
             p[Keys.FPS_HACK] = settings.fpsHack
-            p[Keys.FILE_LOADING_DELAY] = settings.fileLoadingDelay
+            p[Keys.FILE_LOADING_DELAY] = settings.fileLoadingDelay.coerceAtLeast(0)
             p[Keys.AUDIO_VOLUME] = settings.audioVolume
             p[Keys.AUDIO_BACKEND] = settings.audioBackend.name
             p[Keys.AUDIO_BUFFER] = settings.audioBufferSize
@@ -175,29 +181,46 @@ class SettingsRepository(private val context: Context) {
             p[Keys.SAFE_MODE] = settings.safeMode
             p[Keys.CLOSE_BACKGROUND] = settings.closeBackgroundApps
             p[Keys.HIDE_TOUCH_GAMEPAD] = settings.hideTouchWhenGamepadConnected
+            // M34: hay ajustes guardados (aunque sean los del primer preset).
+            // detectGpu() solo aplica un preset automáticamente si esto es false.
+            p[Keys.PRESET_APPLIED] = true
         }
     }
 
+    /** ¿Se ha guardado ya alguna vez una configuración (preset o ajuste)? */
+    suspend fun isPresetApplied(): Boolean {
+        return context.settingsDataStore.data.first()[Keys.PRESET_APPLIED] == true
+    }
+
     /** Aplica un preset completo (sobrescribe los ajustes actuales). */
-    suspend fun applyPreset(profile: GpuProfileId, keepDriver: Boolean = true, current: LauncherSettings? = null) {
+    suspend fun applyPreset(profile: GpuProfileId, current: LauncherSettings? = null) {
         val base = presetSettings(profile)
         // El driver sí forma parte del preset: Turnip solo tiene sentido en
         // ADRENO_QUALITY_TURNIP; en Mali/G99 el driver siempre es Sistema.
         // La info de Turnip instalado (nombre/versión) se conserva siempre.
         val driver = when (profile) {
             GpuProfileId.ADRENO_QUALITY_TURNIP -> com.danielsnagustin.childoflight.launcher.model.GpuDriver.TURNIP
-            GpuProfileId.ADRENO_PERFORMANCE -> if (keepDriver) {
-                current?.gpuDriver ?: com.danielsnagustin.childoflight.launcher.model.GpuDriver.SYSTEM
-            } else {
-                com.danielsnagustin.childoflight.launcher.model.GpuDriver.SYSTEM
-            }
+            // M23: ADRENO_PERFORMANCE es el perfil sin Turnip; antes con
+            // keepDriver=true un usuario que venía de ADRENO_QUALITY_TURNIP
+            // conservaba TURNIP en el perfil de rendimiento. Ahora siempre
+            // Sistema aquí; quien quiera Turnip elige el perfil Turnip.
             else -> com.danielsnagustin.childoflight.launcher.model.GpuDriver.SYSTEM
         }
+        // M21: el preset cambia rendimiento/calidad, no los gustos del
+        // usuario: audio, modo seguro, cerrar apps y ocultar controles se
+        // conservan (antes se reseteaban en silencio al aplicar un preset).
         val merged = base.copy(
             gpuDriver = driver,
             customDriverName = current?.customDriverName ?: "",
             turnipVersion = current?.turnipVersion ?: "",
             turnipInstalled = current?.turnipInstalled ?: false,
+            audioVolume = current?.audioVolume ?: 100,
+            audioBackend = current?.audioBackend ?: com.danielsnagustin.childoflight.launcher.model.AudioBackend.SDL,
+            audioBufferSize = current?.audioBufferSize ?: 512,
+            ngsEnable = current?.ngsEnable ?: true,
+            safeMode = current?.safeMode ?: false,
+            closeBackgroundApps = current?.closeBackgroundApps ?: true,
+            hideTouchWhenGamepadConnected = current?.hideTouchWhenGamepadConnected ?: true,
         )
         save(merged)
     }
@@ -231,6 +254,13 @@ class SettingsRepository(private val context: Context) {
     }
 
     companion object {
+        // M22: resolución solo 1x–4x y finita; aniso solo valores válidos.
+        fun clampResolution(value: Float): Float =
+            if (!value.isFinite()) 1f else value.coerceIn(1f, 4f)
+
+        fun clampAniso(value: Int): Int =
+            if (value in setOf(1, 2, 4, 8, 16)) value else 1
+
         fun encodeBenchmark(run: BenchmarkRun): String = listOf(
             run.profile.name,
             run.gpuLabel.replace("|", "/"),
