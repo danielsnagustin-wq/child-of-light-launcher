@@ -59,6 +59,8 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
     // botones (antes no se veía NADA mientras copiaba ~2 GB y el usuario
     // creía que "al cargar no funciona").
     val importing by vm.importing.collectAsState()
+    val status by vm.status.collectAsState()
+    val pendingLicense by vm.pendingPkgLicense.collectAsState()
     var showConfig by remember { mutableStateOf(false) }
     var showResetConfirm by remember { mutableStateOf(false) }
     val configText by vm.generatedConfig.collectAsState()
@@ -84,6 +86,9 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
     }
     val pickDlcFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) vm.importDlcFolder(uri)
+    }
+    val pickWorkBin = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) vm.importWorkBin(uri)
     }
 
     val s = settings
@@ -114,28 +119,76 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
             )
             Spacer(modifier = Modifier.height(12.dp))
             if (importing) {
-                Text(
+                PulsingText(
                     "⏳ Importando… no cierres la app. Un juego completo puede tardar varios minutos.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = ColGold,
+                    ColGold,
+                    MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(modifier = Modifier.height(12.dp))
             }
             SecondaryButton("Importar juego (.zip / .vpk / .pkg)", onClick = { pickGame.launch("*/*") }, enabled = !importing)
-            NoteText("Elige el .zip o .vpk COMPLETO del juego (dentro lleva eboot.bin). Un eboot.bin suelto no basta.")
+            NoteText("Elige el paquete COMPLETO del juego: .zip/.vpk con eboot.bin dentro, o .pkg. El nombre del archivo da igual: el juego se valida por su contenido. Un eboot.bin suelto no basta.")
             Spacer(modifier = Modifier.height(8.dp))
             SecondaryButton("Importar carpeta del juego", onClick = { pickGameFolder.launch(null) }, enabled = !importing)
             NoteText("Elige la carpeta PCSE00480 o PCSB00598 que contiene eboot.bin dentro.")
             Spacer(modifier = Modifier.height(8.dp))
-            SecondaryButton("Importar DLC (.zip)", onClick = { pickDlc.launch("*/*") }, enabled = !importing)
-            NoteText("Elige el .zip del DLC (con la ruta addcont/ dentro).")
+            SecondaryButton("Importar DLC (.zip / .pkg)", onClick = { pickDlc.launch("*/*") }, enabled = !importing)
+            NoteText("Elige el .zip del DLC (con la ruta addcont/ dentro) o el .pkg del DLC.")
             Spacer(modifier = Modifier.height(8.dp))
             SecondaryButton("Importar carpeta de DLC", onClick = { pickDlcFolder.launch(null) }, enabled = !importing)
             NoteText("Elige la carpeta del juego que contiene addcont/ dentro.")
             Spacer(modifier = Modifier.height(8.dp))
-            SecondaryButton("Importar update (.zip / .vpk)", onClick = { pickUpdate.launch("*/*") }, enabled = !importing)
-            NoteText("Elige el .zip o .vpk del update.")
+            SecondaryButton("Importar update (.zip / .vpk / .pkg)", onClick = { pickUpdate.launch("*/*") }, enabled = !importing)
+            NoteText("Elige el .zip, .vpk o .pkg del update.")
+        }
+
+        // --- .pkg: licencia pendiente y entrega a Vita3K ---
+        pendingLicense?.let { pending ->
+            SectionTitle("Falta la licencia")
+            PremiumCard {
+                Text(
+                    "Falta el work.bin del ${pending.kind.label} (${pending.titleId}).",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                )
+                NoteText("Sin la licencia Vita3K no puede instalar el .pkg. Es el archivo work.bin de 512 B que acompaña al .pkg (a veces se descarga como «work (5).bin»).")
+                Spacer(modifier = Modifier.height(12.dp))
+                SecondaryButton("Elegir work.bin", onClick = { pickWorkBin.launch("*/*") }, enabled = !importing)
+            }
+        }
+        if (status.pkgInstalled) {
+            SectionTitle("Juego en .pkg")
+            PremiumCard {
+                Text(
+                    "Juego (.pkg): ${status.pkgTitleId?.id ?: "—"}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                )
+                Text("Content ID: ${status.pkgContentId ?: "—"}", style = MaterialTheme.typography.bodySmall, color = ColMutedText)
+                Text(
+                    "Licencia (work.bin): ${if (status.pkgLicensePresent) "guardada ✓" else "falta ✗"}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (status.pkgLicensePresent) ColSuccessGreen else Color.White,
+                )
+                if (s?.pkgDeliveredToVita3k == true) {
+                    Text("✓ Copiado a Descargas/ChildOfLight/", style = MaterialTheme.typography.bodyMedium, color = ColSuccessGreen)
+                }
+                if (s?.pkgInstalledInVita3k == true) {
+                    Text("✓ Instalado en Vita3K (confirmado por ti)", style = MaterialTheme.typography.bodyMedium, color = ColSuccessGreen)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                SecondaryButton("Instalar en Vita3K", onClick = { vm.deliverPkgToVita3k() }, enabled = !importing && status.pkgLicensePresent)
+                if (!status.pkgLicensePresent) {
+                    NoteText("Falta el work.bin: elige la licencia arriba para poder instalarlo.")
+                }
+                if (s?.pkgDeliveredToVita3k == true && s?.pkgInstalledInVita3k != true) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    SecondaryButton("Ya lo instalé en Vita3K", onClick = { vm.confirmPkgInstalledInVita3k() })
+                }
+                NoteText("El launcher no puede instalar un .pkg por sí mismo: lo instala Vita3K. «Instalar en Vita3K» copia el .pkg y su licencia a Descargas/ChildOfLight/ y abre Vita3K con la guía.")
+            }
         }
 
         // --- Secciones del launcher (antes botones en la Home) ---

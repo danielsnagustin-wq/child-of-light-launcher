@@ -100,31 +100,43 @@ JUGAR, insignia GPU y tarjeta de logros.
 1. Instala el APK y abre el launcher. En el primer arranque detecta
    tu GPU y aplica el preset recomendado.
 2. **Importar juego:** Configuración → Importar juego → elige tu
-   `.zip` o `.vpk` (un `.vpk` es un zip). El launcher valida antes de
-   instalar nada:
-   - La carpeta principal del zip debe ser **PCSE00480 (US)** o
-     **PCSB00598 (EU)**. Cualquier otro Title ID se rechaza con el
-     motivo exacto.
+   `.zip`, `.vpk` (un `.vpk` es un zip) o `.pkg`. El launcher valida
+   por contenido, nunca por el nombre del archivo (los `.pkg` reales
+   se llaman por hash):
+   - `.zip`/`.vpk`: la carpeta principal del zip debe ser **PCSE00480 (US)** o
+     **PCSB00598 (EU)** (puede ir anidada hasta 3 niveles), o el juego
+     plano (`eboot.bin` en la raíz con `sce_sys/param.sfo` que diga el
+     Title ID). Cualquier otro Title ID se rechaza con el motivo exacto.
    - Debe contener `<TITLE_ID>/eboot.bin`.
    - Se instala en `ux0/app/<TITLE_ID>/` (la carpeta DEBE llamarse
      como el Title ID, como exige Vita3K).
    - Si el juego trae su `TROPHY.TRP`, se anota; si no, se usa la
      lista bundled de 27 trofeos.
+   - `.pkg`: se lee el header (Content ID → Title ID y región) y se
+     guarda en `ux0/pkg/<TITLE_ID>.pkg` con su `work.bin` (licencia
+     zRIF de 512 B, buscada junto al `.pkg` o pedida después). El
+     launcher no puede instalar un `.pkg` por sí mismo: se instala en
+     Vita3K con **«Instalar en Vita3K»** (copia `.pkg` + `work.bin` a
+     `Descargas/ChildOfLight/` y abre Vita3K con la guía).
 3. **Importar DLC:** elige el `.zip`/`.vpk` del DLC. Debe traer la
    ruta `<TITLE_ID>/addcont/<DLC_ID>/...` dentro del zip. Se instala
-   en `ux0/addcont/<TITLE_ID>/<DLC_ID>/`.
+   en `ux0/addcont/<TITLE_ID>/<DLC_ID>/`. También se acepta el `.pkg`
+   del DLC (se guarda en `ux0/pkg/dlc/` y se instala en Vita3K igual
+   que el del juego).
    - **O carpeta de DLC:** Configuración → Importar carpeta de DLC →
      elige la carpeta del juego que contiene `addcont/` dentro.
 4. **Importar update:** elige el `.zip`/`.vpk` con la carpeta
    `<TITLE_ID>` como principal. Se instala en `ux0/patch/<TITLE_ID>/`.
-5. **Archivos `.pkg`:** no se pueden inspeccionar sin un parser de
-   paquetes de Vita. Se aceptan solo si el nombre del archivo contiene
-   el Title ID y se guardan en `import_pending/` con el aviso claro
-   de que su instalación real la hace Vita3K (Etapa 2). **Nunca** se
-   muestran como "juego instalado".
+   También se acepta el `.pkg` del update (`ux0/pkg/patch/`).
+5. **Archivos `.pkg`:** se validan por el header (Content ID), nunca
+   por el nombre del archivo. Se guardan en `ux0/pkg/` con su
+   `work.bin` y se instalan en Vita3K con «Instalar en Vita3K». En la
+   Home se muestran como «Instalado como .pkg»: los saves y las
+   sesiones de ese juego viven dentro de Vita3K, no en el launcher.
 6. **Importar carpeta del juego:** Configuración → Importar carpeta
    del juego → elige la carpeta `PCSE00480` o `PCSB00598` que contiene
-   `eboot.bin` dentro. Es la vía para quien tiene el juego
+   `eboot.bin` dentro (o cualquier carpeta con `eboot.bin` +
+   `sce_sys/param.sfo` que diga el Title ID). Es la vía para quien tiene el juego
    descomprimido (no un .zip/.vpk).
 7. **¿Por qué te pedía un `.bin`?** El selector de archivos muestra
    todos los archivos, incluido `eboot.bin`. Pero **un eboot.bin
@@ -162,6 +174,9 @@ JUGAR, insignia GPU y tarjeta de logros.
   firmware/installed.json     <- marcador
   drivers/turnip/*.zip        <- driver Turnip (solo Adreno)
   ux0/app/PCSE00480/          <- juego (o PCSB00598)
+  ux0/pkg/PCSB00598.pkg       <- juego en .pkg + PCSB00598.work.bin (licencia)
+  ux0/pkg/dlc/<DLC>.pkg       <- DLCs en .pkg (+ su .work.bin)
+  ux0/pkg/patch/PCSB00598.pkg <- update en .pkg (+ su .work.bin)
   ux0/addcont/PCSE00480/<DLC>/
   ux0/patch/PCSE00480/
   ux0/user/00/savedata/PCSE00480/   <- savedata VIVA (sesión activa)
@@ -172,7 +187,6 @@ JUGAR, insignia GPU y tarjeta de logros.
     <id>/savedata/            <- copia de savedata de esa sesión
     <id>/achievements.txt     <- logros locales de esa sesión
     <id>/control-profile.txt  <- perfil de control de esa sesión
-  import_pending/             <- .pkg guardados sin instalar
 ```
 
 ---

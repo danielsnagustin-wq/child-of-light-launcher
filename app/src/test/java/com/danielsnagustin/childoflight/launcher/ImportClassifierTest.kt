@@ -63,4 +63,21 @@ class ImportClassifierTest {
         assertTrue(help.contains(".zip"))
         assertTrue(help.contains("PCSE00480"))
     }
+
+    @Test
+    fun pkgMagicIsDetected() {
+        // Magia "\x7FPKG": un .pkg por hash sin extensión en el nombre se
+        // reconoce igual que uno con .pkg.
+        assertTrue(ImportFileGuide.looksLikePkgMagic(byteArrayOf(0x7F, 0x50, 0x4B, 0x47)))
+        assertFalse(ImportFileGuide.looksLikePkgMagic(byteArrayOf(0x50, 0x4B, 0x03, 0x04)))
+        assertFalse(ImportFileGuide.looksLikePkgMagic(byteArrayOf(0x7F, 0x50)))
+        assertFalse(ImportFileGuide.looksLikePkgMagic(byteArrayOf()))
+    }
+
+    @Test
+    fun hashNamedPkgIsStillAPackage() {
+        // El .pkg del usuario: nombre hash, con extensión .pkg.
+        assertTrue(ImportFileGuide.isPackage("EAMfBniHkRQwXxYyZz1234567890abcdefoldLwRkHA.pkg"))
+        assertEquals("pkg", ImportFileGuide.extensionOf("EAMfBniHkRQwXxYyZz1234567890abcdefoldLwRkHA.pkg"))
+    }
 }

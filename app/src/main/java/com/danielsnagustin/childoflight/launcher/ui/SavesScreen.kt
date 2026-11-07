@@ -63,6 +63,12 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             "Las sesiones y los saves de aquí viven en el almacenamiento privado del launcher: solo los usará el núcleo embebido (Etapa 2). " +
                 "Con Vita3K externo, los saves viven dentro de Vita3K y cambiar de sesión aquí no cambia el juego.",
         )
+        if (status.pkgInstalled && !status.gameExtracted) {
+            NoteText(
+                "El juego está como .pkg: los saves viven dentro de Vita3K, no en el launcher. " +
+                    "Las sesiones, los saves y los logros de aquí solo aplican con el juego extraído o el núcleo embebido (Etapa 2).",
+            )
+        }
         val title = status.titleId?.id
 
         // Sesiones / partidas: la gestión de saves vive aquí, ampliada a
@@ -86,15 +92,17 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         }
 
         SectionTitle("Saves")
+        // Los saves del launcher solo existen con el juego extraído:
+        // con un .pkg los saves viven dentro de Vita3K.
         OutlinedButton(
             onClick = { exportSaves.launch("child-of-light-saves.zip") },
             modifier = Modifier.fillMaxWidth(),
-            enabled = title != null && status.saves.isNotEmpty(),
+            enabled = status.gameExtracted && status.saves.isNotEmpty(),
         ) { Text("Exportar saves (.zip)") }
         OutlinedButton(
             onClick = { importSaves.launch("*/*") },
             modifier = Modifier.fillMaxWidth(),
-            enabled = title != null,
+            enabled = status.gameExtracted,
         ) { Text("Importar saves (.zip)") }
 
         SectionTitle("Logros (junto con los saves)")

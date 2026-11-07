@@ -154,10 +154,19 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         )
     }
     deleteDlcTarget?.let { dlcId ->
+        val isPkgDlc = status.dlcs.firstOrNull { it.dlcId == dlcId }?.isPkg == true
         AlertDialog(
             onDismissRequest = { deleteDlcTarget = null },
             title = { Text("¿Borrar el DLC $dlcId?") },
-            text = { Text("Se borra de ux0/addcont/${status.titleId?.id ?: "—"}/$dlcId/. Solo vuelve si importas de nuevo tu copia del DLC.") },
+            text = {
+                Text(
+                    if (isPkgDlc) {
+                        "Se borra el .pkg guardado (ux0/pkg/dlc/$dlcId.pkg) y su licencia. Solo vuelve si importas de nuevo tu copia del DLC."
+                    } else {
+                        "Se borra de ux0/addcont/${status.titleId?.id ?: "—"}/$dlcId/. Solo vuelve si importas de nuevo tu copia del DLC."
+                    },
+                )
+            },
             confirmButton = {
                 TextButton(onClick = { vm.deleteDlc(dlcId); deleteDlcTarget = null }) { Text("Borrar DLC") }
             },

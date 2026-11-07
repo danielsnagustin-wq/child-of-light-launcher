@@ -135,4 +135,54 @@ class ImportTreeSearchTest {
         assertFalse(ImportFileGuide.looksLikePupMagic(byteArrayOf(0x50, 0x4B, 0x03, 0x04)))
         assertFalse(ImportFileGuide.looksLikePupMagic(byteArrayOf(0x53, 0x43)))
     }
+
+    // --- Juego plano (eboot.bin en la raíz + sce_sys/param.sfo) ---
+
+    private fun flatGameTree(titleId: String, ebootName: String = "eboot.bin"): File {
+        File(tmp.root, ebootName).writeText("fake-eboot")
+        val sceSys = File(tmp.root, "sce_sys").apply { mkdirs() }
+        File(sceSys, "param.sfo").writeBytes(
+            buildSfoBytes(listOf("TITLE_ID" to titleId, "TITLE" to "Child of Light")),
+        )
+        return tmp.root
+    }
+
+    @Test
+    fun flatGameWithSfoIsRecognized() {
+        val root = flatGameTree("PCSB00598")
+        val found = ImportTreeSearch.findFlatGame(root)
+        assertNotNull(found)
+        assertEquals(TitleId.EU, found!!.first)
+        assertEquals(root, found.second)
+        assertNull(ImportTreeSearch.findTitleDir(root))
+    }
+
+    @Test
+    fun flatGameWithUppercaseEbootIsRecognized() {
+        val root = flatGameTree("PCSE00480", ebootName = "EBOOT.BIN")
+        val found = ImportTreeSearch.findFlatGame(root)
+        assertNotNull(found)
+        assertEquals(TitleId.US, found!!.first)
+    }
+
+    @Test
+    fun flatGameWithoutSfoIsNotRecognized() {
+        File(tmp.root, "eboot.bin").writeText("fake-eboot")
+        assertNull(ImportTreeSearch.findFlatGame(tmp.root))
+    }
+
+    @Test
+    fun flatGameWithUnknownTitleIsNotRecognized() {
+        val root = flatGameTree("PCSE00999")
+        assertNull(ImportTreeSearch.findFlatGame(root))
+    }
+
+    @Test
+    fun flatGameWithoutEbootIsNotRecognized() {
+        val sceSys = File(tmp.root, "sce_sys").apply { mkdirs() }
+        File(sceSys, "param.sfo").writeBytes(
+            buildSfoBytes(listOf("TITLE_ID" to "PCSB00598")),
+        )
+        assertNull(ImportTreeSearch.findFlatGame(tmp.root))
+    }
 }

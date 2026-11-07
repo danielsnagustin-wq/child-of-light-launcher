@@ -86,8 +86,12 @@ class SessionManager(
         }
     }
 
+    // Title ID del juego EXTRAÍDO, no del .pkg: las sesiones gestionan
+    // la savedata del launcher, y con un .pkg los saves viven en Vita3K.
+    // Si se usara el título del .pkg, se crearía una "Partida 1" vacía
+    // y se harían snapshots de una savedata que no existe.
     private fun installedTitleId(): String? = try {
-        library.scanStatus().titleId?.id
+        library.scanStatus().extractedTitleId?.id
     } catch (_: Exception) {
         null
     }
@@ -145,6 +149,14 @@ class SessionManager(
         val cleanName = name.trim().take(40)
         if (cleanName.isBlank()) return Result.failure(IllegalArgumentException("Ponle un nombre a la sesión."))
         val titleId = installedTitleId() ?: activeSession?.titleId ?: ""
+        // Sin juego EXTRAÍDO no hay savedata en el launcher que gestionar:
+        // con un .pkg los saves viven en Vita3K. Crear una sesión con el
+        // Title ID vacío dejaba una sesión huérfana sin juego.
+        if (titleId.isBlank()) {
+            return Result.failure(
+                IllegalStateException("Instala primero el juego extraído para crear sesiones. Con un .pkg los saves viven dentro de Vita3K."),
+            )
+        }
         // 1. Snapshot de la sesión actual (si la hay): no se pierde nada.
         snapshotActive()
         // 2. Nueva sesión vacía, activa.

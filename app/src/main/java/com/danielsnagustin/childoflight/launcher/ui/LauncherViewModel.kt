@@ -47,7 +47,20 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Acción que puede ofrecer el diálogo de aviso importante. */
-enum class AlertAction { INSTALL_VITA3K, GO_IMPORT }
+enum class AlertAction { INSTALL_VITA3K, GO_IMPORT, DELIVER_PKG_TO_VITA3K, CONFIRM_PKG_INSTALLED }
+
+/**
+ * Un .pkg guardado al que le falta su work.bin (licencia). La tarjeta
+ * de Ajustes lo muestra con el botón "Elegir work.bin".
+ */
+data class PendingPkgLicense(
+    val titleId: String,
+    val kind: com.danielsnagustin.childoflight.launcher.model.PkgKind,
+    val contentId: String,
+    /** Para DLC: id del .pkg guardado (nombre del contenido saneado). */
+    val dlcId: String?,
+    val storedPath: String,
+)
 
 /**
  * Mensaje importante que la UI muestra como DIÁLOGO (no como Snackbar
@@ -113,6 +126,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     /** Versión de Vita3K externo instalado, o null si no está instalado (para la Home). */
     private val _externalVita3k = MutableStateFlow<String?>(null)
     val externalVita3k: StateFlow<String?> = _externalVita3k.asStateFlow()
+
+    /** .pkg guardado sin work.bin: falta la licencia para instalarlo en Vita3K. */
+    private val _pendingPkgLicense = MutableStateFlow<PendingPkgLicense?>(null)
+    val pendingPkgLicense: StateFlow<PendingPkgLicense?> = _pendingPkgLicense.asStateFlow()
 
     fun clearMessage() { _message.value = null }
     fun clearAlert() { _alert.value = null }
@@ -366,10 +383,51 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      */
     private fun showImportResult(result: ImportResult) {
         when (result) {
-            is ImportResult.Rejected, is ImportResult.Failed, is ImportResult.PkgStored ->
+            is ImportResult.Rejected, is ImportResult.Failed ->
                 _alert.value = AlertInfo(importResultMessage(result))
+            is ImportResult.PkgStored -> {
+                // Un .pkg nuevo deja obsoleta la entrega anterior: lo que
+                // se copió a Descargas es el .pkg viejo.
+                if (result.kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME) {
+                    resetPkgDeliveryFlags()
+                }
+                _alert.value = AlertInfo(importResultMessage(result), AlertAction.DELIVER_PKG_TO_VITA3K)
+            }
+            is ImportResult.PkgNeedsLicense -> {
+                if (result.kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME) {
+                    resetPkgDeliveryFlags()
+                }
+                val dlcId = if (result.kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC) {
+                    java.io.File(result.storedPath).nameWithoutExtension
+                } else null
+                _pendingPkgLicense.value = PendingPkgLicense(
+                    titleId = result.titleId.id,
+                    kind = result.kind,
+                    contentId = result.contentId,
+                    dlcId = dlcId,
+                    storedPath = result.storedPath,
+                )
+                _alert.value = AlertInfo(importResultMessage(result))
+            }
             else -> _message.value = importResultMessage(result)
         }
+    }
+
+    /** Un .pkg nuevo (o borrado) invalida la entrega/confirmación anterior. */
+    private fun resetPkgDeliveryFlags() {
+        viewModelScope.launch {
+            val current = settingsRepo.settingsFlow.first()
+            if (current.pkgDeliveredToVita3k || current.pkgInstalledInVita3k) {
+                settingsRepo.save(current.copy(pkgDeliveredToVita3k = false, pkgInstalledInVita3k = false))
+            }
+        }
+    }
+
+    private fun formatBytes(bytes: Long): String = when {
+        bytes >= 1_000_000_000L -> "%.2f GB".format(bytes / 1_000_000_000.0)
+        bytes >= 1_000_000L -> "%.1f MB".format(bytes / 1_000_000.0)
+        bytes >= 1_000L -> "${bytes / 1_000} KB"
+        else -> "$bytes bytes"
     }
 
     private fun importResultMessage(result: ImportResult): String = when (result) {
@@ -377,10 +435,28 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         is ImportResult.DlcSuccess -> "DLC ${result.dlcId} instalado para ${result.titleId.id}."
         is ImportResult.UpdateSuccess -> "Update instalado para ${result.titleId.id}."
         is ImportResult.FirmwareSuccess -> "Firmware ${result.fileName} guardado."
-        is ImportResult.PkgStored -> ".pkg guardado en ${result.storedPath}, pero esta versión NO puede instalar .pkg: " +
-            "no hay parser de paquetes de Vita, y Vita3K externo tampoco ve esa carpeta (es privada del launcher).\n\n" +
-            "Para instalar el juego usa el .zip o .vpk completo, o la carpeta ${result.titleId.id} con eboot.bin dentro. " +
-            "El .pkg queda guardado por si Vita3K lo instala en el futuro."
+        is ImportResult.PkgStored -> {
+            val what = when (result.kind) {
+                com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME -> "El juego"
+                com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC -> "El DLC"
+                com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE -> "El update"
+            }
+            "$what se guardó como .pkg (${result.titleId.id} · ${formatBytes(result.sizeBytes)}).\n\n" +
+                "El launcher no puede instalar un .pkg por sí mismo: lo instala Vita3K. " +
+                "Pulsa «Instalar en Vita3K»: se copia el .pkg y su licencia a Descargas/ChildOfLight/ " +
+                "y se abre Vita3K para instalarlo ahí una sola vez."
+        }
+        is ImportResult.PkgNeedsLicense -> {
+            val what = when (result.kind) {
+                com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME -> "El juego"
+                com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC -> "El DLC"
+                com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE -> "El update"
+            }
+            "$what se guardó como .pkg (${result.titleId.id} · ${formatBytes(result.sizeBytes)}), " +
+                "pero falta su licencia (work.bin de 512 B): sin ella Vita3K no puede instalarlo.\n\n" +
+                "Elige el work.bin en Ajustes (tarjeta «Falta la licencia»): es el archivo work.bin " +
+                "que acompaña al .pkg (a veces se descarga como «work (5).bin»)."
+        }
         is ImportResult.Rejected -> "No se instaló nada:\n\n${result.reason}"
         is ImportResult.Failed -> "No se pudo importar:\n\n${result.reason}\n\nSi el archivo es grande, espera sin cerrar la app: la copia puede tardar varios minutos."
     }
@@ -397,6 +473,125 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             } finally {
                 endImport()
             }
+        }
+    }
+
+    // --- .pkg + Vita3K externo ---
+
+    /** Guarda el work.bin elegido por el usuario para el .pkg pendiente de licencia. */
+    fun importWorkBin(uri: Uri) {
+        val pending = _pendingPkgLicense.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val licenseDest = when (pending.kind) {
+                com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME ->
+                    library.pkgWorkBinFile(pending.titleId)
+                com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC ->
+                    library.pkgDlcWorkBinFile(pending.dlcId ?: return@launch)
+                com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE ->
+                    library.pkgPatchWorkBinFile(pending.titleId)
+            }
+            val result = library.importWorkBin(uri, licenseDest)
+            withContext(Dispatchers.Main) {
+                result.onSuccess {
+                    _pendingPkgLicense.value = null
+                    _alert.value = AlertInfo(
+                        "Licencia guardada: el .pkg ya tiene su work.bin.\n\n" +
+                            "Pulsa «Instalar en Vita3K» para copiar el .pkg y su licencia a " +
+                            "Descargas/ChildOfLight/ e instalarlo en Vita3K.",
+                        AlertAction.DELIVER_PKG_TO_VITA3K,
+                    )
+                }.onFailure { e ->
+                    _alert.value = AlertInfo("Ese archivo no es un work.bin válido: ${e.message}")
+                }
+            }
+            refreshStatus()
+        }
+    }
+
+    /** Copia el .pkg + work.bin a Descargas/ChildOfLight/, abre Vita3K y muestra la guía de instalación. */
+    fun deliverPkgToVita3k() {
+        viewModelScope.launch(Dispatchers.IO) {
+            // Cualquier .pkg guardado vale (juego, DLC o update), no solo el del juego.
+            if (library.storedPkgFilesForDelivery().isEmpty()) {
+                withContext(Dispatchers.Main) {
+                    _alert.value = AlertInfo("No hay ningún .pkg guardado para entregar. Importa primero el .pkg del juego.")
+                }
+                return@launch
+            }
+            // Cada .pkg necesita su work.bin: si falta alguno, se pide
+            // antes de copiar nada (copiar un .pkg sin licencia no sirve).
+            val missing = library.storedPkgsMissingLicense()
+            if (missing.isNotEmpty()) {
+                val first = missing.first()
+                val status = runCatching { library.scanStatus() }.getOrNull()
+                withContext(Dispatchers.Main) {
+                    _pendingPkgLicense.value = PendingPkgLicense(
+                        titleId = first.titleId.id,
+                        kind = first.kind,
+                        contentId = if (first.kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME) {
+                            status?.pkgContentId ?: ""
+                        } else "",
+                        dlcId = first.dlcId,
+                        storedPath = when (first.kind) {
+                            com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME ->
+                                library.pkgGameFile(first.titleId.id).absolutePath
+                            com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC ->
+                                library.pkgDlcFile(first.dlcId ?: "").absolutePath
+                            com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE ->
+                                library.pkgPatchFile(first.titleId.id).absolutePath
+                        },
+                    )
+                    _alert.value = AlertInfo(
+                        "Falta la licencia (work.bin) del ${first.kind.label} ${first.titleId.id}: sin ella Vita3K no puede instalarlo.\n\n" +
+                            "Elige el work.bin en Ajustes (tarjeta «Falta la licencia»).",
+                    )
+                }
+                return@launch
+            }
+            val result = launcher.deliverPkgFiles(library)
+            result.onSuccess { copied ->
+                val current = settingsRepo.settingsFlow.first()
+                settingsRepo.save(current.copy(pkgDeliveredToVita3k = true))
+                val opened = launcher.openVita3k()
+                withContext(Dispatchers.Main) {
+                    if (opened) {
+                        _alert.value = AlertInfo(pkgInstallGuideText(copied), AlertAction.CONFIRM_PKG_INSTALLED)
+                    } else {
+                        _alert.value = AlertInfo(
+                            "Los archivos se copiaron a Descargas/ChildOfLight/, pero Vita3K no está instalado.\n\n" +
+                                "Instálalo y luego vuelve a pulsar «Instalar en Vita3K».",
+                            AlertAction.INSTALL_VITA3K,
+                        )
+                    }
+                }
+            }.onFailure { e ->
+                withContext(Dispatchers.Main) {
+                    _alert.value = AlertInfo("No se pudo entregar el .pkg a Vita3K: ${e.message}")
+                }
+            }
+            refreshStatus()
+        }
+    }
+
+    /** Guía paso a paso para instalar el .pkg dentro de Vita3K (una sola vez). */
+    private fun pkgInstallGuideText(copied: List<String>): String {
+        val files = copied.joinToString("\n") { "• $it" }
+        return "Archivos copiados a Descargas/ChildOfLight/:\n$files\n\n" +
+            "Vita3K está abierto. Instala el juego ahí una sola vez:\n\n" +
+            "1. En Vita3K: File → Install Package (.pkg).\n" +
+            "2. Elige el .pkg de Descargas/ChildOfLight/.\n" +
+            "3. Pulsa «Select work.bin» y elige el work.bin de la misma carpeta.\n" +
+            "4. Espera a que termine la instalación y vuelve aquí.\n\n" +
+            "Cuando lo hayas instalado, pulsa «Ya lo instalé en Vita3K»."
+    }
+
+    /** El usuario confirma que instaló el .pkg en Vita3K (honesto: el launcher no puede comprobarlo). */
+    fun confirmPkgInstalledInVita3k() {
+        viewModelScope.launch {
+            val current = settingsRepo.settingsFlow.first()
+            settingsRepo.save(current.copy(pkgInstalledInVita3k = true))
+            _message.value = "Anotado: el juego quedó instalado en Vita3K. Pulsa JUGAR y ábrelo en la biblioteca de Vita3K."
+            LauncherLog.append(context, "pkg", "Usuario confirmó instalación del .pkg en Vita3K.")
         }
     }
 
@@ -463,6 +658,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 sessionManager.notePlayStarted()
             }
             withContext(Dispatchers.Main) {
+                // Con el juego solo en .pkg, JUGAR abre Vita3K y el juego
+                // se abre en SU biblioteca (si ya se instaló ahí); si no,
+                // el diálogo ofrece entregarlo ("Instalar en Vita3K").
+                val pkgOnly = _status.value.pkgInstalled && !_status.value.gameExtracted
                 when (outcome) {
                     is Vita3KLauncher.LaunchOutcome.LaunchedExternal ->
                         // H8: el config.yml escrito vive en el almacenamiento
@@ -473,18 +672,46 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         // importarlo también dentro de Vita3K. Antes esto
                         // era una Snackbar fugaz y el usuario solo veía que
                         // JUGAR "no hacía nada".
-                        _alert.value = AlertInfo(
-                            "Vita3K abierto.\n\n" +
-                                "IMPORTANTE: el juego que instalaste en el launcher vive en su almacenamiento privado y Vita3K no lo ve. " +
-                                "Para jugar, importa tu copia también dentro de Vita3K (su biblioteca).\n\n" +
-                                "Los ajustes del launcher (config.yml) tampoco los lee Vita3K externo: configúralo dentro de Vita3K.",
-                        )
+                        _alert.value = if (pkgOnly) {
+                            if (settings.pkgInstalledInVita3k) {
+                                AlertInfo(
+                                    "Vita3K abierto.\n\n" +
+                                        "Abre Child of Light en la biblioteca de Vita3K (ya lo instalaste ahí).\n\n" +
+                                        "Los ajustes del launcher (config.yml) no los lee Vita3K externo: configúralo dentro de Vita3K.",
+                                )
+                            } else {
+                                AlertInfo(
+                                    "Vita3K abierto, pero el juego aún no está instalado DENTRO de Vita3K.\n\n" +
+                                        "El .pkg guardado en el launcher no lo ve Vita3K: hay que instalarlo ahí una sola vez.",
+                                    AlertAction.DELIVER_PKG_TO_VITA3K,
+                                )
+                            }
+                        } else {
+                            AlertInfo(
+                                "Vita3K abierto.\n\n" +
+                                    "IMPORTANTE: el juego que instalaste en el launcher vive en su almacenamiento privado y Vita3K no lo ve. " +
+                                    "Para jugar, importa tu copia también dentro de Vita3K (su biblioteca).\n\n" +
+                                    "Los ajustes del launcher (config.yml) tampoco los lee Vita3K externo: configúralo dentro de Vita3K.",
+                            )
+                        }
                     is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ->
-                        _alert.value = AlertInfo(
-                            Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL + "\n\n" +
-                                "El juego que instalaste en el launcher vive en su almacenamiento privado y Vita3K no lo ve: " +
-                                "importa tu copia también dentro de Vita3K (su biblioteca).",
-                        )
+                        _alert.value = if (pkgOnly) {
+                            AlertInfo(
+                                Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL + "\n\n" +
+                                    if (settings.pkgInstalledInVita3k) {
+                                        "Abre Child of Light en la biblioteca de Vita3K."
+                                    } else {
+                                        "El .pkg aún no está instalado dentro de Vita3K."
+                                    },
+                                if (settings.pkgInstalledInVita3k) null else AlertAction.DELIVER_PKG_TO_VITA3K,
+                            )
+                        } else {
+                            AlertInfo(
+                                Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL + "\n\n" +
+                                    "El juego que instalaste en el launcher vive en su almacenamiento privado y Vita3K no lo ve: " +
+                                    "importa tu copia también dentro de Vita3K (su biblioteca).",
+                            )
+                        }
                     is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded ->
                         _message.value = "Núcleo embebido: juego lanzado (${outcome.configPath})."
                     is Vita3KLauncher.LaunchOutcome.EmbeddedCorePresent ->
@@ -928,9 +1155,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun deleteSavesOnly() {
         viewModelScope.launch(Dispatchers.IO) {
-            val title = _status.value.titleId?.id
+            // Solo con el juego extraído: con un .pkg los saves viven en Vita3K.
+            val title = freshExtractedTitleId()
             if (title == null) {
-                withContext(Dispatchers.Main) { _message.value = "No hay juego instalado: no hay saves que borrar." }
+                withContext(Dispatchers.Main) {
+                    _message.value = if (freshTitleId() != null) {
+                        "El juego está como .pkg: los saves viven dentro de Vita3K, no en el launcher."
+                    } else {
+                        "No hay juego instalado: no hay saves que borrar."
+                    }
+                }
                 return@launch
             }
             val ok = library.deleteSavesOnly(title)
@@ -975,11 +1209,23 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private fun freshTitleId(): String? =
         runCatching { library.scanStatus().titleId?.id }.getOrNull()
 
+    /** Title ID del juego EXTRAÍDO, fresco. null si el juego es solo .pkg. */
+    private fun freshExtractedTitleId(): String? =
+        runCatching { library.scanStatus().extractedTitleId?.id }.getOrNull()
+
     fun exportSaves(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
-            val title = freshTitleId()
+            // Los saves del launcher solo existen con el juego extraído:
+            // con un .pkg los saves viven dentro de Vita3K.
+            val title = freshExtractedTitleId()
             if (title == null) {
-                withContext(Dispatchers.Main) { _message.value = "No hay juego instalado: no hay saves que exportar." }
+                withContext(Dispatchers.Main) {
+                    _message.value = if (freshTitleId() != null) {
+                        "El juego está como .pkg: los saves viven dentro de Vita3K, no en el launcher."
+                    } else {
+                        "No hay juego instalado: no hay saves que exportar."
+                    }
+                }
                 return@launch
             }
             val result = library.exportSaves(title, uri)
@@ -995,10 +1241,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun importSaves(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
             // M36: el Title ID se lee fresco de disco, no del estado de la
-            // UI (puede ir desactualizado si cambió el juego).
-            val title = freshTitleId()
+            // UI (puede ir desactualizado si cambió el juego). Y solo del
+            // juego EXTRAÍDO: con un .pkg los saves viven en Vita3K.
+            val title = freshExtractedTitleId()
             if (title == null) {
-                withContext(Dispatchers.Main) { _message.value = "Instala primero el juego para importar saves." }
+                withContext(Dispatchers.Main) {
+                    _message.value = if (freshTitleId() != null) {
+                        "El juego está como .pkg: los saves viven dentro de Vita3K, no en el launcher."
+                    } else {
+                        "Instala primero el juego para importar saves."
+                    }
+                }
                 return@launch
             }
             // M14: respaldo de la sesión activa ANTES de importar: si el
@@ -1021,13 +1274,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun deleteGameData() {
         viewModelScope.launch(Dispatchers.IO) {
-            val title = _status.value.titleId?.id
+            // Título fresco de disco (extraído o .pkg), no el estado de la
+            // UI, que puede ir desactualizado.
+            val title = freshTitleId()
             if (title == null) {
                 withContext(Dispatchers.Main) { _message.value = "No hay juego instalado: no hay datos que borrar." }
                 return@launch
             }
             val deleted = library.deleteGameData(title)
             sessionManager.deleteAllSessions()
+            _pendingPkgLicense.value = null
+            val current = settingsRepo.settingsFlow.first()
+            settingsRepo.save(current.copy(pkgDeliveredToVita3k = false, pkgInstalledInVita3k = false))
             withContext(Dispatchers.Main) {
                 _message.value = "Datos borrados: ${deleted.joinToString(", ")} + todas las sesiones. El launcher queda vacío, listo para importar de nuevo."
             }
@@ -1044,9 +1302,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun markBatteryOptimizationDisabled() {
         viewModelScope.launch {
+            // Se guarda el estado REAL (PowerManager), no un "sí" optimista:
+            // este método se llama al volver del diálogo del sistema, lo
+            // conceda el usuario o no. Antes se persistía true siempre.
+            val disabled = launcher.isBatteryOptimizationDisabled()
             val current = settingsRepo.settingsFlow.first()
-            settingsRepo.save(current.copy(batteryOptimizationDisabled = true))
-            _batteryOptDisabled.value = launcher.isBatteryOptimizationDisabled()
+            settingsRepo.save(current.copy(batteryOptimizationDisabled = disabled))
+            _batteryOptDisabled.value = disabled
         }
     }
 
@@ -1066,6 +1328,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             appendLine()
             appendLine("--- Juego ---")
             appendLine("Instalado: ${status.gameInstalled} (${status.titleId?.id ?: "-"})")
+            appendLine("Extraído: ${status.gameExtracted} | .pkg: ${status.pkgTitleId?.id ?: "-"} (${status.pkgContentId ?: "-"}) | Licencia work.bin: ${status.pkgLicensePresent}")
+            appendLine("Entregado a Vita3K: ${settings.pkgDeliveredToVita3k} | Instalado en Vita3K (confirmado por el usuario): ${settings.pkgInstalledInVita3k}")
             appendLine("DLCs: ${status.dlcCount} | Update: ${status.updateInstalled} | Firmware: ${status.firmwareInstalled}")
             appendLine("Saves: ${status.saves.size} archivos")
             appendLine()

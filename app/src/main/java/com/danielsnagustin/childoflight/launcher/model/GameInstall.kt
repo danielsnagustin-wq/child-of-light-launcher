@@ -33,6 +33,8 @@ data class DlcInfo(
     val titleId: String,
     /** Tamaño total en bytes de ux0/addcont/<title>/<dlc>/, 0 si no se pudo medir. */
     val sizeBytes: Long = 0L,
+    /** true si el DLC es un .pkg guardado (ux0/pkg/dlc/), no una carpeta extraída. */
+    val isPkg: Boolean = false,
 )
 
 data class SaveInfo(
@@ -44,11 +46,34 @@ data class SaveInfo(
 /**
  * Estado real del juego en el almacenamiento privado del launcher.
  * Todo se lee del disco en cada escaneo; nada se inventa.
+ *
+ * Dos formas de tener el juego:
+ * - EXTRAÍDO: ux0/app/<TITLE>/ con eboot.bin (zip/.vpk o carpeta).
+ *   Es lo único que el núcleo embebido (Etapa 2) puede arrancar y lo
+ *   único de lo que el launcher gestiona saves/sesiones.
+ * - .PKG: ux0/pkg/<TITLE>.pkg + <TITLE>.work.bin (licencia). El
+ *   launcher NO puede desencriptarlo ni extraerlo: solo Vita3K
+ *   externo lo instala. Por eso gameExtracted y pkgTitleId van
+ *   por separado: muchas pantallas (saves, sesiones) solo tienen
+ *   sentido con el juego extraído.
  */
 data class GameStatus(
+    /** Title ID efectivo: el extraído si lo hay, si no el del .pkg. */
     val titleId: TitleId? = null,
+    /** Title ID del juego EXTRAÍDO (ux0/app/<TITLE>/eboot.bin). null si no hay. */
+    val extractedTitleId: TitleId? = null,
     val gameInstalled: Boolean = false,
+    /** true solo si hay juego extraído (eboot.bin en ux0/app/). */
+    val gameExtracted: Boolean = false,
     val gameSizeBytes: Long = 0L,
+    /** Title ID leído del header del .pkg guardado. null si no hay .pkg. */
+    val pkgTitleId: TitleId? = null,
+    /** Content ID del .pkg guardado, p. ej. "EP0001-PCSB00598_00-...". */
+    val pkgContentId: String? = null,
+    /** Tamaño del .pkg guardado en bytes. */
+    val pkgSizeBytes: Long = 0L,
+    /** true si el .pkg guardado tiene su work.bin (licencia) al lado. */
+    val pkgLicensePresent: Boolean = false,
     val dlcs: List<DlcInfo> = emptyList(),
     val updateInstalled: Boolean = false,
     val firmwareInstalled: Boolean = false,
@@ -56,12 +81,23 @@ data class GameStatus(
     val saves: List<SaveInfo> = emptyList(),
 ) {
     val dlcCount: Int get() = dlcs.size
+    /** true si hay un .pkg de juego guardado (con o sin licencia). */
+    val pkgInstalled: Boolean get() = pkgTitleId != null
     val installedLabel: String
         get() = when {
             !gameInstalled -> "No instalado"
+            gameExtracted && titleId != null -> "Instalado (${titleId.id} · ${titleId.region})"
+            pkgTitleId != null -> "Instalado como .pkg (${pkgTitleId.id} · ${pkgTitleId.region})"
             titleId == null -> "Instalado"
             else -> "Instalado (${titleId.id} · ${titleId.region})"
         }
+}
+
+/** Qué .pkg es: juego, DLC o update. Lo decide el botón que pulsó el usuario, no el nombre del archivo. */
+enum class PkgKind(val label: String) {
+    GAME("juego"),
+    DLC("DLC"),
+    UPDATE("update"),
 }
 
 sealed class ImportResult {
@@ -70,11 +106,32 @@ sealed class ImportResult {
     data class UpdateSuccess(val titleId: TitleId) : ImportResult()
     data class FirmwareSuccess(val fileName: String) : ImportResult()
     /**
-     * Un .pkg no se puede inspeccionar sin un parser de paquetes de Vita.
-     * Se guarda tal cual y su instalación real la hace Vita3K (Etapa 2).
-     * NUNCA se presenta como "juego instalado".
+     * Un .pkg guardado tras validar su header (Content ID → Title ID).
+     * El nombre del archivo NO se miró: los .pkg reales se llaman por
+     * hash. El juego NO está instalado como tal: el .pkg solo lo puede
+     * instalar Vita3K externo ("Instalar en Vita3K"). Si licenseFound
+     * es false, falta el work.bin y el resultado es PkgNeedsLicense.
      */
-    data class PkgStored(val titleId: TitleId, val storedPath: String) : ImportResult()
+    data class PkgStored(
+        val titleId: TitleId,
+        val storedPath: String,
+        val contentId: String,
+        val sizeBytes: Long,
+        val licenseFound: Boolean,
+        val kind: PkgKind,
+    ) : ImportResult()
+    /**
+     * El .pkg se guardó, pero falta su licencia (work.bin de 512 B).
+     * Sin ella Vita3K no puede instalarlo. El usuario debe elegir el
+     * work.bin (el launcher lo busca también junto al .pkg).
+     */
+    data class PkgNeedsLicense(
+        val titleId: TitleId,
+        val storedPath: String,
+        val contentId: String,
+        val sizeBytes: Long,
+        val kind: PkgKind,
+    ) : ImportResult()
     data class Rejected(val reason: String) : ImportResult()
     data class Failed(val reason: String) : ImportResult()
 }

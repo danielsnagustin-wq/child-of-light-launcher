@@ -14,6 +14,16 @@
          cerrar apps en segundo plano antes de jugar (best-effort). -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+    <!-- Copia de .pkg a Descargas en API 28 (en API 29+ se usa MediaStore, sin permiso). -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+
+    <!-- Visibilidad de paquetes (Android 11+): sin <queries>, el sistema
+         oculta Vita3K y getLaunchIntentForPackage/getPackageInfo devuelven
+         null aunque esté instalado ("Vita3K no instalado" falso y JUGAR
+         bloqueado). Solo se declara Vita3K, nada más. -->
+    <queries>
+        <package android:name="org.vita3k.emulator" />
+    </queries>
 
     <application
         android:allowBackup="true"

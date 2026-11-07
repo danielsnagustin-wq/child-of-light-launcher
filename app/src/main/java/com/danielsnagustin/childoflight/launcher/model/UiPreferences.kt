@@ -16,10 +16,13 @@ enum class AccentColor(val hex: String, val label: String) {
 }
 
 enum class HomeBackground(val hex: String, val label: String) {
-    NIGHT("#0E1420", "Noche"),
-    BLUE("#12233D", "Azul noche"),
-    GREEN("#12291E", "Verde oscuro"),
-    PURPLE("#241A33", "Morado oscuro"),
+    // AMOLED (2026-11-07): tintes casi negros. El fondo de la Home es
+    // negro puro #000000 con un leve tinte arriba; nada de azul marino.
+    // Se guardan por nombre, así que cambiar el hex es seguro.
+    NIGHT("#000000", "Negro AMOLED"),
+    BLUE("#05070D", "Azul noche (AMOLED)"),
+    GREEN("#040805", "Verde oscuro (AMOLED)"),
+    PURPLE("#080510", "Morado oscuro (AMOLED)"),
 }
 
 enum class AppLanguage(val label: String) { SPANISH("Español"), ENGLISH("English") }

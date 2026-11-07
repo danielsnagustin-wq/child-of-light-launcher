@@ -1,5 +1,10 @@
 package com.danielsnagustin.childoflight.launcher.ui
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,12 +70,24 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
     val percent = trophyProgressPercent(achievements)
 
     val gameCard: @Composable () -> Unit = {
+        // Brillo dorado sutil que respira (ciclo lento de 8 s): la
+        // tarjeta se siente viva. Solo un alpha animado, barato.
+        val bannerGlow by rememberInfiniteTransition(label = "bannerGlow").animateFloat(
+            initialValue = 0.03f,
+            targetValue = 0.09f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(4000, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "bannerGlowAlpha",
+        )
         PremiumCard {
-            // Banner premium: degradado noche→violeta con el título grande.
+            // Banner premium: negro profundo con el título grande.
             // Sin el arte vectorial cutre (sol/estrella) y SIN la portada
             // oficial: la portada vive solo en el icono de la app
             // (decisión del usuario). Sin texto "Etapa 1...": la
             // explicación técnica vive en Configuración → GPU y diagnóstico.
+            // AMOLED: el degradado es negro (#0A0A0A → #000000), no azul marino.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -78,6 +95,14 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
                     .background(Brush.verticalGradient(listOf(ColViolet, ColNight, ColVioletDeep)))
                     .padding(horizontal = 16.dp, vertical = 18.dp),
             ) {
+                Box(
+                    modifier = Modifier.fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(ColGold.copy(alpha = bannerGlow), Color.Transparent, Color.Transparent),
+                            ),
+                        ),
+                )
                 Column {
                     Text("Child of Light", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.White)
                     Text("PS Vita · Ubisoft · UbiArt", style = MaterialTheme.typography.bodyMedium, color = ColMutedText)
@@ -154,11 +179,18 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
         val vita3k by vm.externalVita3k.collectAsState()
         val gameOk = status.gameInstalled
         val vitaOk = vita3k != null
+        val pkgOnly = status.pkgInstalled && !status.gameExtracted
+        val delivered = settings?.pkgDeliveredToVita3k == true
+        val confirmedInVita3k = settings?.pkgInstalledInVita3k == true
         PremiumCard {
             Text("Para jugar", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                if (gameOk) "✓ Juego instalado (${status.titleId?.id ?: ""})" else "✗ Juego sin instalar",
+                when {
+                    pkgOnly -> "✓ Juego (.pkg) guardado (${status.pkgTitleId?.id ?: ""})"
+                    gameOk -> "✓ Juego instalado (${status.titleId?.id ?: ""})"
+                    else -> "✗ Juego sin instalar"
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (gameOk) ColSuccessGreen else Color.White,
             )
@@ -167,29 +199,56 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (vitaOk) ColSuccessGreen else Color.White,
             )
-            if (!gameOk || !vitaOk) {
-                Spacer(modifier = Modifier.height(12.dp))
-                if (!gameOk) {
-                    SecondaryButton("Importar juego", onClick = { onNavigate(Screen.SETTINGS) })
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-                if (!vitaOk) {
-                    SecondaryButton("Instalar Vita3K", onClick = { vm.openVita3kReleases() })
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
+            if (pkgOnly) {
                 Text(
-                    "El juego instalado en el launcher no lo ve Vita3K: hay que importar la copia también dentro de Vita3K.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ColMutedText,
+                    if (status.pkgLicensePresent) "✓ Licencia (work.bin) guardada" else "✗ Falta la licencia (work.bin)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (status.pkgLicensePresent) ColSuccessGreen else Color.White,
                 )
-            } else {
-                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    "Todo listo: pulsa JUGAR. Recuerda importar tu copia también dentro de Vita3K.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ColMutedText,
+                    when {
+                        confirmedInVita3k -> "✓ Instalado en Vita3K"
+                        delivered -> "✓ Copiado a Descargas — falta instalarlo en Vita3K"
+                        else -> "✗ Falta instalarlo en Vita3K"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (confirmedInVita3k) ColSuccessGreen else Color.White,
                 )
             }
+            Spacer(modifier = Modifier.height(12.dp))
+            if (!gameOk) {
+                SecondaryButton("Importar juego", onClick = { onNavigate(Screen.SETTINGS) })
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            if (!vitaOk) {
+                SecondaryButton("Instalar Vita3K", onClick = { vm.openVita3kReleases() })
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            if (pkgOnly && !status.pkgLicensePresent) {
+                SecondaryButton("Elegir work.bin", onClick = { onNavigate(Screen.SETTINGS) })
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            if (pkgOnly && status.pkgLicensePresent && !delivered) {
+                SecondaryButton("Instalar en Vita3K", onClick = { vm.deliverPkgToVita3k() })
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            if (pkgOnly && delivered && !confirmedInVita3k) {
+                SecondaryButton("Ya lo instalé en Vita3K", onClick = { vm.confirmPkgInstalledInVita3k() })
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            Text(
+                when {
+                    !gameOk -> "Importa tu copia de Child of Light (.zip, .vpk o .pkg — el nombre del archivo da igual)."
+                    !vitaOk -> "Instala Vita3K para jugar: el launcher no trae núcleo embebido en Etapa 1."
+                    pkgOnly && !status.pkgLicensePresent -> "Sin la licencia (work.bin) Vita3K no puede instalar el .pkg."
+                    pkgOnly && !delivered -> "El .pkg está guardado. Instálalo en Vita3K para poder jugar."
+                    pkgOnly && !confirmedInVita3k -> "Copiado a Descargas/ChildOfLight/. Instálalo en Vita3K (File → Install Package (.pkg)) y confirma aquí."
+                    pkgOnly -> "Todo listo: pulsa JUGAR y abre el juego en la biblioteca de Vita3K."
+                    else -> "Todo listo: pulsa JUGAR. Recuerda importar tu copia también dentro de Vita3K."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = ColMutedText,
+            )
         }
     }
 
@@ -222,17 +281,19 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
 
             // El orden de secciones lo elige el usuario (GAME_CARD / GPU_CARD);
             // NAV_BUTTONS ya no se muestra en Home: vive en Configuración.
+            // Aparición progresiva: cada tarjeta entra con fundido + subida,
+            // con 90 ms entre ellas. Una sola vez al abrir la Home.
             val order = uiPrefs?.sectionOrder ?: HomeSection.entries.toList()
             order.forEach { section ->
                 when (section) {
-                    HomeSection.GAME_CARD -> { gameCard(); Spacer(modifier = Modifier.height(16.dp)) }
-                    HomeSection.GPU_CARD -> { gpuBadge(); Spacer(modifier = Modifier.height(16.dp)) }
+                    HomeSection.GAME_CARD -> { FadeSlideIn(0) { gameCard() }; Spacer(modifier = Modifier.height(16.dp)) }
+                    HomeSection.GPU_CARD -> { FadeSlideIn(90) { gpuBadge() }; Spacer(modifier = Modifier.height(16.dp)) }
                     HomeSection.NAV_BUTTONS -> { /* En Configuración (engranaje). */ }
                 }
             }
-            achievementsCard()
+            FadeSlideIn(180) { achievementsCard() }
             Spacer(modifier = Modifier.height(16.dp))
-            playStatusCard()
+            FadeSlideIn(270) { playStatusCard() }
             Spacer(modifier = Modifier.height(24.dp))
         }
     }

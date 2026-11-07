@@ -1,12 +1,16 @@
 package com.danielsnagustin.childoflight.launcher.launcher
 
 import android.app.ActivityManager
+import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.PowerManager
+import android.provider.MediaStore
 import android.provider.Settings
 import com.danielsnagustin.childoflight.launcher.core.Vita3kCoreBridge
 import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
@@ -16,6 +20,9 @@ import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.data.SessionManager
 import com.danielsnagustin.childoflight.launcher.data.Vita3kConfigGenerator
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 
 /**
  * Lanzador del juego.
@@ -26,6 +33,8 @@ import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
  * 2. Activa la sesión correcta (SessionManager): snapshot de la
  *    sesión actual y restore de la activa en la savedata viva. Si
  *    falla, NO se lanza (mejor no lanzar con la savedata equivocada).
+ *    SOLO si el juego está EXTRAÍDO: con un .pkg no hay savedata en
+ *    el launcher (vive en Vita3K) y no hay sesión que activar.
  * 3. Si lo pide el ajuste, cierra apps en segundo plano (best-effort).
  * 4. Escribe config.yml con los ajustes actuales.
  * 5. Núcleo embebido (Etapa 2, esqueleto): si Vita3kCoreBridge está
@@ -33,7 +42,8 @@ import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
  *    puente devuelve NOT_IMPLEMENTED y se sigue con el fallback.
  *    El núcleo embebido SÍ necesita firmware local: sin él, se
  *    bloquea con UNA frase (no hay otra fuente de firmware dentro
- *    de la app).
+ *    de la app). Con un .pkg no se intenta el núcleo embebido: no
+ *    hay juego extraído que cargar.
  * 6. Fallback honesto: lanza la app externa org.vita3k.emulator
  *    (Vita3K oficial de Android) si está instalada, con un Intent
  *    MAIN normal. No se inventa un deep-link para arrancar un Title
@@ -45,6 +55,15 @@ import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
  *    firmware por internet.
  * 7. Si ni siquiera está la app externa, devuelve el error con
  *    instrucciones claras en vez de fallar en silencio.
+ *
+ * .pkg + Vita3K externo (deliverPkgFiles): el launcher NO puede
+ * desencriptar un .pkg ni leer la biblioteca de Vita3K. La única vía
+ * honesta es copiar el .pkg + work.bin a Descargas/ChildOfLight/
+ * (carpeta compartida que Vita3K sí lee), abrir Vita3K y guiar al
+ * usuario para instalarlo ahí una sola vez (File > Install Package
+ * (.pkg) > elegir el .pkg > "Select work.bin" > elegir el work.bin).
+ * Vita3K Android no expone ningún intent público documentado para
+ * instalar un .pkg: no se inventa ninguno.
  */
 class Vita3KLauncher(private val context: Context) {
 
@@ -81,12 +100,16 @@ class Vita3KLauncher(private val context: Context) {
     data class Prerequisites(
         val gameInstalled: Boolean,
         val titleId: String?,
+        /** true si el juego está EXTRAÍDO (eboot.bin). false = solo .pkg. */
+        val gameExtracted: Boolean,
         val firmwareInstalled: Boolean,
         val firmwareStatus: FirmwareStatus,
         val missing: List<String>,
     ) {
         /** Solo el juego es obligatorio. El firmware es aviso, no bloqueo. */
         val ready: Boolean get() = gameInstalled
+        /** El juego es solo un .pkg guardado: no hay saves/sesiones en el launcher. */
+        val pkgOnly: Boolean get() = gameInstalled && !gameExtracted
     }
 
     fun checkPrerequisites(library: GameLibraryRepository): Prerequisites {
@@ -99,10 +122,90 @@ class Vita3KLauncher(private val context: Context) {
         return Prerequisites(
             status.gameInstalled,
             status.titleId?.id,
+            status.gameExtracted,
             firmwareStatus.ready,
             firmwareStatus,
             missing,
         )
+    }
+
+    /**
+     * Copia los .pkg + work.bin guardados a Descargas/ChildOfLight/
+     * (carpeta compartida que Vita3K sí puede leer) para instalarlos
+     * ahí una sola vez. Vita3K Android no expone ningún intent público
+     * documentado para instalar un .pkg: por eso se copia + se abre
+     * Vita3K + se muestra la guía paso a paso. No se inventa un
+     * deep-link. Devuelve las rutas públicas copiadas.
+     */
+    fun deliverPkgFiles(library: GameLibraryRepository): Result<List<String>> {
+        return try {
+            val files = library.storedPkgFilesForDelivery()
+            if (files.isEmpty()) {
+                return Result.failure(
+                    IllegalStateException("No hay ningún .pkg guardado para entregar. Importa primero el .pkg del juego."),
+                )
+            }
+            val copied = files.map { copyToDownloads(it) }
+            LauncherLog.append(context, "pkg", "Entregados a Descargas/ChildOfLight/: ${copied.joinToString()}")
+            Result.success(copied)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun copyToDownloads(file: File): String {
+        val fileName = file.name
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // MediaStore (API 29+): sin permiso de almacenamiento.
+            val resolver = context.contentResolver
+            // Si ya existe un archivo con ese nombre en la carpeta, se
+            // borra primero para no acumular copias viejas del .pkg.
+            resolver.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Downloads._ID),
+                "${MediaStore.Downloads.DISPLAY_NAME} = ? AND ${MediaStore.Downloads.RELATIVE_PATH} = ?",
+                arrayOf(fileName, "Download/ChildOfLight/"),
+                null,
+            )?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(0)
+                    resolver.delete(ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id), null, null)
+                }
+            }
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
+                put(MediaStore.Downloads.RELATIVE_PATH, "Download/ChildOfLight/")
+            }
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("No se pudo crear $fileName en Descargas.")
+            resolver.openOutputStream(uri)?.use { out ->
+                FileInputStream(file).use { it.copyTo(out) }
+            } ?: throw IllegalStateException("No se pudo escribir $fileName en Descargas.")
+            "Descargas/ChildOfLight/$fileName"
+        } else {
+            // API 28: carpeta pública legacy (permiso WRITE_EXTERNAL_STORAGE maxSdkVersion 28).
+            @Suppress("DEPRECATION")
+            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "ChildOfLight")
+            if (!dir.exists()) dir.mkdirs()
+            val dest = File(dir, fileName)
+            FileInputStream(file).use { input ->
+                FileOutputStream(dest).use { out -> input.copyTo(out) }
+            }
+            dest.absolutePath
+        }
+    }
+
+    /** Abre Vita3K externo (su biblioteca). false si no está instalado. */
+    fun openVita3k(): Boolean {
+        val intent = context.packageManager.getLaunchIntentForPackage(VITA3K_PACKAGE) ?: return false
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            context.startActivity(intent)
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     suspend fun launch(
@@ -130,13 +233,17 @@ class Vita3KLauncher(private val context: Context) {
             return LaunchOutcome.Blocked(pre.missing.joinToString("\n"))
         }
         // Sesión correcta ANTES de tocar nada: si falla, no se lanza.
-        if (sessionManager != null) {
+        // Con un .pkg NO hay sesión que activar: los saves viven en
+        // Vita3K, no en el launcher (no hay savedata que respaldar).
+        if (sessionManager != null && !pre.pkgOnly) {
             val activated = sessionManager.activateForLaunch()
             if (activated.isFailure) {
                 return LaunchOutcome.Blocked(
                     activated.exceptionOrNull()?.message ?: "No se pudo activar la sesión.",
                 )
             }
+        } else if (pre.pkgOnly) {
+            LauncherLog.append(context, "launch", "Juego solo en .pkg: sin sesiones (los saves viven en Vita3K).")
         }
         if (settings.closeBackgroundApps) {
             val killed = closeBackgroundApps()
@@ -151,7 +258,9 @@ class Vita3KLauncher(private val context: Context) {
         // callejón sin salida y nunca probaba Vita3K externo. Se salta
         // directo al intent externo.
         var embeddedAttemptFailed = false
-        if (Vita3kCoreBridge.available) {
+        // Con un .pkg no se intenta el núcleo embebido: no hay juego
+        // extraído que cargar (loadGame necesitaría eboot.bin).
+        if (Vita3kCoreBridge.available && !pre.pkgOnly) {
             if (!pre.firmwareStatus.ready) {
                 return LaunchOutcome.Blocked(FIRMWARE_BLOCKED_EMBEDDED)
             }
@@ -169,7 +278,7 @@ class Vita3KLauncher(private val context: Context) {
                 embeddedAttemptFailed = true
             }
         }
-        if (embeddedCorePresent() && !embeddedAttemptFailed) {
+        if (embeddedCorePresent() && !embeddedAttemptFailed && !pre.pkgOnly) {
             // .so presente pero sin puente JNI funcional (Etapa 2 en curso).
             LauncherLog.append(context, "launch", "Núcleo embebido detectado; falta el punto de entrada JNI (Etapa 2).")
             return LaunchOutcome.EmbeddedCorePresent(configFile.absolutePath)

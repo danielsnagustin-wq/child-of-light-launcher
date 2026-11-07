@@ -68,6 +68,8 @@ class SettingsRepository(private val context: Context) {
         val BATTERY_OPT_DISABLED = booleanPreferencesKey("battery_opt_disabled")
         val SAFE_MODE = booleanPreferencesKey("safe_mode")
         val CLOSE_BACKGROUND = booleanPreferencesKey("close_background_apps")
+        val PKG_DELIVERED = booleanPreferencesKey("pkg_delivered_to_vita3k")
+        val PKG_INSTALLED_IN_VITA3K = booleanPreferencesKey("pkg_installed_in_vita3k")
         val HIDE_TOUCH_GAMEPAD = booleanPreferencesKey("hide_touch_when_gamepad")
         // M34: true cuando ya se guardó alguna configuración (preset o ajuste).
         val PRESET_APPLIED = booleanPreferencesKey("preset_applied")
@@ -121,6 +123,8 @@ class SettingsRepository(private val context: Context) {
             batteryOptimizationDisabled = p[Keys.BATTERY_OPT_DISABLED] ?: false,
             safeMode = p[Keys.SAFE_MODE] ?: false,
             closeBackgroundApps = p[Keys.CLOSE_BACKGROUND] ?: true,
+            pkgDeliveredToVita3k = p[Keys.PKG_DELIVERED] ?: false,
+            pkgInstalledInVita3k = p[Keys.PKG_INSTALLED_IN_VITA3K] ?: false,
             hideTouchWhenGamepadConnected = p[Keys.HIDE_TOUCH_GAMEPAD] ?: true,
         )
     }
@@ -178,6 +182,8 @@ class SettingsRepository(private val context: Context) {
             p[Keys.BATTERY_OPT_DISABLED] = settings.batteryOptimizationDisabled
             p[Keys.SAFE_MODE] = settings.safeMode
             p[Keys.CLOSE_BACKGROUND] = settings.closeBackgroundApps
+            p[Keys.PKG_DELIVERED] = settings.pkgDeliveredToVita3k
+            p[Keys.PKG_INSTALLED_IN_VITA3K] = settings.pkgInstalledInVita3k
             p[Keys.HIDE_TOUCH_GAMEPAD] = settings.hideTouchWhenGamepadConnected
             // M34: hay ajustes guardados (aunque sean los del primer preset).
             // detectGpu() solo aplica un preset automáticamente si esto es false.
@@ -207,6 +213,8 @@ class SettingsRepository(private val context: Context) {
         // M21: el preset cambia rendimiento/calidad, no los gustos del
         // usuario: audio, modo seguro, cerrar apps y ocultar controles se
         // conservan (antes se reseteaban en silencio al aplicar un preset).
+        // El estado de entrega del .pkg también se conserva: un preset no
+        // es importar un juego nuevo.
         val merged = base.copy(
             gpuDriver = driver,
             customDriverName = current?.customDriverName ?: "",
@@ -218,6 +226,8 @@ class SettingsRepository(private val context: Context) {
             ngsEnable = current?.ngsEnable ?: true,
             safeMode = current?.safeMode ?: false,
             closeBackgroundApps = current?.closeBackgroundApps ?: true,
+            pkgDeliveredToVita3k = current?.pkgDeliveredToVita3k ?: false,
+            pkgInstalledInVita3k = current?.pkgInstalledInVita3k ?: false,
             hideTouchWhenGamepadConnected = current?.hideTouchWhenGamepadConnected ?: true,
         )
         save(merged)

@@ -191,6 +191,18 @@ data class LauncherSettings(
     /** Cerrar apps en segundo plano antes de jugar (best-effort, ver Vita3KLauncher). */
     val closeBackgroundApps: Boolean = true,
     /**
+     * .pkg entregado a Vita3K: el launcher copió el .pkg + work.bin a
+     * Descargas/ChildOfLight/ y abrió Vita3K con la guía. Se resetea
+     * al importar un .pkg nuevo o borrar los datos del juego.
+     */
+    val pkgDeliveredToVita3k: Boolean = false,
+    /**
+     * El usuario confirmó ("Ya lo instalé en Vita3K") que instaló el
+     * .pkg dentro de Vita3K. Es una confirmación HONESTA: el launcher
+     * no puede leer la biblioteca de Vita3K para comprobarlo.
+     */
+    val pkgInstalledInVita3k: Boolean = false,
+    /**
      * Ocultar controles táctiles si hay un mando físico conectado.
      * Si el usuario borró todos los botones (usa mando físico), el
      * overlay no estorba: con este interruptor ON, el launcher oculta

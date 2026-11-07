@@ -46,6 +46,22 @@ object ImportTreeSearch {
         findChildIgnoreCase(titleDir, "eboot.bin")?.takeIf { it.isFile }
 
     /**
+     * Juego PLANO: eboot.bin en la raíz del árbol (sin carpeta de Title
+     * ID) con sce_sys/param.sfo al lado. El Title ID se lee del SFO por
+     * contenido, nunca del nombre de ninguna carpeta: hay paquetes que
+     * traen el juego descomprimido sin la carpeta PCSE00480/PCSB00598.
+     * Devuelve el Title ID y la raíz, o null si no es un juego plano válido.
+     */
+    fun findFlatGame(root: File): Pair<TitleId, File>? {
+        if (findEboot(root) == null) return null
+        val sceSys = findChildIgnoreCase(root, "sce_sys")?.takeIf { it.isDirectory } ?: return null
+        val sfo = findChildIgnoreCase(sceSys, "param.sfo")?.takeIf { it.isFile } ?: return null
+        val info = ParamSfo.parse(sfo).getOrNull() ?: return null
+        val title = TitleId.fromString(info.titleId) ?: return null
+        return title to root
+    }
+
+    /**
      * Carpeta addcont/ dentro de la carpeta del juego: primero hija
      * directa (estructura normal <TITLE>/addcont/<DLC>/), y si no, un
      * nivel más abajo (paquetes con una carpeta intermedia).

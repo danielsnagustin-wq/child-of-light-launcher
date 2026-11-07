@@ -6,6 +6,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -140,14 +147,30 @@ private fun LauncherApp(vm: LauncherViewModel) {
 
     Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
         Box(modifier = Modifier.padding(padding)) {
-            when (screen) {
-                Screen.HOME -> HomeScreen(vm) { screenName = it.name }
-                Screen.SETTINGS -> SettingsScreen(vm, { screenName = Screen.HOME.name }, { screenName = it.name })
-                Screen.GPU -> GpuDiagnosticsScreen(vm) { screenName = Screen.HOME.name }
-                Screen.TOUCH -> TouchLayoutScreen(vm) { screenName = Screen.HOME.name }
-                Screen.SAVES -> SavesScreen(vm) { screenName = Screen.HOME.name }
-                Screen.ACHIEVEMENTS -> AchievementsScreen(vm) { screenName = Screen.HOME.name }
-                Screen.CLEANUP -> CleanupScreen(vm) { screenName = Screen.SETTINGS.name }
+            // Transición suave entre pantallas (fundido + deslizamiento,
+            // 250 ms): la navegación deja de ser un salto seco.
+            AnimatedContent(
+                targetState = screen,
+                transitionSpec = {
+                    (fadeIn(animationSpec = tween(250)) + slideInHorizontally(
+                        initialOffsetX = { it / 6 },
+                        animationSpec = tween(250),
+                    )) togetherWith (fadeOut(animationSpec = tween(200)) + slideOutHorizontally(
+                        targetOffsetX = { -it / 6 },
+                        animationSpec = tween(200),
+                    ))
+                },
+                label = "screenTransition",
+            ) { target ->
+                when (target) {
+                    Screen.HOME -> HomeScreen(vm) { screenName = it.name }
+                    Screen.SETTINGS -> SettingsScreen(vm, { screenName = Screen.HOME.name }, { screenName = it.name })
+                    Screen.GPU -> GpuDiagnosticsScreen(vm) { screenName = Screen.HOME.name }
+                    Screen.TOUCH -> TouchLayoutScreen(vm) { screenName = Screen.HOME.name }
+                    Screen.SAVES -> SavesScreen(vm) { screenName = Screen.HOME.name }
+                    Screen.ACHIEVEMENTS -> AchievementsScreen(vm) { screenName = Screen.HOME.name }
+                    Screen.CLEANUP -> CleanupScreen(vm) { screenName = Screen.SETTINGS.name }
+                }
             }
         }
     }
@@ -168,6 +191,8 @@ private fun LauncherApp(vm: LauncherViewModel) {
                 when (info.action) {
                     AlertAction.INSTALL_VITA3K -> TextButton(onClick = { vm.clearAlert(); vm.openVita3kReleases() }) { Text("Instalar Vita3K") }
                     AlertAction.GO_IMPORT -> TextButton(onClick = { vm.clearAlert(); screenName = Screen.SETTINGS.name }) { Text("Ir a importar") }
+                    AlertAction.DELIVER_PKG_TO_VITA3K -> TextButton(onClick = { vm.clearAlert(); vm.deliverPkgToVita3k() }) { Text("Instalar en Vita3K") }
+                    AlertAction.CONFIRM_PKG_INSTALLED -> TextButton(onClick = { vm.clearAlert(); vm.confirmPkgInstalledInVita3k() }) { Text("Ya lo instalé en Vita3K") }
                     null -> TextButton(onClick = { vm.clearAlert() }) { Text("Entendido") }
                 }
             },

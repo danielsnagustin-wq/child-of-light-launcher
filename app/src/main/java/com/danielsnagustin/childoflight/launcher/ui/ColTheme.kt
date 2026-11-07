@@ -1,6 +1,18 @@
 package com.danielsnagustin.childoflight.launcher.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,60 +36,72 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 
-val ColNight = Color(0xFF0E1420)
+// --- Paleta AMOLED (2026-11-07): negro puro #000000, píxeles apagados.
+// Nada de azul marino oscuro: los fondos son negro puro y las tarjetas
+// un negro muy suave (#0A0A0A / #111111) con borde dorado sutil. El
+// texto es blanco o gris claro (#B8C2D4): nunca gris oscuro sobre
+// negro, para no perder legibilidad. Los acentos dorados se mantienen.
+val ColNight = Color(0xFF000000)
 val ColGold = Color(0xFFF2B705)
 val ColBlue = Color(0xFF7FB3D5)
-val ColCard = Color(0xFF1A2436)
+val ColCard = Color(0xFF1A1A1A)
 
 // --- Paleta premium (auditoría + rediseño 2026-11-07) ---
-// Degradado noche → violeta como el arte de Child of Light (cielo,
-// estrellas, aurora). Dorado solo para lo importante (JUGAR, progreso).
-val ColViolet = Color(0xFF241A33)
-val ColVioletDeep = Color(0xFF171226)
-val ColCardElevated = Color(0xFF232F47)
+// Degradado negro profundo con el dorado solo para lo importante
+// (JUGAR, progreso). Antes era noche→violeta (#0E1420/#241A33);
+// en AMOLED eso es azul marino: ahora es negro puro.
+val ColViolet = Color(0xFF0A0A0A)
+val ColVioletDeep = Color(0xFF000000)
+val ColCardElevated = Color(0xFF111111)
 val ColMutedText = Color(0xFFB8C2D4)
 val ColSuccessGreen = Color(0xFF6FCF97)
 
-/** Degradado premium de fondo: azul noche arriba → violeta abajo. */
+/** Fondo AMOLED: negro puro #000000 (píxeles apagados, ahorra batería). */
 fun premiumBackgroundBrush(): Brush = Brush.verticalGradient(
-    listOf(ColNight, ColVioletDeep, ColViolet),
+    listOf(Color.Black, Color.Black),
 )
 
-/** Degradado de fondo respetando el color elegido por el usuario. */
+/** Fondo de la Home: el tinte elegido por el usuario (casi negro) arriba → negro puro abajo. */
 fun homeBackgroundBrush(baseHex: String?): Brush {
     val base = try {
-        Color(android.graphics.Color.parseColor(baseHex ?: "#0E1420"))
+        Color(android.graphics.Color.parseColor(baseHex ?: "#000000"))
     } catch (_: Exception) {
-        ColNight
+        Color.Black
     }
-    return Brush.verticalGradient(listOf(base, ColVioletDeep, ColViolet))
+    return Brush.verticalGradient(listOf(base, Color.Black))
 }
 
-/** Tarjeta premium: superficie elevada, bordes grandes, sombra suave. */
+/** Tarjeta premium: negro muy suave (#111111) con borde dorado sutil. Sin sombra: en negro puro no se ve. */
 @Composable
 fun PremiumCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
+    val border = BorderStroke(1.dp, ColGold.copy(alpha = 0.22f))
     if (onClick != null) {
         Card(
             modifier = modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = ColCardElevated),
-            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            border = border,
             onClick = onClick,
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -89,7 +113,8 @@ fun PremiumCard(
             modifier = modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = ColCardElevated),
-            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            border = border,
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 content()
@@ -118,12 +143,70 @@ fun ScreenHeader(title: String, subtitle: String? = null) {
     Spacer(modifier = Modifier.height(16.dp))
 }
 
+// ---------------------------------------------------------------------------
+// Movimiento (2026-11-07): la interfaz se sentía estática. Animaciones
+// baratas y de una sola vez (aparición, pulsación, progreso); solo dos
+// infinitas y lentas: el brillo del banner de la Home y el pulso de
+// "Importando…", que solo existe mientras se importa. Nada de bucles
+// rápidos ni animaciones que mantengan la GPU despierta.
+// ---------------------------------------------------------------------------
+
+/** Aparición progresiva: fundido + subida suave con retardo. Una sola vez al componer. */
+@Composable
+fun FadeSlideIn(delayMillis: Int, content: @Composable () -> Unit) {
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(delayMillis.toLong())
+        visible = true
+    }
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(animationSpec = tween(450, easing = FastOutSlowInEasing)) +
+            slideInVertically(
+                initialOffsetY = { it / 3 },
+                animationSpec = tween(450, easing = FastOutSlowInEasing),
+            ),
+    ) {
+        content()
+    }
+}
+
+/** Pulso suave de alpha (0.55 ↔ 1) para textos de progreso. Solo mientras se muestra. */
+@Composable
+fun PulsingText(text: String, color: Color, style: androidx.compose.ui.text.TextStyle) {
+    val alpha by rememberInfiniteTransition(label = "pulse").animateFloat(
+        initialValue = 0.55f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "pulseAlpha",
+    )
+    Text(
+        text = text,
+        style = style,
+        fontWeight = FontWeight.SemiBold,
+        color = color,
+        modifier = Modifier.alpha(alpha),
+    )
+}
+
 /** Botón principal dorado (solo para lo importante: JUGAR, acciones clave). */
 @Composable
 fun GoldButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.96f else 1f,
+        animationSpec = tween(durationMillis = 120),
+        label = "goldPress",
+    )
     Button(
         onClick = onClick,
-        modifier = modifier.fillMaxWidth().height(56.dp),
+        modifier = modifier.fillMaxWidth().height(56.dp)
+            .graphicsLayer(scaleX = scale, scaleY = scale),
+        interactionSource = interactionSource,
         enabled = enabled,
         shape = RoundedCornerShape(16.dp),
         colors = ButtonDefaults.buttonColors(
@@ -140,9 +223,18 @@ fun GoldButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier,
 /** Botón secundario: contorno claro, sin amarillo. */
 @Composable
 fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.96f else 1f,
+        animationSpec = tween(durationMillis = 120),
+        label = "secondaryPress",
+    )
     OutlinedButton(
         onClick = onClick,
-        modifier = modifier.fillMaxWidth().height(52.dp),
+        modifier = modifier.fillMaxWidth().height(52.dp)
+            .graphicsLayer(scaleX = scale, scaleY = scale),
+        interactionSource = interactionSource,
         enabled = enabled,
         shape = RoundedCornerShape(16.dp),
     ) {
@@ -158,20 +250,25 @@ fun BackButton(onBack: () -> Unit) {
     Spacer(modifier = Modifier.height(24.dp))
 }
 
-/** Barra de progreso dorada (logros). */
+/** Barra de progreso dorada (logros). Anima el progreso al cambiar (800 ms), no salta. */
 @Composable
 fun GoldProgressBar(progress: Float, modifier: Modifier = Modifier) {
     // Antes era LinearProgressIndicator: con progreso 0 dibujaba un
     // punto dorado (la tapa redondeada del indicador) y parecía un error
     // de la barra. Barra propia: sin punto cuando no hay progreso.
     val p = progress.coerceIn(0f, 1f)
+    val animated by animateFloatAsState(
+        targetValue = p,
+        animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
+        label = "goldProgress",
+    )
     Box(
         modifier = modifier.fillMaxWidth().height(8.dp)
             .clip(RoundedCornerShape(4.dp)).background(ColCard),
     ) {
-        if (p > 0f) {
+        if (animated > 0f) {
             Box(
-                modifier = Modifier.fillMaxWidth(p).height(8.dp)
+                modifier = Modifier.fillMaxWidth(animated).height(8.dp)
                     .clip(RoundedCornerShape(4.dp)).background(ColGold),
             )
         }

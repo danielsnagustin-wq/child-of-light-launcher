@@ -28,7 +28,11 @@ class TurnipDriverRepository(private val context: Context) {
 
     /** Instala un zip de Turnip. Devuelve el nombre guardado. */
     fun installDriverZip(uri: Uri, fileName: String): Result<String> {
-        if (!fileName.lowercase().endsWith(".zip")) {
+        // El nombre viene de DISPLAY_NAME del selector: se toma solo el
+        // basename. Un nombre con "/" o ".." escaparía de la carpeta de
+        // drivers y escribiría fuera de ella.
+        val safeName = File(fileName).name
+        if (!safeName.lowercase().endsWith(".zip")) {
             return Result.failure(IllegalArgumentException("El driver Turnip debe ser un archivo .zip."))
         }
         return try {
@@ -38,11 +42,11 @@ class TurnipDriverRepository(private val context: Context) {
             // se copiaba el nuevo; si openInputStream devolvía null o la
             // copia fallaba, el driver viejo (que funcionaba) ya estaba
             // perdido. Ahora se copia a temporal y solo se sustituye al final.
-            val tmp = File(dir, "$fileName.tmp")
+            val tmp = File(dir, "$safeName.tmp")
             context.contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(tmp).use { out -> input.copyTo(out) }
             } ?: return Result.failure(IllegalStateException("No se pudo abrir el zip."))
-            val dest = File(dir, fileName)
+            val dest = File(dir, safeName)
             var renamed = tmp.renameTo(dest)
             if (!renamed && dest.exists()) {
                 dest.delete()
@@ -54,8 +58,8 @@ class TurnipDriverRepository(private val context: Context) {
             }
             // Solo se guarda el último driver instalado.
             dir.listFiles()?.forEach { if (it != dest) it.delete() }
-            LauncherLog.append(context, "driver", "Turnip instalado: $fileName (${dest.length()} bytes)")
-            Result.success(fileName)
+            LauncherLog.append(context, "driver", "Turnip instalado: $safeName (${dest.length()} bytes)")
+            Result.success(safeName)
         } catch (e: Exception) {
             Result.failure(e)
         }

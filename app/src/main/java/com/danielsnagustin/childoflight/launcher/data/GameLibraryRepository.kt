@@ -53,6 +53,19 @@ object ImportFileGuide {
         return magic.indices.all { firstBytes[it] == magic[it] }
     }
 
+    /**
+     * Magia de un .pkg de Vita ("\x7FPKG" al inicio). Sirve para
+     * reconocer el paquete aunque el archivo se llame por hash y no
+     * traiga extensión en el nombre (algunos gestores devuelven un ID
+     * de documento en vez del nombre real). El nombre nunca decide
+     * nada: solo la magia y, después, el Content ID del header.
+     */
+    fun looksLikePkgMagic(firstBytes: ByteArray): Boolean {
+        if (firstBytes.size < 4) return false
+        return firstBytes[0] == 0x7F.toByte() && firstBytes[1] == 0x50.toByte() &&
+            firstBytes[2] == 0x4B.toByte() && firstBytes[3] == 0x47.toByte()
+    }
+
     /** Mensaje claro en español cuando el usuario elige un .bin suelto. */
     fun bareBinHelp(what: String): String = when (what) {
         "DLC" -> "Elegiste un archivo .bin suelto. Ese archivo solo no instala el DLC: " +
@@ -95,10 +108,21 @@ object ImportFileGuide {
  *   la extracción va a una carpeta temporal y solo se mueve al destino
  *   si la validación pasa.
  *
- * .pkg: NO se puede inspeccionar sin un parser de paquetes de Vita.
- * Se acepta solo si el nombre del archivo contiene el Title ID y se
- * guarda en import_pending/ con el resultado PkgStored. Nunca se
- * presenta como "juego instalado".
+ * .pkg: se valida por CONTENIDO, nunca por el nombre del archivo.
+ * El parser (PkgHeaderParser) lee el header: magic "\x7FPKG" y el
+ * Content ID en 0x30, de donde sale el Title ID (PCSE00480/PCSB00598)
+ * y la región. Los .pkg reales se llaman por hash y no traen el Title
+ * ID en el nombre: exigirlo era el error que rechazaba la copia del
+ * usuario. El .pkg se guarda en ux0/pkg/ con su work.bin (licencia
+ * zRIF de 512 B, buscada junto al .pkg o pedida al usuario). El
+ * launcher NO puede desencriptar ni extraer un .pkg: instalarlo es
+ * trabajo de Vita3K externo ("Instalar en Vita3K" copia ambos a
+ * Descargas/ChildOfLight/ y abre Vita3K con la guía).
+ *
+ * .zip/.vpk: dentro debe haber una carpeta PCSE00480 o PCSB00598
+ * (puede ir anidada hasta 3 niveles) con eboot.bin, O el juego plano
+ * (eboot.bin en la raíz con sce_sys/param.sfo que diga el Title ID).
+ * La extensión se resuelve por nombre, tipo MIME o magia del archivo.
  */
 class GameLibraryRepository(private val context: Context) {
 
@@ -113,8 +137,176 @@ class GameLibraryRepository(private val context: Context) {
     fun firmwareDir(): File = File(vitaRoot, "firmware")
     fun driversDir(): File = File(vitaRoot, "drivers/turnip")
 
+    // --- Almacenamiento de .pkg (ver PkgHeaderParser) ---
+    /** Carpeta de .pkg guardados: ux0/pkg/. El nombre del .pkg original no se conserva: se guarda por Title ID. */
+    fun pkgDir(): File = File(vitaRoot, "ux0/pkg")
+    fun pkgGameFile(titleId: String): File = File(pkgDir(), "$titleId.pkg")
+    fun pkgWorkBinFile(titleId: String): File = File(pkgDir(), "$titleId.work.bin")
+    fun pkgDlcDir(): File = File(pkgDir(), "dlc")
+    fun pkgDlcFile(dlcId: String): File = File(pkgDlcDir(), "$dlcId.pkg")
+    fun pkgDlcWorkBinFile(dlcId: String): File = File(pkgDlcDir(), "$dlcId.work.bin")
+    fun pkgPatchDir(): File = File(pkgDir(), "patch")
+    fun pkgPatchFile(titleId: String): File = File(pkgPatchDir(), "$titleId.pkg")
+    fun pkgPatchWorkBinFile(titleId: String): File = File(pkgPatchDir(), "$titleId.work.bin")
+
+    /** .pkg guardado al que le falta su work.bin (licencia). */
+    data class MissingPkgLicense(
+        val titleId: TitleId,
+        val kind: com.danielsnagustin.childoflight.launcher.model.PkgKind,
+        val dlcId: String?,
+    )
+
+    /** .pkg guardados sin su work.bin (licencia). Sin ella Vita3K no puede instalarlos. */
+    fun storedPkgsMissingLicense(): List<MissingPkgLicense> {
+        val missing = mutableListOf<MissingPkgLicense>()
+        for (candidate in TitleId.entries) {
+            if (pkgGameFile(candidate.id).isFile && !pkgWorkBinFile(candidate.id).isFile) {
+                missing.add(MissingPkgLicense(candidate, com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME, null))
+            }
+            if (pkgPatchFile(candidate.id).isFile && !pkgPatchWorkBinFile(candidate.id).isFile) {
+                missing.add(MissingPkgLicense(candidate, com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE, null))
+            }
+        }
+        pkgDlcDir().listFiles()
+            ?.filter { it.isFile && it.name.lowercase().endsWith(".pkg") }
+            ?.forEach { pkg ->
+                val dlcId = pkg.nameWithoutExtension
+                if (!pkgDlcWorkBinFile(dlcId).isFile) {
+                    val title = runCatching {
+                        pkg.inputStream().use { PkgHeaderParser.parse(it) }
+                    }.getOrNull()?.getOrNull()?.titleId ?: TitleId.US
+                    missing.add(MissingPkgLicense(title, com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC, dlcId))
+                }
+            }
+        return missing
+    }
+
+    /** Archivos .pkg + work.bin guardados, para entregarlos a Vita3K. */
+    fun storedPkgFilesForDelivery(): List<File> {
+        val out = mutableListOf<File>()
+        pkgDir().listFiles()?.forEach { file ->
+            if (file.isFile && (file.name.lowercase().endsWith(".pkg") || file.name.lowercase().endsWith(".work.bin"))) {
+                out.add(file)
+            }
+        }
+        listOf(pkgDlcDir(), pkgPatchDir()).forEach { dir ->
+            dir.listFiles()?.forEach { file ->
+                if (file.isFile && (file.name.lowercase().endsWith(".pkg") || file.name.lowercase().endsWith(".work.bin"))) {
+                    out.add(file)
+                }
+            }
+        }
+        return out.sortedBy { it.name }
+    }
+
+    /**
+     * Dónde se guarda un .pkg según su tipo. El DLC se guarda por el
+     * nombre del contenido del Content ID (saneado), no por el nombre
+     * del archivo: "CHILDOFLIGHTDLC1.pkg", etc.
+     */
+    fun pkgStorageFor(titleId: TitleId, header: PkgHeader, kind: com.danielsnagustin.childoflight.launcher.model.PkgKind): Pair<File, File> {
+        return when (kind) {
+            com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME ->
+                pkgGameFile(titleId.id) to pkgWorkBinFile(titleId.id)
+            com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE ->
+                pkgPatchFile(titleId.id) to pkgPatchWorkBinFile(titleId.id)
+            com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC -> {
+                val dlcId = sanitizeContentName(header.contentName).ifBlank { "dlc-${titleId.id}" }
+                pkgDlcFile(dlcId) to pkgDlcWorkBinFile(dlcId)
+            }
+        }
+    }
+
+    /** Nombre de archivo seguro a partir del nombre del contenido del .pkg. */
+    fun sanitizeContentName(raw: String): String {
+        return raw.map { c ->
+            if (c.isLetterOrDigit() || c == '-' || c == '_' || c == '.') c else '_'
+        }.joinToString("").trim('.', '_').take(40)
+    }
+
+    /** Copia atómica de un URI a un archivo: temporal + rename. */
+    private fun copyUriAtomic(uri: Uri, dest: File) {
+        dest.parentFile?.mkdirs()
+        val tmp = File(dest.parentFile, dest.name + ".tmp")
+        copyUriToFile(uri, tmp)
+        if (!tmp.renameTo(dest)) {
+            tmp.delete()
+            throw IllegalStateException("No se pudo guardar ${dest.name}.")
+        }
+    }
+
+    /**
+     * Busca el work.bin hermano del .pkg elegido (misma carpeta SAF).
+     * Orden: "work.bin" exacto, "work (N).bin" (copias de Chrome),
+     * cualquier .bin de 512 B. El contenido se valida después con
+     * PkgHeaderParser.validateWorkBin: un .bin que no sea licencia
+     * zRIF no se acepta. Best-effort: algunos proveedores no dejan
+     * listar la carpeta; en ese caso se devuelve null y se pide el
+     * work.bin al usuario.
+     */
+    fun findWorkBinSibling(pkgUri: Uri): Uri? {
+        return try {
+            val pkgDoc = DocumentFile.fromSingleUri(context, pkgUri) ?: return null
+            val parent = pkgDoc.parentFile ?: return null
+            val siblings = parent.listFiles().filter { it.isFile }
+            siblings.firstOrNull { it.name.equals("work.bin", ignoreCase = true) }?.uri
+                ?: siblings.firstOrNull {
+                    val n = it.name?.lowercase() ?: ""
+                    n.startsWith("work") && n.endsWith(".bin")
+                }?.uri
+                ?: siblings.firstOrNull {
+                    it.name?.lowercase()?.endsWith(".bin") == true && it.length() == 512L
+                }?.uri
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Guarda el work.bin elegido por el usuario para un .pkg ya
+     * guardado. Valida el contenido (512 B, zRIF "KO") antes de copiar.
+     */
+    fun importWorkBin(uri: Uri, licenseDest: File): Result<Unit> {
+        return try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                PkgHeaderParser.validateWorkBin(input).getOrThrow()
+            } ?: return Result.failure(IllegalStateException("No se pudo abrir el archivo elegido."))
+            copyUriAtomic(uri, licenseDest)
+            LauncherLog.append(context, "import", "work.bin guardado en ${licenseDest.absolutePath}")
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** Borra la carpeta legacy import_pending/ (flujo antiguo sin parser). */
+    private fun cleanLegacyPending() {
+        runCatching {
+            val pending = File(vitaRoot, "import_pending")
+            if (pending.exists()) {
+                pending.deleteRecursively()
+                LauncherLog.append(context, "import", "Carpeta legacy import_pending/ eliminada (flujo .pkg antiguo).")
+            }
+        }
+    }
+
+    /** Title ID leído de sce_sys/param.sfo dentro de una carpeta SAF (por contenido, no por nombre). */
+    private fun titleIdFromFolderSfo(root: DocumentFile): TitleId? {
+        return try {
+            val sceSys = root.listFiles()
+                .firstOrNull { it.isDirectory && it.name.equals("sce_sys", ignoreCase = true) } ?: return null
+            val sfo = sceSys.listFiles()
+                .firstOrNull { it.isFile && it.name.equals("param.sfo", ignoreCase = true) } ?: return null
+            if (sfo.length() > ParamSfo.MAX_SFO_BYTES) return null
+            val bytes = context.contentResolver.openInputStream(sfo.uri)?.use { it.readBytes() } ?: return null
+            TitleId.fromString(ParamSfo.parse(bytes).getOrNull()?.titleId)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     fun scanStatus(): GameStatus {
-        var title: TitleId? = null
+        var extractedTitle: TitleId? = null
         var gameSize = 0L
         // M15: si están instaladas las dos regiones, solo se muestra US
         // (GameStatus lleva un solo titleId). Se registra para no esconderlo.
@@ -126,15 +318,38 @@ class GameLibraryRepository(private val context: Context) {
             // sensible al caso y el juego instalado no se reconocía.
             if (dir.exists() && ImportTreeSearch.findEboot(dir) != null) {
                 installedCount++
-                if (title == null) {
-                    title = candidate
+                if (extractedTitle == null) {
+                    extractedTitle = candidate
                     gameSize = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
                 }
             }
         }
         if (installedCount > 1) {
-            LauncherLog.append(context, "status", "Dos regiones instaladas (US y EU); se muestra ${title?.id}. Los DLCs/saves de la otra región no se ven.")
+            LauncherLog.append(context, "status", "Dos regiones instaladas (US y EU); se muestra ${extractedTitle?.id}. Los DLCs/saves de la otra región no se ven.")
         }
+        // .pkg de juego guardado: su Title ID se lee del header (Content
+        // ID), nunca del nombre del archivo guardado (que es el Title ID,
+        // pero el header manda si el archivo está corrupto o a medias).
+        var pkgTitle: TitleId? = null
+        var pkgContentId: String? = null
+        var pkgSize = 0L
+        var pkgLicense = false
+        for (candidate in TitleId.entries) {
+            val pkg = pkgGameFile(candidate.id)
+            if (!pkg.isFile) continue
+            val header = runCatching {
+                pkg.inputStream().use { PkgHeaderParser.parse(it) }
+            }.getOrNull()?.getOrNull()
+            // Si el header no se lee (pkg corrupto o a medias), se sigue
+            // mostrando como .pkg: el usuario puede borrarlo e importar
+            // de nuevo. No se inventa el Title ID.
+            pkgTitle = header?.titleId ?: candidate
+            pkgContentId = header?.contentId
+            pkgSize = pkg.length()
+            pkgLicense = pkgWorkBinFile(candidate.id).isFile
+            break
+        }
+        val title = extractedTitle ?: pkgTitle
         val dlcs = mutableListOf<DlcInfo>()
         if (title != null) {
             val base = addcontDir(title.id)
@@ -144,9 +359,19 @@ class GameLibraryRepository(private val context: Context) {
                     dlcs.add(DlcInfo(dlcDir.name, title.id, size))
                 }
             }
+            // DLCs en .pkg (sin extraer): ux0/pkg/dlc/<DLC>.pkg
+            val dlcDir = pkgDlcDir()
+            if (dlcDir.exists()) {
+                dlcDir.listFiles()
+                    ?.filter { it.isFile && it.name.lowercase().endsWith(".pkg") }
+                    ?.forEach { pkgFile ->
+                        dlcs.add(DlcInfo(pkgFile.nameWithoutExtension, title.id, pkgFile.length(), isPkg = true))
+                    }
+            }
         }
-        val updateInstalled = title != null && patchDir(title.id).exists() &&
-            (patchDir(title.id).listFiles()?.isNotEmpty() == true)
+        val updateInstalled = (title != null && patchDir(title.id).exists() &&
+            (patchDir(title.id).listFiles()?.isNotEmpty() == true)) ||
+            (title != null && pkgPatchFile(title.id).isFile)
         val firmwareMarker = File(firmwareDir(), "installed.json")
         // BUG (auditoría): readText() puede lanzar IOException (el archivo
         // puede desaparecer entre exists() y la lectura) y scanStatus() se
@@ -163,11 +388,19 @@ class GameLibraryRepository(private val context: Context) {
         val firmwareName = if (firmwareInstalled) {
             markerText?.takeIf { it.isNotBlank() } ?: "PSVUPDAT.PUP"
         } else null
-        val saves = if (title != null) listSaves(title.id) else emptyList()
+        // Los saves solo existen con el juego extraído: con un .pkg los
+        // saves viven dentro de Vita3K, no en el launcher.
+        val saves = if (extractedTitle != null) listSaves(extractedTitle.id) else emptyList()
         return GameStatus(
             titleId = title,
-            gameInstalled = title != null,
+            extractedTitleId = extractedTitle,
+            gameInstalled = extractedTitle != null || pkgTitle != null,
+            gameExtracted = extractedTitle != null,
             gameSizeBytes = gameSize,
+            pkgTitleId = pkgTitle,
+            pkgContentId = pkgContentId,
+            pkgSizeBytes = pkgSize,
+            pkgLicensePresent = pkgLicense,
             dlcs = dlcs.sortedBy { it.dlcId },
             updateInstalled = updateInstalled,
             firmwareInstalled = firmwareInstalled,
@@ -218,8 +451,10 @@ class GameLibraryRepository(private val context: Context) {
         val mime = runCatching { context.contentResolver.getType(uri) }.getOrNull()
         if (mime == "application/zip" || mime == "application/x-zip-compressed") return "zip"
         // Si el nombre no trae extensión conocida, se husmea la magia del
-        // archivo (8 bytes): PK = zip/.vpk, SCEUF = .PUP. Sin esto, el
-        // proveedor que devuelve otro MIME dejaba el archivo sin reconocer.
+        // archivo (8 bytes): PK = zip/.vpk, SCEUF = .PUP, \x7FPKG = .pkg.
+        // Sin esto, el proveedor que devuelve otro MIME dejaba el archivo
+        // sin reconocer. El nombre nunca decide: un .pkg por hash sin
+        // extensión se reconoce por su magia igual que uno con .pkg.
         val head = runCatching {
             context.contentResolver.openInputStream(uri)?.use { input ->
                 val buf = ByteArray(8)
@@ -229,6 +464,7 @@ class GameLibraryRepository(private val context: Context) {
         }.getOrNull()
         if (head != null && ImportFileGuide.looksLikeZipMagic(head)) return "zip"
         if (head != null && ImportFileGuide.looksLikePupMagic(head)) return "pup"
+        if (head != null && ImportFileGuide.looksLikePkgMagic(head)) return "pkg"
         return byName
     }
 
@@ -258,35 +494,55 @@ class GameLibraryRepository(private val context: Context) {
             )
         }
         if (ext == "pkg") {
-            // Sin parser de PKG no se puede validar el contenido.
-            // M13: el nombre de SAF se toma como basename (nunca con rutas) y
-            // si contiene los dos Title ID se rechaza (antes ganaba US por
-            // orden del enum, sin avisar).
-            val safeName = File(fileName).name
-            val matched = TitleId.entries.filter { safeName.uppercase().contains(it.id) }
-            if (matched.size > 1) {
-                return ImportResult.Rejected(
-                    "El .pkg contiene dos Title ID en el nombre ($safeName). Renómbralo para que traiga solo PCSE00480 o PCSB00598.",
-                )
+            // EL NOMBRE DEL ARCHIVO NO IMPORTA: los .pkg reales se llaman
+            // por hash ("EAMfBniHkRQw...oldLwRkHA.pkg") y nunca traen el
+            // Title ID en el nombre. Solo manda el header: se lee el
+            // Content ID ANTES de copiar nada, así un .pkg de otro juego
+            // o corrupto no deja 1 GB guardado a medias.
+            val header = try {
+                context.contentResolver.openInputStream(uri)?.use { PkgHeaderParser.parse(it) }
+                    ?: return ImportResult.Failed("No se pudo abrir el archivo elegido.")
+            } catch (e: Exception) {
+                return ImportResult.Failed("No se pudo leer el header del .pkg: ${e.message}")
             }
-            val title = matched.firstOrNull()
-                ?: return ImportResult.Rejected(
-                    "El .pkg no trae el Title ID en el nombre del archivo " +
-                        "(se esperaba PCSE00480 o PCSB00598). Sin eso no se puede saber a qué juego pertenece.",
-                )
+            val parsed = header.getOrElse { e ->
+                return ImportResult.Rejected(e.message ?: "El .pkg no es válido.")
+            }
+            val title = parsed.titleId
+            val pkgKind = when (kind) {
+                ImportKind.GAME -> com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME
+                ImportKind.DLC -> com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC
+                ImportKind.UPDATE -> com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE
+            }
             return try {
-                val pending = File(vitaRoot, "import_pending")
-                if (!pending.exists()) pending.mkdirs()
-                val dest = File(pending, safeName)
-                // Misma atomicidad que el firmware: temporal + rename.
-                val tmp = File(pending, "$safeName.tmp")
-                copyUriToFile(uri, tmp)
-                if (!tmp.renameTo(dest)) {
-                    tmp.delete()
-                    throw IllegalStateException("No se pudo guardar el .pkg.")
+                cleanLegacyPending()
+                val (dest, licenseDest) = pkgStorageFor(title, parsed, pkgKind)
+                // Copia atómica: temporal + rename. Un .pkg son ~1.1 GB:
+                // si la copia falla a medias, el .pkg viejo sigue intacto.
+                copyUriAtomic(uri, dest)
+                val sizeBytes = dest.length()
+                // Licencia: buscar work.bin junto al .pkg (misma carpeta).
+                // Se valida el contenido (512 B, zRIF "KO"): un .bin que
+                // no sea licencia no se acepta como tal.
+                var licenseFound = false
+                val sibling = findWorkBinSibling(uri)
+                if (sibling != null) {
+                    val valid = runCatching {
+                        context.contentResolver.openInputStream(sibling)?.use { PkgHeaderParser.validateWorkBin(it) }
+                    }.getOrNull()?.isSuccess == true
+                    if (valid) {
+                        copyUriAtomic(sibling, licenseDest)
+                        licenseFound = true
+                    } else {
+                        LauncherLog.append(context, "import", "El archivo junto al .pkg no es un work.bin válido; se pedirá al usuario.")
+                    }
                 }
-                LauncherLog.append(context, "import", ".pkg guardado en import_pending/${dest.name} (${dest.length()} bytes)")
-                ImportResult.PkgStored(title, dest.absolutePath)
+                LauncherLog.append(context, "import", ".pkg ${pkgKind.label} guardado: ${dest.name} (${sizeBytes} bytes, Content ID ${parsed.contentId}, licencia: ${if (licenseFound) "sí" else "falta"})")
+                if (licenseFound) {
+                    ImportResult.PkgStored(title, dest.absolutePath, parsed.contentId, sizeBytes, true, pkgKind)
+                } else {
+                    ImportResult.PkgNeedsLicense(title, dest.absolutePath, parsed.contentId, sizeBytes, pkgKind)
+                }
             } catch (e: Exception) {
                 ImportResult.Failed("No se pudo guardar el .pkg: ${e.message}")
             }
@@ -305,11 +561,17 @@ class GameLibraryRepository(private val context: Context) {
         return try {
             tmp.deleteRecursively()
             extractZip(uri, tmp)
+            // Carpeta del Title ID (hasta 3 niveles) o juego PLANO
+            // (eboot.bin en la raíz con sce_sys/param.sfo que diga el
+            // Title ID por contenido). El nombre del archivo/carpeta
+            // nunca decide: solo el contenido.
             val found = ImportTreeSearch.findTitleDir(tmp)
+                ?: ImportTreeSearch.findFlatGame(tmp)
             if (found == null) {
                 val topNames = ImportTreeSearch.topLevelDirNames(tmp)
                 ImportResult.Rejected(
-                    "Title ID no aceptado: dentro del archivo no hay una carpeta PCSE00480 (US) ni PCSB00598 (EU). " +
+                    "Title ID no aceptado: dentro del archivo no hay una carpeta PCSE00480 (US) ni PCSB00598 (EU), " +
+                        "ni un juego plano (eboot.bin en la raíz con sce_sys/param.sfo que diga el Title ID). " +
                         if (topNames.isEmpty()) "El archivo parece vacío."
                         else "Las carpetas principales son: ${topNames.joinToString(", ")}. " +
                             "Este launcher solo acepta Child of Light: PCSE00480 (US) o PCSB00598 (EU).",
@@ -474,10 +736,13 @@ class GameLibraryRepository(private val context: Context) {
         return try {
             val root = DocumentFile.fromTreeUri(context, treeUri)
                 ?: return ImportResult.Failed("No se pudo abrir la carpeta elegida.")
-            val title = TitleId.fromString(root.name)
+            // El nombre de la carpeta NO es obligatorio: si no es el
+            // Title ID, se lee de sce_sys/param.sfo (por contenido).
+            val title = TitleId.fromString(root.name) ?: titleIdFromFolderSfo(root)
                 ?: return ImportResult.Rejected(
                     "La carpeta elegida se llama \"${root.name ?: "?"}\". Debe llamarse " +
-                        "PCSE00480 (US) o PCSB00598 (EU) y contener eboot.bin dentro. " +
+                        "PCSE00480 (US) o PCSB00598 (EU) y contener eboot.bin dentro, o traer " +
+                        "eboot.bin + sce_sys/param.sfo con el Title ID dentro. " +
                         "Si tu juego está en una carpeta con otro nombre, renómbrala al Title ID.",
                 )
             val eboot = findChildIgnoreCase(root, "eboot.bin")
@@ -683,15 +948,44 @@ class GameLibraryRepository(private val context: Context) {
                 deleted.add(label)
             }
         }
+        // .pkg guardados (juego + update + licencia) y DLCs en .pkg.
+        var pkgDeleted = false
+        listOf(
+            pkgGameFile(titleId), pkgWorkBinFile(titleId),
+            pkgPatchFile(titleId), pkgPatchWorkBinFile(titleId),
+        ).forEach { file ->
+            if (file.exists()) {
+                file.delete()
+                pkgDeleted = true
+            }
+        }
+        if (pkgDlcDir().exists()) {
+            val hadDlcPkgs = pkgDlcDir().listFiles()?.isNotEmpty() == true
+            pkgDlcDir().deleteRecursively()
+            if (hadDlcPkgs) {
+                pkgDeleted = true
+                deleted.add("DLCs (.pkg)")
+            }
+        }
+        if (pkgDeleted && "paquete .pkg" !in deleted) deleted.add("paquete .pkg")
         LauncherLog.append(context, "delete", "Datos borrados de $titleId: ${deleted.joinToString()}")
         return deleted
     }
 
-    /** Borra UN DLC instalado (ux0/addcont/<TITLE>/<DLC_ID>/). Con confirmación en la UI. */
+    /** Borra UN DLC instalado (ux0/addcont/<TITLE>/<DLC_ID>/ o ux0/pkg/dlc/<DLC_ID>.pkg). Con confirmación en la UI. */
     fun deleteDlc(titleId: String, dlcId: String): Boolean {
         // H5: dlcId llega de nombres de carpeta en disco; un valor con "/",
         // ".." o vacío haría que deleteRecursively apuntara fuera de addcont/.
         if (dlcId.isBlank() || dlcId == "." || dlcId == ".." || '/' in dlcId || '\\' in dlcId) return false
+        // DLC en .pkg: se borra el .pkg y su work.bin.
+        val pkgDlc = pkgDlcFile(dlcId)
+        if (pkgDlc.isFile) {
+            val size = pkgDlc.length()
+            val ok = pkgDlc.delete()
+            pkgDlcWorkBinFile(dlcId).delete()
+            if (ok) LauncherLog.append(context, "delete", "DLC .pkg $dlcId borrado de $titleId ($size bytes)")
+            return ok
+        }
         val dir = File(addcontDir(titleId), dlcId)
         if (!dir.exists()) return false
         val size = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
