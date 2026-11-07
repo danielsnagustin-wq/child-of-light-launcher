@@ -75,17 +75,11 @@ jobs:
           gradle-version: "8.7"
       - name: Set VCPKG_ROOT (lo exige vita3k/cmake/vcpkg_android.cmake)
         run: |
-          VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
-          VCPKG_ROOT="$(dirname "$VCPKG_BIN")"
-          if [ ! -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
-            VCPKG_ROOT="/usr/local/share/vcpkg"
-        fi
-        if [ ! -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
-          echo "ERROR: no se encontró scripts/buildsystems/vcpkg.cmake en $VCPKG_ROOT"
-          exit 1
-      fi
-      echo "VCPKG_ROOT=$VCPKG_ROOT" >> "$GITHUB_ENV"
-      echo "VCPKG_ROOT=$VCPKG_ROOT"
+          VCPKG_ROOT="$(dirname "$(readlink -f "$(command -v vcpkg)")")"
+          [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ] || VCPKG_ROOT=/usr/local/share/vcpkg
+          [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ] || { echo "ERROR: vcpkg.cmake no existe en $VCPKG_ROOT"; exit 1; }
+          echo "VCPKG_ROOT=$VCPKG_ROOT" >> "$GITHUB_ENV"
+          echo "VCPKG_ROOT=$VCPKG_ROOT"
 
       - name: Install NDK 29 + build tools (como .ci/setup-android.sh de upstream)
         run: |
