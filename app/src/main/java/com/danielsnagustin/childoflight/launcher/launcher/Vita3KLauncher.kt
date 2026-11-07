@@ -380,9 +380,13 @@ class Vita3KLauncher(private val context: Context) {
 
     /**
      * Instala el .pkg del juego con el propio núcleo embebido
-     * (EmbeddedPkgInstaller). El progreso detallado aún no se muestra
-     * en UI (TODO: cablear el progreso a la pantalla de JUGAR);
-     * por ahora solo se registra inicio y fin en el log.
+     * (EmbeddedPkgInstaller), y después el update y los DLCs
+     * guardados en .pkg: sin ellos el usuario jugaría solo el juego
+     * base. El progreso detallado aún no se muestra en UI (TODO:
+     * cablear el progreso a la pantalla de JUGAR); por ahora solo se
+     * registra inicio y fin en el log. Un fallo del update/DLC no
+     * bloquea el lanzamiento del juego base, pero queda registrado
+     * (no silencioso).
      */
     private suspend fun installPkgWithEmbeddedCore(
         library: GameLibraryRepository,
@@ -393,8 +397,22 @@ class Vita3KLauncher(private val context: Context) {
         val result = installer.installGamePkg(titleId) { _, _ -> /* progreso: TODO mostrar en UI */ }
         result.onFailure {
             LauncherLog.append(context, "pkg", "Instalación .pkg embebida falló: ${it.message}")
+            return false
         }
-        return result.isSuccess
+        if (library.pkgPatchFile(titleId.id).isFile) {
+            installer.installUpdatePkg(titleId) { _, _ -> }
+                .onSuccess { LauncherLog.append(context, "pkg", "Update embebido instalado: ${titleId.id}") }
+                .onFailure { LauncherLog.append(context, "pkg", "Instalación del update embebido falló: ${it.message}") }
+        }
+        library.pkgDlcDir().listFiles()
+            ?.filter { it.isFile && it.name.lowercase().endsWith(".pkg") }
+            ?.forEach { pkg ->
+                val dlcId = pkg.nameWithoutExtension
+                installer.installDlcPkg(dlcId) { _, _ -> }
+                    .onSuccess { LauncherLog.append(context, "pkg", "DLC embebido instalado: $dlcId") }
+                    .onFailure { LauncherLog.append(context, "pkg", "Instalación del DLC $dlcId embebido falló: ${it.message}") }
+            }
+        return true
     }
 
     /** ¿Existe la librería nativa del núcleo embebido? En Etapa 1, no. Se cachea: loadLibrary no debe intentarse en cada recomposición. */
