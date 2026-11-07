@@ -30,7 +30,7 @@ android {
             // Solo arm64-v8a: el procesador objetivo es arm64 y así el
             // APK no duplica el .so (decenas de MB) con x86_64.
             ndk {
-                abiFilters("arm64-v8a")
+                abiFilters += "arm64-v8a"
             }
         }
     }
