@@ -100,6 +100,9 @@ jobs:
             exit 1
           fi
           git submodule update --init --recursive --depth 1
+          # Vita3K comprueba submódulos con ${CMAKE_SOURCE_DIR}/.gitmodules, pero aquí CMAKE_SOURCE_DIR es app/src/main/cpp (adaptador). Reescribimos rutas con prefijo vita3k/.
+          sed 's|^\(\s*path = \)|\1vita3k/|' .gitmodules > ../.gitmodules
+          echo "Submódulos reescritos en ../.gitmodules: $(grep -c 'path = vita3k/' ../.gitmodules)"
           echo "Vita3K en ${VITA3K_PIN} con submódulos."
 
       - name: Cache vcpkg (binaria, como upstream)
