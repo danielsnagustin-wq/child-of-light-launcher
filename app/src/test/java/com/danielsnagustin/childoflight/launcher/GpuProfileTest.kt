@@ -19,7 +19,6 @@ class GpuProfileTest {
         vendor = GpuVendor.MALI,
         renderer = "Mali-G57 MC2",
         socModel = "MT6789",
-        deviceModel = "SM-A175F",
         vulkanSupported = true,
         vulkanVersionLabel = "Vulkan 1.1+",
     )

@@ -78,7 +78,6 @@ class SettingsRepository(private val context: Context) {
         val GPU_VENDOR_STR = stringPreferencesKey("gpu_vendor_str")
         val GPU_GLES = stringPreferencesKey("gpu_gles")
         val GPU_SOC = stringPreferencesKey("gpu_soc")
-        val GPU_DEVICE = stringPreferencesKey("gpu_device")
         val GPU_VULKAN = stringPreferencesKey("gpu_vulkan")
         val GPU_VULKAN_SUPPORTED = booleanPreferencesKey("gpu_vulkan_supported")
         val GPU_DETECTED_AT = longPreferencesKey("gpu_detected_at")
@@ -133,7 +132,6 @@ class SettingsRepository(private val context: Context) {
             vendorString = p[Keys.GPU_VENDOR_STR] ?: "",
             glesVersion = p[Keys.GPU_GLES] ?: "",
             socModel = p[Keys.GPU_SOC] ?: "",
-            deviceModel = p[Keys.GPU_DEVICE] ?: "",
             vulkanVersionLabel = p[Keys.GPU_VULKAN] ?: "Desconocido",
             vulkanSupported = p[Keys.GPU_VULKAN_SUPPORTED] ?: false,
             detectedAtMillis = p[Keys.GPU_DETECTED_AT] ?: 0L,
@@ -238,7 +236,6 @@ class SettingsRepository(private val context: Context) {
             p[Keys.GPU_VENDOR_STR] = gpu.vendorString
             p[Keys.GPU_GLES] = gpu.glesVersion
             p[Keys.GPU_SOC] = gpu.socModel
-            p[Keys.GPU_DEVICE] = gpu.deviceModel
             p[Keys.GPU_VULKAN] = gpu.vulkanVersionLabel
             p[Keys.GPU_VULKAN_SUPPORTED] = gpu.vulkanSupported
             p[Keys.GPU_DETECTED_AT] = gpu.detectedAtMillis

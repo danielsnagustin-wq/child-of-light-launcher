@@ -48,18 +48,16 @@ data class GpuInfo(
     val glesVersion: String = "",
     /** SoC: Build.SOC_MODEL, o Build.HARDWARE si no está disponible. */
     val socModel: String = "",
-    val deviceModel: String = "",
     /** Etiqueta aproximada por system feature, p. ej. "Vulkan 1.1+". */
     val vulkanVersionLabel: String = "Desconocido",
     val vulkanSupported: Boolean = false,
     val detectedAtMillis: Long = 0L,
 ) {
-    /** Helio G99 = MediaTek MT6789. Se detecta por SoC o por hardware. */
+    /** Helio G99 = MediaTek MT6789. Se detecta solo por procesador (SoC o hardware), nunca por modelo de dispositivo. */
     val isHelioG99: Boolean
         get() {
             val soc = socModel.uppercase()
-            return soc.contains("G99") || soc.contains("MT6789") ||
-                deviceModel.equals("SM-A175F", ignoreCase = true)
+            return soc.contains("G99") || soc.contains("MT6789")
         }
     val isMaliG57: Boolean
         get() = renderer.uppercase().contains("MALI-G57") ||
@@ -83,7 +81,7 @@ enum class GpuProfileId(val label: String, val description: String) {
     /** FOCO PRINCIPAL. Dato real del usuario: el juego va muy bien en el G99. */
     G99_RECOMMENDED(
         "G99 / Mali-G57 — Recomendado",
-        "Preset por defecto en el Galaxy A17 (Helio G99). 1x estable, sin recortes de más.",
+        "Preset por defecto en Helio G99. 1x estable, sin recortes de más.",
     ),
     G99_QUALITY(
         "G99 — Calidad (probar 2x)",

@@ -30,7 +30,7 @@ import androidx.compose.ui.unit.dp
 /**
  * GPU y diagnóstico.
  * - Detección: SoC, GPU, versión Vulkan, driver.
- * - En G99/Mali-G57 muestra "Dispositivo verificado por el usuario".
+ * - En G99/Mali-G57 muestra "Procesador verificado por el usuario".
  * - Prueba de 30 s + registro manual del FPS del overlay.
  * - Optimización de batería, núcleo, log reciente y reporte de bug.
  */
@@ -75,9 +75,8 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             Text("Vendor: ${g.vendorString.ifBlank { "—" }}")
             Text("GLES: ${g.glesVersion.ifBlank { "—" }}")
             Text("Vulkan: ${g.vulkanVersionLabel} (soportado: ${if (g.vulkanSupported) "sí" else "no"})")
-            Text("Dispositivo: ${g.deviceModel.ifBlank { "—" }}")
             if (g.isUserVerifiedDevice) {
-                Text("✓ Dispositivo verificado por el usuario: Child of Light va muy bien en este teléfono.", color = ColGold, fontWeight = FontWeight.Bold)
+                Text("✓ Procesador verificado por el usuario: Child of Light va muy bien en este procesador.", color = ColGold, fontWeight = FontWeight.Bold)
                 NoteText("Por eso el preset por defecto es G99 Recomendado (1x, Frame Skip 0): se optimiza para mantener esa fluidez estable, no para recortar de más.")
             } else if (g.vendor.name == "MALI") {
                 NoteText("Mali: hay cosas que definitivamente no funcionan y es posible que nunca funcionen, pero Vita3K+ trae arreglos para Mali (vertex fix, Double Buffer mejorado) y Child of Light, al ser 2D UbiArt, es más ligero que un juego 3D: a 1x tiene más chance. No se prometen 60 fps en Mali.")

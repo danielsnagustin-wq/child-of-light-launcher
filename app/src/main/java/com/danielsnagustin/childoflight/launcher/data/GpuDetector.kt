@@ -36,7 +36,6 @@ object GpuDetector {
             vendorString = vendor,
             glesVersion = glesVersion,
             socModel = soc,
-            deviceModel = Build.MODEL ?: "",
             vulkanVersionLabel = vulkanLabel,
             vulkanSupported = vulkanSupported,
             detectedAtMillis = System.currentTimeMillis(),

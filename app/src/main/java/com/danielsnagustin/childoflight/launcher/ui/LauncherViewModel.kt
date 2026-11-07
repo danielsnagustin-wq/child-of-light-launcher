@@ -170,7 +170,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             }
             withContext(Dispatchers.Main) {
                 _message.value = if (gpu.isUserVerifiedDevice) {
-                    "GPU detectada: Helio G99 · Mali-G57 MC2. Dispositivo verificado por ti: " +
+                    "GPU detectada: Helio G99 · Mali-G57 MC2. Procesador verificado por ti: " +
                         if (appliedPreset) "preset G99 Recomendado aplicado." else "tus ajustes personalizados no se tocaron."
                 } else {
                     "GPU detectada: ${gpu.shortLabel}. " +
@@ -948,12 +948,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             appendLine("Fecha: ${java.util.Date()}")
             appendLine("App: com.danielsnagustin.childoflight.launcher v0.1.0")
             appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
-            appendLine("Dispositivo: ${Build.MANUFACTURER} ${Build.MODEL} (${Build.HARDWARE})")
+            appendLine("Procesador: ${gpu?.socModel?.ifBlank { null } ?: Build.SOC_MODEL ?: Build.HARDWARE}")
             appendLine("SoC: ${gpu?.socModel ?: "no detectado"}")
             appendLine("GPU: ${gpu?.renderer ?: "no detectada"} (${gpu?.vendor})")
             appendLine("GLES: ${gpu?.glesVersion ?: ""}")
             appendLine("Vulkan: ${gpu?.vulkanVersionLabel ?: "desconocido"} (soportado: ${gpu?.vulkanSupported})")
-            appendLine("Dispositivo verificado por el usuario: ${gpu?.isUserVerifiedDevice}")
+            appendLine("Procesador verificado por el usuario: ${gpu?.isUserVerifiedDevice}")
             appendLine()
             appendLine("--- Juego ---")
             appendLine("Instalado: ${status.gameInstalled} (${status.titleId?.id ?: "-"})")

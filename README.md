@@ -6,7 +6,7 @@ y lanza el juego. Sin biblioteca de emulador, sin lista de juegos.
 
 > **Versión:** 0.1.0 (Etapa 1) · **App ID:** `com.danielsnagustin.childoflight.launcher`
 > **minSdk 28 · targetSdk 35 · compileSdk 35** · Kotlin + Jetpack Compose
-> **Teléfono objetivo:** Samsung Galaxy A17 4G SM-A175F (Helio G99, Mali-G57 MC2)
+> **Procesador objetivo:** MediaTek Helio G99 (Mali-G57 MC2)
 
 ---
 
@@ -179,8 +179,8 @@ JUGAR, insignia GPU y tarjeta de logros.
 
 ## Optimización Mali vs Snapdragon
 
-El foco es el **Helio G99 / Mali-G57 MC2** del Galaxy A17: el usuario
-confirmó que Child of Light **va muy bien** en ese teléfono. No es un
+El foco es el **Helio G99 / Mali-G57 MC2**: el usuario
+confirmó que Child of Light **va muy bien** en ese procesador. No es un
 "ojalá funcione". Por eso el preset por defecto es G99 Recomendado
 (1x, Frame Skip 0): se optimiza para mantener esa fluidez estable,
 no para recortar de más por miedo a Mali en general.

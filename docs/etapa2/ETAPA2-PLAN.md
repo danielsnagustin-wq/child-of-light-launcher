@@ -330,7 +330,7 @@ child-of-light-launcher/
   lo resuelve Actions.
 - No se puede probar en dispositivo real (sin GPU Mali, sin teléfono):
   el arranque `-r PCSE00480`, el rendimiento en G99 y el overlay
-  táctil solo se verifican instalando el APK en el Galaxy A17.
+  táctil solo se verifican instalando el APK en un dispositivo con Helio G99.
 - No se puede verificar el detalle Kotlin de upstream
   (`Emulator.getArguments()`, `NativeLib.kt`) en esta sesión: la API
   de GitHub devolvió 403 al listar esa carpeta. El contrato C++ sí
@@ -378,4 +378,4 @@ child-of-light-launcher/
    de `libvita3k.so` y del APK. Si falla, el error dirá qué falta
    (normalmente un submódulo, vcpkg o la toolchain).
 7. Solo cuando el `.so` compile, escribir la Activity SDL y probar
-   en el Galaxy A17 el arranque `-r PCSE00480`.
+   en un dispositivo con Helio G99 el arranque `-r PCSE00480`.
