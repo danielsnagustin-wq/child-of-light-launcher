@@ -193,6 +193,7 @@ private fun LauncherApp(vm: LauncherViewModel) {
                     AlertAction.GO_IMPORT -> TextButton(onClick = { vm.clearAlert(); screenName = Screen.SETTINGS.name }) { Text("Ir a importar") }
                     AlertAction.DELIVER_PKG_TO_VITA3K -> TextButton(onClick = { vm.clearAlert(); vm.deliverPkgToVita3k() }) { Text("Instalar en Vita3K") }
                     AlertAction.CONFIRM_PKG_INSTALLED -> TextButton(onClick = { vm.clearAlert(); vm.confirmPkgInstalledInVita3k() }) { Text("Ya lo instalé en Vita3K") }
+                    AlertAction.REPLACE_DUPLICATE -> TextButton(onClick = { vm.confirmReplaceDuplicate() }) { Text("Reemplazar") }
                     null -> TextButton(onClick = { vm.clearAlert() }) { Text("Entendido") }
                 }
             },

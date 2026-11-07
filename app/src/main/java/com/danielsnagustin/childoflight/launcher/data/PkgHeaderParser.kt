@@ -29,8 +29,15 @@ import java.io.InputStream
  *
  * work.bin (licencia del .pkg, lo que Vita3K pide al instalar):
  * - Exactamente 512 bytes.
- * - Contenido zRIF: ASCII base64 que empieza por "KO", rellenado
- *   con NUL hasta 512 bytes. Sin él Vita3K no puede instalar el .pkg.
+ * - El archivo REAL de NPS es una licencia .rif BINARIA: cabecera
+ *   binaria + Content ID ASCII en el offset 16 + clave. El "KO..."
+ *   que se ve en la web de NPS es la misma licencia en texto (zRIF),
+ *   pero el .bin NO contiene "KO" en ningún sitio (verificado con el
+ *   work.bin real del usuario: 512 B, Content ID
+ *   "EP0001-PCSB00598_00-CHILDOFLIGHT0000" en 0x10, sin "KO").
+ *   Se aceptan las dos formas: .rif binario (Content ID en 0x10) o
+ *   texto zRIF (ASCII base64 que empieza por "KO", con NUL hasta 512).
+ *   Si se conoce el Content ID del .pkg, el del .bin debe coincidir.
  */
 data class PkgHeader(
     /** Content ID completo, p. ej. "EP0001-PCSB00598_00-CHILDOFLIGHT0000". */
@@ -55,6 +62,22 @@ object PkgHeaderParser {
     const val HEADER_READ_BYTES = 0x80
 
     private val PKG_MAGIC = byteArrayOf(0x7F, 0x50, 0x4B, 0x47) // "\x7FPKG"
+
+    /** Content ID de una licencia .rif: p. ej. "EP0001-PCSB00598_00-CHILDOFLIGHT0000". */
+    private val RIF_CONTENT_ID_REGEX = Regex("^[A-Z]{2}[0-9]{4}-[A-Z0-9]{9}_00-[A-Z0-9]{1,16}$")
+
+    /**
+     * Content ID ASCII dentro de un work.bin binario (.rif): está en el
+     * offset 16 (hasta 48 bytes o el primer NUL). Null si no hay un
+     * Content ID con formato válido ahí.
+     */
+    fun extractWorkBinContentId(bytes: ByteArray): String? {
+        if (bytes.size < 64) return null
+        val end = (16 until minOf(64, bytes.size)).firstOrNull { bytes[it] == 0.toByte() }
+            ?: minOf(64, bytes.size)
+        val text = bytes.copyOfRange(16, end).toString(Charsets.US_ASCII)
+        return text.takeIf { RIF_CONTENT_ID_REGEX.matches(it) }
+    }
     // El segmento del Title ID se captura laxo (9 caracteres): si no es
     // PCSE00480/PCSB00598, el error dice "otro juego" en vez de
     // "formato no esperado".
@@ -149,12 +172,17 @@ object PkgHeaderParser {
     }
 
     /**
-     * Valida un work.bin (licencia zRIF del .pkg).
-     * Reglas: exactamente 512 bytes; contenido ASCII base64 que empieza
-     * por "KO", con relleno NUL hasta 512. Un "work (5).bin" de NPS
-     * cumple esto (el nombre con "(5)" no importa: solo el contenido).
+     * Valida un work.bin (licencia del .pkg).
+     * Reglas: exactamente 512 bytes; y una de estas dos formas:
+     *  A) binario .rif (el real de NPS): Content ID válido en el offset 16.
+     *     Si se pasa expectedContentId, debe coincidir: el .bin tiene que
+     *     ser la licencia DE ESTE .pkg, no de otro juego.
+     *  B) texto zRIF: ASCII base64 que empieza por "KO", con relleno NUL
+     *     hasta 512 (por si alguien guarda el zRIF como archivo).
+     * Un "work (5).bin" de NPS cumple A (el nombre con "(5)" no importa:
+     * solo el contenido).
      */
-    fun validateWorkBin(bytes: ByteArray): Result<Unit> {
+    fun validateWorkBin(bytes: ByteArray, expectedContentId: String? = null): Result<Unit> {
         if (bytes.size != 512) {
             return Result.failure(
                 IllegalArgumentException(
@@ -163,24 +191,39 @@ object PkgHeaderParser {
                 ),
             )
         }
-        if (bytes[0] != 'K'.code.toByte() || bytes[1] != 'O'.code.toByte()) {
+        // Forma B: texto zRIF.
+        if (bytes[0] == 'K'.code.toByte() && bytes[1] == 'O'.code.toByte()) {
+            val end = bytes.indexOfFirst { it == 0.toByte() }.takeIf { it >= 0 } ?: bytes.size
+            val bad = (0 until end).firstOrNull { i ->
+                val c = bytes[i].toInt().toChar()
+                !(c.isLetterOrDigit() || c == '+' || c == '/' || c == '=')
+            }
+            if (bad != null) {
+                return Result.failure(
+                    IllegalArgumentException(
+                        "El work.bin trae caracteres no válidos en la licencia zRIF " +
+                            "(posición $bad). Elige el work.bin que acompaña a este .pkg.",
+                    ),
+                )
+            }
+            return Result.success(Unit)
+        }
+        // Forma A: binario .rif (la real de NPS).
+        val contentId = extractWorkBinContentId(bytes)
+        if (contentId == null) {
             return Result.failure(
                 IllegalArgumentException(
-                    "El work.bin no trae una licencia zRIF válida (debe empezar por «KO»). " +
-                        "Elige el work.bin que acompaña a este .pkg.",
+                    "Ese archivo no es un work.bin válido: no trae licencia zRIF " +
+                        "(texto que empieza por «KO») ni Content ID de licencia .rif. " +
+                        "Elige el work.bin de 512 B que acompaña a este .pkg.",
                 ),
             )
         }
-        val end = bytes.indexOfFirst { it == 0.toByte() }.takeIf { it >= 0 } ?: bytes.size
-        val bad = (0 until end).firstOrNull { i ->
-            val c = bytes[i].toInt().toChar()
-            !(c.isLetterOrDigit() || c == '+' || c == '/' || c == '=')
-        }
-        if (bad != null) {
+        if (expectedContentId != null && contentId != expectedContentId) {
             return Result.failure(
                 IllegalArgumentException(
-                    "El work.bin trae caracteres no válidos en la licencia zRIF " +
-                        "(posición $bad). Elige el work.bin que acompaña a este .pkg.",
+                    "Este work.bin es de otro juego (trae Content ID $contentId, " +
+                        "se esperaba $expectedContentId). Elige el work.bin que acompaña a este .pkg.",
                 ),
             )
         }
@@ -188,7 +231,7 @@ object PkgHeaderParser {
     }
 
     /** Valida un work.bin desde un stream (lee como máximo 513 bytes). */
-    fun validateWorkBin(input: InputStream): Result<Unit> {
+    fun validateWorkBin(input: InputStream, expectedContentId: String? = null): Result<Unit> {
         return try {
             val buf = ByteArray(513)
             var read = 0
@@ -205,7 +248,7 @@ object PkgHeaderParser {
                     ),
                 )
             }
-            validateWorkBin(buf.copyOf(read))
+            validateWorkBin(buf.copyOf(read), expectedContentId)
         } catch (e: Exception) {
             Result.failure(IllegalStateException("No se pudo leer el work.bin: ${e.message}"))
         }

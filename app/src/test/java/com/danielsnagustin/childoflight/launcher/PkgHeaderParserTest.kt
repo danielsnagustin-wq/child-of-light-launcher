@@ -44,6 +44,19 @@ class PkgHeaderParserTest {
         return bytes
     }
 
+    /**
+     * work.bin REAL de NPS: licencia .rif binaria de 512 B (cabecera
+     * binaria + Content ID en el offset 16 + clave). Sin "KO" en ningún
+     * sitio: es el formato del archivo work (5).bin del usuario.
+     */
+    private fun rifWorkBinBytes(contentId: String = "EP0001-PCSB00598_00-CHILDOFLIGHT0000"): ByteArray {
+        val bytes = ByteArray(512)
+        byteArrayOf(0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02).copyInto(bytes)
+        contentId.toByteArray(Charsets.US_ASCII).copyInto(bytes, 16)
+        byteArrayOf(0xDD.toByte(), 0xA3.toByte(), 0xED.toByte(), 0x58.toByte()).copyInto(bytes, 0x40)
+        return bytes
+    }
+
     @Test
     fun euGameHeaderIsParsed() {
         val result = PkgHeaderParser.parse(pkgHeaderBytes("EP0001-PCSB00598_00-CHILDOFLIGHT0000"))
@@ -155,11 +168,45 @@ class PkgHeaderParserTest {
     }
 
     @Test
-    fun workBinNotStartingWithKoIsRejected() {
-        val bytes = workBinBytes("AB5ifR1dQ+e7BsB")
+    fun binaryRifWorkBinPasses() {
+        // El work.bin real de NPS: 512 B binarios con Content ID en 0x10, sin "KO".
+        assertTrue(PkgHeaderParser.validateWorkBin(rifWorkBinBytes()).isSuccess)
+    }
+
+    @Test
+    fun binaryRifWithExpectedContentIdPasses() {
+        val result = PkgHeaderParser.validateWorkBin(
+            rifWorkBinBytes(),
+            "EP0001-PCSB00598_00-CHILDOFLIGHT0000",
+        )
+        assertTrue(result.isSuccess)
+    }
+
+    @Test
+    fun binaryRifWithWrongContentIdIsRejected() {
+        // El .bin es de otro juego: su Content ID no coincide con el del .pkg.
+        val result = PkgHeaderParser.validateWorkBin(
+            rifWorkBinBytes(),
+            "UP0001-PCSE00480_00-CHILDOFLIGHT0000",
+        )
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()!!.message!!.contains("otro juego"))
+    }
+
+    @Test
+    fun binaryRifWithoutContentIdIsRejected() {
+        val bytes = rifWorkBinBytes()
+        bytes.fill(0, 16, 52) // borra el Content ID del offset 16
+        assertTrue(PkgHeaderParser.validateWorkBin(bytes).isFailure)
+    }
+
+    @Test
+    fun workBinGarbageIsRejected() {
+        // 512 B sin "KO" ni Content ID: no es una licencia.
+        val bytes = ByteArray(512) { 0x41 }
         val result = PkgHeaderParser.validateWorkBin(bytes)
         assertTrue(result.isFailure)
-        assertTrue(result.exceptionOrNull()!!.message!!.contains("KO"))
+        assertTrue(result.exceptionOrNull()!!.message!!.contains("work.bin"))
     }
 
     @Test

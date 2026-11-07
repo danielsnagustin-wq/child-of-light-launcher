@@ -47,7 +47,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Acción que puede ofrecer el diálogo de aviso importante. */
-enum class AlertAction { INSTALL_VITA3K, GO_IMPORT, DELIVER_PKG_TO_VITA3K, CONFIRM_PKG_INSTALLED }
+enum class AlertAction { INSTALL_VITA3K, GO_IMPORT, DELIVER_PKG_TO_VITA3K, CONFIRM_PKG_INSTALLED, REPLACE_DUPLICATE }
 
 /**
  * Un .pkg guardado al que le falta su work.bin (licencia). La tarjeta
@@ -119,6 +119,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _alert = MutableStateFlow<AlertInfo?>(null)
     val alert: StateFlow<AlertInfo?> = _alert.asStateFlow()
 
+    /**
+     * Importación en pausa porque el juego/DLC/update ya está subido:
+     * espera a que el usuario elija Reemplazar o Cancelar en el diálogo.
+     * kind: "GAME", "DLC", "UPDATE", "GAME_FOLDER", "DLC_FOLDER".
+     */
+    private data class PendingDuplicate(val uri: Uri, val kind: String)
+    private val _pendingDuplicate = MutableStateFlow<PendingDuplicate?>(null)
+
     /** true mientras hay una importación en curso (para mostrar progreso y bloquear dobles toques). */
     private val _importing = MutableStateFlow(false)
     val importing: StateFlow<Boolean> = _importing.asStateFlow()
@@ -132,7 +140,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val pendingPkgLicense: StateFlow<PendingPkgLicense?> = _pendingPkgLicense.asStateFlow()
 
     fun clearMessage() { _message.value = null }
-    fun clearAlert() { _alert.value = null }
+    fun clearAlert() {
+        _alert.value = null
+        // Si se cierra el diálogo de duplicado, el reemplazo pendiente se abandona.
+        _pendingDuplicate.value = null
+    }
 
     /** Abre la página oficial de releases de Vita3K para instalarlo. */
     fun openVita3kReleases() {
@@ -325,17 +337,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun importGame(uri: Uri) = importWith(uri) { name -> library.importGame(uri, name) }
-    fun importDlc(uri: Uri) = importWith(uri) { name -> library.importDlc(uri, name) }
-    fun importUpdate(uri: Uri) = importWith(uri) { name -> library.importUpdate(uri, name) }
-    fun importFirmware(uri: Uri) = importWith(uri) { name -> library.importFirmware(uri, name) }
+    fun importGame(uri: Uri, force: Boolean = false) = importWith(uri, "GAME") { name -> library.importGame(uri, name, force) }
+    fun importDlc(uri: Uri, force: Boolean = false) = importWith(uri, "DLC") { name -> library.importDlc(uri, name, force) }
+    fun importUpdate(uri: Uri, force: Boolean = false) = importWith(uri, "UPDATE") { name -> library.importUpdate(uri, name, force) }
+    fun importFirmware(uri: Uri) = importWith(uri, "FIRMWARE") { name -> library.importFirmware(uri, name) }
 
     /** Importar el juego desde una carpeta (debe llamarse PCSE00480/PCSB00598 y tener eboot.bin). */
-    fun importGameFolder(uri: Uri) {
+    fun importGameFolder(uri: Uri, force: Boolean = false) {
         if (!beginImport()) return
+        _pendingDuplicate.value = PendingDuplicate(uri, "GAME_FOLDER")
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val result = library.importGameFolder(uri)
+                val result = library.importGameFolder(uri, force)
                 withContext(Dispatchers.Main) { showImportResult(result) }
             } finally {
                 endImport()
@@ -344,15 +357,34 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     /** Importar DLCs desde una carpeta (debe tener addcont/ dentro). */
-    fun importDlcFolder(uri: Uri) {
+    fun importDlcFolder(uri: Uri, force: Boolean = false) {
         if (!beginImport()) return
+        _pendingDuplicate.value = PendingDuplicate(uri, "DLC_FOLDER")
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val result = library.importDlcFolder(uri)
+                val result = library.importDlcFolder(uri, force)
                 withContext(Dispatchers.Main) { showImportResult(result) }
             } finally {
                 endImport()
             }
+        }
+    }
+
+    /**
+     * El usuario aceptó reemplazar lo ya subido: se repite la misma
+     * importación con force = true (sobrescribe la copia guardada).
+     * Cancelar es solo cerrar el diálogo: clearAlert() ya limpia el
+     * pendiente.
+     */
+    fun confirmReplaceDuplicate() {
+        val pending = _pendingDuplicate.value ?: return
+        clearAlert()
+        when (pending.kind) {
+            "GAME" -> importGame(pending.uri, force = true)
+            "DLC" -> importDlc(pending.uri, force = true)
+            "UPDATE" -> importUpdate(pending.uri, force = true)
+            "GAME_FOLDER" -> importGameFolder(pending.uri, force = true)
+            "DLC_FOLDER" -> importDlcFolder(pending.uri, force = true)
         }
     }
 
@@ -382,6 +414,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * solo veía que "no pasa nada".
      */
     private fun showImportResult(result: ImportResult) {
+        // Duplicado: el juego/DLC/update ya está subido. No es un error:
+        // se pregunta si se reemplaza o se cancela, en vez de volver a
+        // copiar en silencio. El pendiente se guardó al empezar la
+        // importación (importWith / importGameFolder / importDlcFolder).
+        if (result is ImportResult.Rejected && result.reason.startsWith(com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository.DUPLICATE_MARKER)) {
+            _alert.value = AlertInfo(
+                result.reason.removePrefix(com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository.DUPLICATE_MARKER),
+                AlertAction.REPLACE_DUPLICATE,
+            )
+            return
+        }
+        _pendingDuplicate.value = null
         when (result) {
             is ImportResult.Rejected, is ImportResult.Failed ->
                 _alert.value = AlertInfo(importResultMessage(result))
@@ -457,12 +501,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 "Elige el work.bin en Ajustes (tarjeta «Falta la licencia»): es el archivo work.bin " +
                 "que acompaña al .pkg (a veces se descarga como «work (5).bin»)."
         }
-        is ImportResult.Rejected -> "No se instaló nada:\n\n${result.reason}"
+        is ImportResult.Rejected -> "No se instaló nada:\n\n${result.reason.removePrefix(com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository.DUPLICATE_MARKER)}"
         is ImportResult.Failed -> "No se pudo importar:\n\n${result.reason}\n\nSi el archivo es grande, espera sin cerrar la app: la copia puede tardar varios minutos."
     }
 
-    private fun importWith(uri: Uri, block: (String) -> ImportResult) {
+    private fun importWith(uri: Uri, kind: String, block: (String) -> ImportResult) {
         if (!beginImport()) return
+        _pendingDuplicate.value = PendingDuplicate(uri, kind)
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val name = fileNameOf(uri)
@@ -490,7 +535,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE ->
                     library.pkgPatchWorkBinFile(pending.titleId)
             }
-            val result = library.importWorkBin(uri, licenseDest)
+            val result = library.importWorkBin(uri, licenseDest, pending.contentId)
             withContext(Dispatchers.Main) {
                 result.onSuccess {
                     _pendingPkgLicense.value = null

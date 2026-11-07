@@ -126,6 +126,90 @@ object ImportFileGuide {
  */
 class GameLibraryRepository(private val context: Context) {
 
+    companion object {
+        /**
+         * Prefijo de ImportResult.Rejected cuando el juego/DLC/update ya
+         * está subido: el ViewModel lo convierte en un diálogo
+         * "Reemplazar / Cancelar" en vez de un error. El texto tras el
+         * prefijo es el mensaje para el usuario (sin el prefijo).
+         */
+        const val DUPLICATE_MARKER = "DUPLICATE::"
+    }
+
+    /** ¿El juego ya está subido (extraído en ux0/app/ o como .pkg)? */
+    private fun isGameInstalled(titleId: String): Boolean =
+        (appDir(titleId).exists() && ImportTreeSearch.findEboot(appDir(titleId)) != null) ||
+            pkgGameFile(titleId).isFile
+
+    /** ¿El DLC ya está subido (extraído en addcont/ o como .pkg)? */
+    private fun isDlcInstalled(titleId: String, dlcId: String): Boolean =
+        File(addcontDir(titleId), dlcId).exists() || pkgDlcFile(dlcId).isFile
+
+    /** ¿El update ya está subido (extraído en patch/ o como .pkg)? */
+    private fun isUpdateInstalled(titleId: String): Boolean =
+        (patchDir(titleId).exists() && patchDir(titleId).listFiles()?.isNotEmpty() == true) ||
+            pkgPatchFile(titleId).isFile
+
+    private fun formatSizeMb(bytes: Long): String =
+        if (bytes >= 1_000_000_000L) "%.2f GB".format(bytes / 1_000_000_000.0)
+        else "${bytes / 1_000_000} MB"
+
+    /**
+     * Mensaje de duplicado para el JUEGO, o null si no está subido.
+     * Distingue la misma forma (reemplazar no ocupa más) de otra forma
+     * (extraído + .pkg convivirían y ocuparían más).
+     */
+    private fun gameDuplicateMessage(titleId: String): String? {
+        val pkg = pkgGameFile(titleId)
+        if (pkg.isFile) {
+            return "El juego $titleId ya está subido como .pkg (${formatSizeMb(pkg.length())}). " +
+                "Si lo subes de nuevo, se reemplaza el archivo guardado y no ocupa más espacio. ¿Quieres reemplazarlo?"
+        }
+        if (appDir(titleId).exists() && ImportTreeSearch.findEboot(appDir(titleId)) != null) {
+            return "El juego $titleId ya está instalado (extraído). Si lo subes como .pkg tendrás " +
+                "las dos copias y ocupará más espacio. ¿Seguro que quieres subirlo de todos modos?"
+        }
+        return null
+    }
+
+    private fun updateDuplicateMessage(titleId: String): String? {
+        if (!isUpdateInstalled(titleId)) return null
+        return "El update de $titleId ya está subido. Si lo subes de nuevo, se reemplaza " +
+            "la copia guardada y no ocupa más espacio. ¿Quieres reemplazarlo?"
+    }
+
+    private fun duplicateResult(message: String): ImportResult =
+        ImportResult.Rejected("$DUPLICATE_MARKER$message")
+
+    /**
+     * Borra restos de importaciones que se cortaron a medias (app cerrada
+     * o sin espacio durante la copia): temporales "*.tmp" y respaldos
+     * "*.bak-<timestamp>" de .pkg, juego, DLCs y update. Sin esto, cada
+     * importación interrumpida dejaba hasta 1 GB huérfano y el launcher
+     * "engordaba" sin que el usuario supiera por qué. Solo se borran
+     * restos de importación; nunca el juego, los DLCs ni los saves.
+     */
+    private fun cleanStaleImportLeftovers() {
+        runCatching {
+            listOf(pkgDir(), pkgDlcDir(), pkgPatchDir()).forEach { dir ->
+                dir.listFiles()?.forEach { f ->
+                    if (f.name.endsWith(".tmp") && f.isFile) f.delete()
+                    else if (".bak-" in f.name) f.deleteRecursively()
+                }
+            }
+            listOf(File(vitaRoot, "ux0/app"), File(vitaRoot, "ux0/patch")).forEach { base ->
+                base.listFiles()?.forEach { f ->
+                    if (".bak-" in f.name) f.deleteRecursively()
+                }
+            }
+            File(vitaRoot, "ux0/addcont").listFiles()?.forEach { titleDir ->
+                titleDir.listFiles()?.forEach { f ->
+                    if (".bak-" in f.name) f.deleteRecursively()
+                }
+            }
+        }
+    }
+
     val vitaRoot: File get() = File(context.filesDir, "vita3k")
     val configFile: File get() = File(vitaRoot, "config.yml")
 
@@ -240,7 +324,7 @@ class GameLibraryRepository(private val context: Context) {
      * Orden: "work.bin" exacto, "work (N).bin" (copias de Chrome),
      * cualquier .bin de 512 B. El contenido se valida después con
      * PkgHeaderParser.validateWorkBin: un .bin que no sea licencia
-     * zRIF no se acepta. Best-effort: algunos proveedores no dejan
+     * (.rif binario con Content ID, o texto zRIF «KO») no se acepta. Best-effort: algunos proveedores no dejan
      * listar la carpeta; en ese caso se devuelve null y se pide el
      * work.bin al usuario.
      */
@@ -264,12 +348,15 @@ class GameLibraryRepository(private val context: Context) {
 
     /**
      * Guarda el work.bin elegido por el usuario para un .pkg ya
-     * guardado. Valida el contenido (512 B, zRIF "KO") antes de copiar.
+     * guardado. Valida el contenido (512 B: licencia .rif binaria con
+     * Content ID, o texto zRIF «KO») antes de copiar. Si se pasa
+     * expectedContentId, el Content ID del .bin debe coincidir: el .bin
+     * tiene que ser la licencia DE ESTE .pkg, no de otro juego.
      */
-    fun importWorkBin(uri: Uri, licenseDest: File): Result<Unit> {
+    fun importWorkBin(uri: Uri, licenseDest: File, expectedContentId: String? = null): Result<Unit> {
         return try {
             context.contentResolver.openInputStream(uri)?.use { input ->
-                PkgHeaderParser.validateWorkBin(input).getOrThrow()
+                PkgHeaderParser.validateWorkBin(input, expectedContentId).getOrThrow()
             } ?: return Result.failure(IllegalStateException("No se pudo abrir el archivo elegido."))
             copyUriAtomic(uri, licenseDest)
             LauncherLog.append(context, "import", "work.bin guardado en ${licenseDest.absolutePath}")
@@ -425,16 +512,16 @@ class GameLibraryRepository(private val context: Context) {
     // Importación
     // ------------------------------------------------------------------
 
-    fun importGame(uri: Uri, fileName: String): ImportResult {
-        return importArchive(uri, fileName, ImportKind.GAME)
+    fun importGame(uri: Uri, fileName: String, force: Boolean = false): ImportResult {
+        return importArchive(uri, fileName, ImportKind.GAME, force)
     }
 
-    fun importDlc(uri: Uri, fileName: String): ImportResult {
-        return importArchive(uri, fileName, ImportKind.DLC)
+    fun importDlc(uri: Uri, fileName: String, force: Boolean = false): ImportResult {
+        return importArchive(uri, fileName, ImportKind.DLC, force)
     }
 
-    fun importUpdate(uri: Uri, fileName: String): ImportResult {
-        return importArchive(uri, fileName, ImportKind.UPDATE)
+    fun importUpdate(uri: Uri, fileName: String, force: Boolean = false): ImportResult {
+        return importArchive(uri, fileName, ImportKind.UPDATE, force)
     }
 
     /**
@@ -470,7 +557,9 @@ class GameLibraryRepository(private val context: Context) {
 
     private enum class ImportKind { GAME, DLC, UPDATE }
 
-    private fun importArchive(uri: Uri, fileName: String, kind: ImportKind): ImportResult {
+    private fun importArchive(uri: Uri, fileName: String, kind: ImportKind, force: Boolean = false): ImportResult {
+        // Restos de importaciones cortadas a medias (hasta 1 GB huérfanos).
+        cleanStaleImportLeftovers()
         // "Al cargar no funciona": la extensión se sacaba SOLO del nombre
         // que devuelve el selector. Algunos gestores devuelven un ID de
         // documento sin extensión (o un nombre sin punto) y el .zip/.vpk
@@ -514,6 +603,25 @@ class GameLibraryRepository(private val context: Context) {
                 ImportKind.DLC -> com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC
                 ImportKind.UPDATE -> com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE
             }
+            // Duplicado: si ya está subido, NO se vuelve a copiar en
+            // silencio (eso era lo que hacía "engordar" al launcher).
+            // Se avisa y el usuario elige Reemplazar o Cancelar.
+            if (!force) {
+                val duplicateMessage = when (pkgKind) {
+                    com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME ->
+                        gameDuplicateMessage(title.id)
+                    com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC -> {
+                        val dlcId = sanitizeContentName(parsed.contentName).ifBlank { "dlc-${title.id}" }
+                        if (isDlcInstalled(title.id, dlcId)) {
+                            "El DLC $dlcId ya está subido. Si lo subes de nuevo, se reemplaza " +
+                                "la copia guardada y no ocupa más espacio. ¿Quieres reemplazarlo?"
+                        } else null
+                    }
+                    com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE ->
+                        updateDuplicateMessage(title.id)
+                }
+                if (duplicateMessage != null) return duplicateResult(duplicateMessage)
+            }
             return try {
                 cleanLegacyPending()
                 val (dest, licenseDest) = pkgStorageFor(title, parsed, pkgKind)
@@ -522,13 +630,14 @@ class GameLibraryRepository(private val context: Context) {
                 copyUriAtomic(uri, dest)
                 val sizeBytes = dest.length()
                 // Licencia: buscar work.bin junto al .pkg (misma carpeta).
-                // Se valida el contenido (512 B, zRIF "KO"): un .bin que
-                // no sea licencia no se acepta como tal.
+                // Se valida el contenido (512 B: licencia .rif binaria con
+                // el Content ID de ESTE .pkg, o texto zRIF «KO»): un .bin
+                // que no sea licencia no se acepta como tal.
                 var licenseFound = false
                 val sibling = findWorkBinSibling(uri)
                 if (sibling != null) {
                     val valid = runCatching {
-                        context.contentResolver.openInputStream(sibling)?.use { PkgHeaderParser.validateWorkBin(it) }
+                        context.contentResolver.openInputStream(sibling)?.use { PkgHeaderParser.validateWorkBin(it, parsed.contentId) }
                     }.getOrNull()?.isSuccess == true
                     if (valid) {
                         copyUriAtomic(sibling, licenseDest)
@@ -587,6 +696,9 @@ class GameLibraryRepository(private val context: Context) {
                     if (ImportTreeSearch.findEboot(titleDir) == null) {
                         ImportResult.Failed("Extracción incompleta: no apareció ${title.id}/eboot.bin. El archivo puede estar truncado.")
                     } else {
+                    if (!force) {
+                        gameDuplicateMessage(title.id)?.let { return duplicateResult(it) }
+                    }
                     val dest = appDir(title.id)
                     // BUG (auditoría): antes se borraba el juego viejo ANTES
                     // de copiar el nuevo; si la copia fallaba (disco lleno),
@@ -620,6 +732,15 @@ class GameLibraryRepository(private val context: Context) {
                     } else if (dlcIds.isEmpty()) {
                         ImportResult.Rejected("La carpeta addcont/ está vacía: no había ningún DLC dentro.")
                     } else {
+                    if (!force) {
+                        val already = dlcIds.filter { isDlcInstalled(title.id, it) }
+                        if (already.isNotEmpty()) {
+                            return duplicateResult(
+                                "Ya tienes subido(s) este DLC: ${already.joinToString(", ")}. " +
+                                    "Si lo subes de nuevo, se reemplaza la copia guardada y no ocupa más espacio. ¿Quieres reemplazarlo?",
+                            )
+                        }
+                    }
                     val destBase = addcontDir(title.id)
                     destBase.mkdirs()
                     // Se instala cada DLC de la carpeta addcont/ con respaldo
@@ -646,6 +767,9 @@ class GameLibraryRepository(private val context: Context) {
                     if (titleDir.listFiles()?.isEmpty() != false) {
                         ImportResult.Rejected("El update está vacío: la carpeta ${title.id} no trae archivos.")
                     } else {
+                    if (!force) {
+                        updateDuplicateMessage(title.id)?.let { return duplicateResult(it) }
+                    }
                     val dest = patchDir(title.id)
                     // BUG (auditoría): igual que el juego — se borraba el
                     // update viejo antes de copiar el nuevo (pérdida de datos
@@ -732,7 +856,7 @@ class GameLibraryRepository(private val context: Context) {
      * juego descomprimido (no un .zip/.vpk). Copia todo el árbol a
      * ux0/app/<TITLE>/ de forma atómica (respaldo + restauración).
      */
-    fun importGameFolder(treeUri: Uri): ImportResult {
+    fun importGameFolder(treeUri: Uri, force: Boolean = false): ImportResult {
         return try {
             val root = DocumentFile.fromTreeUri(context, treeUri)
                 ?: return ImportResult.Failed("No se pudo abrir la carpeta elegida.")
@@ -753,6 +877,11 @@ class GameLibraryRepository(private val context: Context) {
                         "Si la carpeta está en la tarjeta SD o en Drive y no se lee, muévela al almacenamiento interno o a Descargas e inténtalo de nuevo.",
                 )
             }
+            // Duplicado: no volver a copiar en silencio.
+            if (!force) {
+                gameDuplicateMessage(title.id)?.let { return duplicateResult(it) }
+            }
+            cleanStaleImportLeftovers()
             val tmp = File(context.cacheDir, "import_folder_${title.id}")
             tmp.deleteRecursively()
             tmp.mkdirs()
@@ -781,7 +910,7 @@ class GameLibraryRepository(private val context: Context) {
      * y contener addcont/ dentro (estructura <TITLE>/addcont/<DLC>/...).
      * Instala cada DLC con respaldo, como el .zip de DLC.
      */
-    fun importDlcFolder(treeUri: Uri): ImportResult {
+    fun importDlcFolder(treeUri: Uri, force: Boolean = false): ImportResult {
         return try {
             val root = DocumentFile.fromTreeUri(context, treeUri)
                 ?: return ImportResult.Failed("No se pudo abrir la carpeta elegida.")
@@ -805,6 +934,23 @@ class GameLibraryRepository(private val context: Context) {
             copyDocumentTree(addcont, stagedAddcont)
             val destBase = addcontDir(title.id)
             destBase.mkdirs()
+            val stagedNames = stagedAddcont.listFiles()
+                ?.filter { it.isDirectory }
+                ?.map { it.name }
+                .orEmpty()
+            // Duplicado: lo mismo que en el .zip de DLC — si ya está
+            // subido, se avisa en vez de volver a copiar en silencio.
+            if (!force) {
+                val already = stagedNames.filter { isDlcInstalled(title.id, it) }
+                if (already.isNotEmpty()) {
+                    tmp.deleteRecursively()
+                    return duplicateResult(
+                        "Ya tienes subido(s) este DLC: ${already.joinToString(", ")}. " +
+                            "Si lo subes de nuevo, se reemplaza la copia guardada y no ocupa más espacio. ¿Quieres reemplazarlo?",
+                    )
+                }
+            }
+            cleanStaleImportLeftovers()
             val installed = stagedAddcont.listFiles()
                 ?.filter { it.isDirectory }
                 ?.map { dlcDir ->
