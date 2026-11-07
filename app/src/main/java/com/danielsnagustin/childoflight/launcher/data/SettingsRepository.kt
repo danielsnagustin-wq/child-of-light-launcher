@@ -235,7 +235,16 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun resetToDefaults(gpu: GpuInfo?) {
         val profile = if (gpu != null) defaultProfileFor(gpu) else GpuProfileId.G99_RECOMMENDED
-        save(presetSettings(profile))
+        // El estado de entrega del .pkg NO es un ajuste: restablecer no
+        // debe obligar a volver a copiar 1.1 GB a Descargas ni a
+        // reconfirmar la instalación (igual que applyPreset, M21).
+        val current = runCatching { settingsFlow.first() }.getOrNull()
+        save(
+            presetSettings(profile).copy(
+                pkgDeliveredToVita3k = current?.pkgDeliveredToVita3k ?: false,
+                pkgInstalledInVita3k = current?.pkgInstalledInVita3k ?: false,
+            ),
+        )
     }
 
     suspend fun saveGpuInfo(gpu: GpuInfo) {

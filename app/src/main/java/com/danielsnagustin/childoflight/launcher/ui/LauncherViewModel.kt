@@ -7,8 +7,12 @@ import android.net.Uri
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.danielsnagustin.childoflight.launcher.core.EmbeddedPkgInstaller
+import com.danielsnagustin.childoflight.launcher.core.Vita3kCoreBridge
 import com.danielsnagustin.childoflight.launcher.data.AchievementRepository
 import com.danielsnagustin.childoflight.launcher.data.ControlProfile
+import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
+import com.danielsnagustin.childoflight.launcher.data.DownloadsCopy
 import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
 import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
@@ -47,7 +51,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Acción que puede ofrecer el diálogo de aviso importante. */
-enum class AlertAction { INSTALL_VITA3K, GO_IMPORT, DELIVER_PKG_TO_VITA3K, CONFIRM_PKG_INSTALLED, REPLACE_DUPLICATE }
+enum class AlertAction { INSTALL_VITA3K, GO_IMPORT, DELIVER_PKG_TO_VITA3K, CONFIRM_PKG_INSTALLED, REPLACE_DUPLICATE, CONFIRM_DOWNLOADS_COPY }
 
 /**
  * Un .pkg guardado al que le falta su work.bin (licencia). La tarjeta
@@ -69,6 +73,20 @@ data class PendingPkgLicense(
  * usuario veía "no pasa nada" y no sabía qué había fallado.
  */
 data class AlertInfo(val text: String, val action: AlertAction? = null)
+
+/**
+ * Texto de confirmación antes de copiar a Descargas/ChildOfLight/.
+ * Puro (sin Android): testeable en JVM (DownloadsAndLayoutTest).
+ * Sin el nombre de la app externa: la UI solo habla de "la app externa".
+ */
+internal fun downloadsCopyConfirmText(fileNames: List<String>, totalBytes: Long): String {
+    val files = fileNames.joinToString("\n") { "• $it" }
+    return "El juego, los DLCs, los updates y la licencia viven en el almacenamiento interno del launcher (privado, sin carpeta visible).\n\n" +
+        "La app externa no puede leerlos desde ahí: para instalarlos hay que copiarlos a la carpeta compartida Descargas/ChildOfLight/ (${DownloadsCleanup.formatBytes(totalBytes)}).\n\n" +
+        "Archivos que se copiarán:\n$files\n\n" +
+        "Esto solo hace falta mientras el núcleo embebido no esté listo: cuando lo esté, JUGAR instalará el juego sin copiar nada a Descargas. " +
+        "Después de instalar, puedes borrar estas copias desde Ajustes → Almacenamiento."
+}
 
 class LauncherViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -96,6 +114,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _firmwareStatus = MutableStateFlow<FirmwareStatus>(FirmwareStatus.Missing)
     val firmwareStatusFlow: StateFlow<FirmwareStatus> = _firmwareStatus.asStateFlow()
 
+    /** true mientras se instala el PUP guardado en el núcleo embebido (puede tardar minutos). */
+    private val _firmwareInstalling = MutableStateFlow(false)
+    val firmwareInstallingFlow: StateFlow<Boolean> = _firmwareInstalling.asStateFlow()
+
+    /** ¿Está presente el núcleo embebido (Etapa 2)? null = aún no comprobado. */
+    private val _embeddedCore = MutableStateFlow<Boolean?>(null)
+    val embeddedCoreFlow: StateFlow<Boolean?> = _embeddedCore.asStateFlow()
+
     // B3 (auditoría UI): la batería y los mandos se leían con llamadas
     // planas y la UI no se enteraba del cambio. Ahora son StateFlow.
     private val _batteryOptDisabled = MutableStateFlow(false)
@@ -107,6 +133,40 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     /** Refresca la lista de mandos físicos conectados (InputDevice). */
     fun refreshGamepads() {
         _gamepads.value = launcher.connectedGamepads()
+    }
+
+    // --- Descargas/ChildOfLight/ (copias para la app externa) ---
+    // El juego/DLCs/updates/licencia viven en el almacenamiento interno
+    // del launcher; la única copia a Descargas es la entrega explícita
+    // a la app externa, que el usuario confirma antes. Aquí se lista
+    // para ofrecer la limpieza en Ajustes → Almacenamiento.
+    private val _downloadsCopies = MutableStateFlow<List<DownloadsCopy>>(emptyList())
+    val downloadsCopies: StateFlow<List<DownloadsCopy>> = _downloadsCopies.asStateFlow()
+
+    /** Llamar desde IO (refreshStatus, deleteDownloadsCopies). */
+    private fun refreshDownloadsCopies() {
+        _downloadsCopies.value = runCatching { library.listDownloadsCopies() }.getOrDefault(emptyList())
+    }
+
+    /**
+     * Borra las copias de Descargas/ChildOfLight/ (solo se llama desde
+     * la confirmación del usuario en Ajustes → Almacenamiento). El
+     * juego, los DLCs y la licencia del almacenamiento interno NO se
+     * tocan. Si aún no instaló el .pkg en la app externa, tendrá que
+     * volver a copiarlo (el diálogo de confirmación lo avisa).
+     */
+    fun deleteDownloadsCopies() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val deleted = runCatching { library.deleteDownloadsCopies() }.getOrDefault(0)
+            refreshDownloadsCopies()
+            withContext(Dispatchers.Main) {
+                _message.value = if (deleted > 0) {
+                    "Se borraron $deleted archivo(s) de Descargas/ChildOfLight/. El juego sigue guardado en el almacenamiento interno del launcher."
+                } else {
+                    "No había nada que borrar en Descargas/ChildOfLight/."
+                }
+            }
+        }
     }
 
     private val _status = MutableStateFlow(GameStatus())
@@ -154,7 +214,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             }
             context.startActivity(intent)
         }.onFailure {
-            _message.value = "No se pudo abrir el navegador. Busca «Vita3K releases» en GitHub."
+            _message.value = "No se pudo abrir el navegador. Busca las releases de la app externa en GitHub."
         }
     }
 
@@ -203,8 +263,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 .onSuccess { _firmwareStatus.value = it }
             _externalVita3k.value =
                 runCatching { launcher.externalVita3kVersion() }.getOrNull()
+            _embeddedCore.value =
+                runCatching { Vita3kCoreBridge.available }.getOrNull()
             _batteryOptDisabled.value =
                 runCatching { launcher.isBatteryOptimizationDisabled() }.getOrDefault(false)
+            refreshDownloadsCopies()
             val title = _status.value.titleId?.id
             _trophyScan.value = if (title != null) {
                 runCatching { TrophyStoreReader.scan(library.vitaRoot, title) }.getOrNull()
@@ -340,7 +403,155 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun importGame(uri: Uri, force: Boolean = false) = importWith(uri, "GAME") { name -> library.importGame(uri, name, force) }
     fun importDlc(uri: Uri, force: Boolean = false) = importWith(uri, "DLC") { name -> library.importDlc(uri, name, force) }
     fun importUpdate(uri: Uri, force: Boolean = false) = importWith(uri, "UPDATE") { name -> library.importUpdate(uri, name, force) }
-    fun importFirmware(uri: Uri) = importWith(uri, "FIRMWARE") { name -> library.importFirmware(uri, name) }
+    // --- Firmware (núcleo embebido, Etapa 2) ---
+
+    /**
+     * Importar el PUP UNA SOLA VEZ: el usuario elige su propio
+     * PSVUPDAT.PUP con el selector de archivos del sistema (SAF),
+     * sin exigir nombre ni ruta concretos (la extensión se resuelve
+     * por nombre, MIME o magia SCEUF). El archivo se guarda SOLO en
+     * el teléfono (nunca sale de ahí, nunca entra en el repo/APK) y,
+     * si el núcleo embebido ya está presente, se instala en él en el
+     * mismo acto. Si el núcleo aún no está, el PUP queda guardado y
+     * se instalará solo al jugar o desde Ajustes → Avanzado →
+     * Firmware. Si el usuario no tiene el PUP, no se le manda a
+     * buscarlo por internet: la app lo dice en una frase y se sigue
+     * jugando con la app externa.
+     */
+    fun importFirmware(uri: Uri) {
+        if (!beginImport()) return
+        _pendingDuplicate.value = PendingDuplicate(uri, "FIRMWARE")
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val name = fileNameOf(uri)
+                val result = library.importFirmware(uri, name)
+                _pendingDuplicate.value = null
+                if (result is ImportResult.FirmwareSuccess) {
+                    when (val installed = tryInstallSavedFirmwareInCore()) {
+                        is FirmwareCoreResult.Done ->
+                            withContext(Dispatchers.Main) { _message.value = installed.message }
+                        is FirmwareCoreResult.NotInstalled ->
+                            withContext(Dispatchers.Main) { _message.value = installed.message }
+                    }
+                } else {
+                    withContext(Dispatchers.Main) { showImportResult(result) }
+                }
+            } finally {
+                endImport()
+            }
+        }
+    }
+
+    /** Resultado de intentar instalar el PUP guardado en el núcleo. message = frase para el usuario. */
+    private sealed class FirmwareCoreResult {
+        data class Done(val message: String) : FirmwareCoreResult()
+        /** No se instaló (sin núcleo, sin PUP, o fallo del núcleo). */
+        data class NotInstalled(val message: String) : FirmwareCoreResult()
+    }
+
+    /**
+     * Instala el PUP guardado en el almacenamiento del núcleo
+     * embebido (vía EmbeddedPkgInstaller.installFirmware) y registra
+     * la versión instalada. No lanza excepciones. Si no hay núcleo,
+     * el PUP simplemente queda guardado para cuando llegue.
+     */
+    private suspend fun tryInstallSavedFirmwareInCore(): FirmwareCoreResult {
+        if (!Vita3kCoreBridge.available) {
+            return FirmwareCoreResult.NotInstalled(
+                "Firmware guardado. El núcleo embebido aún no está en esta versión: " +
+                    "el PUP queda guardado en el teléfono y se instalará solo cuando el núcleo esté disponible. " +
+                    "Mientras tanto, la app externa usa su propio firmware.",
+            )
+        }
+        when (val status = FirmwareResolver.resolve(library.vitaRoot)) {
+            is FirmwareStatus.Ready ->
+                return FirmwareCoreResult.Done("Firmware ya instalado en el núcleo (${status.source}).")
+            FirmwareStatus.Missing ->
+                return FirmwareCoreResult.NotInstalled(FirmwareResolver.NO_FIRMWARE_MESSAGE)
+            is FirmwareStatus.Saved -> { /* seguir: hay PUP guardado por instalar */ }
+        }
+        val pup = FirmwareResolver.pupFile(library.vitaRoot)
+        if (!FirmwareResolver.isValidPupFile(pup)) {
+            return FirmwareCoreResult.NotInstalled(
+                "El archivo guardado no es un PUP válido (debe empezar por SCEUF). " +
+                    "Elige de nuevo tu PSVUPDAT.PUP en Ajustes → Avanzado → Firmware.",
+            )
+        }
+        _firmwareInstalling.value = true
+        return try {
+            val installer = EmbeddedPkgInstaller(library)
+            val result = installer.installFirmware(pup) { _, _ -> /* progreso: TODO mostrar % en UI */ }
+            result.fold(
+                onSuccess = { version ->
+                    FirmwareResolver.markInstalled(library.vitaRoot, version)
+                    refreshStatus()
+                    LauncherLog.append(context, "firmware", "Firmware $version instalado en el núcleo embebido.")
+                    FirmwareCoreResult.Done(
+                        "Firmware $version instalado en el núcleo embebido. Ya puedes jugar sin la app externa.",
+                    )
+                },
+                onFailure = { e ->
+                    LauncherLog.append(context, "firmware", "Instalación en el núcleo falló: ${e.message}")
+                    FirmwareCoreResult.NotInstalled(
+                        "El PUP quedó guardado, pero el núcleo no pudo instalarlo: ${e.message}. " +
+                            "Puedes seguir jugando con la app externa.",
+                    )
+                },
+            )
+        } finally {
+            _firmwareInstalling.value = false
+        }
+    }
+
+    /** Botón "Instalar en el núcleo embebido" (Ajustes → Avanzado → Firmware). */
+    fun installSavedFirmwareInCore() {
+        viewModelScope.launch(Dispatchers.IO) {
+            when (val result = tryInstallSavedFirmwareInCore()) {
+                is FirmwareCoreResult.Done ->
+                    withContext(Dispatchers.Main) { _message.value = result.message }
+                is FirmwareCoreResult.NotInstalled ->
+                    withContext(Dispatchers.Main) {
+                        // Sin PUP o instalación fallida: diálogo, no
+                        // Snackbar fugaz; el usuario tiene que leerlo.
+                        if (result.message == FirmwareResolver.NO_FIRMWARE_MESSAGE ||
+                            result.message.startsWith("El PUP quedó guardado")
+                        ) {
+                            _alert.value = AlertInfo(result.message)
+                        } else {
+                            _message.value = result.message
+                        }
+                    }
+            }
+        }
+    }
+
+    /**
+     * Antes de JUGAR: si el núcleo está presente y hay un PUP
+     * guardado sin instalar, instalarlo ahora (best-effort). NUNCA
+     * bloquea el lanzamiento: si falla o no hay PUP, se sigue con el
+     * fallback a la app externa (que avisa una vez y lanza igual).
+     */
+    private suspend fun ensureFirmwareForEmbedded() {
+        runCatching { tryInstallSavedFirmwareInCore() }
+            .onFailure {
+                LauncherLog.append(context, "firmware", "No se pudo preparar el firmware: ${it.message}")
+            }
+    }
+
+    /** Borra el firmware local (PUP guardado + marcador + vs0 extraído). No toca juego, DLCs ni saves. */
+    fun deleteFirmware() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val deleted = FirmwareResolver.deleteFirmware(library.vitaRoot)
+            withContext(Dispatchers.Main) {
+                _message.value = if (deleted) {
+                    "Firmware borrado del launcher y del núcleo."
+                } else {
+                    "No había firmware que borrar."
+                }
+            }
+            refreshStatus()
+        }
+    }
 
     /** Importar el juego desde una carpeta (debe llamarse PCSE00480/PCSB00598 y tener eboot.bin). */
     fun importGameFolder(uri: Uri, force: Boolean = false) {
@@ -485,10 +696,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC -> "El DLC"
                 com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE -> "El update"
             }
-            "$what se guardó como .pkg (${result.titleId.id} · ${formatBytes(result.sizeBytes)}).\n\n" +
-                "El launcher no puede instalar un .pkg por sí mismo: lo instala Vita3K. " +
-                "Pulsa «Instalar en Vita3K»: se copia el .pkg y su licencia a Descargas/ChildOfLight/ " +
-                "y se abre Vita3K para instalarlo ahí una sola vez."
+            "$what se guardó como .pkg (${result.titleId.id} · ${formatBytes(result.sizeBytes)}) en el almacenamiento interno del launcher.\n\n" +
+                "El launcher no puede instalar un .pkg por sí mismo: lo instala la app externa. " +
+                "Pulsa «Instalar en la app externa»: te pedirá confirmar la copia del .pkg y su licencia a Descargas/ChildOfLight/ " +
+                "y se abre la app externa para instalarlo ahí una sola vez."
         }
         is ImportResult.PkgNeedsLicense -> {
             val what = when (result.kind) {
@@ -497,7 +708,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE -> "El update"
             }
             "$what se guardó como .pkg (${result.titleId.id} · ${formatBytes(result.sizeBytes)}), " +
-                "pero falta su licencia (work.bin de 512 B): sin ella Vita3K no puede instalarlo.\n\n" +
+                "pero falta su licencia (work.bin de 512 B): sin ella no se puede instalar.\n\n" +
                 "Elige el work.bin en Ajustes (tarjeta «Falta la licencia»): es el archivo work.bin " +
                 "que acompaña al .pkg (a veces se descarga como «work (5).bin»)."
         }
@@ -541,8 +752,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     _pendingPkgLicense.value = null
                     _alert.value = AlertInfo(
                         "Licencia guardada: el .pkg ya tiene su work.bin.\n\n" +
-                            "Pulsa «Instalar en Vita3K» para copiar el .pkg y su licencia a " +
-                            "Descargas/ChildOfLight/ e instalarlo en Vita3K.",
+                            "Pulsa «Instalar en la app externa»: te pedirá confirmar la copia del .pkg y su licencia a " +
+                            "Descargas/ChildOfLight/ para instalarlo en la app externa.",
                         AlertAction.DELIVER_PKG_TO_VITA3K,
                     )
                 }.onFailure { e ->
@@ -553,7 +764,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /** Copia el .pkg + work.bin a Descargas/ChildOfLight/, abre Vita3K y muestra la guía de instalación. */
+    /**
+     * Valida que haya .pkg + licencia y pide CONFIRMACIÓN antes de copiar
+     * nada a Descargas/ChildOfLight/. La copia solo ocurre si el usuario
+     * la confirma en el diálogo (confirmDeliverPkgToDownloads): sin
+     * confirmación, la carpeta Descargas/ChildOfLight/ no se crea nunca.
+     */
     fun deliverPkgToVita3k() {
         viewModelScope.launch(Dispatchers.IO) {
             // Cualquier .pkg guardado vale (juego, DLC o update), no solo el del juego.
@@ -587,12 +803,37 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         },
                     )
                     _alert.value = AlertInfo(
-                        "Falta la licencia (work.bin) del ${first.kind.label} ${first.titleId.id}: sin ella Vita3K no puede instalarlo.\n\n" +
+                        "Falta la licencia (work.bin) del ${first.kind.label} ${first.titleId.id}: sin ella no se puede instalar.\n\n" +
                             "Elige el work.bin en Ajustes (tarjeta «Falta la licencia»).",
                     )
                 }
                 return@launch
             }
+            // La copia a Descargas NUNCA es automática: el usuario la
+            // confirma en el diálogo (qué se copia, cuánto ocupa y por
+            // qué). Sin confirmación, la carpeta Descargas/ChildOfLight/
+            // no se crea nunca.
+            val files = library.storedPkgFilesForDelivery()
+            val total = files.sumOf { it.length() }
+            withContext(Dispatchers.Main) {
+                _alert.value = AlertInfo(
+                    downloadsCopyConfirmText(files.map { it.name }, total),
+                    AlertAction.CONFIRM_DOWNLOADS_COPY,
+                )
+            }
+        }
+    }
+
+    /**
+     * El usuario confirmó la copia a Descargas en el diálogo: copia el
+     * .pkg + work.bin a Descargas/ChildOfLight/, abre la app externa y
+     * muestra la guía de instalación. Es el ÚNICO camino que crea la
+     * carpeta Descargas/ChildOfLight/; con el núcleo embebido listo, el
+     * juego se instala desde el almacenamiento interno y este paso
+     * desaparece.
+     */
+    fun confirmDeliverPkgToDownloads() {
+        viewModelScope.launch(Dispatchers.IO) {
             val result = launcher.deliverPkgFiles(library)
             result.onSuccess { copied ->
                 val current = settingsRepo.settingsFlow.first()
@@ -603,15 +844,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         _alert.value = AlertInfo(pkgInstallGuideText(copied), AlertAction.CONFIRM_PKG_INSTALLED)
                     } else {
                         _alert.value = AlertInfo(
-                            "Los archivos se copiaron a Descargas/ChildOfLight/, pero Vita3K no está instalado.\n\n" +
-                                "Instálalo y luego vuelve a pulsar «Instalar en Vita3K».",
+                            "Los archivos se copiaron a Descargas/ChildOfLight/, pero la app externa no está instalada.\n\n" +
+                                "Instálala y luego vuelve a pulsar «Instalar en la app externa».",
                             AlertAction.INSTALL_VITA3K,
                         )
                     }
                 }
             }.onFailure { e ->
                 withContext(Dispatchers.Main) {
-                    _alert.value = AlertInfo("No se pudo entregar el .pkg a Vita3K: ${e.message}")
+                    _alert.value = AlertInfo("No se pudo entregar el .pkg a la app externa: ${e.message}")
                 }
             }
             refreshStatus()
@@ -622,12 +863,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private fun pkgInstallGuideText(copied: List<String>): String {
         val files = copied.joinToString("\n") { "• $it" }
         return "Archivos copiados a Descargas/ChildOfLight/:\n$files\n\n" +
-            "Vita3K está abierto. Instala el juego ahí una sola vez:\n\n" +
-            "1. En Vita3K: File → Install Package (.pkg).\n" +
+            "La app externa está abierta. Instala el juego ahí una sola vez:\n\n" +
+            "1. En la app externa: File → Install Package (.pkg).\n" +
             "2. Elige el .pkg de Descargas/ChildOfLight/.\n" +
             "3. Pulsa «Select work.bin» y elige el work.bin de la misma carpeta.\n" +
             "4. Espera a que termine la instalación y vuelve aquí.\n\n" +
-            "Cuando lo hayas instalado, pulsa «Ya lo instalé en Vita3K»."
+            "Cuando lo hayas instalado, pulsa «Ya lo instalé en la app externa»."
     }
 
     /** El usuario confirma que instaló el .pkg en Vita3K (honesto: el launcher no puede comprobarlo). */
@@ -635,8 +876,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val current = settingsRepo.settingsFlow.first()
             settingsRepo.save(current.copy(pkgInstalledInVita3k = true))
-            _message.value = "Anotado: el juego quedó instalado en Vita3K. Pulsa JUGAR y ábrelo en la biblioteca de Vita3K."
-            LauncherLog.append(context, "pkg", "Usuario confirmó instalación del .pkg en Vita3K.")
+            _message.value = "Anotado: el juego quedó instalado en la app externa. Pulsa JUGAR y ábrelo en su biblioteca."
+            LauncherLog.append(context, "pkg", "Usuario confirmó instalación del .pkg en la app externa.")
         }
     }
 
@@ -662,7 +903,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         ),
                     )
                     withContext(Dispatchers.Main) {
-                        _message.value = "Turnip instalado: $savedName. Vita3K limpiará la caché de shaders al arrancar con el nuevo driver."
+                        _message.value = "Turnip instalado: $savedName. El núcleo limpiará la caché de shaders al arrancar con el nuevo driver."
                     }
                 } else {
                     settingsRepo.save(
@@ -695,6 +936,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun play() {
         viewModelScope.launch(Dispatchers.IO) {
             val settings = settingsRepo.settingsFlow.first()
+            // Firmware: si hay PUP guardado y núcleo presente, instalarlo
+            // ahora (best-effort, nunca bloquea el lanzamiento).
+            ensureFirmwareForEmbedded()
             val outcome = launcher.launch(library, settings, sessionManager)
             if (outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternal ||
                 outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ||
@@ -703,9 +947,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 sessionManager.notePlayStarted()
             }
             withContext(Dispatchers.Main) {
-                // Con el juego solo en .pkg, JUGAR abre Vita3K y el juego
-                // se abre en SU biblioteca (si ya se instaló ahí); si no,
-                // el diálogo ofrece entregarlo ("Instalar en Vita3K").
+                // Con el juego solo en .pkg, JUGAR abre la app externa y
+                // el juego se abre en SU biblioteca (si ya se instaló ahí);
+                // si no, el diálogo ofrece entregarlo ("Instalar en la app
+                // externa", con confirmación de la copia a Descargas).
                 val pkgOnly = _status.value.pkgInstalled && !_status.value.gameExtracted
                 when (outcome) {
                     is Vita3KLauncher.LaunchOutcome.LaunchedExternal ->
@@ -720,23 +965,23 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         _alert.value = if (pkgOnly) {
                             if (settings.pkgInstalledInVita3k) {
                                 AlertInfo(
-                                    "Vita3K abierto.\n\n" +
-                                        "Abre Child of Light en la biblioteca de Vita3K (ya lo instalaste ahí).\n\n" +
-                                        "Los ajustes del launcher (config.yml) no los lee Vita3K externo: configúralo dentro de Vita3K.",
+                                    "App externa abierta.\n\n" +
+                                        "Abre Child of Light en su biblioteca (ya lo instalaste ahí).\n\n" +
+                                        "Los ajustes del launcher (config.yml) no los lee la app externa: configúralos dentro de ella.",
                                 )
                             } else {
                                 AlertInfo(
-                                    "Vita3K abierto, pero el juego aún no está instalado DENTRO de Vita3K.\n\n" +
-                                        "El .pkg guardado en el launcher no lo ve Vita3K: hay que instalarlo ahí una sola vez.",
+                                    "App externa abierta, pero el juego aún no está instalado DENTRO de la app externa.\n\n" +
+                                        "El .pkg guardado en el launcher no lo ve la app externa: hay que instalarlo ahí una sola vez.",
                                     AlertAction.DELIVER_PKG_TO_VITA3K,
                                 )
                             }
                         } else {
                             AlertInfo(
-                                "Vita3K abierto.\n\n" +
-                                    "IMPORTANTE: el juego que instalaste en el launcher vive en su almacenamiento privado y Vita3K no lo ve. " +
-                                    "Para jugar, importa tu copia también dentro de Vita3K (su biblioteca).\n\n" +
-                                    "Los ajustes del launcher (config.yml) tampoco los lee Vita3K externo: configúralo dentro de Vita3K.",
+                                "App externa abierta.\n\n" +
+                                    "IMPORTANTE: el juego que instalaste en el launcher vive en su almacenamiento privado y la app externa no lo ve. " +
+                                    "Para jugar, importa tu copia también dentro de la app externa (su biblioteca).\n\n" +
+                                    "Los ajustes del launcher (config.yml) tampoco los lee la app externa: configúralos dentro de ella.",
                             )
                         }
                     is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ->
@@ -744,17 +989,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                             AlertInfo(
                                 Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL + "\n\n" +
                                     if (settings.pkgInstalledInVita3k) {
-                                        "Abre Child of Light en la biblioteca de Vita3K."
+                                        "Abre Child of Light en la biblioteca de la app externa."
                                     } else {
-                                        "El .pkg aún no está instalado dentro de Vita3K."
+                                        "El .pkg aún no está instalado dentro de la app externa."
                                     },
                                 if (settings.pkgInstalledInVita3k) null else AlertAction.DELIVER_PKG_TO_VITA3K,
                             )
                         } else {
                             AlertInfo(
                                 Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL + "\n\n" +
-                                    "El juego que instalaste en el launcher vive en su almacenamiento privado y Vita3K no lo ve: " +
-                                    "importa tu copia también dentro de Vita3K (su biblioteca).",
+                                    "El juego que instalaste en el launcher vive en su almacenamiento privado y la app externa no lo ve: " +
+                                    "importa tu copia también dentro de la app externa (su biblioteca).",
                             )
                         }
                     is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded ->
@@ -765,7 +1010,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         // El diálogo ofrece la acción que resuelve el bloqueo:
                         // instalar Vita3K, o ir a importar el juego.
                         val action = when {
-                            outcome.reason.contains("Vita3K no está instalado") -> AlertAction.INSTALL_VITA3K
+                            outcome.reason.contains("app externa no está instalada") -> AlertAction.INSTALL_VITA3K
                             outcome.reason.contains("El juego no está instalado") -> AlertAction.GO_IMPORT
                             else -> null
                         }
@@ -902,6 +1147,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 note = "Prueba de 30 s con preset ${settings.activeProfile.label}. FPS sin medir: anota el FPS del overlay al volver.",
             )
             _pendingBenchmark.value = run
+            // Firmware: igual que en play(), instalar el PUP guardado
+            // en el núcleo si está presente (best-effort, no bloquea).
+            ensureFirmwareForEmbedded()
             val outcome = launcher.launch(library, settings, sessionManager)
             if (outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternal ||
                 outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ||
@@ -1051,10 +1299,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     /** Borra un botón del perfil activo (con confirmación en la UI). Desaparece del overlay. */
     fun deleteTouchControl(controlId: String) {
         viewModelScope.launch {
-            val layout = touchRepo.layoutFlow.first()
-            val updated = layout.filter { it.id != controlId }
-            if (updated.size == layout.size) return@launch
-            touchRepo.save(updated)
+            // B6: el borrado es atómico en el repositorio (leer +
+            // filtrar + guardar bajo el mismo mutex); antes se hacía
+            // aquí en tres pasos y dos borrados rápidos podían
+            // pisarse entre sí.
+            val deleted = touchRepo.deleteControl(controlId)
+            if (!deleted) return@launch
             _message.value = "Botón borrado del layout. Ya no aparece en el overlay."
             LauncherLog.append(context, "touch", "Botón $controlId borrado del layout")
         }
@@ -1066,13 +1316,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val layout = touchRepo.layoutFlow.first()
             val n = layout.count { it.kind == "button" } + 1
             val control = com.danielsnagustin.childoflight.launcher.data.TouchControl(
-                id = "btn_custom_$n-${System.currentTimeMillis() % 100000}",
+                // B6: el id llevaba solo currentTimeMillis(); dos toques
+                // en el mismo milisegundo daban el mismo id y borrar o
+                // editar uno afectaba a los dos. Se añade nanoTime,
+                // igual que los ids de perfil.
+                id = "btn_custom_$n-${System.currentTimeMillis()}-${System.nanoTime() % 100000}",
                 label = "B$n",
                 kind = "button",
                 vitaButton = com.danielsnagustin.childoflight.launcher.data.VitaButton.CROSS,
                 xFraction = 0.5f, yFraction = 0.5f, sizeDp = 64, opacity = 0.8f,
             )
-            touchRepo.save(layout + control)
+            touchRepo.addControl(control)
             _message.value = "Botón nuevo añadido en el centro. Muévelo y remapealo."
         }
     }
@@ -1165,9 +1419,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun deleteDlc(dlcId: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            // BUG (auditoría): si el estado aún no tenía Title ID, el borrado
-            // no hacía nada en silencio, sin avisar al usuario.
-            val title = _status.value.titleId?.id
+            // Título fresco de disco, no el estado de la UI (que puede ir
+            // desactualizado si cambió el juego): con el estado obsoleto
+            // el borrado no hacía nada en silencio, sin avisar al usuario.
+            val title = freshTitleId()
             if (title == null) {
                 withContext(Dispatchers.Main) { _message.value = "No hay juego instalado: no hay DLC que borrar." }
                 return@launch
@@ -1205,7 +1460,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             if (title == null) {
                 withContext(Dispatchers.Main) {
                     _message.value = if (freshTitleId() != null) {
-                        "El juego está como .pkg: los saves viven dentro de Vita3K, no en el launcher."
+                        "El juego está como .pkg: los saves viven dentro de la app externa, no en el launcher."
                     } else {
                         "No hay juego instalado: no hay saves que borrar."
                     }
@@ -1266,7 +1521,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             if (title == null) {
                 withContext(Dispatchers.Main) {
                     _message.value = if (freshTitleId() != null) {
-                        "El juego está como .pkg: los saves viven dentro de Vita3K, no en el launcher."
+                        "El juego está como .pkg: los saves viven dentro de la app externa, no en el launcher."
                     } else {
                         "No hay juego instalado: no hay saves que exportar."
                     }
@@ -1292,7 +1547,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             if (title == null) {
                 withContext(Dispatchers.Main) {
                     _message.value = if (freshTitleId() != null) {
-                        "El juego está como .pkg: los saves viven dentro de Vita3K, no en el launcher."
+                        "El juego está como .pkg: los saves viven dentro de la app externa, no en el launcher."
                     } else {
                         "Instala primero el juego para importar saves."
                     }
@@ -1374,13 +1629,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             appendLine("--- Juego ---")
             appendLine("Instalado: ${status.gameInstalled} (${status.titleId?.id ?: "-"})")
             appendLine("Extraído: ${status.gameExtracted} | .pkg: ${status.pkgTitleId?.id ?: "-"} (${status.pkgContentId ?: "-"}) | Licencia work.bin: ${status.pkgLicensePresent}")
-            appendLine("Entregado a Vita3K: ${settings.pkgDeliveredToVita3k} | Instalado en Vita3K (confirmado por el usuario): ${settings.pkgInstalledInVita3k}")
+            appendLine("Entregado a la app externa: ${settings.pkgDeliveredToVita3k} | Instalado en la app externa (confirmado por el usuario): ${settings.pkgInstalledInVita3k}")
             appendLine("DLCs: ${status.dlcCount} | Update: ${status.updateInstalled} | Firmware: ${status.firmwareInstalled}")
             appendLine("Saves: ${status.saves.size} archivos")
             appendLine()
             appendLine("--- Núcleo ---")
             appendLine("Núcleo embebido (Etapa 2): ${if (embeddedCorePresent()) "presente" else "NO presente"}")
-            appendLine("Vita3K externo: ${externalVita3kVersion() ?: "no instalado"}")
+            appendLine("App externa: ${externalVita3kVersion() ?: "no instalada"}")
             appendLine()
             appendLine("--- Ajustes activos ---")
             appendLine("Perfil: ${settings.activeProfile.label}")

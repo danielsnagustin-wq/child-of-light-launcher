@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -21,8 +22,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -44,10 +46,10 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     // B3: firmware y batería se leen como flujo, no con llamada plana.
     val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
     val batteryOptDisabled by vm.batteryOptDisabledFlow.collectAsState()
-    var fpsInput by remember { mutableStateOf("") }
-    var showFpsDialog by remember { mutableStateOf(false) }
-    var fpsError by remember { mutableStateOf(false) }
-    var showBatteryDialog by remember { mutableStateOf(false) }
+    var fpsInput by rememberSaveable { mutableStateOf("") }
+    var showFpsDialog by rememberSaveable { mutableStateOf(false) }
+    var fpsError by rememberSaveable { mutableStateOf(false) }
+    var showBatteryDialog by rememberSaveable { mutableStateOf(false) }
 
     val exportBug = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         val s = settings
@@ -62,7 +64,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
     ) {
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
     ) {
         ScreenHeader("GPU y diagnóstico", "Tu GPU, el núcleo y la prueba de 30 segundos.")
         val g = gpu
@@ -79,7 +81,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 Text("✓ Procesador verificado por el usuario: Child of Light va muy bien en este procesador.", color = ColGold, fontWeight = FontWeight.Bold)
                 NoteText("Por eso el preset por defecto es G99 Recomendado (1x, Frame Skip 0): se optimiza para mantener esa fluidez estable, no para recortar de más.")
             } else if (g.vendor.name == "MALI") {
-                NoteText("Mali: hay cosas que definitivamente no funcionan y es posible que nunca funcionen, pero Vita3K+ trae arreglos para Mali (vertex fix, Double Buffer mejorado) y Child of Light, al ser 2D UbiArt, es más ligero que un juego 3D: a 1x tiene más chance. No se prometen 60 fps en Mali.")
+                NoteText("Mali: hay cosas que definitivamente no funcionan y es posible que nunca funcionen, pero el núcleo trae arreglos para Mali (vertex fix, Double Buffer mejorado) y Child of Light, al ser 2D UbiArt, es más ligero que un juego 3D: a 1x tiene más chance. No se prometen 60 fps en Mali.")
             } else if (g.vendor.name == "ADRENO") {
                 NoteText("Snapdragon/Adreno: usa Turnip para mejor compatibilidad (ver Ajustes → Driver GPU).")
             }
@@ -88,7 +90,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
 
         SectionTitle("Núcleo")
         Text("Núcleo embebido (Etapa 2): ${if (vm.embeddedCorePresent()) "presente" else "NO presente"}")
-        Text("Vita3K externo: ${vm.externalVita3kVersion() ?: "no instalado"}")
+        Text("App externa: ${vm.externalVita3kVersion() ?: "no instalada"}")
         Text("Firmware: ${com.danielsnagustin.childoflight.launcher.data.FirmwareResolver.label(firmwareStatus)}")
         NoteText("El firmware nunca es un paso inicial: el primer uso solo pide juego + DLCs. Importarlo es una opción avanzada en Ajustes.")
         Text("Backend: ${settings?.backend?.label ?: "—"} · Driver: ${settings?.gpuDriver ?: "—"}${if (settings?.turnipInstalled == true) " (${settings?.turnipVersion})" else ""}")

@@ -9,6 +9,8 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 private val Context.touchDataStore: DataStore<Preferences> by preferencesDataStore(name = "col_touch_layout")
 
@@ -123,6 +125,17 @@ class TouchLayoutRepository(private val context: Context) {
         val ACTIVE_PROFILE = stringPreferencesKey("active_control_profile")
     }
 
+    // B6 (auditoría panel táctil): todos los guardados son
+    // read-modify-write sobre DataStore (leer perfiles -> modificar
+    // -> guardar). Sin mutex, dos guardados concurrentes — p. ej.
+    // cada tick de un slider de tamaño/opacidad, o el soltar de un
+    // arrastre que llegaba a la vez que un tick — se basaban en la
+    // misma lectura y el último en terminar pisaba al otro: se
+    // perdía la edición final (el slider "no persistía" o volvía
+    // a un valor anterior). Todas las mutaciones públicas pasan
+    // por este mutex; los helpers privados asumen que ya se tiene.
+    private val mutationMutex = Mutex()
+
     val profilesFlow: Flow<List<ControlProfile>> = context.touchDataStore.data.map { prefs ->
         decodeProfiles(prefs[Keys.PROFILES] ?: "") ?: builtInProfiles()
     }
@@ -139,6 +152,34 @@ class TouchLayoutRepository(private val context: Context) {
     }
 
     suspend fun save(layout: List<TouchControl>) {
+        mutationMutex.withLock { saveLocked(layout) }
+    }
+
+    /**
+     * Añade un control al perfil activo de forma atómica. Antes el
+     * ViewModel leía el layout, añadía y guardaba en tres pasos: dos
+     * toques rápidos a "+ Añadir botón" leían el mismo layout y el
+     * segundo guardado pisaba al primero (un botón no aparecía).
+     */
+    suspend fun addControl(control: TouchControl) {
+        mutationMutex.withLock { saveLocked(currentActiveControls() + control) }
+    }
+
+    /**
+     * Borra un control del perfil activo de forma atómica. Devuelve
+     * false si ese id no estaba (no se toca nada).
+     */
+    suspend fun deleteControl(controlId: String): Boolean {
+        return mutationMutex.withLock {
+            val current = currentActiveControls()
+            val updated = current.filter { it.id != controlId }
+            if (updated.size == current.size) return@withLock false
+            saveLocked(updated)
+            true
+        }
+    }
+
+    private suspend fun saveLocked(layout: List<TouchControl>) {
         val profiles = currentProfiles()
         val activeId = currentActiveId()
         if (profiles.none { it.id == activeId }) {
@@ -150,53 +191,73 @@ class TouchLayoutRepository(private val context: Context) {
                 if (index == 0) p.copy(controls = layout) else p
             }
             saveProfiles(updated)
-            setActiveProfile(profiles.first().id)
+            setActiveProfileLocked(profiles.first().id)
             return
         }
         val updated = profiles.map { if (it.id == activeId) it.copy(controls = layout) else it }
         saveProfiles(updated)
     }
 
-    suspend fun reset() {
-        saveProfiles(builtInProfiles())
-        setActiveProfile("default-g99")
+    /** Controles del perfil activo (o del primero si el activo no existe). */
+    private suspend fun currentActiveControls(): List<TouchControl> {
+        val profiles = currentProfiles()
+        val activeId = currentActiveId()
+        return profiles.firstOrNull { it.id == activeId }?.controls
+            ?: profiles.firstOrNull()?.controls ?: emptyList()
     }
 
-    suspend fun setActiveProfile(id: String) {
+    private suspend fun setActiveProfileLocked(id: String) {
         context.touchDataStore.edit { prefs -> prefs[Keys.ACTIVE_PROFILE] = id }
     }
 
+    suspend fun reset() {
+        mutationMutex.withLock {
+            saveProfiles(builtInProfiles())
+            setActiveProfileLocked("default-g99")
+        }
+    }
+
+    suspend fun setActiveProfile(id: String) {
+        mutationMutex.withLock { setActiveProfileLocked(id) }
+    }
+
     suspend fun createProfile(name: String, fromControls: List<TouchControl>): ControlProfile {
-        val cleanName = sanitizeName(name).ifBlank { "Perfil nuevo" }
-        val profile = ControlProfile(
-            id = newProfileId(),
-            name = cleanName,
-            isBuiltIn = false,
-            controls = fromControls.map { it.copy() },
-        )
-        saveProfiles(currentProfiles() + profile)
-        setActiveProfile(profile.id)
-        return profile
+        return mutationMutex.withLock {
+            val cleanName = sanitizeName(name).ifBlank { "Perfil nuevo" }
+            val profile = ControlProfile(
+                id = newProfileId(),
+                name = cleanName,
+                isBuiltIn = false,
+                controls = fromControls.map { it.copy() },
+            )
+            saveProfiles(currentProfiles() + profile)
+            setActiveProfileLocked(profile.id)
+            profile
+        }
     }
 
     suspend fun duplicateProfile(id: String): ControlProfile? {
-        val source = currentProfiles().firstOrNull { it.id == id } ?: return null
-        val copy = source.copy(
-            id = newProfileId(),
-            name = sanitizeName("${source.name} (copia)"),
-            isBuiltIn = false,
-        )
-        saveProfiles(currentProfiles() + copy)
-        return copy
+        return mutationMutex.withLock {
+            val source = currentProfiles().firstOrNull { it.id == id } ?: return@withLock null
+            val copy = source.copy(
+                id = newProfileId(),
+                name = sanitizeName("${source.name} (copia)"),
+                isBuiltIn = false,
+            )
+            saveProfiles(currentProfiles() + copy)
+            copy
+        }
     }
 
     suspend fun renameProfile(id: String, newName: String): Boolean {
-        val clean = sanitizeName(newName)
-        if (clean.isBlank()) return false
-        val profiles = currentProfiles()
-        if (profiles.none { it.id == id }) return false
-        saveProfiles(profiles.map { if (it.id == id) it.copy(name = clean) else it })
-        return true
+        return mutationMutex.withLock {
+            val clean = sanitizeName(newName)
+            if (clean.isBlank()) return@withLock false
+            val profiles = currentProfiles()
+            if (profiles.none { it.id == id }) return@withLock false
+            saveProfiles(profiles.map { if (it.id == id) it.copy(name = clean) else it })
+            true
+        }
     }
 
     /**
@@ -204,16 +265,18 @@ class TouchLayoutRepository(private val context: Context) {
      * si se borra el activo, el activo pasa al primer perfil que queda.
      */
     suspend fun deleteProfile(id: String): Boolean {
-        val profiles = currentProfiles()
-        if (profiles.size <= 1) return false
-        if (profiles.none { it.id == id }) return false
-        val remaining = profiles.filter { it.id != id }
-        saveProfiles(remaining)
-        // BUG (auditoría): antes se forzaba "default-g99" como activo; si
-        // ese perfil ya había sido borrado, el activo apuntaba a un perfil
-        // inexistente y save() no guardaba nada en silencio.
-        if (currentActiveId() == id) setActiveProfile(remaining.first().id)
-        return true
+        return mutationMutex.withLock {
+            val profiles = currentProfiles()
+            if (profiles.size <= 1) return@withLock false
+            if (profiles.none { it.id == id }) return@withLock false
+            val remaining = profiles.filter { it.id != id }
+            saveProfiles(remaining)
+            // BUG (auditoría): antes se forzaba "default-g99" como activo; si
+            // ese perfil ya había sido borrado, el activo apuntaba a un perfil
+            // inexistente y save() no guardaba nada en silencio.
+            if (currentActiveId() == id) setActiveProfileLocked(remaining.first().id)
+            true
+        }
     }
 
     /** Exporta un perfil como texto (mismo formato de guardado, un solo perfil). */
@@ -221,20 +284,24 @@ class TouchLayoutRepository(private val context: Context) {
 
     /** Importa un perfil desde texto exportado. Devuelve el perfil creado o null si el texto no es válido. */
     suspend fun importProfileText(raw: String): ControlProfile? {
-        val parsed = decodeProfile(raw.trim()) ?: return null
-        val profile = parsed.copy(
-            id = newProfileId(),
-            isBuiltIn = false,
-            name = sanitizeName(parsed.name).ifBlank { "Perfil importado" },
-        )
-        saveProfiles(currentProfiles() + profile)
-        return profile
+        return mutationMutex.withLock {
+            val parsed = decodeProfile(raw.trim()) ?: return@withLock null
+            val profile = parsed.copy(
+                id = newProfileId(),
+                isBuiltIn = false,
+                name = sanitizeName(parsed.name).ifBlank { "Perfil importado" },
+            )
+            saveProfiles(currentProfiles() + profile)
+            profile
+        }
     }
 
     suspend fun restoreBuiltIns() {
-        val current = currentProfiles()
-        val missing = builtInProfiles().filter { built -> current.none { it.id == built.id } }
-        if (missing.isNotEmpty()) saveProfiles(current + missing)
+        mutationMutex.withLock {
+            val current = currentProfiles()
+            val missing = builtInProfiles().filter { built -> current.none { it.id == built.id } }
+            if (missing.isNotEmpty()) saveProfiles(current + missing)
+        }
     }
 
     private suspend fun currentProfiles(): List<ControlProfile> {
@@ -260,6 +327,7 @@ class TouchLayoutRepository(private val context: Context) {
 
         fun sanitizeName(name: String): String =
             name.replace('|', ' ').replace(';', ' ').replace('#', ' ')
+                .replace('/', ' ').replace('\\', ' ')
                 .replace('\n', ' ').replace('\r', ' ').trim().take(40)
 
         /** Saneado para campos del formato (sin quitar '#': colorHex lo usa). */
@@ -278,21 +346,53 @@ class TouchLayoutRepository(private val context: Context) {
             c.stickMode.name, c.igniculusMode.name, c.sensitivity.toString(),
         ).joinToString("|")
 
+        /**
+         * Centro de un control en fracción de pantalla, con el control
+         * ENTERO dentro de la pantalla: [half, 1 - half], donde half es
+         * la mitad del tamaño del control en fracción. Si el control es
+         * mayor que la pantalla, el centro es 0.5. Lo usa el arrastre
+         * de la vista previa (B7): antes el arrastre fijaba la fracción
+         * en 0..1 y el dibujado la recortaba por arriba, así que al
+         * arrastrar a un borde el botón dejaba de moverse en pantalla
+         * pero la fracción seguía bajando hasta 0 — y al volver, los
+         * primeros píxeles del dedo no movían nada. Fracción guardada
+         * y posición dibujada ahora coinciden siempre.
+         */
+        fun clampCenterFraction(fraction: Float, halfSizeFraction: Float): Float {
+            val lo = halfSizeFraction.coerceAtMost(0.5f)
+            val hi = (1f - halfSizeFraction).coerceAtLeast(0.5f)
+            return fraction.coerceIn(lo, hi)
+        }
+
+        private fun finiteFloat(raw: String?, default: Float): Float =
+            raw?.toFloatOrNull()?.takeIf { it.isFinite() } ?: default
+
         fun decodeControl(raw: String): TouchControl? {
             val p = raw.split("|")
             if (p.size < 7) return null
-            return runCatching {
+            val parsed = runCatching {
                 if (p.size >= 14) {
+                    // B8 (auditoría panel táctil): esta rama usaba
+                    // toFloat()/toInt()/valueOf() directos dentro de
+                    // runCatching: UN solo campo corrupto (un enum
+                    // renombrado, un número roto) descartaba el
+                    // control ENTERO en silencio al decodificar, y el
+                    // botón desaparecía del layout. Ahora cada campo
+                    // se lee con valor por defecto, igual que la rama
+                    // de 8-13 campos (M28).
                     TouchControl(
                         id = p[0], label = p[1], kind = p[2],
-                        vitaButton = VitaButton.valueOf(p[3]),
-                        xFraction = p[4].toFloat(), yFraction = p[5].toFloat(),
-                        sizeDp = p[6].toInt(), opacity = p[7].toFloat(),
-                        colorHex = p[8], shape = ControlShape.valueOf(p[9]),
-                        visible = p[10].toBoolean(),
-                        stickMode = StickMode.valueOf(p[11]),
-                        igniculusMode = IgniculusMode.valueOf(p[12]),
-                        sensitivity = p[13].toFloat(),
+                        vitaButton = runCatching { VitaButton.valueOf(p[3]) }.getOrDefault(VitaButton.NONE),
+                        xFraction = finiteFloat(p[4], 0.5f),
+                        yFraction = finiteFloat(p[5], 0.5f),
+                        sizeDp = p[6].toIntOrNull() ?: 64,
+                        opacity = finiteFloat(p[7], 0.8f),
+                        colorHex = p[8],
+                        shape = runCatching { ControlShape.valueOf(p[9]) }.getOrNull() ?: ControlShape.CIRCLE,
+                        visible = p[10].toBooleanStrictOrNull() ?: true,
+                        stickMode = runCatching { StickMode.valueOf(p[11]) }.getOrNull() ?: StickMode.ANALOG,
+                        igniculusMode = runCatching { IgniculusMode.valueOf(p[12]) }.getOrNull() ?: IgniculusMode.DIRECT_TOUCH,
+                        sensitivity = finiteFloat(p[13], 1.0f),
                     )
                 } else if (p.size >= 8) {
                     // M28: formato intermedio (8-13 campos): los campos
@@ -304,16 +404,16 @@ class TouchLayoutRepository(private val context: Context) {
                     TouchControl(
                         id = p[0], label = p[1], kind = p[2],
                         vitaButton = runCatching { VitaButton.valueOf(p[3]) }.getOrDefault(VitaButton.NONE),
-                        xFraction = p[4].toFloatOrNull() ?: 0.5f,
-                        yFraction = p[5].toFloatOrNull() ?: 0.5f,
+                        xFraction = finiteFloat(p[4], 0.5f),
+                        yFraction = finiteFloat(p[5], 0.5f),
                         sizeDp = p[6].toIntOrNull() ?: 64,
-                        opacity = p[7].toFloatOrNull() ?: 0.8f,
+                        opacity = finiteFloat(p[7], 0.8f),
                         colorHex = p.getOrNull(8) ?: "#F2B705",
                         shape = p.getOrNull(9)?.let { runCatching { ControlShape.valueOf(it) }.getOrNull() } ?: ControlShape.CIRCLE,
                         visible = p.getOrNull(10)?.toBooleanStrictOrNull() ?: true,
                         stickMode = p.getOrNull(11)?.let { runCatching { StickMode.valueOf(it) }.getOrNull() } ?: StickMode.ANALOG,
                         igniculusMode = p.getOrNull(12)?.let { runCatching { IgniculusMode.valueOf(it) }.getOrNull() } ?: IgniculusMode.DIRECT_TOUCH,
-                        sensitivity = p.getOrNull(13)?.toFloatOrNull() ?: 1.0f,
+                        sensitivity = finiteFloat(p.getOrNull(13), 1.0f),
                     )
                 } else {
                     // Formato antiguo (7 campos): valores por defecto para lo nuevo.
@@ -324,7 +424,17 @@ class TouchLayoutRepository(private val context: Context) {
                         sizeDp = p[5].toInt(), opacity = p[6].toFloat(),
                     )
                 }
-            }.getOrNull()
+            }.getOrNull() ?: return null
+            // B9: normalizar al leer. Un valor corrupto fuera de rango
+            // (fracción > 1, tamaño negativo, opacidad > 1, "NaN") no
+            // puede sacar el botón de la pantalla ni romper el layout.
+            return parsed.copy(
+                xFraction = parsed.xFraction.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0.5f,
+                yFraction = parsed.yFraction.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0.5f,
+                sizeDp = parsed.sizeDp.coerceIn(16, 400),
+                opacity = parsed.opacity.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0.8f,
+                sensitivity = parsed.sensitivity.takeIf { it.isFinite() }?.coerceIn(0.5f, 2.0f) ?: 1.0f,
+            )
         }
 
         private fun defaultButtonFor(id: String, kind: String): VitaButton = when (id) {
@@ -352,8 +462,16 @@ class TouchLayoutRepository(private val context: Context) {
             val controls = if (controlsRaw.isBlank()) emptyList() else {
                 controlsRaw.split(";").mapNotNull { decodeControl(it) }
             }
-            if (controls.isEmpty()) return null
-            return ControlProfile(header[0], header[1], header[2].toBoolean(), controls)
+            // B10 (auditoría panel táctil): un perfil SIN controles es
+            // válido (el usuario borró todos los botones para jugar
+            // solo con mando físico). Antes se devolvía null y el
+            // perfil entero desaparecía al leer: el layout volvía a
+            // los predefinidos y los botones borrados "resucitaban".
+            // Tampoco se podía importar un perfil vacío exportado.
+            // Ids duplicados (p. ej. en un archivo importado a mano):
+            // se queda el primero, para que borrar/editar por id no
+            // afecte a dos controles a la vez.
+            return ControlProfile(header[0], header[1], header[2].toBoolean(), controls.distinctBy { it.id })
         }
 
         fun decodeProfiles(raw: String): List<ControlProfile>? {

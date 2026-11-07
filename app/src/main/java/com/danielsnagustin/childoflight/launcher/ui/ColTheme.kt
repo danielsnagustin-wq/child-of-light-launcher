@@ -50,8 +50,22 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+
+/** Ancho máximo del contenido en pantallas grandes (tablet / horizontal): las tarjetas y botones no se estiran a todo el ancho. En teléfonos (< 720 dp) no hace nada. */
+val ContentMaxWidth: Dp = 720.dp
+
+/**
+ * Altura de la vista previa del panel táctil según la altura disponible:
+ * en pantallas bajas (teléfono en horizontal, ~360-400 dp de alto) se
+ * achica a 200 dp para que quepan la cabecera y los botones sin tanto
+ * scroll; en vertical se mantiene en 300 dp. Puro: testeable en JVM
+ * (DownloadsAndLayoutTest). El arrastre usa fracciones, así que el
+ * tamaño no cambia la posición guardada.
+ */
+fun previewHeightForScreen(maxHeight: Dp): Dp = if (maxHeight < 500.dp) 200.dp else 300.dp
 
 // --- Paleta AMOLED (2026-11-07): negro puro #000000, píxeles apagados.
 // Nada de azul marino oscuro: los fondos son negro puro y las tarjetas

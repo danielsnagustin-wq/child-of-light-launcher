@@ -1,5 +1,6 @@
 package com.danielsnagustin.childoflight.launcher.core
 
+import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
 import com.danielsnagustin.childoflight.launcher.model.PkgKind
 import com.danielsnagustin.childoflight.launcher.model.TitleId
@@ -156,6 +157,12 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
                 if (version.isEmpty()) {
                     Result.failure(IllegalStateException("El núcleo no pudo instalar el firmware."))
                 } else {
+                    // Registrar la versión instalada: solo así
+                    // FirmwareResolver.resolve() pasa a Ready. Sin este
+                    // marcador, el firmware instalado seguiría viéndose
+                    // como "PUP guardado" y decide() no elegiría nunca
+                    // el núcleo embebido.
+                    FirmwareResolver.markInstalled(library.vitaRoot, version)
                     Result.success(version)
                 }
             } catch (e: Exception) {

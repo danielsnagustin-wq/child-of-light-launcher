@@ -34,8 +34,8 @@ object TrophyStoreReader {
                 files = emptyList(),
                 trpPresent = false,
                 trpSizeBytes = 0L,
-                note = "Vita3K aún no creó la carpeta de trofeos para $titleId. " +
-                    "Se crea al jugar con Vita3K. El progreso que se muestra es el local del launcher.",
+                note = "El núcleo aún no creó la carpeta de trofeos para $titleId. " +
+                    "Se crea al jugar. El progreso que se muestra es el local del launcher.",
             )
         }
         val files = dir.listFiles()?.map { it.name }?.sorted() ?: emptyList()

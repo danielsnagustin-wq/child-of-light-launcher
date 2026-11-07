@@ -1,7 +1,11 @@
 package com.danielsnagustin.childoflight.launcher.data
 
+import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.documentfile.provider.DocumentFile
 import com.danielsnagustin.childoflight.launcher.model.DlcInfo
 import com.danielsnagustin.childoflight.launcher.model.GameStatus
@@ -11,6 +15,7 @@ import com.danielsnagustin.childoflight.launcher.model.TitleId
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -82,6 +87,32 @@ object ImportFileGuide {
     }
 }
 
+/** Una copia del .pkg o su licencia que quedó en Descargas/ChildOfLight/. */
+data class DownloadsCopy(val name: String, val sizeBytes: Long)
+
+/**
+ * Lógica pura de la limpieza de Descargas/ChildOfLight/ (sin Android):
+ * tamaños y texto del diálogo de confirmación. Testeable en JVM
+ * (DownloadsAndLayoutTest).
+ */
+object DownloadsCleanup {
+    fun totalBytes(copies: List<DownloadsCopy>): Long = copies.sumOf { it.sizeBytes }
+
+    /** Mismo formato que el resto del launcher, con locale fijo (sin comas decimales). */
+    fun formatBytes(bytes: Long): String = when {
+        bytes >= 1_000_000_000L -> java.lang.String.format(Locale.US, "%.2f GB", bytes / 1_000_000_000.0)
+        bytes >= 1_000_000L -> java.lang.String.format(Locale.US, "%.1f MB", bytes / 1_000_000.0)
+        bytes >= 1_000L -> "${bytes / 1_000} KB"
+        else -> "$bytes bytes"
+    }
+
+    /** Texto del diálogo de confirmación: qué se borraría y cuánto ocupa. */
+    fun summarize(copies: List<DownloadsCopy>): String {
+        val lines = copies.joinToString("\n") { "• ${it.name} (${formatBytes(it.sizeBytes)})" }
+        return "$lines\n\nTotal: ${formatBytes(totalBytes(copies))}"
+    }
+}
+
 /**
  * Biblioteca del juego: importación y estructura de archivos.
  *
@@ -116,8 +147,12 @@ object ImportFileGuide {
  * usuario. El .pkg se guarda en ux0/pkg/ con su work.bin (licencia
  * zRIF de 512 B, buscada junto al .pkg o pedida al usuario). El
  * launcher NO puede desencriptar ni extraer un .pkg: instalarlo es
- * trabajo de Vita3K externo ("Instalar en Vita3K" copia ambos a
- * Descargas/ChildOfLight/ y abre Vita3K con la guía).
+ * trabajo de la app externa ("Instalar en la app externa" pide
+ * confirmación y solo entonces copia ambos a Descargas/ChildOfLight/
+ * y abre la app externa con la guía). El .pkg y su licencia viven
+ * siempre en el almacenamiento interno del launcher; la copia a
+ * Descargas es solo la entrega explícita al externo y se puede borrar
+ * desde Ajustes → Almacenamiento.
  *
  * .zip/.vpk: dentro debe haber una carpeta PCSE00480 o PCSB00598
  * (puede ir anidada hasta 3 niveles) con eboot.bin, O el juego plano
@@ -281,6 +316,86 @@ class GameLibraryRepository(private val context: Context) {
             }
         }
         return out.sortedBy { it.name }
+    }
+
+    // --- Descargas/ChildOfLight/ (copias para la app externa) ---
+    //
+    // El juego, los DLCs, los updates y la licencia viven SIEMPRE en el
+    // almacenamiento PRIVADO del launcher (filesDir/vita3k): la única
+    // copia a Descargas es la entrega explícita a la app externa
+    // (Vita3KLauncher.deliverPkgFiles), que el usuario confirma antes
+    // en un diálogo y que dejará de existir cuando el núcleo embebido
+    // esté listo. Estas funciones listan y borran esas copias: la app
+    // ofrece la limpieza en Ajustes → Almacenamiento y NUNCA borra
+    // nada sin que el usuario lo confirme en el diálogo.
+
+    /** Lista lo que hay en Descargas/ChildOfLight/ (copias entregadas a la app externa). */
+    fun listDownloadsCopies(): List<DownloadsCopy> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // MediaStore (API 29+): sin permisos, son archivos propios de la app.
+            val out = mutableListOf<DownloadsCopy>()
+            context.contentResolver.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Downloads.DISPLAY_NAME, MediaStore.Downloads.SIZE),
+                "${MediaStore.Downloads.RELATIVE_PATH} = ?",
+                arrayOf("Download/ChildOfLight/"),
+                null,
+            )?.use { cursor ->
+                val nameIdx = cursor.getColumnIndexOrThrow(MediaStore.Downloads.DISPLAY_NAME)
+                val sizeIdx = cursor.getColumnIndexOrThrow(MediaStore.Downloads.SIZE)
+                while (cursor.moveToNext()) {
+                    out.add(DownloadsCopy(cursor.getString(nameIdx), cursor.getLong(sizeIdx)))
+                }
+            }
+            out.sortedBy { it.name }
+        } else {
+            // API 28: carpeta pública legacy.
+            @Suppress("DEPRECATION")
+            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "ChildOfLight")
+            dir.listFiles()
+                ?.filter { it.isFile }
+                ?.map { DownloadsCopy(it.name, it.length()) }
+                ?.sortedBy { it.name }
+                ?: emptyList()
+        }
+    }
+
+    /**
+     * Borra todo lo de Descargas/ChildOfLight/. Devuelve cuántos archivos
+     * borró. Solo se llama desde la confirmación del usuario en Ajustes →
+     * Almacenamiento. El juego/DLCs/licencia del almacenamiento interno
+     * NO se tocan.
+     */
+    fun deleteDownloadsCopies(): Int {
+        var deleted = 0
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            resolver.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Downloads._ID),
+                "${MediaStore.Downloads.RELATIVE_PATH} = ?",
+                arrayOf("Download/ChildOfLight/"),
+                null,
+            )?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(0)
+                    deleted += resolver.delete(
+                        ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id),
+                        null,
+                        null,
+                    )
+                }
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "ChildOfLight")
+            dir.listFiles()?.forEach { file ->
+                if (file.isFile && file.delete()) deleted++
+            }
+            // Si quedó vacía, se borra también la carpeta.
+            runCatching { dir.delete() }
+        }
+        return deleted
     }
 
     /**
@@ -459,22 +574,18 @@ class GameLibraryRepository(private val context: Context) {
         val updateInstalled = (title != null && patchDir(title.id).exists() &&
             (patchDir(title.id).listFiles()?.isNotEmpty() == true)) ||
             (title != null && pkgPatchFile(title.id).isFile)
-        val firmwareMarker = File(firmwareDir(), "installed.json")
-        // BUG (auditoría): readText() puede lanzar IOException (el archivo
-        // puede desaparecer entre exists() y la lectura) y scanStatus() se
-        // llama sin try/catch desde el ViewModel. Además, un installed.json
-        // vacío no debe contar como firmware instalado.
-        val markerText = runCatching {
-            firmwareMarker.takeIf { it.exists() }?.readText()?.trim()
-        }.getOrNull()
-        // M20: unificar el criterio con FirmwareResolver: el PUP debe tener
-        // tamaño > 0 (un PUP de 0 bytes no es firmware instalado).
-        val pupFile = File(firmwareDir(), "PSVUPDAT.PUP")
-        val firmwareInstalled = !markerText.isNullOrBlank() ||
-            (pupFile.exists() && pupFile.length() > 0)
-        val firmwareName = if (firmwareInstalled) {
-            markerText?.takeIf { it.isNotBlank() } ?: "PSVUPDAT.PUP"
-        } else null
+        // Firmware: criterio ÚNICO con FirmwareResolver. "Instalado"
+        // significa instalado EN EL NÚCLEO (vs0 extraído o marcador
+        // con versión); un PUP solo guardado NO es instalado (es
+        // "guardado, no instalado"). Antes, cualquier marcador no
+        // vacío o cualquier PUP con tamaño > 0 se daba por instalado.
+        val fwStatus = FirmwareResolver.resolve(vitaRoot)
+        val firmwareInstalled = fwStatus.ready
+        val firmwareName = when (val s = fwStatus) {
+            is FirmwareStatus.Ready -> FirmwareResolver.installedVersion(vitaRoot) ?: s.source
+            is FirmwareStatus.Saved -> "PSVUPDAT.PUP (guardado, no instalado)"
+            FirmwareStatus.Missing -> null
+        }
         // Los saves solo existen con el juego extraído: con un .pkg los
         // saves viven dentro de Vita3K, no en el launcher.
         val saves = if (extractedTitle != null) listSaves(extractedTitle.id) else emptyList()
@@ -914,10 +1025,14 @@ class GameLibraryRepository(private val context: Context) {
         return try {
             val root = DocumentFile.fromTreeUri(context, treeUri)
                 ?: return ImportResult.Failed("No se pudo abrir la carpeta elegida.")
-            val title = TitleId.fromString(root.name)
+            // El nombre de la carpeta NO es obligatorio: si no es el
+            // Title ID, se lee de sce_sys/param.sfo (igual que
+            // importGameFolder). La carpeta del juego trae sce_sys/.
+            val title = TitleId.fromString(root.name) ?: titleIdFromFolderSfo(root)
                 ?: return ImportResult.Rejected(
                     "La carpeta elegida se llama \"${root.name ?: "?"}\". Debe llamarse " +
-                        "PCSE00480 (US) o PCSB00598 (EU) y contener addcont/ dentro.",
+                        "PCSE00480 (US) o PCSB00598 (EU) y contener addcont/ dentro, o traer " +
+                        "eboot.bin + sce_sys/param.sfo con el Title ID dentro.",
                 )
             val addcont = findChildIgnoreCase(root, "addcont")
             if (addcont == null || !addcont.isDirectory) {
@@ -1009,11 +1124,23 @@ class GameLibraryRepository(private val context: Context) {
                 tmp.delete()
                 return ImportResult.Rejected("El archivo de firmware está vacío (0 bytes). Elige el PSVUPDAT.PUP completo.")
             }
+            // El PUP se reconoce por su magia SCEUF, no solo por el
+            // nombre: un archivo llamado .PUP con otro contenido no es
+            // firmware y no debe guardarse como tal.
+            val head = ByteArray(5)
+            FileInputStream(tmp).use { it.read(head) }
+            if (!ImportFileGuide.looksLikePupMagic(head)) {
+                tmp.delete()
+                return ImportResult.Rejected("Ese archivo no es un PSVUPDAT.PUP válido (no empieza por SCEUF). Elige el PUP de firmware que tengas guardado en el teléfono.")
+            }
             if (!tmp.renameTo(dest)) {
                 tmp.delete()
                 throw IllegalStateException("No se pudo guardar el firmware.")
             }
-            File(dir, "installed.json").writeText(fileName)
+            // El marcador installed.json SOLO lo escribe markInstalled tras
+            // instalar en el núcleo con éxito: un PUP nuevo invalida el
+            // "instalado" anterior hasta que el núcleo lo instale de nuevo.
+            runCatching { File(dir, "installed.json").delete() }
             LauncherLog.append(context, "import", "Firmware $fileName guardado (${dest.length()} bytes)")
             ImportResult.FirmwareSuccess(fileName)
         } catch (e: Exception) {

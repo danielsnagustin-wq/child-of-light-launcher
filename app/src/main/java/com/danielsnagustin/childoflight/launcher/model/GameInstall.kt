@@ -110,8 +110,9 @@ sealed class ImportResult {
      * Un .pkg guardado tras validar su header (Content ID → Title ID).
      * El nombre del archivo NO se miró: los .pkg reales se llaman por
      * hash. El juego NO está instalado como tal: el .pkg solo lo puede
-     * instalar Vita3K externo ("Instalar en Vita3K"). Si licenseFound
-     * es false, falta el work.bin y el resultado es PkgNeedsLicense.
+     * instalar la app externa ("Instalar en la app externa", con
+     * confirmación de la copia a Descargas). Si licenseFound es false,
+     * falta el work.bin y el resultado es PkgNeedsLicense.
      */
     data class PkgStored(
         val titleId: TitleId,

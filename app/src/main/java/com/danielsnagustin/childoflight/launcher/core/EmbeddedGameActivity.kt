@@ -110,7 +110,7 @@ class EmbeddedGameActivity : SDLActivity() {
         if (rc != Vita3kCoreBridge.OK) {
             Toast.makeText(
                 this,
-                "El núcleo embebido no se pudo iniciar (código $rc). Vuelve al launcher e inténtalo con Vita3K externo.",
+                "El núcleo embebido no se pudo iniciar (código $rc). Vuelve al launcher e inténtalo con la app externa.",
                 Toast.LENGTH_LONG,
             ).show()
             finish()

@@ -64,14 +64,20 @@ import java.io.FileOutputStream
  * 7. Si ni siquiera está la app externa, devuelve el error con
  *    instrucciones claras en vez de fallar en silencio.
  *
- * .pkg + Vita3K externo (deliverPkgFiles): el launcher NO puede
- * desencriptar un .pkg ni leer la biblioteca de Vita3K. La única vía
- * honesta es copiar el .pkg + work.bin a Descargas/ChildOfLight/
- * (carpeta compartida que Vita3K sí lee), abrir Vita3K y guiar al
- * usuario para instalarlo ahí una sola vez (File > Install Package
- * (.pkg) > elegir el .pkg > "Select work.bin" > elegir el work.bin).
- * Vita3K Android no expone ningún intent público documentado para
- * instalar un .pkg: no se inventa ninguno.
+ * .pkg + app externa (deliverPkgFiles): el launcher NO puede
+ * desencriptar un .pkg ni leer la biblioteca de la app externa. La
+ * única vía honesta es copiar el .pkg + work.bin a
+ * Descargas/ChildOfLight/ (carpeta compartida que la app externa sí
+ * lee), abrir la app externa y guiar al usuario para instalarlo ahí
+ * una sola vez (File > Install Package (.pkg) > elegir el .pkg >
+ * "Select work.bin" > elegir el work.bin). La app externa no expone
+ * ningún intent público documentado para instalar un .pkg: no se
+ * inventa ninguno. La copia NUNCA es automática: el ViewModel pide
+ * confirmación antes (qué se copia, cuánto ocupa y por qué) y la
+ * carpeta solo se crea si el usuario la confirma; las copias se
+ * pueden borrar desde Ajustes → Almacenamiento. Con el núcleo
+ * embebido listo, el juego se instala desde el almacenamiento
+ * interno y este paso desaparece.
  */
 class Vita3KLauncher(private val context: Context) {
 
@@ -81,16 +87,16 @@ class Vita3KLauncher(private val context: Context) {
 
         /**
          * Una frase, sin pedir que se busque nada por internet.
-         * Para el lanzamiento externo (Vita3K gestiona su firmware).
+         * Para el lanzamiento externo (la app externa gestiona su firmware).
          */
         const val FIRMWARE_WARNING_EXTERNAL =
-            "Falta el firmware de Vita en el launcher: Vita3K lo gestiona al arrancar, " +
-                "o puedes importarlo en Ajustes → Diagnóstico (opción avanzada)."
+            "Falta el firmware de Vita en el launcher: la app externa lo gestiona al arrancar, " +
+                "o puedes importarlo en Ajustes → Avanzado → Firmware (opción avanzada)."
 
         /** Una frase. Para el núcleo embebido (sin otra fuente de firmware). */
         const val FIRMWARE_BLOCKED_EMBEDDED =
             "Falta el firmware de Vita: el núcleo embebido no puede arrancar el juego sin él " +
-                "(Ajustes → Diagnóstico → Firmware, opción avanzada)."
+                "(Ajustes → Avanzado → Firmware, opción avanzada)."
     }
 
     sealed class LaunchOutcome {
@@ -139,11 +145,14 @@ class Vita3KLauncher(private val context: Context) {
 
     /**
      * Copia los .pkg + work.bin guardados a Descargas/ChildOfLight/
-     * (carpeta compartida que Vita3K sí puede leer) para instalarlos
-     * ahí una sola vez. Vita3K Android no expone ningún intent público
-     * documentado para instalar un .pkg: por eso se copia + se abre
-     * Vita3K + se muestra la guía paso a paso. No se inventa un
-     * deep-link. Devuelve las rutas públicas copiadas.
+     * (carpeta compartida que la app externa sí puede leer) para
+     * instalarlos ahí una sola vez. La app externa no expone ningún
+     * intent público documentado para instalar un .pkg: por eso se
+     * copia + se abre la app externa + se muestra la guía paso a paso.
+     * No se inventa un deep-link. Solo se llama después de que el
+     * usuario confirme la copia en el diálogo del ViewModel: es el
+     * ÚNICO camino que crea Descargas/ChildOfLight/. Devuelve las
+     * rutas públicas copiadas.
      */
     fun deliverPkgFiles(library: GameLibraryRepository): Result<List<String>> {
         return try {
@@ -251,7 +260,7 @@ class Vita3KLauncher(private val context: Context) {
                 )
             }
         } else if (pre.pkgOnly) {
-            LauncherLog.append(context, "launch", "Juego solo en .pkg: sin sesiones (los saves viven en Vita3K).")
+            LauncherLog.append(context, "launch", "Juego solo en .pkg: sin sesiones (los saves viven en la app externa).")
         }
         if (settings.closeBackgroundApps) {
             val killed = closeBackgroundApps()
@@ -300,12 +309,12 @@ class Vita3KLauncher(private val context: Context) {
                 when {
                     Vita3kCoreBridge.available && !pre.firmwareStatus.ready -> FIRMWARE_BLOCKED_EMBEDDED
                     Vita3kCoreBridge.available ->
-                        "El núcleo embebido está presente pero no pudo arrancar el juego, y Vita3K no está instalado.\n\n" +
-                            "Instala Vita3K para Android (org.vita3k.emulator) desde su GitHub oficial para jugar. " +
+                        "El núcleo embebido está presente pero no pudo arrancar el juego, y la app externa no está instalada.\n\n" +
+                            "Instala la app externa para Android desde su página oficial de releases para jugar. " +
                             "El config.yml ya quedó escrito en:\n${configFile.absolutePath}"
                     else ->
-                        "Núcleo embebido no presente (Etapa 2) y Vita3K no está instalado.\n\n" +
-                            "Instala Vita3K para Android (org.vita3k.emulator) desde su GitHub oficial " +
+                        "Núcleo embebido no presente (Etapa 2) y la app externa no está instalada.\n\n" +
+                            "Instala la app externa para Android desde su página oficial de releases " +
                             "para jugar mientras llega la Etapa 2. El config.yml ya quedó escrito en:\n${configFile.absolutePath}"
                 },
             )
@@ -313,14 +322,14 @@ class Vita3KLauncher(private val context: Context) {
         return try {
             context.startActivity(intent)
             if (!pre.firmwareStatus.ready) {
-                LauncherLog.append(context, "launch", "Vita3K externo lanzado sin firmware local (aviso mostrado)")
+                LauncherLog.append(context, "launch", "App externa lanzada sin firmware local (aviso mostrado)")
                 LaunchOutcome.LaunchedExternalFirmwareWarning(configFile.absolutePath)
             } else {
-                LauncherLog.append(context, "launch", "Vita3K externo lanzado; config en ${configFile.absolutePath}")
+                LauncherLog.append(context, "launch", "App externa lanzada; config en ${configFile.absolutePath}")
                 LaunchOutcome.LaunchedExternal(configFile.absolutePath)
             }
         } catch (e: Exception) {
-            LaunchOutcome.Blocked("No se pudo abrir Vita3K: ${e.message}")
+            LaunchOutcome.Blocked("No se pudo abrir la app externa: ${e.message}")
         }
     }
 

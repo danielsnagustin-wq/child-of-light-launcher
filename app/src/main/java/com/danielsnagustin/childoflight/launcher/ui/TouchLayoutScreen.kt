@@ -5,6 +5,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -33,6 +35,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +54,7 @@ import com.danielsnagustin.childoflight.launcher.data.ControlShape
 import com.danielsnagustin.childoflight.launcher.data.IgniculusMode
 import com.danielsnagustin.childoflight.launcher.data.StickMode
 import com.danielsnagustin.childoflight.launcher.data.TouchControl
+import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
 import com.danielsnagustin.childoflight.launcher.data.VitaButton
 
 private val CONTROL_COLORS = listOf("#F2B705", "#7FB3D5", "#4CAF50", "#E57373", "#BA68C8", "#FFFFFF")
@@ -84,14 +88,17 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     val profiles by vm.profilesFlow.collectAsState(initial = emptyList())
     val activeProfileId by vm.activeProfileIdFlow.collectAsState(initial = "default-g99")
     val settings by vm.settingsFlow.collectAsState(initial = null)
-    var selectedId by remember { mutableStateOf("stick") }
+    // B11: selectedId y los textos de los diálogos se pierden al
+    // rotar/recrear (eran remember): el usuario editaba un botón y
+    // al girar el teléfono volvía al stick y perdía lo escrito.
+    var selectedId by rememberSaveable { mutableStateOf("stick") }
     var previewSize by remember { mutableStateOf(IntSize.Zero) }
     var deleteTarget by remember { mutableStateOf<TouchControl?>(null) }
     var deleteProfileTarget by remember { mutableStateOf<ControlProfile?>(null) }
-    var showCreateProfile by remember { mutableStateOf(false) }
-    var newProfileName by remember { mutableStateOf("") }
+    var showCreateProfile by rememberSaveable { mutableStateOf(false) }
+    var newProfileName by rememberSaveable { mutableStateOf("") }
     var renameTarget by remember { mutableStateOf<ControlProfile?>(null) }
-    var renameText by remember { mutableStateOf("") }
+    var renameText by rememberSaveable { mutableStateOf("") }
     var exportTarget by remember { mutableStateOf<ControlProfile?>(null) }
 
     // B5 (auditoría UI): durante el arrastre los cambios van a un layout
@@ -115,6 +122,13 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         if (uri != null) vm.importControlProfile(uri)
     }
 
+    // B12 (auditoría panel táctil): mientras se arrastra un botón
+    // se desactiva el scroll vertical de la columna. Antes el
+    // arrastre vertical competía con el scroll de la página: mover
+    // un botón hacia arriba/abajo desplazaba la pantalla en vez del
+    // botón (o lo movía menos que el dedo).
+    var isDragging by remember { mutableStateOf(false) }
+
     fun updateControl(newControl: TouchControl) {
         vm.saveTouchLayout(displayLayout.map { if (it.id == newControl.id) newControl else it })
     }
@@ -123,75 +137,107 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
     ) {
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState(), enabled = !isDragging).padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
     ) {
         ScreenHeader("Controles táctiles", "Arrastra los botones en la vista previa para moverlos. Toca uno en la lista para editarlo: tamaño, opacidad, color, forma, etiqueta, remap y visibilidad.")
         NoteText(
             "En Etapa 1 este layout solo se GUARDA aquí: el overlay táctil aparecerá dentro del juego cuando llegue el núcleo embebido (Etapa 2). " +
-                "Por ahora, Vita3K externo usa sus propios controles táctiles y los ajustes de aquí no se ven en el juego.",
+                "Por ahora, la app externa usa sus propios controles táctiles y los ajustes de aquí no se ven en el juego.",
         )
 
         // Vista previa con arrastre real.
-        Box(
-            modifier = Modifier.fillMaxWidth().height(300.dp).background(ColCard)
-                .clipToBounds()
-                .onSizeChanged { previewSize = it },
-        ) {
-            val hideAll = settings?.hideTouchWhenGamepadConnected == true && gamepads.isNotEmpty()
-            if (hideAll) {
-                Text(
-                    "Mando conectado (${gamepads.firstOrNull() ?: ""}): overlay táctil oculto por tu ajuste.",
-                    modifier = Modifier.align(Alignment.Center).padding(16.dp),
-                )
-            } else {
-                displayLayout.filter { it.visible }.forEach { control ->
-                    val size = control.sizeDp.dp
-                    val shape = if (control.shape == ControlShape.CIRCLE) CircleShape else RoundedCornerShape(8.dp)
-                    val density = LocalDensity.current
-                    val sizePx = with(density) { size.toPx() }
-                    Box(
-                        modifier = Modifier
-                            .offset {
-                                // B4 (auditoría UI): antes solo había tope
-                                // izquierdo/superior y el botón se salía por
-                                // derecha/abajo (hasta sizePx/2 fuera).
-                                IntOffset(
-                                    x = ((control.xFraction * previewSize.width) - sizePx / 2).toInt()
-                                        .coerceIn(0, (previewSize.width - sizePx).toInt().coerceAtLeast(0)),
-                                    y = ((control.yFraction * previewSize.height) - sizePx / 2).toInt()
-                                        .coerceIn(0, (previewSize.height - sizePx).toInt().coerceAtLeast(0)),
-                                )
-                            }
-                            .size(size)
-                            .alpha(control.opacity)
-                            .background(parseHex(control.colorHex), shape)
-                            .pointerInput(control.id) {
-                                detectDragGestures(
-                                    onDragEnd = {
-                                        dragLayout?.let { vm.saveTouchLayout(it) }
-                                        dragLayout = null
-                                    },
-                                    onDragCancel = { dragLayout = null },
-                                ) { change, dragAmount ->
-                                    change.consume()
-                                    if (previewSize.width > 0 && previewSize.height > 0) {
-                                        val base = dragLayout ?: layout
-                                        val current = base.firstOrNull { it.id == control.id } ?: control
-                                        val nx = (current.xFraction + dragAmount.x / previewSize.width).coerceIn(0f, 1f)
-                                        val ny = (current.yFraction + dragAmount.y / previewSize.height).coerceIn(0f, 1f)
-                                        selectedId = control.id
-                                        dragLayout = base.map {
-                                            if (it.id == control.id) it.copy(xFraction = nx, yFraction = ny) else it
+        // B13: la vista previa se dibuja SIEMPRE, aunque haya un
+        // mando conectado y el ajuste de ocultar esté activo: antes
+        // se sustituía por un texto y no se podía arrastrar ni ver
+        // ningún botón del panel con el mando conectado. El ajuste
+        // solo afecta al juego, no al editor.
+        val hideAll = settings?.hideTouchWhenGamepadConnected == true && gamepads.isNotEmpty()
+        // B14: la zona Igniculus (220 dp, opacidad 0.25) se dibuja
+        // PRIMERO, detrás de los botones. Antes iba la última y
+        // tapaba por completo el botón Start (y parte de Y/X): en
+        // la vista previa Start no se podía ni tocar ni arrastrar,
+        // porque el toque lo recibía la zona Igniculus.
+        val previewControls = displayLayout.filter { it.visible }
+            .sortedBy { if (it.kind == "igniculus") 0 else 1 }
+        // La altura se adapta a la pantalla (BoxWithConstraints): en
+        // horizontal la vista previa fija de 300 dp se comía casi toda
+        // la altura y no cabían ni la cabecera ni los botones.
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val previewHeight = previewHeightForScreen(maxHeight)
+            Box(
+                modifier = Modifier.fillMaxWidth().height(previewHeight).background(ColCard)
+                    .clipToBounds()
+                    .onSizeChanged { previewSize = it },
+            ) {
+                previewControls.forEach { control ->
+                        val size = control.sizeDp.dp
+                        val shape = if (control.shape == ControlShape.CIRCLE) CircleShape else RoundedCornerShape(8.dp)
+                        val density = LocalDensity.current
+                        val sizePx = with(density) { size.toPx() }
+                        Box(
+                            modifier = Modifier
+                                .offset {
+                                    // B4 (auditoría UI): antes solo había tope
+                                    // izquierdo/superior y el botón se salía por
+                                    // derecha/abajo (hasta sizePx/2 fuera).
+                                    IntOffset(
+                                        x = ((control.xFraction * previewSize.width) - sizePx / 2).toInt()
+                                            .coerceIn(0, (previewSize.width - sizePx).toInt().coerceAtLeast(0)),
+                                        y = ((control.yFraction * previewSize.height) - sizePx / 2).toInt()
+                                            .coerceIn(0, (previewSize.height - sizePx).toInt().coerceAtLeast(0)),
+                                    )
+                                }
+                                .size(size)
+                                .alpha(control.opacity)
+                                .background(parseHex(control.colorHex), shape)
+                                .pointerInput(control.id) {
+                                    detectDragGestures(
+                                        onDragStart = { isDragging = true },
+                                        onDragEnd = {
+                                            isDragging = false
+                                            dragLayout?.let { vm.saveTouchLayout(it) }
+                                            dragLayout = null
+                                        },
+                                        onDragCancel = { isDragging = false; dragLayout = null },
+                                    ) { change, dragAmount ->
+                                        change.consume()
+                                        if (previewSize.width > 0 && previewSize.height > 0) {
+                                            val base = dragLayout ?: layout
+                                            val current = base.firstOrNull { it.id == control.id } ?: control
+                                            // B7: la fracción se fija con el
+                                            // centro del botón entero dentro
+                                            // de la vista previa (ver
+                                            // clampCenterFraction). Antes se
+                                            // fijaba en 0..1 y el dibujado
+                                            // recortaba: al llegar al borde
+                                            // el botón dejaba de moverse
+                                            // pero la fracción seguía
+                                            // cambiando, y al volver los
+                                            // primeros píxeles no movían nada.
+                                            val nx = TouchLayoutRepository.clampCenterFraction(
+                                                current.xFraction + dragAmount.x / previewSize.width,
+                                                (sizePx / 2f) / previewSize.width,
+                                            )
+                                            val ny = TouchLayoutRepository.clampCenterFraction(
+                                                current.yFraction + dragAmount.y / previewSize.height,
+                                                (sizePx / 2f) / previewSize.height,
+                                            )
+                                            selectedId = control.id
+                                            dragLayout = base.map {
+                                                if (it.id == control.id) it.copy(xFraction = nx, yFraction = ny) else it
+                                            }
                                         }
                                     }
-                                }
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(control.label, fontWeight = FontWeight.Bold, color = ColNight, style = MaterialTheme.typography.bodySmall)
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(control.label, fontWeight = FontWeight.Bold, color = ColNight, style = MaterialTheme.typography.bodySmall)
+                        }
                     }
-                }
             }
+        }
+        if (hideAll) {
+            NoteText("Mando conectado (${gamepads.firstOrNull() ?: ""}): en el juego el overlay táctil quedará oculto por tu ajuste. Aquí se sigue viendo para poder editarlo.")
         }
         NoteText("Vista previa esquemática: las fracciones X/Y se aplican a la pantalla real en el juego.")
 
@@ -207,7 +253,10 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             FlowRow(modifier = Modifier.fillMaxWidth()) {
                 TextButton(onClick = { vm.duplicateControlProfile(profile.id) }) { Text("Duplicar") }
                 TextButton(onClick = { renameTarget = profile; renameText = profile.name }) { Text("Renombrar") }
-                TextButton(onClick = { deleteProfileTarget = profile }) { Text("Borrar") }
+                // El último perfil no se puede borrar (el repositorio lo
+                // rechaza): no se ofrece un diálogo que promete borrar y
+                // luego falla. "Restaurar predefinidos que falten" lo recupera.
+                TextButton(onClick = { deleteProfileTarget = profile }, enabled = profiles.size > 1) { Text("Borrar") }
                 TextButton(onClick = { exportTarget = profile; exportProfile.launch("perfil-${profile.name}.txt") }) { Text("Exportar") }
             }
         }

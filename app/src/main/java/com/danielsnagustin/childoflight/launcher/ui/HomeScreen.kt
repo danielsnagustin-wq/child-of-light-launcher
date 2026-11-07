@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -196,7 +197,7 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
                 color = if (gameOk) ColSuccessGreen else Color.White,
             )
             Text(
-                if (vitaOk) "✓ Vita3K instalado ($vita3k)" else "✗ Vita3K no instalado",
+                if (vitaOk) "✓ App externa instalada ($vita3k)" else "✗ App externa no instalada",
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (vitaOk) ColSuccessGreen else Color.White,
             )
@@ -208,9 +209,9 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
                 )
                 Text(
                     when {
-                        confirmedInVita3k -> "✓ Instalado en Vita3K"
-                        delivered -> "✓ Copiado a Descargas — falta instalarlo en Vita3K"
-                        else -> "✗ Falta instalarlo en Vita3K"
+                        confirmedInVita3k -> "✓ Instalado en la app externa"
+                        delivered -> "✓ Copiado a Descargas — falta instalarlo en la app externa"
+                        else -> "✗ Falta instalarlo en la app externa"
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (confirmedInVita3k) ColSuccessGreen else Color.White,
@@ -222,7 +223,7 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
                 Spacer(modifier = Modifier.height(8.dp))
             }
             if (!vitaOk) {
-                SecondaryButton("Instalar Vita3K", onClick = { vm.openVita3kReleases() })
+                SecondaryButton("Instalar app externa", onClick = { vm.openVita3kReleases() })
                 Spacer(modifier = Modifier.height(8.dp))
             }
             if (pkgOnly && !status.pkgLicensePresent) {
@@ -230,22 +231,22 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
                 Spacer(modifier = Modifier.height(8.dp))
             }
             if (pkgOnly && status.pkgLicensePresent && !delivered) {
-                SecondaryButton("Instalar en Vita3K", onClick = { vm.deliverPkgToVita3k() })
+                SecondaryButton("Instalar en la app externa", onClick = { vm.deliverPkgToVita3k() })
                 Spacer(modifier = Modifier.height(8.dp))
             }
             if (pkgOnly && delivered && !confirmedInVita3k) {
-                SecondaryButton("Ya lo instalé en Vita3K", onClick = { vm.confirmPkgInstalledInVita3k() })
+                SecondaryButton("Ya lo instalé en la app externa", onClick = { vm.confirmPkgInstalledInVita3k() })
                 Spacer(modifier = Modifier.height(8.dp))
             }
             Text(
                 when {
                     !gameOk -> "Importa tu copia de Child of Light (.zip, .vpk o .pkg — el nombre del archivo da igual)."
-                    !vitaOk -> "Instala Vita3K para jugar: el launcher no trae núcleo embebido en Etapa 1."
-                    pkgOnly && !status.pkgLicensePresent -> "Sin la licencia (work.bin) Vita3K no puede instalar el .pkg."
-                    pkgOnly && !delivered -> "El .pkg está guardado. Instálalo en Vita3K para poder jugar."
-                    pkgOnly && !confirmedInVita3k -> "Copiado a Descargas/ChildOfLight/. Instálalo en Vita3K (File → Install Package (.pkg)) y confirma aquí."
-                    pkgOnly -> "Todo listo: pulsa JUGAR y abre el juego en la biblioteca de Vita3K."
-                    else -> "Todo listo: pulsa JUGAR. Recuerda importar tu copia también dentro de Vita3K."
+                    !vitaOk -> "Instala la app externa para jugar: el launcher no trae núcleo embebido en Etapa 1."
+                    pkgOnly && !status.pkgLicensePresent -> "Sin la licencia (work.bin) no se puede instalar el .pkg."
+                    pkgOnly && !delivered -> "El .pkg está guardado. Instálalo en la app externa para poder jugar."
+                    pkgOnly && !confirmedInVita3k -> "Copiado a Descargas/ChildOfLight/. Instálalo en la app externa (File → Install Package (.pkg)) y confirma aquí. Cuando lo instales, puedes borrar la copia desde Ajustes → Almacenamiento."
+                    pkgOnly -> "Todo listo: pulsa JUGAR y abre el juego en la biblioteca de la app externa."
+                    else -> "Todo listo: pulsa JUGAR. Recuerda importar tu copia también dentro de la app externa."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = ColMutedText,
@@ -262,7 +263,9 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 16.dp),
+                .padding(horizontal = 20.dp, vertical = 16.dp)
+                .widthIn(max = ContentMaxWidth)
+                .align(Alignment.TopCenter),
             verticalArrangement = Arrangement.Top,
         ) {
             // Barra superior: título + engranaje de Configuración.

@@ -11,10 +11,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -23,7 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,14 +57,19 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
     val uiPrefs by vm.uiFlow.collectAsState(initial = null)
     // B3: el firmware se lee como flujo (antes llamada plana sin refresco).
     val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
+    val firmwareInstalling by vm.firmwareInstallingFlow.collectAsState()
+    val embeddedCore by vm.embeddedCoreFlow.collectAsState()
     // Importación en curso: se muestra el progreso y se bloquean los
     // botones (antes no se veía NADA mientras copiaba ~2 GB y el usuario
     // creía que "al cargar no funciona").
     val importing by vm.importing.collectAsState()
     val status by vm.status.collectAsState()
     val pendingLicense by vm.pendingPkgLicense.collectAsState()
-    var showConfig by remember { mutableStateOf(false) }
-    var showResetConfirm by remember { mutableStateOf(false) }
+    val downloadsCopies by vm.downloadsCopies.collectAsState()
+    var showConfig by rememberSaveable { mutableStateOf(false) }
+    var showResetConfirm by rememberSaveable { mutableStateOf(false) }
+    var showDeleteFirmwareConfirm by rememberSaveable { mutableStateOf(false) }
+    var showDeleteDownloadsConfirm by rememberSaveable { mutableStateOf(false) }
     val configText by vm.generatedConfig.collectAsState()
 
     val pickTurnip = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -96,7 +103,7 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
         modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
     ) {
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
     ) {
         ScreenHeader("Configuración", "Todo lo del launcher, en un solo lugar.")
         Text("Perfil activo: ${s?.activeProfile?.label ?: "—"}", style = MaterialTheme.typography.bodyMedium, color = ColMutedText)
@@ -152,7 +159,7 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
                     fontWeight = FontWeight.SemiBold,
                     color = Color.White,
                 )
-                NoteText("Sin la licencia Vita3K no puede instalar el .pkg. Es el archivo work.bin de 512 B que acompaña al .pkg (a veces se descarga como «work (5).bin»).")
+                NoteText("Sin la licencia no se puede instalar el .pkg. Es el archivo work.bin de 512 B que acompaña al .pkg (a veces se descarga como «work (5).bin»).")
                 Spacer(modifier = Modifier.height(12.dp))
                 SecondaryButton("Elegir work.bin", onClick = { pickWorkBin.launch("*/*") }, enabled = !importing)
             }
@@ -176,18 +183,49 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
                     Text("✓ Copiado a Descargas/ChildOfLight/", style = MaterialTheme.typography.bodyMedium, color = ColSuccessGreen)
                 }
                 if (s?.pkgInstalledInVita3k == true) {
-                    Text("✓ Instalado en Vita3K (confirmado por ti)", style = MaterialTheme.typography.bodyMedium, color = ColSuccessGreen)
+                    Text("✓ Instalado en la app externa (confirmado por ti)", style = MaterialTheme.typography.bodyMedium, color = ColSuccessGreen)
                 }
                 Spacer(modifier = Modifier.height(12.dp))
-                SecondaryButton("Instalar en Vita3K", onClick = { vm.deliverPkgToVita3k() }, enabled = !importing && status.pkgLicensePresent)
+                SecondaryButton("Instalar en la app externa", onClick = { vm.deliverPkgToVita3k() }, enabled = !importing && status.pkgLicensePresent)
                 if (!status.pkgLicensePresent) {
                     NoteText("Falta el work.bin: elige la licencia arriba para poder instalarlo.")
                 }
                 if (s?.pkgDeliveredToVita3k == true && s?.pkgInstalledInVita3k != true) {
                     Spacer(modifier = Modifier.height(8.dp))
-                    SecondaryButton("Ya lo instalé en Vita3K", onClick = { vm.confirmPkgInstalledInVita3k() })
+                    SecondaryButton("Ya lo instalé en la app externa", onClick = { vm.confirmPkgInstalledInVita3k() })
                 }
-                NoteText("El launcher no puede instalar un .pkg por sí mismo: lo instala Vita3K. «Instalar en Vita3K» copia el .pkg y su licencia a Descargas/ChildOfLight/ y abre Vita3K con la guía.")
+                NoteText("El launcher no puede instalar un .pkg por sí mismo: lo instala la app externa. «Instalar en la app externa» te pide confirmar antes de copiar el .pkg y su licencia a Descargas/ChildOfLight/ (la app externa no puede leer el almacenamiento interno del launcher) y abre la app externa con la guía. Cuando el núcleo embebido esté listo, no hará falta copiar nada.")
+            }
+        }
+
+        // --- Almacenamiento: todo vive en la data interna; Descargas solo es la entrega explícita ---
+        SectionTitle("Almacenamiento")
+        PremiumCard {
+            Text(
+                "El juego, los DLCs, los updates y la licencia viven en el almacenamiento interno del launcher (privado, sin carpeta visible en Descargas ni en el almacenamiento compartido).",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+            )
+            NoteText("La única copia en Descargas es la entrega explícita a la app externa («Instalar en la app externa», con confirmación antes de copiar). Cuando el núcleo embebido esté listo, no hará falta copiar nada.")
+            Spacer(modifier = Modifier.height(12.dp))
+            if (downloadsCopies.isEmpty()) {
+                Text("Descargas/ChildOfLight/: vacía ✓", style = MaterialTheme.typography.bodyMedium, color = ColSuccessGreen)
+            } else {
+                Text(
+                    "Copias en Descargas/ChildOfLight/:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                )
+                Text(
+                    com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup.summarize(downloadsCopies),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = ColMutedText,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                SecondaryButton("Borrar copias de Descargas", onClick = { showDeleteDownloadsConfirm = true })
+                NoteText("Borra solo las copias de Descargas/ChildOfLight/. El juego, los DLCs y la licencia del almacenamiento interno no se tocan.")
             }
         }
 
@@ -262,7 +300,7 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
             }
             Text("Turnip instalado: ${if (s.turnipInstalled) s.turnipVersion else "no"}", style = MaterialTheme.typography.bodyMedium)
             OutlinedButton(onClick = { pickTurnip.launch("*/*") }, modifier = Modifier.fillMaxWidth()) { Text("Instalar / cambiar Turnip (.zip)") }
-            NoteText("Turnip es el driver Mesa open-source para Adreno. Se carga solo para esta app. Al cambiar de driver, Vita3K limpia la caché de shaders al arrancar.")
+            NoteText("Turnip es el driver Mesa open-source para Adreno. Se carga solo para esta app. Al cambiar de driver, el núcleo limpia la caché de shaders al arrancar.")
         } else {
             Text("Driver del sistema (${gpu?.renderer ?: "GPU no detectada"})", fontWeight = FontWeight.SemiBold)
             NoteText("Turnip solo funciona en Qualcomm Adreno, no en Mali. Por eso no se muestra aquí.")
@@ -275,14 +313,14 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
 
         // --- CPU ---
         SectionTitle("CPU")
-        SettingSwitch("Optimización CPU (JIT Dynarmic)", "cpu-opt en config.yml. Dynarmic es el backend por defecto de Vita3K.", s.cpuOpt) { vm.saveSettings(s.copy(cpuOpt = it)) }
+        SettingSwitch("Optimización CPU (JIT Dynarmic)", "cpu-opt en config.yml. Dynarmic es el backend por defecto del núcleo.", s.cpuOpt) { vm.saveSettings(s.copy(cpuOpt = it)) }
         SettingSwitch("FPS Hack (30 → 60)", "fps-hack en config.yml. En Child of Light déjalo OFF salvo que sepas que el juego lo soporta.", s.fpsHack) { vm.saveSettings(s.copy(fpsHack = it)) }
         SettingSlider("Retraso de carga de archivos", s.fileLoadingDelay, 0..100, { vm.saveSettings(s.copy(fileLoadingDelay = it)) })
 
         // --- Audio ---
         SectionTitle("Audio")
         EnumChips("Backend de audio", AudioBackend.entries, s.audioBackend, { it.label }) { vm.saveSettings(s.copy(audioBackend = it)) }
-        NoteText("SDL es el default de Vita3K-Android desde v7 porque arregla ruido. Cubeb es la alternativa (Vita3K+ v1.3: cubeb y SDL ya no deberían crepitar/cortar).")
+        NoteText("SDL es el predeterminado desde v7 porque arregla ruido. Cubeb es la alternativa (v1.3: cubeb y SDL ya no deberían crepitar/cortar).")
         EnumChips("Tamaño de buffer de audio", listOf(256, 512, 1024, 2048), s.audioBufferSize, { "$it" }) { vm.saveSettings(s.copy(audioBufferSize = it)) }
         NoteText("Si hay crackles (chasquidos), sube el buffer un paso (p. ej. 512 → 1024). Es ajuste del launcher: no hay clave de buffer en config.h.")
         SettingSwitch("NGS (audio del sistema Vita)", "ngs-enable en config.yml. ON recomendado.", s.ngsEnable) { vm.saveSettings(s.copy(ngsEnable = it)) }
@@ -301,8 +339,8 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
 
         // --- Corrección de errores ---
         SectionTitle("Corrección de errores")
-        NoteText("Mitigaciones del launcher (no reescriben el núcleo Vita3K). Si algo falla, empieza por el Modo seguro.")
-        SettingSwitch("Accurate Thread Scheduling", "Default nuevo en Vita3K: evita freezes/cuelgues. ON recomendado. Sin clave verificada en config.h: se guarda en el launcher.", s.accurateThreadScheduling) { vm.saveSettings(s.copy(accurateThreadScheduling = it)) }
+        NoteText("Mitigaciones del launcher (no reescriben el núcleo del juego). Si algo falla, empieza por el Modo seguro.")
+        SettingSwitch("Accurate Thread Scheduling", "Predeterminado nuevo en el núcleo: evita freezes/cuelgues. ON recomendado. Sin clave verificada en config.h: se guarda en el launcher.", s.accurateThreadScheduling) { vm.saveSettings(s.copy(accurateThreadScheduling = it)) }
         SettingSwitch("Caché de shaders", "ON siempre: el stutter de la primera partida se va cuando la caché se llena.", s.shaderCache) { vm.saveSettings(s.copy(shaderCache = it)) }
         SettingSwitch("Cerrar apps en segundo plano antes de jugar", "Best-effort con el permiso del sistema. Libera RAM antes de lanzar.", s.closeBackgroundApps) { vm.saveSettings(s.copy(closeBackgroundApps = it)) }
         SettingSwitch("Modo seguro", "Fuerza 1x, SDL, buffer 2048, Thread Scheduling ON, High Accuracy OFF. Para cuando algo falle.", s.safeMode) { vm.setSafeMode(it) }
@@ -325,7 +363,7 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
             EnumChips("Idioma", com.danielsnagustin.childoflight.launcher.model.AppLanguage.entries, ui.language, { it.label }) {
                 vm.saveUiPrefs(ui.copy(language = it))
             }
-            NoteText("Idioma ES/EN: traduce la portada, la navegación y los títulos de sección. Las notas técnicas de Vita3K permanecen en español en Etapa 1.")
+            NoteText("Idioma ES/EN: traduce la portada, la navegación y los títulos de sección. Las notas técnicas permanecen en español en Etapa 1.")
             SettingSwitch("Mostrar FPS en la pantalla principal", "Muestra el FPS medio de la última prueba de 30 s en la portada.", ui.showFpsOnHome) {
                 vm.saveUiPrefs(ui.copy(showFpsOnHome = it))
             }
@@ -362,21 +400,48 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
         NoteText("Botones ocultos, perfiles sin usar, presets sin usar, Turnip sin usar, DLCs y saves.")
 
         // --- Avanzado: firmware (nunca un paso inicial) ---
+        // Flujo simple, 100% en el teléfono: el usuario aporta su
+        // propio PSVUPDAT.PUP con el selector de archivos (una sola
+        // vez, sin exigir nombre ni ruta), el launcher lo guarda en
+        // su almacenamiento privado y lo instala en el núcleo
+        // embebido. El archivo nunca sale del teléfono, nunca entra
+        // en el repo ni en el APK y nunca se sube a ningún sitio.
         SectionTitle("Avanzado — Firmware")
         Text("Firmware: ${com.danielsnagustin.childoflight.launcher.data.FirmwareResolver.label(firmwareStatus)}", style = MaterialTheme.typography.bodyMedium)
-        OutlinedButton(onClick = { pickFirmware.launch("*/*") }, modifier = Modifier.fillMaxWidth()) { Text("Importar firmware (.PUP, avanzado)") }
+        if (firmwareStatus is com.danielsnagustin.childoflight.launcher.data.FirmwareStatus.Missing) {
+            NoteText(com.danielsnagustin.childoflight.launcher.data.FirmwareResolver.NO_FIRMWARE_MESSAGE)
+        }
+        OutlinedButton(onClick = { pickFirmware.launch("*/*") }, modifier = Modifier.fillMaxWidth()) { Text("Importar firmware (.PUP, tu copia)") }
+        if (firmwareInstalling) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            NoteText("Instalando el firmware en el núcleo embebido… puede tardar unos minutos. No cierres la app.")
+        } else if (firmwareStatus is com.danielsnagustin.childoflight.launcher.data.FirmwareStatus.Saved) {
+            if (embeddedCore == true) {
+                OutlinedButton(onClick = { vm.installSavedFirmwareInCore() }, modifier = Modifier.fillMaxWidth()) { Text("Instalar en el núcleo embebido") }
+            } else {
+                NoteText(
+                    "El PUP ya está guardado en el teléfono. El núcleo embebido aún no está en esta versión: " +
+                        "se instalará solo cuando llegue (al importar, al pulsar JUGAR o desde aquí). " +
+                        "Mientras tanto, la app externa usa su propio firmware.",
+                )
+            }
+        }
+        if (firmwareStatus is com.danielsnagustin.childoflight.launcher.data.FirmwareStatus.Ready) {
+            OutlinedButton(onClick = { showDeleteFirmwareConfirm = true }, modifier = Modifier.fillMaxWidth()) { Text("Borrar firmware") }
+        }
         NoteText(
             "Opción avanzada, nunca obligatoria: el primer uso solo pide juego + DLCs. " +
-                "El launcher detecta solo el firmware que ya tengas guardado (PSVUPDAT.PUP o vs0 extraído); " +
-                "si Vita3K ya tiene firmware instalado, usa el suyo. Esto solo guarda una copia local " +
-                "para el núcleo embebido (Etapa 2). El launcher no incluye firmware ni claves.",
+                "Tu PUP se queda solo en tu teléfono: el launcher lo lee de ahí y lo instala en el núcleo embebido (Etapa 2). " +
+                "No tienes que enviarlo por chat ni subirlo a ningún sitio: se lee directamente de tu teléfono (Descargas o donde lo tengas guardado). " +
+                "La app externa no puede usarlo (cada app tiene su propio almacenamiento) y usa su propio firmware. " +
+                "El launcher no incluye firmware ni claves.",
         )
 
         // --- Aviso legal ---
         SectionTitle("Aviso legal")
         PremiumCard {
             Text(
-                "Proyecto independiente, sin afiliación con Ubisoft, Sony / PlayStation ni Vita3K.",
+                "Proyecto independiente, sin afiliación con Ubisoft, Sony / PlayStation ni con los autores del emulador.",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = Color.White,
@@ -422,6 +487,37 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
                 TextButton(onClick = { vm.resetSettings(); showResetConfirm = false }) { Text("Restablecer") }
             },
             dismissButton = { TextButton(onClick = { showResetConfirm = false }) { Text("Cancelar") } },
+        )
+    }
+    if (showDeleteFirmwareConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteFirmwareConfirm = false },
+            title = { Text("¿Borrar el firmware?") },
+            text = { Text("Se borra el PUP guardado y el firmware instalado en el núcleo. El juego, los DLCs y los saves no se tocan. Para jugar con el núcleo embebido habrá que importar el PUP de nuevo.") },
+            confirmButton = {
+                TextButton(onClick = { vm.deleteFirmware(); showDeleteFirmwareConfirm = false }) { Text("Borrar") }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteFirmwareConfirm = false }) { Text("Cancelar") } },
+        )
+    }
+    if (showDeleteDownloadsConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDownloadsConfirm = false },
+            title = { Text("¿Borrar las copias de Descargas?") },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    Text(
+                        "Se borrarán estos archivos de Descargas/ChildOfLight/:\n\n" +
+                            com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup.summarize(downloadsCopies) +
+                            "\n\nEl juego, los DLCs y la licencia del almacenamiento interno del launcher NO se tocan.\n\n" +
+                            "Si aún no instalaste el juego en la app externa, tendrás que volver a copiarlo («Instalar en la app externa»).",
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { vm.deleteDownloadsCopies(); showDeleteDownloadsConfirm = false }) { Text("Borrar") }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteDownloadsConfirm = false }) { Text("Cancelar") } },
         )
     }
 }

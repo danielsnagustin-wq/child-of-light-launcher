@@ -22,6 +22,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -52,11 +53,11 @@ fun SessionsSection(vm: LauncherViewModel) {
     val activeId by vm.activeSessionIdFlow.collectAsState(initial = null)
     val status by vm.status.collectAsState()
 
-    var showNewDialog by remember { mutableStateOf(false) }
-    var newName by remember { mutableStateOf("") }
+    var showNewDialog by rememberSaveable { mutableStateOf(false) }
+    var newName by rememberSaveable { mutableStateOf("") }
     var renameTarget by remember { mutableStateOf<GameSession?>(null) }
-    var renameName by remember { mutableStateOf("") }
-    var renameChapter by remember { mutableStateOf("") }
+    var renameName by rememberSaveable { mutableStateOf("") }
+    var renameChapter by rememberSaveable { mutableStateOf("") }
     var deleteTarget by remember { mutableStateOf<GameSession?>(null) }
     var exportTarget by remember { mutableStateOf<GameSession?>(null) }
 
@@ -129,7 +130,14 @@ fun SessionsSection(vm: LauncherViewModel) {
                         onClick = { exportTarget = session; exportSession.launch("col-sesion-${safeFileName(session.name)}.zip") },
                         modifier = Modifier.weight(1f),
                     ) { Text("Exportar") }
-                    OutlinedButton(onClick = { deleteTarget = session }, modifier = Modifier.weight(1f)) { Text("Borrar") }
+                    OutlinedButton(
+                        onClick = { deleteTarget = session },
+                        modifier = Modifier.weight(1f),
+                        // La única sesión no se puede borrar (el gestor lo
+                        // rechaza): el botón no ofrece un diálogo que
+                        // promete borrar y luego falla.
+                        enabled = sessions.size > 1,
+                    ) { Text("Borrar") }
                 }
             }
         }

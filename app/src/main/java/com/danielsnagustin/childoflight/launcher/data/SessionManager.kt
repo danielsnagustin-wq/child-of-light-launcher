@@ -154,7 +154,7 @@ class SessionManager(
         // Title ID vacío dejaba una sesión huérfana sin juego.
         if (titleId.isBlank()) {
             return Result.failure(
-                IllegalStateException("Instala primero el juego extraído para crear sesiones. Con un .pkg los saves viven dentro de Vita3K."),
+                IllegalStateException("Instala primero el juego extraído para crear sesiones. Con un .pkg los saves viven dentro de la app externa."),
             )
         }
         // 1. Snapshot de la sesión actual (si la hay): no se pierde nada.

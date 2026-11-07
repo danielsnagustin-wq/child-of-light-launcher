@@ -51,7 +51,7 @@ object Vita3kConfigGenerator {
         if (settings.safeMode) {
             sb.appendLine("# MODO SEGURO activo: 1x, SDL, buffer grande, Thread Scheduling ON, High Accuracy OFF.")
         }
-        sb.appendLine("# Fuente de claves: Vita3K vita3k/config/include/config/config.h (master, 2026-11-07).")
+        sb.appendLine("# Fuente de claves: config.h del núcleo (master, 2026-11-07).")
         sb.appendLine("# Las líneas TODO-VERIFY son ajustes del launcher SIN clave verificada en config.h.")
         sb.appendLine("# No se inventan claves: esos ajustes no se escriben como claves reales.")
         sb.appendLine()
@@ -80,7 +80,7 @@ object Vita3kConfigGenerator {
         sb.appendLine("shader-cache: ${s.shaderCache}")
         // --- Driver ---
         if (s.turnipInstalled && s.customDriverName.isNotBlank()) {
-            sb.appendLine("# Driver personalizado Turnip (solo Adreno). custom-driver-name verificado como clave; el valor esperado exacto (nombre del zip) es TODO-VERIFY contra Vita3K-Android.")
+            sb.appendLine("# Driver personalizado Turnip (solo Adreno). custom-driver-name verificado como clave; el valor esperado exacto (nombre del zip) es TODO-VERIFY contra el build de Android.")
             sb.appendLine("custom-driver-name: \"${s.customDriverName}\"")
         } else {
             sb.appendLine("custom-driver-name: \"\"")
@@ -94,7 +94,7 @@ object Vita3kConfigGenerator {
         if (s.audioBackend.name == "SDL") {
             sb.appendLine("audio-backend: \"SDL\"")
         } else {
-            sb.appendLine("# TODO-VERIFY: string exacto de Cubeb en audio-backend. Vita3K+ v1.3 lo documenta como alternativa a SDL; se emite \"Cubeb\" y debe verificarse contra el build usado.")
+            sb.appendLine("# TODO-VERIFY: string exacto de Cubeb en audio-backend. La v1.3 lo documenta como alternativa a SDL; se emite \"Cubeb\" y debe verificarse contra el build usado.")
             sb.appendLine("audio-backend: \"Cubeb\"")
         }
         sb.appendLine("audio-volume: ${s.audioVolume}")
@@ -103,7 +103,7 @@ object Vita3kConfigGenerator {
         // --- Overlay ---
         sb.appendLine("performance-overlay: ${s.showFpsOverlay}")
         // --- Ajustes solo-launcher ---
-        sb.appendLine("# TODO-VERIFY: frame-limiter (${s.frameLimiter.label}) no tiene clave en config.h; lo aplica el launcher al lanzar (límite objetivo), no Vita3K vía YAML.")
+        sb.appendLine("# TODO-VERIFY: frame-limiter (${s.frameLimiter.label}) no tiene clave en config.h; lo aplica el launcher al lanzar (límite objetivo), no el núcleo vía YAML.")
         sb.appendLine("# TODO-VERIFY: frame-skipping (${s.frameSkipping}) no tiene clave en config.h; ajuste del launcher.")
         sb.appendLine("# TODO-VERIFY: accurate-thread-scheduling (${s.accurateThreadScheduling}) no tiene clave en config.h (es ajuste del fork Android); se guarda en el launcher y se aplica si el build lo soporta.")
         // --- Rutas ---

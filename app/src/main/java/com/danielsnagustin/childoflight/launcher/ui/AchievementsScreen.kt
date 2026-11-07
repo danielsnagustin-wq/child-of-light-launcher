@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -23,6 +24,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,7 +60,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     val progress by vm.achievementsFlow.collectAsState(initial = emptyList())
     val scan by vm.trophyScan.collectAsState()
     var selected by remember { mutableStateOf<TrophyProgress?>(null) }
-    var showResetConfirm by remember { mutableStateOf(false) }
+    var showResetConfirm by rememberSaveable { mutableStateOf(false) }
 
     val unlocked = progress.count { it.unlocked }
     val percent = trophyProgressPercent(progress)
@@ -67,7 +69,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
     ) {
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
     ) {
         ScreenHeader("Logros", "27 trofeos de la versión Vita · $unlocked/27 desbloqueados ($percent%)")
         PremiumCard {
@@ -87,7 +89,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         }
         NoteText("Logros LOCALES del launcher: no se sincronizan con PSN / PlayStation Network ni con Steam. No hay platino en este juego (ni en PS4 ni en Vita).")
         scan?.let { s ->
-            NoteText("Vita3K (ux0/user/00/trophy/): ${s.note}")
+            NoteText("Trofeos del núcleo (ux0/user/00/trophy/): ${s.note}")
         }
         Spacer(modifier = Modifier.height(8.dp))
 

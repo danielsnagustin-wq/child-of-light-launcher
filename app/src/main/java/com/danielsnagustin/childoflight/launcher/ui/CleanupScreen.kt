@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -19,8 +20,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -45,9 +47,9 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     val settings by vm.settingsFlow.collectAsState(initial = null)
     val uiPrefs by vm.uiFlow.collectAsState(initial = null)
     val status by vm.status.collectAsState()
-    var showBatchConfirm by remember { mutableStateOf(false) }
-    var deleteDlcTarget by remember { mutableStateOf<String?>(null) }
-    var showDeleteSavesConfirm by remember { mutableStateOf(false) }
+    var showBatchConfirm by rememberSaveable { mutableStateOf(false) }
+    var deleteDlcTarget by rememberSaveable { mutableStateOf<String?>(null) }
+    var showDeleteSavesConfirm by rememberSaveable { mutableStateOf(false) }
 
     val hiddenButtons = layout.filter { !it.visible }
     val unusedProfiles = profiles.filter { it.id != activeProfileId }
@@ -61,7 +63,7 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
     ) {
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
     ) {
         ScreenHeader("Limpiar no usados", "Todo lo que se borra aquí se puede volver a crear o importar, salvo DLCs y saves.")
 

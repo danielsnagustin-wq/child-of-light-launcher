@@ -52,7 +52,7 @@ object EmbeddedGameLauncher {
             return Decision.UseExternal("Núcleo embebido no presente (Etapa 2).")
         }
         if (!firmwareReady) {
-            return Decision.UseExternal("Sin firmware local: se usa Vita3K externo.")
+            return Decision.UseExternal("Sin firmware local: se usa la app externa.")
         }
         return when {
             status.gameExtracted -> Decision.UseEmbedded(titleId)
