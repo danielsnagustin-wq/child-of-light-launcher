@@ -306,6 +306,22 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
                 "para el núcleo embebido (Etapa 2). El launcher no incluye firmware ni claves.",
         )
 
+        // --- Aviso legal ---
+        SectionTitle("Aviso legal")
+        PremiumCard {
+            Text(
+                "Proyecto independiente, sin afiliación con Ubisoft, Sony / PlayStation ni Vita3K.",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+            )
+            NoteText(
+                "Child of Light es marca registrada de Ubisoft. Este launcher no incluye el juego, " +
+                    "ni DLCs, ni firmware, ni claves. El usuario debe aportar su propia copia legítima " +
+                    "del juego y sus DLCs; el uso de copias no legítimas es responsabilidad exclusiva del usuario.",
+            )
+        }
+
         Spacer(modifier = Modifier.height(16.dp))
         OutlinedButton(
             onClick = { vm.refreshConfigPreview(s); showConfig = true },

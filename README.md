@@ -10,6 +10,23 @@ y lanza el juego. Sin biblioteca de emulador, sin lista de juegos.
 
 ---
 
+## Aviso legal
+
+- **Proyecto independiente, sin afiliación.** Este launcher **no está
+  afiliado, patrocinado, respaldado ni asociado** con Ubisoft, Sony
+  Interactive Entertainment, PlayStation, Vita3K ni ninguna de sus
+  filiales. *Child of Light* es marca registrada de Ubisoft.
+- **El usuario debe aportar su propia copia legítima.** Este proyecto
+  **no incluye el juego, ni DLCs, ni firmware, ni claves, ni ningún
+  archivo con copyright**. El launcher solo organiza y lanza la copia
+  que el usuario ya compró legalmente y pone él mismo. Cada usuario es
+  responsable de usar solo copias legítimas; el uso de copias no
+  legítimas es responsabilidad exclusiva del usuario.
+- **Vita3K es un proyecto open-source independiente** (emulador de PS
+  Vita); este launcher no está afiliado a Vita3K.
+
+---
+
 ## Qué es
 
 - Un **launcher** para un solo juego: Child of Light de PS Vita.
