@@ -1,14 +1,29 @@
 package com.danielsnagustin.childoflight.launcher.core
 
-import android.graphics.RectF
 import com.danielsnagustin.childoflight.launcher.data.TouchControl
 import com.danielsnagustin.childoflight.launcher.data.VitaButton
 import kotlin.math.sqrt
 
 /**
+ * Rectángulo de un control en píxeles, Kotlin puro.
+ *
+ * NO es android.graphics.RectF a propósito: en los tests unitarios JVM
+ * RectF es un stub sin mockear y su constructor NO asigna los campos
+ * (todo queda a 0), así que el test controlRectMatchesEditorPreview
+ * fallaba en CI (run #57) con left=0 aunque la matemática era correcta.
+ * La vista del juego usa solo left/top/width de este rectángulo
+ * (GamepadOverlayView), donde Android es real; los RectF de dibujo se
+ * construyen allí desde los límites de cada vista.
+ */
+data class ControlRect(val left: Float, val top: Float, val right: Float, val bottom: Float) {
+    fun width(): Float = right - left
+    fun height(): Float = bottom - top
+}
+
+/**
  * Mapeo del overlay táctil del launcher al mando virtual SDL del núcleo.
  *
- * TODO LO DE AQUÍ ES PURO KOTLIN (sin Android salvo RectF) y está
+ * TODO LO DE AQUÍ ES PURO KOTLIN (sin Android) y está
  * verificado contra el código de upstream en el pin
  * 3e43bc803a04c775737a3474e0d54f3e10ca61bf:
  *
@@ -172,14 +187,14 @@ object TouchOverlayMapping {
      * (TouchOverlayMappingTest.controlRectMatchesEditorPreview) debe
      * actualizarse a la vez; si esta cambia, igual.
      */
-    fun controlRect(control: TouchControl, viewWidthPx: Float, viewHeightPx: Float, density: Float): RectF {
+    fun controlRect(control: TouchControl, viewWidthPx: Float, viewHeightPx: Float, density: Float): ControlRect {
         val sizePx = control.sizeDp * density
         val half = sizePx / 2f
         val left = (control.xFraction * viewWidthPx - half)
             .coerceIn(0f, (viewWidthPx - sizePx).coerceAtLeast(0f))
         val top = (control.yFraction * viewHeightPx - half)
             .coerceIn(0f, (viewHeightPx - sizePx).coerceAtLeast(0f))
-        return RectF(left, top, left + sizePx, top + sizePx)
+        return ControlRect(left, top, left + sizePx, top + sizePx)
     }
 
     /** Controles que aparecen en el juego: solo los visibles. Un botón borrado no está en la lista; uno oculto tampoco. */
