@@ -33,6 +33,8 @@ import com.danielsnagustin.childoflight.launcher.data.SettingsRepository
 import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
 import com.danielsnagustin.childoflight.launcher.data.TrophyStoreReader
 import com.danielsnagustin.childoflight.launcher.data.TrophyStoreScan
+import com.danielsnagustin.childoflight.launcher.data.TrophyTrpReader
+import com.danielsnagustin.childoflight.launcher.data.TrpReadResult
 import com.danielsnagustin.childoflight.launcher.data.TurnipDriverRepository
 import com.danielsnagustin.childoflight.launcher.data.UiPreferencesRepository
 import com.danielsnagustin.childoflight.launcher.data.Vita3kConfigGenerator
@@ -70,7 +72,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 
 /** Acción que puede ofrecer el diálogo de aviso importante. */
 enum class AlertAction { INSTALL_VITA3K, GO_IMPORT, DELIVER_PKG_TO_VITA3K, CONFIRM_PKG_INSTALLED, REPLACE_DUPLICATE, CONFIRM_DOWNLOADS_COPY, RETRY_LAUNCH, RESOLVE_LEGACY_CONFLICT }
@@ -85,6 +86,47 @@ internal const val BENCHMARK_PENDING_MAX_AGE_MILLIS = 15L * 60 * 1000
  */
 internal fun isBenchmarkPendingStale(startedAtMillis: Long, nowMillis: Long = System.currentTimeMillis()): Boolean =
     nowMillis - startedAtMillis > BENCHMARK_PENDING_MAX_AGE_MILLIS
+
+/**
+ * R2-P1-08 + R2-P1-09: restauración POR CAMPO de un snapshot de ajustes.
+ * El snapshot se guarda con encodeSettingsBackup, que NO incluye 5 campos
+ * (turnipInstalled, turnipVersion, customDriverName, pkgDeliveredToVita3k,
+ * pkgInstalledInVita3k: describen archivos/el sistema, no preferencias) y
+ * se decodifica contra LauncherSettings() por defecto. Restaurar el
+ * snapshot entero borraba esos 5 campos Y cualquier cambio hecho mientras
+ * el Modo seguro (o "Corregir audio") estaba activo. Por eso la
+ * restauración parte de los ajustes ACTUALES y solo revierte los campos
+ * que el mecanismo sobrescribe; los 5 campos y el resto de cambios
+ * sobreviven. Pura (JVM): SafeModeSnapshotRestoreTest.
+ */
+internal fun restoreSafeModeSnapshot(snapshot: LauncherSettings, current: LauncherSettings): LauncherSettings =
+    current.copy(
+        safeMode = false,
+        // Solo los campos que applySafeMode sobrescribe (model/LauncherSettings.kt).
+        resolutionMultiplier = snapshot.resolutionMultiplier,
+        screenFilter = snapshot.screenFilter,
+        anisotropicFiltering = snapshot.anisotropicFiltering,
+        vSync = snapshot.vSync,
+        asyncPipelineCompilation = snapshot.asyncPipelineCompilation,
+        highAccuracy = snapshot.highAccuracy,
+        surfaceSyncEnabled = snapshot.surfaceSyncEnabled,
+        audioBackend = snapshot.audioBackend,
+        ngsEnable = snapshot.ngsEnable,
+        shaderCache = snapshot.shaderCache,
+    )
+
+/**
+ * R2-P1-09 (misma lógica para "Corregir audio" → Deshacer): solo se
+ * revierten los 3 campos que audioFixTarget sobrescribe (audioBackend,
+ * ngsEnable, shaderCache); el resto — incluidos los 5 campos que el
+ * snapshot no guarda — se conserva como esté ahora.
+ */
+internal fun restoreAudioFixSnapshot(snapshot: LauncherSettings, current: LauncherSettings): LauncherSettings =
+    current.copy(
+        audioBackend = snapshot.audioBackend,
+        ngsEnable = snapshot.ngsEnable,
+        shaderCache = snapshot.shaderCache,
+    )
 
 /**
  * Un .pkg guardado al que le falta su work.bin (licencia). La tarjeta
@@ -281,7 +323,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _installProgress = MutableStateFlow<InstallProgress?>(null)
     val installProgress: StateFlow<InstallProgress?> = _installProgress.asStateFlow()
 
-    /** Versión de la app externa instalada, o null si no está instalada (para Ajustes → Avanzado — Motor). */
+    /** Versión de la app externa instalada, o null si no está instalada (para Ajustes → General → Motor). */
     private val _externalVita3k = MutableStateFlow<String?>(null)
     val externalVita3k: StateFlow<String?> = _externalVita3k.asStateFlow()
 
@@ -313,21 +355,25 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * vez de 17) porque dos desbloqueos en vuelo escribían este
      * StateFlow sin orden ni identidad de evento. El anuncio pasa por
      * [TrophyUnlockAnnouncer] (secuencia por pulsación + construcción
-     * directa desde TROPHIES_27) y los desbloqueos se serializan con
-     * [unlockTrophyMutex]: el popup siempre nombra el trofeo del
-     * desbloqueo más reciente.
+     * directa desde TROPHIES_27).
      * El marcado manual se eliminó (2026-11-08): los trofeos solo se
-     * ganan jugando. El anunciador, la secuencia, el mutex y el sonido
-     * quedan para la sincronización automática con el TROPHY.TRP del
-     * núcleo. */
+     * ganan jugando. El anunciador y el sonido quedan para la
+     * sincronización automática con el TROPHY.TRP del núcleo.
+     * R2-P2-11/R2-P2-37: el mutex de desbloqueo y la secuencia
+     * (unlockTrophyMutex, unlockSeq) ya no tenían llamador y se
+     * eliminaron; solo queda el anunciador. */
     private val _justUnlocked = MutableStateFlow<TrophyProgress?>(null)
     val justUnlocked: StateFlow<TrophyProgress?> = _justUnlocked.asStateFlow()
     private val unlockAnnouncer = TrophyUnlockAnnouncer()
-    private val unlockSeq = AtomicLong(0)
-    private val unlockTrophyMutex = Mutex()
 
     private val _trophyScan = MutableStateFlow<TrophyStoreScan?>(null)
     val trophyScan: StateFlow<TrophyStoreScan?> = _trophyScan.asStateFlow()
+
+    // R2-S01: lectura del TROPHY.TRP real del juego instalado (diagnóstico
+    // en Logros): nº de trofeos y nombres según el juego, no según la lista
+    // del launcher. Null mientras no se ha leído o sin juego instalado.
+    private val _trpRead = MutableStateFlow<TrpReadResult?>(null)
+    val trpRead: StateFlow<TrpReadResult?> = _trpRead.asStateFlow()
 
     private val _logText = MutableStateFlow("")
     val logText: StateFlow<String> = _logText.asStateFlow()
@@ -396,6 +442,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val title = _status.value.titleId?.id
             _trophyScan.value = if (title != null) {
                 runCatching { TrophyStoreReader.scan(library.vitaRoot, title) }.getOrNull()
+            } else null
+            // R2-S01: el TRP del juego instalado, leído del .pkg ya
+            // extraído (appDir del ux0 efectivo). Unreadable si no trae
+            // TRP o el XML no se puede interpretar: nunca se inventa un
+            // conteo; la lista de 27 no cambia sin esta prueba.
+            _trpRead.value = if (title != null) {
+                runCatching { TrophyTrpReader.readBundledTrp(library.appDir(title)) }.getOrNull()
             } else null
             // P1-11: el pendiente de licencia es solo en memoria y se
             // pierde al reiniciar; se reconstruye desde disco (lo que
@@ -624,6 +677,24 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val current = settingsRepo.settingsFlow.first()
             settingsRepo.applyPreset(profile, current = current)
+            // R2-P2-13: el preset no debe reactivar en silencio el modo
+            // rendimiento ni el auto-revert: presetSettings trae
+            // performanceMode=true (G99) y autoRevert=true por defecto,
+            // así que aplicar un preset de calidad con el modo
+            // rendimiento apagado lo encendía sin avisar (y con él el
+            // auto-revert a 1x). Se conservan los valores del usuario.
+            val afterPreset = settingsRepo.settingsFlow.first()
+            if (afterPreset.performanceMode != current.performanceMode ||
+                afterPreset.autoRevertTo1xIfBelow28Fps != current.autoRevertTo1xIfBelow28Fps
+            ) {
+                settingsRepo.save(
+                    afterPreset.copy(
+                        performanceMode = current.performanceMode,
+                        autoRevertTo1xIfBelow28Fps = current.autoRevertTo1xIfBelow28Fps,
+                    ),
+                )
+                LauncherLog.append(context, "preset", "Preset aplicado: ${profile.name} (modo rendimiento y auto-revert conservados del usuario)")
+            }
             // Turnip solo vale en Adreno y solo si el zip está
             // instalado: en Mali (o sin Turnip instalado) el preset
             // "Calidad / Turnip" dejaría gpuDriver=TURNIP sin efecto
@@ -647,11 +718,29 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun resetSettings() {
         viewModelScope.launch {
             val gpu = settingsRepo.gpuInfoFlow.first()
+            val current = settingsRepo.settingsFlow.first()
             // Si el Modo seguro estaba ON, su copia queda huérfana al
             // restablecer todo: se borra (el reseteo es intencionado, los
             // ajustes previos se descartan a propósito).
             deleteSettingsSnapshot(safeModeSnapshotFile())
             settingsRepo.resetToDefaults(gpu)
+            // R2-P2-12: "Restablecer ajustes" borraba también el estado
+            // de Turnip (resetToDefaults no lo conserva): se restaura
+            // encima del reseteo, incluido el driver TURNIP si era el
+            // activo. La entrega del .pkg ya la conserva resetToDefaults.
+            val reset = settingsRepo.settingsFlow.first()
+            settingsRepo.save(
+                reset.copy(
+                    turnipInstalled = current.turnipInstalled,
+                    turnipVersion = current.turnipVersion,
+                    customDriverName = current.customDriverName,
+                    gpuDriver = if (current.gpuDriver == com.danielsnagustin.childoflight.launcher.model.GpuDriver.TURNIP) {
+                        com.danielsnagustin.childoflight.launcher.model.GpuDriver.TURNIP
+                    } else {
+                        reset.gpuDriver
+                    },
+                ),
+            )
             _message.value = "Ajustes restablecidos al preset de tu GPU."
         }
     }
@@ -659,7 +748,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     /**
      * Modo seguro: fuerza 1x, SDL, High Accuracy OFF. Al activarlo se
      * guarda una copia de los ajustes actuales en un archivo privado
-     * (col-safe-mode-snapshot.json); al desactivarlo se restauran.
+     * (col-safe-mode-snapshot.json); al desactivarlo se restauran SOLO
+     * los campos que el modo seguro sobrescribe
+     * (restoreSafeModeSnapshot): los cambios hechos mientras estaba
+     * encendido se conservan, y el estado de Turnip y de entrega del
+     * .pkg — que el snapshot no guarda — sobreviven (R2-P1-08/09).
      */
     fun setSafeMode(enabled: Boolean) {
         viewModelScope.launch {
@@ -667,13 +760,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             if (enabled) {
                 writeSettingsSnapshot(safeModeSnapshotFile(), current)
                 settingsRepo.save(applySafeMode(current))
-                _message.value = "Modo seguro activado: 1x, SDL, High Accuracy OFF. Tus ajustes anteriores quedan guardados: al desactivarlo se restauran."
+                _message.value = "Modo seguro activado: 1x, SDL, High Accuracy OFF. Tus ajustes anteriores quedan guardados: al desactivarlo se restauran los valores que el modo seguro cambió."
             } else {
                 val snapshot = readSettingsSnapshot(safeModeSnapshotFile())
                 deleteSettingsSnapshot(safeModeSnapshotFile())
                 if (snapshot != null) {
-                    settingsRepo.save(snapshot.copy(safeMode = false))
-                    _message.value = "Modo seguro desactivado. Ajustes anteriores restaurados."
+                    settingsRepo.save(restoreSafeModeSnapshot(snapshot, current))
+                    _message.value = "Modo seguro desactivado. Se restauraron los valores anteriores al modo seguro; los cambios hechos mientras estaba activado se conservan."
                 } else {
                     settingsRepo.save(current.copy(safeMode = false))
                     _message.value = "Modo seguro desactivado. No había ajustes guardados que restaurar: vuelve a aplicar tu preset si lo necesitas."
@@ -737,14 +830,19 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /** Restaura los ajustes guardados antes de "Corregir audio" y borra el snapshot. */
+    /** Restaura los ajustes guardados antes de "Corregir audio" y borra el snapshot.
+     * R2-P1-09: restauración por campo (restoreAudioFixSnapshot), igual
+     * que el Modo seguro: solo vuelven los 3 campos de audio; el resto
+     * — incluidos Turnip y entrega del .pkg, que el snapshot no guarda —
+     * se conserva como esté ahora. */
     fun undoFixAudio() {
         viewModelScope.launch {
             val snapshot = readSettingsSnapshot(audioFixSnapshotFile()) ?: _audioFixSnapshot.value ?: return@launch
-            settingsRepo.save(snapshot)
+            val current = settingsRepo.settingsFlow.first()
+            settingsRepo.save(restoreAudioFixSnapshot(snapshot, current))
             deleteSettingsSnapshot(audioFixSnapshotFile())
             _audioFixSnapshot.value = null
-            _message.value = "Audio restaurado a los valores anteriores a «Corregir audio». " +
+            _message.value = "Audio restaurado a los valores anteriores a «Corregir audio» (backend, NGS y caché de shaders). Los demás ajustes no se tocaron. " +
                 "La caché de shaders limpiada no se recupera: se vuelve a llenar sola al jugar."
             LauncherLog.append(context, "audio", "Corregir audio deshecho: valores anteriores restaurados")
         }
@@ -794,8 +892,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * el teléfono (nunca sale de ahí, nunca entra en el repo/APK) y,
      * si el núcleo embebido ya está presente, se instala en él en el
      * mismo acto. Si el núcleo aún no está, el PUP queda guardado y
-     * se instalará solo al jugar o desde Ajustes → Avanzado →
-     * Firmware. Si el usuario no tiene el PUP, no se le manda a
+     * se instalará solo al jugar o desde Importar → Firmware. Si el usuario no tiene el PUP, no se le manda a
      * buscarlo por internet: la app lo dice en una frase y se sigue
      * jugando con la app externa.
      */
@@ -888,7 +985,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         if (!FirmwareResolver.isValidPupFile(pup)) {
             return FirmwareCoreResult.NotInstalled(
                 "El archivo guardado no es un PUP válido (debe empezar por SCEUF). " +
-                    "Elige de nuevo tu PSVUPDAT.PUP en Ajustes → Avanzado → Firmware.",
+                    "Elige de nuevo tu PSVUPDAT.PUP en Importar → Firmware.",
             )
         }
         _firmwareInstalling.value = true
@@ -920,7 +1017,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /** Botón "Instalar en el núcleo embebido" (Ajustes → Avanzado → Firmware). */
+    /** Botón "Instalar en el núcleo embebido" (Importar → Firmware). */
     fun installSavedFirmwareInCore() {
         viewModelScope.launch(Dispatchers.IO) {
             when (val result = tryInstallSavedFirmwareInCore()) {
@@ -1295,7 +1392,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     } else {
                         _alert.value = AlertInfo(
                             "Los archivos se copiaron a Descargas/ChildOfLight/, pero la app externa no está instalada.\n\n" +
-                                "Instálala y luego vuelve a pulsar «Instalar en la app externa».",
+                                "Instálala y luego vuelve a pulsar «Copiar a la app externa».",
                             AlertAction.INSTALL_VITA3K,
                         )
                     }
@@ -1604,7 +1701,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         _message.value = "Núcleo embebido: juego lanzado (${outcome.configPath})." +
                             if (gpu?.vulkanSupported == false) " Sin Vulkan en este teléfono: se usa OpenGL, puede ir más lento o con fallos gráficos." else ""
                     is Vita3KLauncher.LaunchOutcome.EmbeddedCorePresent ->
-                        _message.value = "Núcleo embebido detectado, pero falta el punto de entrada JNI (Etapa 2)."
+                        _message.value = "Núcleo embebido detectado, pero falta el punto de entrada JNI."
                     is Vita3KLauncher.LaunchOutcome.EmbeddedFailed -> {
                         // El motor integrado falló al cargar o al arrancar:
                         // diálogo con el motivo exacto y la acción que lo
@@ -1711,6 +1808,20 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * refresca el estado: onResume ya llamó a refreshStatus() justo
      * antes, y el segundo escaneo completo del juego (~1,14 GB) en
      * cada vuelta era trabajo duplicado.
+     *
+     * P2-A7 (vía externa): NO se cierra la medición aunque la app
+     * externa siga en curso: play() y startBenchmark() ya pasan
+     * external=true a notePlayStarted, y SessionManager.notePlayEnded
+     * hace checkpoint (tiempo + snapshot) y la medición SIGUE en ese
+     * caso; solo la vía embebida se cierra aquí. Una comprobación
+     * best-effort con ActivityManager de si org.vita3k.emulator sigue
+     * en primer plano NO es viable y por eso no se hace:
+     * getRunningAppProcesses() solo devuelve el propio proceso desde
+     * Android 5.0, la única alternativa (UsageStatsManager) exige el
+     * permiso especial de estadísticas de uso, y en el momento en que
+     * se llama aquí (MainActivity.onResume) el launcher mismo es la
+     * app en primer plano por definición. Ver el comentario de
+     * MainActivity.onResume, que documenta lo mismo.
      */
     fun noteReturnedFromGame() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -1893,7 +2004,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         // limpiar el pendiente, recordBenchmarkFps registraría
                         // un FPS de una partida que no ocurrió.
                         _pendingBenchmark.value = null
-                        "Núcleo embebido detectado, falta el punto de entrada JNI (Etapa 2)."
+                        "Núcleo embebido detectado, falta el punto de entrada JNI."
                     }
                 }
             }
@@ -1978,6 +2089,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             achievementsRepo.resetAll()
             clearJustUnlocked()
+            // R2-P2-30: el contador unlockedTrophies del índice de
+            // sesiones se actualiza ya (antes quedaba viejo hasta el
+            // próximo snapshot).
+            sessionManager.refreshActiveTrophyCount()
             _message.value = "Progreso de logros borrado (local, no afecta a PSN porque nunca se sincroniza)."
         }
     }
@@ -2033,11 +2148,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             try {
                 val text = readTextCapped(uri)
                 val result = achievementsRepo.importText(text)
+                // R2-P2-30: actualizar el contador unlockedTrophies del
+                // índice de sesiones.
+                sessionManager.refreshActiveTrophyCount()
+                // R2-P2-34: el total real tras importar se lee de
+                // progressFlow (no de addedOrKept, que es solo el nº de
+                // entradas válidas del archivo).
+                val progress = achievementsRepo.progressFlow.first()
+                val total = progress.count { it.unlocked }
                 withContext(Dispatchers.Main) {
-                    // BUG (auditoría): addedOrKept es el nº de entradas VÁLIDAS
-                    // del archivo, no el total de logros desbloqueados.
-                    _message.value = "Logros importados: ${result.newlyUnlocked} nuevos, " +
-                        "${result.addedOrKept} entradas válidas, ${result.ignoredInvalid} inválidas ignoradas."
+                    _message.value = "Logros importados: ahora tienes $total/${progress.size} " +
+                        "(${result.newlyUnlocked} nuevos, ${result.ignoredInvalid} inválidas ignoradas)."
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { _message.value = "No se pudo importar logros: ${e.message}" }
@@ -2193,12 +2314,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // Modo seguro: si está ON, restablecer Diagnóstico sin restaurar
             // la copia previa perdería los ajustes anteriores al Modo seguro
             // (quedarían los valores forzados 1x/SDL como permanentes y la
-            // copia huérfana). Se restaura primero y el reseteo se aplica
+            // copia huérfana). Se restaura primero (por campo, igual que al
+            // apagar el Modo seguro: R2-P1-08/09) y el reseteo se aplica
             // encima de los ajustes restaurados.
             val base = if (category == SettingsCategory.DIAGNOSTICS && current.safeMode) {
                 val snapshot = readSettingsSnapshot(safeModeSnapshotFile())
                 deleteSettingsSnapshot(safeModeSnapshotFile())
-                snapshot?.copy(safeMode = false) ?: current
+                snapshot?.let { restoreSafeModeSnapshot(it, current) } ?: current
             } else {
                 current
             }
@@ -2232,20 +2354,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun importSettingsBackup(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
-            // Lectura acotada a 256 KB: una copia real son unos pocos KB;
-            // un archivo enorme elegido por error no debe cargar el
-            // teléfono entero. Si el JSON queda truncado, la
-            // decodificación lo rechaza como inválido.
+            // R2-P2-22: lectura HASTA EOF (readTextCapped lee en bucle
+            // hasta agotar el stream), acotada a 256 KB: antes se hacía
+            // un solo read() de 256 KB y un backup mayor quedaba
+            // truncado en silencio. Si el archivo supera el tope,
+            // readTextCapped lanza y no se aplica nada.
             val text = try {
-                context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
-                    val buffer = CharArray(262_144)
-                    val read = reader.read(buffer)
-                    if (read < 0) "" else String(buffer, 0, read)
-                }
+                readTextCapped(uri, 262_144)
             } catch (e: Exception) {
-                null
+                withContext(Dispatchers.Main) { _message.value = "No se pudo leer el archivo de copia de seguridad: ${e.message}" }
+                return@launch
             }
-            if (text == null) {
+            if (text.isBlank()) {
                 withContext(Dispatchers.Main) { _message.value = "No se pudo leer el archivo de copia de seguridad." }
                 return@launch
             }
@@ -2277,9 +2397,24 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 withContext(Dispatchers.Main) { _message.value = "No hay juego instalado: no hay DLC que borrar." }
                 return@launch
             }
+            // R2-P2-03: el origen decide el mensaje. Un DLC guardado
+            // como .pkg y aún no instalado se borra como .pkg (no hay
+            // nada en addcont); un DLC ya instalado se borra de
+            // ux0/addcont (su .pkg original ya se consumió al
+            // instalarlo, no queda archivo que borrar). Se consulta
+            // ANTES de borrar, porque deleteDlc elimina el .pkg.
+            val storedPkg = library.findPkgDlcFile(dlcId)
             val ok = library.deleteDlc(title, dlcId)
             withContext(Dispatchers.Main) {
-                _message.value = if (ok) "DLC $dlcId borrado de ux0/addcont." else "No se pudo borrar el DLC $dlcId."
+                _message.value = if (ok) {
+                    if (storedPkg != null) {
+                        "DLC $dlcId borrado: se eliminó su .pkg guardado (aún no estaba instalado en el juego)."
+                    } else {
+                        "DLC $dlcId borrado de ux0/addcont."
+                    }
+                } else {
+                    "No se pudo borrar el DLC $dlcId."
+                }
             }
             refreshStatus()
         }
@@ -2422,7 +2557,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val result = library.importSaves(title, uri)
             withContext(Dispatchers.Main) {
                 _message.value = result.fold(
-                    onSuccess = { "Saves importados: $it archivos." },
+                    // R2-P2-31: importSaves REEMPLAZA (el agente de datos
+                    // borra la viva antes de copiar; la sesión ya está
+                    // respaldada): el mensaje lo dice, no es una fusión.
+                    onSuccess = { "Saves importados: $it archivos. Los saves actuales fueron reemplazados por los importados." },
                     onFailure = { "No se pudo importar saves: ${it.message}" },
                 )
             }
@@ -2497,7 +2635,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             appendLine("Saves: ${status.saves.size} archivos")
             appendLine()
             appendLine("--- Núcleo ---")
-            appendLine("Núcleo embebido (Etapa 2): ${if (embeddedCorePresent()) "presente" else "NO presente"}")
+            appendLine("Núcleo embebido: ${if (embeddedCorePresent()) "presente" else "NO presente"}")
             appendLine("App externa: ${externalVita3kVersion() ?: "no instalada"}")
             appendLine()
             appendLine("--- Ajustes activos ---")

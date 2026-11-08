@@ -6,6 +6,7 @@ import com.danielsnagustin.childoflight.launcher.model.TitleId
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -85,7 +86,10 @@ class SessionRepository(private val vitaRoot: File) {
      * archivo a medias: el índice entero no se corrompe (H/M3).
      */
     private fun writeTextAtomic(file: File, text: String) {
-        val tmp = File(file.parentFile, file.name + ".tmp-" + System.currentTimeMillis())
+        // R2-P2-33: el temporal llevaba solo currentTimeMillis(): dos
+        // escrituras en el mismo milisegundo colisionaban en el mismo
+        // temporal. nanoTime + UUID lo hacen único.
+        val tmp = File(file.parentFile, file.name + ".tmp-" + System.currentTimeMillis() + "-" + System.nanoTime() + "-" + UUID.randomUUID())
         tmp.writeText(text)
         if (!tmp.renameTo(file)) {
             tmp.delete()
@@ -96,6 +100,9 @@ class SessionRepository(private val vitaRoot: File) {
     /** Copia la savedata viva a la carpeta de la sesión. Devuelve (archivos, bytes). */
     fun snapshotSavedata(titleId: String, sessionId: String): Pair<Int, Long> {
         require(titleId.isNotBlank()) { "Title ID vacío: no se puede localizar la savedata." }
+        // R2-P2-32: antes de snapshoteear, reconciliar .bak-* huérfanos
+        // de un snapshot anterior interrumpido (ver reconcileSavedataBackups).
+        reconcileSavedataBackups(sessionId)
         val dest = File(sessionDir(sessionId), "savedata")
         val live = liveSaveDir(titleId)
         if (!live.isDirectory) {
@@ -129,14 +136,28 @@ class SessionRepository(private val vitaRoot: File) {
         require(titleId.isNotBlank()) { "Title ID vacío: no se puede localizar la savedata." }
         val src = File(sessionDir(sessionId), "savedata")
         val live = liveSaveDir(titleId)
-        // BUG (auditoría): antes se borraba la savedata viva ANTES de
-        // comprobar que existiera la copia de la sesión y antes de copiar;
-        // si la copia fallaba, la partida viva se perdía. Primero se
-        // comprueba la copia; la viva se respalda y se restaura si falla.
+        // R2-P2-32 (mitad viva): restoreSavedata también deja un
+        // respaldo `<TITLE>.bak-<ts>` junto a la viva si el proceso
+        // muere a mitad del restore. Si la sesión ya no tiene copia
+        // pero existe ese respaldo y la viva no, se restaura desde él
+        // (es la única copia que queda); si la sesión sí tiene copia,
+        // los respaldos viejos son peso muerto y se borran.
+        val liveBackups = live.parentFile?.listFiles()
+            ?.filter { it.name.startsWith(live.name + ".bak-") }
+            ?.sortedBy { it.name } ?: emptyList()
         if (!src.isDirectory) {
+            if (!live.exists() && liveBackups.isNotEmpty()) {
+                val latest = liveBackups.maxByOrNull { it.name }!!
+                latest.renameTo(live)
+                liveBackups.filter { it != latest }.forEach { it.deleteRecursively() }
+                val files = live.walkTopDown().filter { it.isFile }.toList()
+                return files.size to files.sumOf { it.length() }
+            }
             live.deleteRecursively()
+            liveBackups.forEach { it.deleteRecursively() }
             return 0 to 0L
         }
+        liveBackups.forEach { it.deleteRecursively() }
         val backup = File(live.parentFile, live.name + ".bak-" + System.currentTimeMillis())
         val hadLive = live.exists()
         if (hadLive && !live.renameTo(backup)) {
@@ -170,6 +191,48 @@ class SessionRepository(private val vitaRoot: File) {
         if (!dir.isDirectory) return 0 to 0L
         val files = dir.walkTopDown().filter { it.isFile }.toList()
         return files.size to files.sumOf { it.length() }
+    }
+
+    /**
+     * R2-P2-32: reconcilia los respaldos `savedata.bak-*` huérfanos de
+     * la sesión (el proceso murió entre el rename a `.bak-<ts>` y la
+     * copia del snapshot). Si no existe `savedata/`, se restaura el
+     * respaldo más reciente (es la única copia que queda); si existe
+     * `savedata/`, los `.bak-*` son peso muerto y se borran. La llama
+     * `SessionManager.refresh()` para cada sesión y `snapshotSavedata`
+     * antes de snapshoteear. No toca `savedata/` cuando existe.
+     */
+    fun reconcileSavedataBackups(sessionId: String) {
+        val dir = sessionDir(sessionId)
+        if (!dir.isDirectory) return
+        val backups = dir.listFiles()
+            ?.filter { it.name.startsWith("savedata.bak-") }
+            ?.sortedBy { it.name } ?: return
+        if (backups.isEmpty()) return
+        val live = File(dir, "savedata")
+        if (!live.exists()) {
+            val latest = backups.maxByOrNull { it.name }!!
+            latest.renameTo(live)
+            backups.filter { it != latest }.forEach { it.deleteRecursively() }
+        } else {
+            backups.forEach { it.deleteRecursively() }
+        }
+    }
+
+    /**
+     * R2-P1-11(b): huella barata de la savedata viva (nº de archivos,
+     * bytes totales, última modificación) para decidir si cambió desde
+     * el último snapshot sin copiarla entera. Null si la viva no
+     * existe. Un save reescrito con el mismo tamaño se detecta por la
+     * fecha de modificación; un cambio que conserve tamaño Y fecha es
+     * indetectable por esta vía y se copiará en el siguiente snapshot
+     * con medición (que siempre copia).
+     */
+    fun liveSavedataFingerprint(titleId: String): Triple<Int, Long, Long>? {
+        val live = liveSaveDir(titleId)
+        if (!live.isDirectory) return null
+        val files = live.walkTopDown().filter { it.isFile }.toList()
+        return Triple(files.size, files.sumOf { it.length() }, files.maxOfOrNull { it.lastModified() } ?: 0L)
     }
 
     fun writeSessionExtras(sessionId: String, achievementsText: String, controlProfileId: String?) {
@@ -230,6 +293,10 @@ class SessionRepository(private val vitaRoot: File) {
             zip.closeEntry()
             dir.walkTopDown().filter { it.isFile }.forEach { file ->
                 val rel = file.relativeTo(dir).path.replace(File.separatorChar, '/')
+                // R2-P2-32: los respaldos huérfanos `savedata.bak-*` no
+                // se exportan: inflan el zip y al importar dejarían un
+                // `.bak-*` dentro de la sesión nueva.
+                if (rel.startsWith("savedata.bak-")) return@forEach
                 zip.putNextEntry(ZipEntry(rel))
                 file.inputStream().use { it.copyTo(zip, LARGE_FILE_COPY_BUFFER_BYTES) }
                 zip.closeEntry()
@@ -283,6 +350,11 @@ class SessionRepository(private val vitaRoot: File) {
             dest.mkdirs()
             tmp.copyRecursively(dest, overwrite = true)
             File(dest, "session.txt").delete()
+            // R2-P2-32: un zip viejo puede traer `savedata.bak-*`
+            // dentro; no pertenecen a la sesión importada.
+            dest.listFiles()
+                ?.filter { it.name.startsWith("savedata.bak-") }
+                ?.forEach { it.deleteRecursively() }
             val stats = savedataStats(newId)
             return imported.copy(
                 id = newId,

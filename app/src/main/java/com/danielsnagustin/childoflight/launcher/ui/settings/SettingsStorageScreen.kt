@@ -59,7 +59,7 @@ fun SettingsStorageScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                                 "Se borrarán estos archivos de Descargas/ChildOfLight/:\n\n" +
                                     DownloadsCleanup.summarize(downloadsCopies) +
                                     "\n\nEl juego, los DLCs y la licencia del almacenamiento interno del launcher NO se tocan.\n\n" +
-                                    "Si aún no instalaste el juego en la app externa, tendrás que volver a copiarlo («Instalar en la app externa»).",
+                                    "Si aún no instalaste el juego en la app externa, tendrás que volver a copiarlo («Copiar a la app externa»).",
                             )
                         }
                     },
@@ -80,7 +80,11 @@ fun SettingsStorageScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                     fontWeight = FontWeight.SemiBold,
                     color = Color.White,
                 )
-                NoteText("La única copia en Descargas es la entrega explícita a la app externa («Instalar en la app externa», con confirmación antes de copiar). Cuando el núcleo embebido esté listo, no hará falta copiar nada.")
+                // R2-P2-18: sin "Cuando el núcleo embebido esté listo…":
+                // el núcleo YA está embebido. Estado real: con núcleo,
+                // el juego se instala solo al pulsar JUGAR y no hace
+                // falta copiar nada a Descargas.
+                NoteText("La única copia en Descargas es la entrega explícita a la app externa («Copiar a la app externa», con confirmación antes de copiar). Con el núcleo embebido, el juego se instala solo al pulsar JUGAR y no hace falta copiar nada.")
                 Spacer(modifier = Modifier.height(12.dp))
                 if (downloadsCopies.isEmpty()) {
                     Text("Descargas/ChildOfLight/: vacía ✓", style = MaterialTheme.typography.bodyMedium, color = ColTurquoise)

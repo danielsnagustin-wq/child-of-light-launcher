@@ -35,4 +35,13 @@ class BenchmarkSamplingTest {
     fun singleSampleIsItsOwnMean() {
         assertEquals(60f, averageBenchmarkFps(listOf(60f))!!, 0.001f)
     }
+
+    @Test
+    fun trimmedMeanDropsMinAndMax() {
+        // R2-P2-29: un tirón a 1 fps y un pico a 240 no deben decidir
+        // la prueba: la media recortada quita ambos extremos.
+        assertEquals(30f, averageBenchmarkFps(listOf(1f, 30f, 30f, 30f, 240f))!!, 0.001f)
+        // Con 3 muestras solo queda la central.
+        assertEquals(30f, averageBenchmarkFps(listOf(10f, 30f, 90f))!!, 0.001f)
+    }
 }

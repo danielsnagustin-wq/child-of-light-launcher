@@ -73,7 +73,10 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
                 NoteText("FSR solo funciona con Vulkan y solo si la GPU lo soporta: si no, el núcleo vuelve solo a Bilinear. En OpenGL, FSR se comporta como Bilinear. Verificado en el código del núcleo (pin 3e43bc80).")
                 EnumChips("Anisotrópico", listOf(1, 2, 4, 8, 16), s.anisotropicFiltering, { "${it}x" }) { vm.saveSettings(s.copy(anisotropicFiltering = it)) }
                 SettingSwitch("V-Sync", "Sincronización vertical. OFF en Rendimiento, ON en Calidad Adreno.", s.vSync) { vm.saveSettings(s.copy(vSync = it)) }
-                SettingSwitch("Async Pipeline Compilation", "Compila shaders en segundo plano, menos tirones. ON siempre.", s.asyncPipelineCompilation) { vm.saveSettings(s.copy(asyncPipelineCompilation = it)) }
+                // R2-P2-08: sin "ON siempre": el interruptor lo puede
+                // apagar el usuario (los presets lo ponen ON por
+                // defecto, pero nada lo fuerza).
+                SettingSwitch("Async Pipeline Compilation", "Compila shaders en segundo plano, menos tirones.", s.asyncPipelineCompilation) { vm.saveSettings(s.copy(asyncPipelineCompilation = it)) }
                 SettingSwitch("High Accuracy Rendering", "Más preciso, mucho más lento. OFF en todos los presets.", s.highAccuracy) { vm.saveSettings(s.copy(highAccuracy = it)) }
                 SettingSwitch("Surface Sync activado", "ON = más preciso. OFF = más rápido (recomendado en G99/Mali).", s.surfaceSyncEnabled) { vm.saveSettings(s.copy(surfaceSyncEnabled = it)) }
                 EnumChips("Memory Mapping", MemoryMapping.entries, s.memoryMapping, { it.label }) { vm.saveSettings(s.copy(memoryMapping = it)) }
@@ -91,10 +94,23 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
             item {
                 SectionTitle("Driver GPU")
                 if (gpu?.vendor == GpuVendor.ADRENO) {
-                    EnumChips("Driver personalizado", GpuDriver.entries, s.gpuDriver, { if (it == GpuDriver.SYSTEM) "Sistema" else "Turnip" }) {
+                    // R2-P2-15: sin Turnip instalado, el chip "Turnip"
+                    // no se ofrece (antes se podía seleccionar sin
+                    // efecto). Si el driver guardado es Turnip pero ya
+                    // no está instalado, se sigue mostrando para poder
+                    // volver a Sistema.
+                    val driverOptions = if (s.turnipInstalled || s.gpuDriver == GpuDriver.TURNIP) {
+                        GpuDriver.entries
+                    } else {
+                        listOf(GpuDriver.SYSTEM)
+                    }
+                    EnumChips("Driver personalizado", driverOptions, s.gpuDriver, { if (it == GpuDriver.SYSTEM) "Sistema" else "Turnip" }) {
                         if (it == GpuDriver.SYSTEM) vm.useSystemDriver() else vm.saveSettings(s.copy(gpuDriver = it))
                     }
                     Text("Turnip instalado: ${if (s.turnipInstalled) s.turnipVersion else "no"}", style = MaterialTheme.typography.bodyMedium)
+                    if (!s.turnipInstalled) {
+                        NoteText("Turnip: no instalado. Instala un archivo .zip de Turnip abajo para poder elegirlo como driver.")
+                    }
                     OutlinedButton(onClick = { pickTurnip.launch("*/*") }, modifier = Modifier.fillMaxWidth()) { Text("Instalar / cambiar Turnip (.zip)") }
                     NoteText("Turnip es el driver Mesa open-source para Adreno. Se carga solo para esta app. Al cambiar de driver, el núcleo limpia la caché de shaders al arrancar.")
                 } else {

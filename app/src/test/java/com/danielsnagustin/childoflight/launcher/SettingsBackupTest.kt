@@ -84,6 +84,20 @@ class SettingsBackupTest {
     }
 
     @Test
+    fun editedResolutionSnapsToOfferedValue() {
+        // R2-S04: un backup editado a mano con 1.5x no llega al
+        // config.yml: se ajusta al valor que ofrece la UI (1x).
+        val json = "{\"format\":\"col-settings-backup\",\"version\":1," +
+            "\"resolutionMultiplier\":1.5}"
+        val decoded = decodeSettingsBackup(json, LauncherSettings(), UiPreferences()).getOrThrow()
+        assertEquals(1f, decoded.first.resolutionMultiplier, 0.001f)
+        val json2 = "{\"format\":\"col-settings-backup\",\"version\":1," +
+            "\"resolutionMultiplier\":2.6}"
+        val decoded2 = decodeSettingsBackup(json2, LauncherSettings(), UiPreferences()).getOrThrow()
+        assertEquals(3f, decoded2.first.resolutionMultiplier, 0.001f)
+    }
+
+    @Test
     fun unknownKeysAreIgnoredAndMissingFieldsKeepCurrent() {
         val json = "{\"format\":\"col-settings-backup\",\"version\":1," +
             "\"claveQueNoExiste\":123,\"audioVolume\":77}"

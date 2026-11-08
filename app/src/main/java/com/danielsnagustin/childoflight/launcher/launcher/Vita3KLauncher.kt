@@ -40,17 +40,18 @@ import java.io.FileOutputStream
 /**
  * Lanzador del juego.
  *
- * Flujo real (Etapa 1 + sesiones + firmware simplificado):
+ * Flujo real (sesiones + firmware simplificado):
  * 1. Verifica prerrequisitos: SOLO el juego instalado. El firmware
  *    NO bloquea el primer uso: el launcher solo pide juego + DLCs.
  * 2. Activa la sesión correcta (SessionManager): snapshot de la
  *    sesión actual y restore de la activa en la savedata viva. Si
  *    falla, NO se lanza (mejor no lanzar con la savedata equivocada).
  *    SOLO si el juego está EXTRAÍDO: con un .pkg no hay savedata en
- *    el launcher (vive en Vita3K) y no hay sesión que activar.
+ *    el launcher (con el núcleo embebido, los saves vivirán en
+ *    vita/ux0 una vez instalado el juego) y no hay sesión que activar.
  * 3. Si lo pide el ajuste, cierra apps en segundo plano (best-effort).
  * 4. Escribe config.yml con los ajustes actuales.
- * 5. Núcleo embebido (Etapa 2): el motor integrado es el camino
+ * 5. Núcleo embebido: el motor integrado es el camino
  *    PRINCIPAL. Si el .so existe, JUGAR abre SIEMPRE el juego dentro
  *    del launcher (EmbeddedGameActivity, SDL): la decisión es pura
  *    (EmbeddedGameLauncher.decide) y aquí solo se ejecuta. Con juego
@@ -60,7 +61,6 @@ import java.io.FileOutputStream
  *    Activity), NO hay salto a la app externa: se devuelve
  *    EmbeddedFailed con el motivo exacto y el launcher muestra el
  *    diálogo (Reintentar / Reportar). Sin firmware local, decide()
- *    bloquea con la frase de firmware (Ajustes → Avanzado →
  *    Firmware); sin núcleo, solo se usa la vía externa si el usuario
  *    activó la opción avanzada en Ajustes (allowExternalVita3k).
  * 6. Vía externa (solo opción avanzada): lanza la app externa
@@ -105,7 +105,7 @@ class Vita3KLauncher(private val context: Context) {
          */
         const val FIRMWARE_WARNING_EXTERNAL =
             "Falta el firmware de Vita en el launcher: la app externa lo gestiona al arrancar, " +
-                "o puedes importarlo en Ajustes → Avanzado → Firmware (opción avanzada)."
+                "o puedes importarlo en Importar → Firmware."
 
         /**
          * Para el lanzamiento embebido bloqueado por falta de firmware:
@@ -116,7 +116,7 @@ class Vita3KLauncher(private val context: Context) {
          */
         const val FIRMWARE_BLOCKED_EMBEDDED =
             "Falta el firmware de Vita: el motor integrado no puede arrancar el juego sin él " +
-                "(Ajustes → Avanzado → Firmware, opción avanzada)."
+                "(Importar → Firmware)."
 
         /**
          * P2-A4a: el último arranque embebido que falló DENTRO de
@@ -410,8 +410,9 @@ class Vita3KLauncher(private val context: Context) {
             return LaunchOutcome.Blocked(pre.missing.joinToString("\n"))
         }
         // Sesión correcta ANTES de tocar nada: si falla, no se lanza.
-        // Con un .pkg NO hay sesión que activar: los saves viven en
-        // Vita3K, no en el launcher (no hay savedata que respaldar).
+        // Con un .pkg NO hay sesión que activar: el juego aún no está
+        // extraído y no hay savedata que respaldar (con el núcleo
+        // embebido, los saves vivirán en vita/ux0 una vez instalado).
         if (sessionManager != null && !pre.pkgOnly) {
             val activated = sessionManager.activateForLaunch()
             if (activated.isFailure) {
@@ -420,7 +421,7 @@ class Vita3KLauncher(private val context: Context) {
                 )
             }
         } else if (pre.pkgOnly) {
-            LauncherLog.append(context, "launch", "Juego solo en .pkg: sin sesiones (los saves viven en la app externa).")
+            LauncherLog.append(context, "launch", "Juego solo en .pkg: sin sesiones (aún no hay savedata que respaldar; con el núcleo embebido los saves vivirán en vita/ux0).")
         }
         if (settings.closeBackgroundApps) {
             val killed = closeBackgroundApps()
@@ -430,14 +431,14 @@ class Vita3KLauncher(private val context: Context) {
         // Turnip: el config.yml ya dice custom-driver-name, pero el
         // nombre solo vale si el driver está instalado en el núcleo
         // (<filesDir>/driver/<nombre>/). Si el zip se instaló cuando
-        // aún no había núcleo (Etapa 1) o el registro se perdió, se
+        // aún no había núcleo o el registro se perdió, se
         // instala ahora, antes de arrancar el juego. Best-effort: si
         // falla, el núcleo usa el driver del sistema y el juego se
         // lanza igual (nunca bloquea el lanzamiento).
         ensureTurnipDriverInstalled(settings)
         val titleId = pre.titleId ?: return LaunchOutcome.Blocked("No se pudo determinar el Title ID instalado.")
 
-        // 5. Núcleo embebido (Etapa 2): el motor integrado es el camino
+        // 5. Núcleo embebido: el motor integrado es el camino
         //    principal. La decisión es pura (EmbeddedGameLauncher.decide);
         //    aquí solo se ejecuta. Si el intento embebido falla, se
         //    devuelve EmbeddedFailed con el motivo exacto: NUNCA se
@@ -532,8 +533,10 @@ class Vita3KLauncher(private val context: Context) {
         val intent = context.packageManager.getLaunchIntentForPackage(VITA3K_PACKAGE)
             ?: return LaunchOutcome.Blocked(
                 "La opción avanzada está activada, pero la app externa no está instalada en este teléfono.\n\n" +
-                    "Desactívala en Ajustes → Avanzado → Motor, o instala la app externa desde su página oficial de releases. " +
-                    "El config.yml ya quedó escrito en:\n${configFile.absolutePath}",
+                    "Desactívala en Ajustes → General → Motor, o instala la app externa desde su página oficial de releases. " +
+                    // R2-P1-02: la ruta absoluta del config.yml lleva el
+                    // nombre del paquete (privacidad): solo la relativa.
+                    "El config.yml ya quedó escrito en:\nvita3k/config.yml",
             )
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return try {
@@ -668,17 +671,6 @@ class Vita3KLauncher(private val context: Context) {
     }
 
     /**
-     * Instala el .pkg del juego con el propio núcleo embebido
-     * (EmbeddedPkgInstaller), y después el update y los DLCs
-     * guardados en .pkg: sin ellos el usuario jugaría solo el juego
-     * base. El progreso real del núcleo llega por onInstallProgress
-     * (null = no se muestra, como antes) y se registra inicio y fin
-     * en el log. Devuelve Result: un fallo del juego base bloquea el
-     * lanzamiento con el motivo exacto; un fallo del update/DLC no
-     * bloquea el lanzamiento del juego base, pero queda registrado
-     * (no silencioso).
-     */
-    /**
      * Reinstala el .pkg del juego desde un archivo concreto (puede
      * vivir en el ux0 antiguo: findPkgGameFile lo busca en los dos).
      * Es la red de seguridad del UseEmbedded cuando el eboot
@@ -702,6 +694,17 @@ class Vita3KLauncher(private val context: Context) {
         return result
     }
 
+    /**
+     * Instala el .pkg del juego con el propio núcleo embebido
+     * (EmbeddedPkgInstaller), y después el update y los DLCs
+     * guardados en .pkg: sin ellos el usuario jugaría solo el juego
+     * base. El progreso real del núcleo llega por onInstallProgress
+     * (null = no se muestra, como antes) y se registra inicio y fin
+     * en el log. Devuelve Result: un fallo del juego base bloquea el
+     * lanzamiento con el motivo exacto; un fallo del update/DLC no
+     * bloquea el lanzamiento del juego base, pero queda registrado
+     * (no silencioso).
+     */
     private suspend fun installPkgWithEmbeddedCore(
         library: GameLibraryRepository,
         titleId: TitleId,
@@ -746,7 +749,7 @@ class Vita3KLauncher(private val context: Context) {
         return Result.success(Unit)
     }
 
-    /** ¿Existe la librería nativa del núcleo embebido? En Etapa 1, no. Se cachea: loadLibrary no debe intentarse en cada recomposición. */
+    /** ¿Existe la librería nativa del núcleo embebido? Se cachea: loadLibrary no debe intentarse en cada recomposición. */
     private var embeddedCoreChecked: Boolean? = null
 
     fun embeddedCorePresent(): Boolean {

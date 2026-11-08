@@ -1,5 +1,7 @@
 package com.danielsnagustin.childoflight.launcher.ui.settings
 
+import com.danielsnagustin.childoflight.launcher.model.GpuVendor
+
 /**
  * Buscador de ajustes (Fase 2, Ola 2, Etapa 1).
  *
@@ -9,10 +11,10 @@ package com.danielsnagustin.childoflight.launcher.ui.settings
  *
  * Coincidencia: la consulta se parte en palabras y TODAS deben aparecer
  * (tras normalizar) en el título, las palabras clave o el título de la
- * categoría. La normalización quita mayúsculas y tildes, así que
- * "diagnostico" encuentra "Diagnóstico" y "60 fps" encuentra el modo
- * 60 FPS. Una consulta vacía no devuelve nada: el hub muestra entonces
- * las 9 categorías.
+ * categoría. La normalización quita mayúsculas, tildes y espacios, así
+ * que "diagnostico" encuentra "Diagnóstico", "60 fps" encuentra el modo
+ * 60 FPS y "60fps" también. Una consulta vacía no devuelve nada: el
+ * hub muestra entonces las 9 categorías.
  */
 data class SearchableSetting(
     val title: String,
@@ -43,18 +45,28 @@ fun normalizeSearchText(text: String): String {
 fun searchSettings(
     query: String,
     index: List<SearchableSetting> = SETTINGS_SEARCH_INDEX,
+    // R2-P2-21a / R2-P2-28: con GPU conocida y no-Adreno, la entrada
+    // "Instalar Turnip" no se ofrece: en Mali no hay dónde instalarlo
+    // (la pantalla GPU no muestra el botón). Sin GPU detectada (null)
+    // se conserva: aún no se sabe si es Adreno.
+    gpuVendor: GpuVendor? = null,
 ): List<SearchableSetting> {
     val words = normalizeSearchText(query)
         .split(' ', '\t')
         .map { it.trim() }
         .filter { it.isNotEmpty() }
     if (words.isEmpty()) return emptyList()
-    return index.filter { entry ->
-        val haystack = normalizeSearchText(
-            entry.title + " " + entry.keywords + " " + entry.category.title,
-        )
-        words.all { haystack.contains(it) }
-    }
+    return index
+        .filter { entry -> gpuVendor == null || gpuVendor == GpuVendor.ADRENO || entry.title != "Instalar Turnip" }
+        .filter { entry ->
+            val haystack = normalizeSearchText(
+                entry.title + " " + entry.keywords + " " + entry.category.title,
+            )
+            // R2-P2-21d: comparar sin espacios, para que "60fps"
+            // encuentre "60 FPS" (y "60 fps" siga funcionando).
+            val compactHaystack = haystack.replace(" ", "")
+            words.all { compactHaystack.contains(it) }
+        }
 }
 
 private fun entry(title: String, keywords: String, category: SettingsCategory) =
@@ -63,10 +75,14 @@ private fun entry(title: String, keywords: String, category: SettingsCategory) =
 /**
  * Registro de entradas buscables. Cubre TODOS los controles que
  * existían en la pantalla única de Ajustes antes de la Ola 2, más los
- * añadidos por la Ola 2 (caché de texturas, deshacer Corregir audio,
- * restaurar valores recomendados). Si un ajuste no está aquí, el
- * buscador no lo encuentra: al añadir un ajuste nuevo hay que
- * registrarlo aquí también.
+ * añadidos por la Ola 2 (caché de texturas, deshacer Corregir audio).
+ * Si un ajuste no está aquí, el buscador no lo encuentra: al añadir un
+ * ajuste nuevo hay que registrarlo aquí también.
+ *
+ * R2-P2-21c: el KDoc prometía además una entrada "restaurar valores
+ * recomendados" que no existe (el restablecido vive en General como
+ * "Restablecer ajustes" y en cada categoría como "Restablecer esta
+ * categoría"): se quitó la promesa, no se inventó la entrada.
  */
 val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     // --- General ---
@@ -151,7 +167,10 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     entry("Modelo del dispositivo", "modelo dispositivo telefono resumen diagnostico", SettingsCategory.DIAGNOSTICS),
     entry("Errores recientes del log", "errores recientes log fallos diagnostico", SettingsCategory.DIAGNOSTICS),
     entry("Resumen del dispositivo", "resumen dispositivo soc cpu gpu ram fps nucleo", SettingsCategory.DIAGNOSTICS),
-    entry("Resumen de la configuración activa", "resumen configuracion activa perfil backend resolucion filtro fps", SettingsCategory.DIAGNOSTICS),
+    // R2-P2-21b: el título es el de la pantalla real de Diagnóstico
+    // ("Configuración efectiva"), no "Resumen de la configuración
+    // activa" (ese es el título de sección de GPU y diagnóstico).
+    entry("Configuración efectiva", "resumen configuracion activa perfil backend resolucion filtro fps", SettingsCategory.DIAGNOSTICS),
     entry("Restablecer esta categoría", "restablecer reset categoria valores preset", SettingsCategory.DIAGNOSTICS),
     entry("Modo seguro", "modo seguro 1x sdl fallos", SettingsCategory.DIAGNOSTICS),
 )

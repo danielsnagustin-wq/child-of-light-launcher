@@ -243,6 +243,12 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White,
                         )
+                        // R2-P1-05: con el update ya instalado también
+                        // se puede reimportar/reemplazar (pasa por
+                        // pickUpdate -> vm.importUpdate, con el diálogo
+                        // de duplicado si aplica). Antes no había forma
+                        // sin borrar todos los datos del juego.
+                        TextButton(onClick = { pickUpdate.launch("*/*") }, enabled = !importing) { Text("Reemplazar") }
                     } else {
                         Text(
                             strings.absent,

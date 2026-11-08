@@ -159,8 +159,12 @@ class FirmwareResolverTest {
         // Constantes del companion (sin instanciar el lanzador).
         assertFalse(Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL.contains("Vita3K"))
         assertFalse(Vita3KLauncher.FIRMWARE_BLOCKED_EMBEDDED.contains("Vita3K"))
-        assertTrue(Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL.contains("Ajustes → Avanzado → Firmware"))
-        assertTrue(Vita3KLauncher.FIRMWARE_BLOCKED_EMBEDDED.contains("Ajustes → Avanzado → Firmware"))
+        // R2-P1-01: la ruta es Importar → Firmware (la sección
+        // "Avanzado" ya no existe en Ajustes).
+        assertTrue(Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL.contains("Importar → Firmware"))
+        assertTrue(Vita3KLauncher.FIRMWARE_BLOCKED_EMBEDDED.contains("Importar → Firmware"))
+        assertFalse(Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL.contains("Avanzado"))
+        assertFalse(Vita3KLauncher.FIRMWARE_BLOCKED_EMBEDDED.contains("Avanzado"))
     }
 
     @Test
@@ -181,7 +185,7 @@ class FirmwareResolverTest {
         val decision = EmbeddedGameLauncher.decide(status, coreAvailable = true, firmwareReady = saved.ready)
         assertTrue(decision is EmbeddedGameLauncher.Decision.Blocked)
         val reason = (decision as EmbeddedGameLauncher.Decision.Blocked).reason
-        assertTrue(reason.contains("Ajustes → Avanzado → Firmware"))
+        assertTrue(reason.contains("Importar → Firmware"))
         assertFalse(reason.contains("Vita3K"))
     }
 }

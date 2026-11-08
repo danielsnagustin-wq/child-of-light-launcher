@@ -22,7 +22,8 @@ enum class SettingsCategory(val screen: Screen, val title: String, val subtitle:
     GPU(
         Screen.SETTINGS_GPU,
         "GPU y gráficos",
-        "Backend, resolución, filtros, driver y caché de shaders.",
+        // R2-P2-16: sin "caché de shaders": vive en Rendimiento.
+        "Backend, resolución, filtros y driver.",
     ),
     CPU(
         Screen.SETTINGS_CPU,
@@ -37,7 +38,9 @@ enum class SettingsCategory(val screen: Screen, val title: String, val subtitle:
     PERFORMANCE(
         Screen.SETTINGS_PERFORMANCE,
         "Rendimiento",
-        "Cachés, overlay y valores recomendados.",
+        // R2-P2-16: sin "valores recomendados": viven en General
+        // ("Restablecer ajustes (preset de tu GPU)").
+        "Cachés, overlay de FPS y volver a 1x.",
     ),
     CONTROLS(
         Screen.SETTINGS_CONTROLS,

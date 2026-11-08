@@ -33,7 +33,7 @@ import com.danielsnagustin.childoflight.launcher.ui.ColMutedText
 import com.danielsnagustin.childoflight.launcher.ui.premiumBackgroundBrush
 
 /**
- * Armazón común de las 10 pantallas de categoría de Ajustes (Ola 2).
+ * Armazón común de las 9 pantallas de categoría de Ajustes (Ola 2).
  * Mismo fondo, mismo ancho máximo y mismo botón Volver que la antigua
  * pantalla única: las categorías se sienten parte de Ajustes, no
  * pantallas sueltas. Los diálogos van en el hueco `dialogs` para que
@@ -52,6 +52,10 @@ fun SettingsCategoryScaffold(
     onBack: () -> Unit,
     dialogs: @Composable () -> Unit = {},
     onResetCategory: (() -> Unit)? = null,
+    // R2-P2-26: etiqueta propia para el botón de restablecer, cuando
+    // la pantalla tiene otro reset con ámbito distinto (ver
+    // Personalización): por defecto, "Restablecer esta categoría".
+    resetLabel: String? = null,
     content: LazyListScope.() -> Unit,
 ) {
     var showResetCategoryConfirm by rememberSaveable { mutableStateOf(false) }
@@ -71,7 +75,7 @@ fun SettingsCategoryScaffold(
                     OutlinedButton(
                         onClick = { showResetCategoryConfirm = true },
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Restablecer esta categoría") }
+                    ) { Text(resetLabel ?: "Restablecer esta categoría") }
                 }
             }
             item {

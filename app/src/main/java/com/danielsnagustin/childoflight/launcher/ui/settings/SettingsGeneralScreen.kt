@@ -112,6 +112,14 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
             }
             item {
                 SectionTitle("Presets por GPU")
+                // R2-P2-14: sin presets hasta que termine la detección
+                // de GPU: antes se listaban los 6, incluidos los de
+                // Adreno, y un usuario Mali podía aplicar un preset
+                // pensado para Adreno (el guard solo corregía el driver,
+                // el resto de valores quedaban aplicados).
+                if (gpu == null) {
+                    Text("Detectando GPU…", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+                } else {
                 val allProfiles = if (gpu?.vendor == GpuVendor.ADRENO) {
                     listOf(GpuProfileId.ADRENO_PERFORMANCE, GpuProfileId.ADRENO_QUALITY_TURNIP, GpuProfileId.G99_RECOMMENDED)
                 } else if (gpu?.isUserVerifiedDevice == true || gpu?.isHelioG99 == true || gpu?.isMaliG57 == true) {
@@ -135,9 +143,14 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                     // (aviso 2x en Mali, Turnip solo en Adreno). Los
                     // valores del preset no cambian: son los reales de
                     // presetSettings (verificados en LauncherSettings).
-                    NoteText(presetCompatibilityNote(profile, gpu))
+                    // R2-P2-23: la nota ya no recibe la GPU: su rama
+                    // Mali/Turnip era muerta (el preset de Turnip nunca
+                    // se lista en Mali) y el guard de applyPreset ya
+                    // corrige el driver al aplicar.
+                    NoteText(presetCompatibilityNote(profile))
                 }
                 NoteText("G99 Calidad (2x): prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado.")
+                }
             }
             item {
                 SectionTitle("Secciones")

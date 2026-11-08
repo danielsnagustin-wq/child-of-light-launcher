@@ -2,7 +2,7 @@ package com.danielsnagustin.childoflight.launcher.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
+import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -60,13 +60,13 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     ) {
         ScreenHeader("Guardados y datos", "Sesiones, saves y logros, en un solo lugar.")
         NoteText(
-            "Las sesiones y los saves de aquí viven en el almacenamiento privado del launcher: solo los usará el núcleo embebido (Etapa 2). " +
+            "Las sesiones y los saves de aquí viven en el almacenamiento privado del launcher: solo los usará el núcleo embebido. " +
                 "Con la app externa, los saves viven dentro de la app externa y cambiar de sesión aquí no cambia el juego.",
         )
         if (status.pkgInstalled && !status.gameExtracted) {
             NoteText(
                 "El juego está como .pkg: los saves viven dentro de la app externa, no en el launcher. " +
-                    "Las sesiones, los saves y los logros de aquí solo aplican con el juego extraído o el núcleo embebido (Etapa 2).",
+                    "Las sesiones, los saves y los logros de aquí solo aplican con el juego extraído o el núcleo embebido.",
             )
         }
         val title = status.titleId?.id
@@ -75,11 +75,16 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         // sesiones, no duplicada en otra pantalla.
         SessionsSection(vm)
 
-        Text(
-            "Carpeta de saves (sesión activa): ux0/user/00/savedata/${title ?: "<TITLE_ID>"}",
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
+        // R2-P2-03: sin literal "<TITLE_ID>" como placeholder: la
+        // ruta solo se muestra cuando hay juego instalado; si no, la
+        // nota de abajo ya dice que hay que instalarlo primero.
+        if (title != null) {
+            Text(
+                "Carpeta de saves (sesión activa): ux0/user/00/savedata/$title",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
         if (title == null) {
             NoteText("Instala primero el juego para ver sus guardados.")
         } else if (status.saves.isEmpty()) {
@@ -87,7 +92,7 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         } else {
             SectionTitle("Archivos de guardado (${status.saves.size})")
             status.saves.forEach { save ->
-                Text("· ${save.name} — ${save.sizeBytes} bytes")
+                Text("· ${save.name} — ${DownloadsCleanup.formatBytes(save.sizeBytes)}")
             }
         }
 

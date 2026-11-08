@@ -32,8 +32,8 @@ import com.danielsnagustin.childoflight.launcher.model.GameStatus
  *   decide()) sí puede reutilizar esa licencia vía findPkgZrif.
  * - Núcleo disponible pero SIN firmware local -> Blocked: el núcleo
  *   no puede arrancar sin firmware y ya no se salta a la app externa
- *   por detrás. El motivo dice dónde importarlo (Ajustes ->
- *   Avanzado -> Firmware).
+ *   por detrás. El motivo dice dónde importarlo (Importar →
+ *   Firmware).
  * - Sin núcleo embebido -> Blocked, SALVO que el usuario haya
  *   activado la opción avanzada en Ajustes (allowExternal): solo
  *   entonces UseExternal. La opción avanzada no cambia nada cuando
@@ -108,7 +108,7 @@ object EmbeddedGameLauncher {
             }
         }
         // Sin núcleo embebido: la app externa solo se usa si el usuario
-        // lo permitió explícitamente en Ajustes → Avanzado. Sin ese
+        // lo permitió explícitamente en Ajustes → General → Motor. Sin ese
         // permiso, se bloquea con el motivo exacto (reintentar /
         // reportar en el diálogo) en vez de saltar por fuera.
         if (allowExternal) {

@@ -55,6 +55,11 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     val settings by vm.settingsFlow.collectAsState(initial = null)
     val benchmarks by vm.benchmarksFlow.collectAsState(initial = emptyList())
     val logText by vm.logText.collectAsState()
+    // R2-P1-02 (parte pantalla): el log en pantalla mostraba rutas
+    // absolutas con el nombre del paquete. Mismo replace que la
+    // exportación del reporte (LauncherViewModel.buildBugReportText):
+    // el nombre del paquete nunca sale en texto visible.
+    val safeLogText = logText.replace("com.danielsnagustin.childoflight.launcher", "child-of-light-launcher")
     val pending by vm.pendingBenchmark.collectAsState()
     // B3: firmware y batería se leen como flujo, no con llamada plana.
     val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
@@ -133,7 +138,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         }
 
         SectionTitle("Núcleo")
-        Text("Núcleo embebido (Etapa 2): ${if (vm.embeddedCorePresent()) "presente" else "NO presente"}")
+        Text("Núcleo embebido: ${if (vm.embeddedCorePresent()) "presente" else "NO presente"}")
         Text("App externa: ${vm.externalVita3kVersion() ?: "no instalada"}")
         Text("Firmware: ${com.danielsnagustin.childoflight.launcher.data.FirmwareResolver.label(firmwareStatus)}")
         NoteText("El firmware nunca es un paso inicial: el primer uso solo pide juego + DLCs. Se importa en Importar, junto al juego y los DLC.")
@@ -150,7 +155,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         Text("VSync: ${if (settings?.vSync == true) "ON" else "OFF"} · Modo 60 FPS: ${if (settings?.fpsHack == true) "ON" else "OFF"} · Modo seguro: ${if (settings?.safeMode == true) "ON" else "OFF"}")
         Text("Último FPS (prueba de 30 s): ${lastFps?.let { "$it fps" } ?: "sin medir"}")
         SectionTitle("Errores recientes del log")
-        val recentErrors = extractRecentErrorLines(logText)
+        val recentErrors = extractRecentErrorLines(safeLogText)
         if (recentErrors.isEmpty()) {
             Text("Sin errores recientes en el log.", color = ColTurquoise)
         } else {
@@ -179,7 +184,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         NoteText("Evita que Android mate el juego en segundo plano o limite la GPU. Lo concede el usuario en el diálogo del sistema.")
 
         SectionTitle("Log reciente")
-        Text(logText, style = MaterialTheme.typography.bodySmall)
+        Text(safeLogText, style = MaterialTheme.typography.bodySmall)
         OutlinedButton(onClick = { vm.refreshLog() }, modifier = Modifier.fillMaxWidth()) { Text("Actualizar log") }
         OutlinedButton(
             onClick = { exportBug.launch("col-bug-report.txt") },

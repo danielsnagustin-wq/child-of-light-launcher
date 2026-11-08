@@ -43,6 +43,7 @@ fun PauseMenuScreen(
     settings: LauncherSettings?,
     sessionManager: SessionManager,
     settingsRepo: SettingsRepository,
+    sessionsReady: Boolean = true,
     onContinue: () -> Unit,
     onExit: () -> Unit,
 ) {
@@ -86,7 +87,14 @@ fun PauseMenuScreen(
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
+                // R2-P2-10: deshabilitado hasta que refresh() complete
+                // (sessionsReady): antes se podía pulsar con las
+                // sesiones aún sin cargar.
+                enabled = sessionsReady,
             ) { Text("Guardar sesión") }
+            if (!sessionsReady) {
+                Text("Cargando sesiones…", style = MaterialTheme.typography.bodySmall, color = ColAccent)
+            }
             saveMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = ColAccent) }
             TextButton(onClick = { quickSettingsOpen = !quickSettingsOpen }) {
                 Text(if (quickSettingsOpen) "Ajustes rápidos ▴" else "Ajustes rápidos ▾")

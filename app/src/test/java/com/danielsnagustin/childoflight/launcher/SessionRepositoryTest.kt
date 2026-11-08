@@ -204,4 +204,112 @@ class SessionRepositoryTest {
             assertTrue(e.message!!.contains("Title ID vacío"))
         }
     }
+
+    // --- R2-P2-32: respaldos savedata.bak-* huérfanos ---
+
+    @Test
+    fun orphanSavedataBakIsRestoredWhenSavedataMissing() {
+        val r = repo()
+        // Proceso muerto a mitad de snapshot: solo queda el .bak-*.
+        val bak = File(r.sessionDir("s1"), "savedata.bak-123")
+        bak.mkdirs()
+        File(bak, "save0.bin").writeText("RESPALDO")
+        r.reconcileSavedataBackups("s1")
+        assertEquals("RESPALDO", File(r.sessionDir("s1"), "savedata/save0.bin").readText())
+        assertFalse(File(r.sessionDir("s1"), "savedata.bak-123").exists())
+    }
+
+    @Test
+    fun orphanSavedataBakIsDeletedWhenSavedataExists() {
+        val r = repo()
+        val savedata = File(r.sessionDir("s1"), "savedata")
+        savedata.mkdirs()
+        File(savedata, "save0.bin").writeText("ACTUAL")
+        val bak = File(r.sessionDir("s1"), "savedata.bak-123")
+        bak.mkdirs()
+        File(bak, "save0.bin").writeText("VIEJO")
+        r.reconcileSavedataBackups("s1")
+        assertFalse(File(r.sessionDir("s1"), "savedata.bak-123").exists())
+        assertEquals("ACTUAL", File(savedata, "save0.bin").readText())
+    }
+
+    @Test
+    fun snapshotReconcilesOrphanBakBeforeCopying() {
+        val r = repo()
+        val vitaRoot = File(tmp.root, "vita3k")
+        val live = File(vitaRoot, "ux0/user/00/savedata/PCSE00480")
+        live.mkdirs()
+        File(live, "save0.bin").writeText("NUEVO")
+        val bak = File(r.sessionDir("s1"), "savedata.bak-123")
+        bak.mkdirs()
+        File(bak, "save0.bin").writeText("VIEJO")
+        val (files, _) = r.snapshotSavedata("PCSE00480", "s1")
+        assertEquals(1, files)
+        assertEquals("NUEVO", File(r.sessionDir("s1"), "savedata/save0.bin").readText())
+        assertFalse(File(r.sessionDir("s1"), "savedata.bak-123").exists())
+    }
+
+    @Test
+    fun exportExcludesSavedataBakEntries() {
+        val r = repo()
+        val vitaRoot = File(tmp.root, "vita3k")
+        val live = File(vitaRoot, "ux0/user/00/savedata/PCSE00480")
+        live.mkdirs()
+        File(live, "save0.bin").writeText("PROGRESO")
+        r.snapshotSavedata("PCSE00480", "s1")
+        val bak = File(r.sessionDir("s1"), "savedata.bak-123")
+        bak.mkdirs()
+        File(bak, "save0.bin").writeText("VIEJO")
+
+        val out = ByteArrayOutputStream()
+        r.exportSession(session("s1", "Mi partida"), out)
+        val entries = mutableListOf<String>()
+        java.util.zip.ZipInputStream(ByteArrayInputStream(out.toByteArray())).use { zip ->
+            var entry = zip.nextEntry
+            while (entry != null) {
+                entries += entry.name
+                zip.closeEntry()
+                entry = zip.nextEntry
+            }
+        }
+        assertTrue(entries.contains("savedata/save0.bin"))
+        assertFalse(entries.any { it.startsWith("savedata.bak-") })
+    }
+
+    @Test
+    fun importDropsSavedataBakEntries() {
+        val r = repo()
+        val out = ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(out).use { zip ->
+            zip.putNextEntry(java.util.zip.ZipEntry("session.txt"))
+            zip.write(("COL-SESSION-v1\n" + SessionRepository.formatLine(session("sX")) + "\n").toByteArray())
+            zip.closeEntry()
+            zip.putNextEntry(java.util.zip.ZipEntry("savedata/save0.bin"))
+            zip.write("PROGRESO".toByteArray())
+            zip.closeEntry()
+            zip.putNextEntry(java.util.zip.ZipEntry("savedata.bak-123/save0.bin"))
+            zip.write("VIEJO".toByteArray())
+            zip.closeEntry()
+        }
+        val imported = r.importSession(ByteArrayInputStream(out.toByteArray()))
+        assertEquals("PROGRESO", File(r.sessionDir(imported.id), "savedata/save0.bin").readText())
+        assertFalse(File(r.sessionDir(imported.id), "savedata.bak-123").exists())
+    }
+
+    @Test
+    fun liveSavedataFingerprintTracksChanges() {
+        val r = repo()
+        assertEquals(null, r.liveSavedataFingerprint("PCSE00480"))
+        val vitaRoot = File(tmp.root, "vita3k")
+        val live = File(vitaRoot, "ux0/user/00/savedata/PCSE00480")
+        live.mkdirs()
+        File(live, "save0.bin").writeText("A")
+        val first = r.liveSavedataFingerprint("PCSE00480")!!
+        assertEquals(1, first.first)
+        assertTrue(first.second > 0)
+        File(live, "save1.bin").writeText("B")
+        val second = r.liveSavedataFingerprint("PCSE00480")!!
+        assertEquals(2, second.first)
+        assertTrue(second.second > first.second)
+    }
 }

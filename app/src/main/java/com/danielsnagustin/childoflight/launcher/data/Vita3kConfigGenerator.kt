@@ -55,9 +55,10 @@ import java.io.File
  *   (:131 y :149): con 0 el núcleo responde siempre
  *   SCE_NP_SERVICE_STATE_SIGNED_OUT y los juegos que piden el
  *   estado de sesión antes de activar sus DLC nunca los aplican.
- *   El launcher emite 1 siempre: es inicio de sesión EMULADO
- *   (sin cuenta real ni red), lo que el usuario llama "señal PSN
- *   emulada"; sin él, los DLC instalados no se activan),
+ *   El launcher emite 1 o 0 según el ajuste psnSignedIn
+ *   (Ajustes → General → Motor, ON por defecto): es inicio de sesión
+ *   EMULADO (sin cuenta real ni red), lo que el usuario llama "señal
+ *   PSN emulada"; sin él, los DLC instalados no se activan),
  *   custom-driver-name (string: nombre del driver instalado = stem
  *   del zip, sin .zip; el driver debe estar instalado en el núcleo
  *   con installCustomDriver, ver driver_bridge.cpp),
@@ -88,7 +89,7 @@ object Vita3kConfigGenerator {
         val s = effectiveSettings(settings)
         val backend = resolveBackend(s, gpu)
         val sb = StringBuilder()
-        sb.appendLine("# config.yml generado por Child of Light Launcher (Etapa 1)")
+        sb.appendLine("# config.yml generado por Child of Light Launcher")
         sb.appendLine("# Perfil activo: ${s.activeProfile.label}")
         if (settings.safeMode) {
             sb.appendLine("# MODO SEGURO activo: 1x, SDL, High Accuracy OFF.")

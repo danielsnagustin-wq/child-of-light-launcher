@@ -468,10 +468,14 @@ fun SectionTitle(text: String) {
 
 @Composable
 fun NoteText(text: String) {
+    // R2-P1-07: color fijo ColMutedText (gris azulado legible sobre el
+    // fondo AMOLED #10131D fijo). Antes usaba
+    // MaterialTheme.colorScheme.onSurfaceVariant, que con Tema Claro es
+    // gris oscuro sobre fondo oscuro: ilegible.
     Text(
         text = text,
         style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = ColMutedText,
         modifier = Modifier.padding(vertical = 4.dp),
     )
 }
@@ -489,7 +493,10 @@ fun SettingSwitch(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // R2-P1-07: mismo arreglo que NoteText: ColMutedText fijo en
+            // vez de onSurfaceVariant (ilegible con Tema Claro sobre el
+            // fondo AMOLED fijo).
+            Text(description, style = MaterialTheme.typography.bodySmall, color = ColMutedText)
         }
         Spacer(modifier = Modifier.width(8.dp))
         Switch(checked = checked, onCheckedChange = onCheckedChange)

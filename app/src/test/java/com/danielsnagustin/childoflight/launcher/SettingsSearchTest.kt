@@ -83,4 +83,30 @@ class SettingsSearchTest {
         assertTrue(results.any { it.category == SettingsCategory.DIAGNOSTICS })
         assertTrue(results.none { it.category == SettingsCategory.PERFORMANCE })
     }
+
+    @Test
+    fun spacelessQueryFindsSpacedTitle() {
+        // R2-P2-21d: "60fps" encuentra "Modo 60 FPS".
+        val results = searchSettings("60fps")
+        assertTrue(results.any { it.title == "Modo 60 FPS" })
+        // Y "60 fps" sigue funcionando igual.
+        assertTrue(searchSettings("60 fps").any { it.title == "Modo 60 FPS" })
+    }
+
+    @Test
+    fun turnipEntryHiddenOnNonAdrenoButShownOtherwise() {
+        // R2-P2-21a / R2-P2-28: en Mali no hay dónde instalar Turnip.
+        val onMali = searchSettings("turnip", gpuVendor = com.danielsnagustin.childoflight.launcher.model.GpuVendor.MALI)
+        assertTrue(onMali.none { it.title == "Instalar Turnip" })
+        // En Adreno y sin GPU detectada sí se ofrece.
+        assertTrue(searchSettings("turnip", gpuVendor = com.danielsnagustin.childoflight.launcher.model.GpuVendor.ADRENO).any { it.title == "Instalar Turnip" })
+        assertTrue(searchSettings("turnip").any { it.title == "Instalar Turnip" })
+    }
+
+    @Test
+    fun effectiveConfigEntryMatchesDiagnosticsScreenTitle() {
+        // R2-P2-21b: la pantalla real dice "Configuración efectiva".
+        val results = searchSettings("configuracion efectiva")
+        assertTrue(results.any { it.title == "Configuración efectiva" && it.category == SettingsCategory.DIAGNOSTICS })
+    }
 }

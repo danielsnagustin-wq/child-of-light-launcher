@@ -92,7 +92,13 @@ fun SettingsAudioScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (
             item {
                 SectionTitle("Audio")
                 EnumChips("Backend de audio", AudioBackend.entries, s.audioBackend, { it.label }) { vm.saveSettings(s.copy(audioBackend = it)) }
-                NoteText("SDL es el predeterminado desde v7 porque arregla ruido. Cubeb es la alternativa (v1.3: cubeb y SDL ya no deberían crepitar/cortar).")
+                // R2-P2-09: sin referencias de versión incomprensibles
+                // ("v7"/"v1.3", versiones internas sin verificar): en
+                // lenguaje de usuario, SDL es el recomendado y Cubeb la
+                // alternativa. El audio funciona en Mali igual que en
+                // el resto: lo que cambia es el backend recomendado,
+                // no si suena o no.
+                NoteText("SDL es el predeterminado porque arregla el ruido. Cubeb es la alternativa si SDL te da problemas: en las versiones actuales ambos deberían sonar sin crepitaciones ni cortes.")
                 SettingSwitch("NGS (audio del sistema Vita)", "ngs-enable en config.yml. ON recomendado.", s.ngsEnable) { vm.saveSettings(s.copy(ngsEnable = it)) }
                 SettingSlider("Volumen", s.audioVolume, 0..100, { vm.saveSettings(s.copy(audioVolume = it)) }) { "$it%" }
             }

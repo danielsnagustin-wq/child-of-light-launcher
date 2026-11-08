@@ -140,8 +140,7 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     ) {
         ScreenHeader("Controles táctiles", "Arrastra los botones en la vista previa para moverlos. Toca uno en la lista para editarlo: tamaño, opacidad, color, forma, etiqueta, remap y visibilidad.")
         NoteText(
-            "En Etapa 1 este layout solo se GUARDA aquí: el overlay táctil aparecerá dentro del juego cuando llegue el núcleo embebido (Etapa 2). " +
-                "Por ahora, la app externa usa sus propios controles táctiles y los ajustes de aquí no se ven en el juego.",
+            "Estos botones son los que aparecen sobre el juego embebido. Arrastra para moverlos; los cambios se aplican al reiniciar el juego.",
         )
 
         // Vista previa con arrastre real.

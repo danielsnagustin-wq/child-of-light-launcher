@@ -43,9 +43,12 @@ class AchievementRepository(private val context: Context) {
         }
     }
 
-    /** Serializa unlock(): sin él, dos desbloqueos concurrentes del mismo
-     * trofeo podían devolver true los dos (el lambda de edit{} puede
-     * reejecutarse en escrituras concurrentes) y sonar dos veces. */
+    /** Serializa TODAS las escrituras del progreso (unlock, resetAll,
+     * replaceAll, importText). R2-P2-33: antes solo unlock() lo usaba y
+     * un resetAll concurrente con un unlock podía resucitar un trofeo
+     * (la comprobación previa de unlock ya había pasado cuando el
+     * edit{} del reset borraba). DataStore serializa los edit{} entre
+     * sí, pero no el comprobar-y-actuar de unlock(). */
     private val unlockMutex = Mutex()
 
     /** Desbloquea un trofeo. Devuelve true solo si estaba bloqueado (es un desbloqueo nuevo). */
@@ -64,17 +67,11 @@ class AchievementRepository(private val context: Context) {
         }
     }
 
-    suspend fun lock(number: Int) {
-        context.achievementsDataStore.edit { prefs ->
-            val map = decode(prefs[Keys.UNLOCKED] ?: "").toMutableMap()
-            map.remove(number)
-            prefs[Keys.UNLOCKED] = encode(map)
-        }
-    }
-
     suspend fun resetAll() {
-        context.achievementsDataStore.edit { prefs ->
-            prefs[Keys.UNLOCKED] = ""
+        unlockMutex.withLock {
+            context.achievementsDataStore.edit { prefs ->
+                prefs[Keys.UNLOCKED] = ""
+            }
         }
     }
 
@@ -92,8 +89,10 @@ class AchievementRepository(private val context: Context) {
      */
     suspend fun replaceAll(raw: String) {
         val valid = decode(raw).filterKeys { n -> TROPHIES_27.any { it.number == n } }
-        context.achievementsDataStore.edit { prefs ->
-            prefs[Keys.UNLOCKED] = encode(valid)
+        unlockMutex.withLock {
+            context.achievementsDataStore.edit { prefs ->
+                prefs[Keys.UNLOCKED] = encode(valid)
+            }
         }
     }
 
@@ -103,13 +102,15 @@ class AchievementRepository(private val context: Context) {
         val valid = incoming.filterKeys { n -> TROPHIES_27.any { it.number == n } }
         val ignored = incoming.size - valid.size
         var added = 0
-        context.achievementsDataStore.edit { prefs ->
-            val map = decode(prefs[Keys.UNLOCKED] ?: "").toMutableMap()
-            for ((number, at) in valid) {
-                if (!map.containsKey(number)) added++
-                map[number] = map[number] ?: at
+        unlockMutex.withLock {
+            context.achievementsDataStore.edit { prefs ->
+                val map = decode(prefs[Keys.UNLOCKED] ?: "").toMutableMap()
+                for ((number, at) in valid) {
+                    if (!map.containsKey(number)) added++
+                    map[number] = map[number] ?: at
+                }
+                prefs[Keys.UNLOCKED] = encode(map)
             }
-            prefs[Keys.UNLOCKED] = encode(map)
         }
         return ImportAchievementsResult(addedOrKept = valid.size, ignoredInvalid = ignored, newlyUnlocked = added)
     }

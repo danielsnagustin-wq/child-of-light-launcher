@@ -50,6 +50,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.danielsnagustin.childoflight.launcher.R
+import com.danielsnagustin.childoflight.launcher.data.TrophyTrpReader
+import com.danielsnagustin.childoflight.launcher.data.TrpReadResult
 import com.danielsnagustin.childoflight.launcher.model.TrophyProgress
 import com.danielsnagustin.childoflight.launcher.model.trophyProgressPercent
 import java.text.SimpleDateFormat
@@ -63,7 +65,7 @@ import kotlin.math.sin
  *
  * Rediseño 2026-11-07 (referencia del usuario: lista con cabecera y
  * filas con icono circular): cabecera con mini portada + "Child of
- * Light" + "X / 27 desbloqueados" con barra dorada; cada fila lleva un
+ * Light" + "X / 27 desbloqueados" con barra azul hielo; cada fila lleva un
  * icono circular azul acuarela pálido con un símbolo blanco dibujado
  * (estrella, luna, sol, corona...) según el trofeo, nombre y
  * descripción. Desbloqueado: color pleno. Bloqueado: atenuado + 🔒.
@@ -78,16 +80,57 @@ import kotlin.math.sin
  * - El popup de desbloqueo lo muestra MainActivity (vm.justUnlocked)
  *   con sonido de notificación del sistema.
  *
- * En Etapa 1 el desbloqueo se marca desde aquí (tocando el trofeo) o
- * al importar progreso. La detección automática dentro de la partida
- * requiere el núcleo embebido (Etapa 2).
+ * Tocar un trofeo solo abre su información: aquí no se marca nada a
+ * mano. Los trofeos se ganan jugando (la sincronización automática
+ * con el progreso real del núcleo está pendiente de que JUGAR
+ * funcione); también se puede importar progreso exportado desde
+ * Guardados. "Borrar progreso de logros" pide doble confirmación
+ * porque borraría los trofeos ganados.
  */
+
+// R2-S01: nombres en inglés de los 27 trofeos del launcher (de los
+// comentarios EN de Achievements.kt), para comparar por nombre con el
+// TROPHY.TRP real del juego. La lista del launcher NO cambia sin prueba.
+private val TROPHY_ENGLISH_NAMES: Map<Int, String> = mapOf(
+    1 to "Starcatcher",
+    2 to "Over the Moon",
+    3 to "Sunrise",
+    4 to "Coronation",
+    5 to "Comedy",
+    6 to "The Girl and the Firefly",
+    7 to "Capilli Catch",
+    8 to "Sweet Sister",
+    9 to "Bolmus Bond",
+    10 to "Kategida Kindred",
+    11 to "Piscean Promise",
+    12 to "Tragedy",
+    13 to "Tenth Birthday",
+    14 to "Perfectionist",
+    15 to "Master Oculist",
+    16 to "Scene Stealer",
+    17 to "Showstopper",
+    18 to "Through the Looking Glass",
+    19 to "Winged Fury",
+    20 to "Explorer",
+    21 to "Perfect Sonnet",
+    22 to "Grassroots",
+    23 to "General of Light",
+    24 to "Guardians of Lemuria",
+    25 to "Aurora Borealis",
+    26 to "When Pigs Fly",
+    27 to "Golden Apple",
+)
+
 @Composable
 fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     val progress by vm.achievementsFlow.collectAsState(initial = emptyList())
     val scan by vm.trophyScan.collectAsState()
+    val trpRead by vm.trpRead.collectAsState()
     var selected by remember { mutableStateOf<TrophyProgress?>(null) }
     var showResetConfirm by rememberSaveable { mutableStateOf(false) }
+    // R2-P2-02: doble confirmación: el primer diálogo avisa y el
+    // segundo deja explícito que borrará los trofeos ganados jugando.
+    var showResetConfirm2 by rememberSaveable { mutableStateOf(false) }
 
     val unlocked = progress.count { it.unlocked }
     val percent = trophyProgressPercent(progress)
@@ -100,7 +143,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
     ) {
         item {
-            // Cabecera: mini portada + título + progreso con barra dorada.
+            // Cabecera: mini portada + título + progreso con barra azul hielo.
             PremiumCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // Miniatura 384x216 (~0,33 MB decodificada) en vez de la
@@ -135,6 +178,37 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             NoteText("Logros LOCALES del launcher: no se sincronizan con PSN / PlayStation Network ni con Steam. No hay platino en este juego (ni en PS4 ni en Vita).")
             scan?.let { s ->
                 NoteText("Trofeos del núcleo (ux0/user/00/trophy/): ${s.note}")
+            }
+            // R2-S01: diagnóstico del TROPHY.TRP real del juego instalado
+            // (sce_sys/trophy/). Si dice 20 y la lista trae 27, la lista
+            // es la de Xbox y habrá que corregirla; si dice 27, la lista
+            // queda confirmada. Nunca se inventa un conteo: si no se puede
+            // leer, se muestra el motivo.
+            trpRead?.let { result ->
+                when (result) {
+                    is TrpReadResult.Success -> {
+                        val comparison = remember(result) {
+                            TrophyTrpReader.compareByName(result.value, TROPHY_ENGLISH_NAMES)
+                        }
+                        NoteText(
+                            "TRP real del juego: ${result.value.trophyCount} trofeos. " +
+                                "Coinciden ${comparison.matchedLauncherNumbers.size} de 27 nombres con la lista del launcher." +
+                                if (comparison.launcherOnlyNumbers.isNotEmpty()) {
+                                    " No están en el TRP: ${comparison.launcherOnlyNumbers.joinToString(", ")}."
+                                } else {
+                                    ""
+                                } +
+                                if (comparison.trpOnlyNames.isNotEmpty()) {
+                                    " El TRP trae nombres fuera de la lista: ${comparison.trpOnlyNames.joinToString(", ")}."
+                                } else {
+                                    ""
+                                },
+                        )
+                    }
+                    is TrpReadResult.Unreadable -> {
+                        NoteText("TRP real del juego: no se pudo leer. ${result.reason}")
+                    }
+                }
             }
             Spacer(modifier = Modifier.height(8.dp))
         }
@@ -198,7 +272,11 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                     if (item.unlocked) Text("Ya desbloqueado.")
                 }
             },
-            dismissButton = { TextButton(onClick = { selected = null }) { Text("Cerrar") } },
+            // "Cerrar" como confirmButton: Material3 exige confirmButton
+            // (o content) en esta sobrecarga; sin él no compila (run #78).
+            // El marcado manual no vuelve aquí: los trofeos solo se ganan
+            // jugando, por decisión del usuario.
+            confirmButton = { TextButton(onClick = { selected = null }) { Text("Cerrar") } },
         )
     }
     if (showResetConfirm) {
@@ -207,9 +285,20 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             title = { Text("¿Borrar el progreso de logros?") },
             text = { Text("Se borran los 27 trofeos desbloqueados en este launcher. Es solo local: no afecta a PSN porque nunca se sincroniza.") },
             confirmButton = {
-                TextButton(onClick = { vm.resetTrophies(); showResetConfirm = false }) { Text("Borrar") }
+                TextButton(onClick = { showResetConfirm = false; showResetConfirm2 = true }) { Text("Continuar") }
             },
             dismissButton = { TextButton(onClick = { showResetConfirm = false }) { Text("Cancelar") } },
+        )
+    }
+    if (showResetConfirm2) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirm2 = false },
+            title = { Text("¿Seguro? Se borrarán los trofeos ganados") },
+            text = { Text("Esto borrará los trofeos ganados jugando, con sus fechas, y no se pueden recuperar. Si quieres conservarlos, expórtalos antes desde Guardados → Exportar progreso de logros.") },
+            confirmButton = {
+                TextButton(onClick = { vm.resetTrophies(); showResetConfirm2 = false }) { Text("Sí, borrar los trofeos ganados") }
+            },
+            dismissButton = { TextButton(onClick = { showResetConfirm2 = false }) { Text("Cancelar") } },
         )
     }
 }

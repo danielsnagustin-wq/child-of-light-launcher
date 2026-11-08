@@ -339,9 +339,18 @@ class SettingsRepository(private val context: Context) {
     }
 
     companion object {
-        // M22: resolución solo 1x–4x y finita; aniso solo valores válidos.
-        fun clampResolution(value: Float): Float =
-            if (!value.isFinite()) 1f else value.coerceIn(1f, 4f)
+        // M22 + R2-S04: resolución solo 1x/2x/3x/4x (lo que ofrece la
+        // UI) y finita. Un backup editado a mano con 1.5x pasaba el
+        // clamp anterior (1..4) y llegaba al config.yml sin que la UI
+        // lo ofreciera nunca; ahora se ajusta al valor ofrecido más
+        // cercano (en empate, al menor: 1.5x -> 1x, conservador en
+        // Mali). El mismo clamp se aplica al leer DataStore, al
+        // guardar y al importar el backup (SettingsBackup lo llama).
+        fun clampResolution(value: Float): Float {
+            if (!value.isFinite()) return 1f
+            val clamped = value.coerceIn(1f, 4f)
+            return listOf(1f, 2f, 3f, 4f).minByOrNull { kotlin.math.abs(it - clamped) } ?: 1f
+        }
 
         fun clampAniso(value: Int): Int =
             if (value in setOf(1, 2, 4, 8, 16)) value else 1

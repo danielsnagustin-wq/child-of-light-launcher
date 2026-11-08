@@ -30,13 +30,12 @@ import java.io.File
  *    `resolve()` NO devuelve Ready (P2-C11): se revalida contra vs0
  *    en cada llamada.
  * 3. `firmware/PSVUPDAT.PUP` guardado: el PUP que el usuario aportó
- *    con el selector de archivos (Ajustes → Avanzado → Firmware).
+ *    con el selector de archivos (Importar → Firmware).
  *    Está GUARDADO, no instalado: hay que instalarlo en el núcleo
  *    con `EmbeddedPkgInstaller.installFirmware` antes de jugar
  *    embebido. Por eso [FirmwareStatus.Saved] NO es `ready`: con
- *    solo el PUP guardado, `decide()` sigue eligiendo Vita3K
- *    externo (avisa una vez y lanza igual) hasta que la instalación
- *    en el núcleo tenga éxito.
+ *    solo el PUP guardado, `decide()` bloquea el lanzamiento hasta
+ *    que el firmware se instale en el núcleo.
  *
  * Lo que NO existe / NO se hace (a propósito):
  * - El firmware de Vita3K EXTERNO no es accesible: cada app Android

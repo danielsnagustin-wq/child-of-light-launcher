@@ -12,14 +12,16 @@ import java.io.File
  * decodifica en Etapa 1 (requeriría el parser del formato TRP de Sony).
  *
  * Por eso este lector es honesto y limitado: informa SI existe el
- * directorio, QUÉ archivos hay y si vino un TROPHY.TRP con el juego
- * importado. NO afirma cuántos trofeos desbloqueó Vita3K ni inventa
- * un parseo. La lista bundled de 27 trofeos se usa como referencia
- * y el progreso que se MUESTRA es el local del launcher (DataStore).
+ * directorio y si vino un TROPHY.TRP con el juego importado. NO afirma
+ * cuántos trofeos desbloqueó Vita3K ni inventa un parseo. La lista
+ * bundled de 27 trofeos se usa como referencia y el progreso que se
+ * MUESTRA es el local del launcher (DataStore).
+ *
+ * R2-P2-37: el campo `files` de TrophyStoreScan se eliminó: se
+ * calculaba pero nada lo mostraba (la UI solo usa `note`).
  */
 data class TrophyStoreScan(
     val trophyDirExists: Boolean,
-    val files: List<String>,
     val trpPresent: Boolean,
     val trpSizeBytes: Long,
     val note: String,
@@ -32,25 +34,22 @@ object TrophyStoreReader {
         if (!dir.exists() || !dir.isDirectory) {
             return TrophyStoreScan(
                 trophyDirExists = false,
-                files = emptyList(),
                 trpPresent = false,
                 trpSizeBytes = 0L,
                 note = "El núcleo aún no creó la carpeta de trofeos para $titleId. " +
                     "Se crea al jugar. El progreso que se muestra es el local del launcher.",
             )
         }
-        val files = dir.listFiles()?.map { it.name }?.sorted() ?: emptyList()
         val trp = File(dir, "TROPHY.TRP")
         val trpPresent = trp.exists()
         return TrophyStoreScan(
             trophyDirExists = true,
-            files = files,
             trpPresent = trpPresent,
             trpSizeBytes = if (trpPresent) trp.length() else 0L,
             note = if (trpPresent) {
-                "TROPHY.TRP encontrado (${trp.length()} bytes). El formato TRP no se " +
-                    "decodifica en Etapa 1: la lista de 27 trofeos bundled es la referencia " +
-                    "y el progreso mostrado es el local del launcher."
+                "TROPHY.TRP encontrado (${trp.length()} bytes). Su contenido " +
+                    "se verifica en el diagnóstico TRP de esta pantalla; el " +
+                    "progreso mostrado es el local del launcher."
             } else {
                 "Carpeta de trofeos existe pero sin TROPHY.TRP. El progreso mostrado es el local del launcher."
             },

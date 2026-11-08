@@ -47,7 +47,18 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     val status by vm.status.collectAsState()
     var showBatchConfirm by rememberSaveable { mutableStateOf(false) }
     var deleteDlcTarget by rememberSaveable { mutableStateOf<String?>(null) }
+    // R2-P1-06: los borrados de botón y de perfil pedían confirmación
+    // igual que el de DLC (mismo patrón: id en estado + AlertDialog).
+    // Antes ejecutaban vm.deleteTouchControl / deleteControlProfile
+    // directamente en el onClick: un toque accidental borraba para
+    // siempre un botón editado a mano o un perfil entero.
+    var deleteControlTarget by rememberSaveable { mutableStateOf<String?>(null) }
+    var deleteProfileTarget by rememberSaveable { mutableStateOf<String?>(null) }
     var showDeleteSavesConfirm by rememberSaveable { mutableStateOf(false) }
+    // El borrado del driver Turnip también pide confirmación: un toque
+    // accidental borraba el .zip instalado sin aviso (el borrado en lote
+    // ya tenía su propio diálogo).
+    var showDeleteTurnipConfirm by rememberSaveable { mutableStateOf(false) }
 
     val hiddenButtons = layout.filter { !it.visible }
     val unusedProfiles = profiles.filter { it.id != activeProfileId }
@@ -69,7 +80,7 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         if (hiddenButtons.isEmpty()) Text("Ninguno: todos los botones están visibles.")
         hiddenButtons.forEach { control ->
             OutlinedButton(
-                onClick = { vm.deleteTouchControl(control.id) },
+                onClick = { deleteControlTarget = control.id },
                 modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
             ) { Text("🗑 Borrar definitivamente: ${control.label}") }
         }
@@ -78,7 +89,7 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         if (unusedProfiles.isEmpty()) Text("Ninguno: solo queda el perfil activo.")
         unusedProfiles.forEach { profile ->
             OutlinedButton(
-                onClick = { vm.deleteControlProfile(profile.id) },
+                onClick = { deleteProfileTarget = profile.id },
                 modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
             ) { Text("🗑 Borrar perfil: ${profile.name}") }
         }
@@ -91,12 +102,19 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
             ) { Text("Ocultar preset: ${preset.label}") }
         }
-        OutlinedButton(onClick = { vm.showAllGpuPresets() }, modifier = Modifier.fillMaxWidth()) { Text("Mostrar todos los presets") }
+        // R2-P2-05: deshabilitado cuando ya se muestran todos (no hay
+        // presets ocultos): antes siempre estaba activo y no hacía nada
+        // visible al pulsarlo en ese caso.
+        OutlinedButton(
+            onClick = { vm.showAllGpuPresets() },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = (uiPrefs?.hiddenPresets?.isNotEmpty() == true),
+        ) { Text("Mostrar todos los presets") }
 
         SectionTitle("Driver Turnip")
         if (turnipUnused) {
             Text("Turnip instalado (${settings?.turnipVersion}) pero no se usa: el driver actual es Sistema.", fontWeight = FontWeight.SemiBold)
-            OutlinedButton(onClick = { vm.deleteTurnipDriver() }, modifier = Modifier.fillMaxWidth()) { Text("🗑 Borrar driver Turnip") }
+            OutlinedButton(onClick = { showDeleteTurnipConfirm = true }, modifier = Modifier.fillMaxWidth()) { Text("🗑 Borrar driver Turnip") }
         } else if (settings?.turnipInstalled == true) {
             Text("Turnip en uso (${settings?.turnipVersion}). No se marca como no usado.")
         } else {
@@ -151,6 +169,41 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 }) { Text("Borrar todo") }
             },
             dismissButton = { TextButton(onClick = { showBatchConfirm = false }) { Text("Cancelar") } },
+        )
+    }
+    deleteControlTarget?.let { controlId ->
+        val control = layout.firstOrNull { it.id == controlId }
+        AlertDialog(
+            onDismissRequest = { deleteControlTarget = null },
+            title = { Text("¿Borrar definitivamente el botón ${control?.label ?: ""}?") },
+            text = { Text("Se borra del layout para siempre. Puedes añadir otro botón nuevo después desde Controles táctiles.") },
+            confirmButton = {
+                TextButton(onClick = { vm.deleteTouchControl(controlId); deleteControlTarget = null }) { Text("Borrar") }
+            },
+            dismissButton = { TextButton(onClick = { deleteControlTarget = null }) { Text("Cancelar") } },
+        )
+    }
+    deleteProfileTarget?.let { profileId ->
+        val profile = profiles.firstOrNull { it.id == profileId }
+        AlertDialog(
+            onDismissRequest = { deleteProfileTarget = null },
+            title = { Text("¿Borrar el perfil ${profile?.name ?: ""}?") },
+            text = { Text("Se borra el perfil de control entero. Si era el activo, se activa el primer perfil que queda.") },
+            confirmButton = {
+                TextButton(onClick = { vm.deleteControlProfile(profileId); deleteProfileTarget = null }) { Text("Borrar") }
+            },
+            dismissButton = { TextButton(onClick = { deleteProfileTarget = null }) { Text("Cancelar") } },
+        )
+    }
+    if (showDeleteTurnipConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteTurnipConfirm = false },
+            title = { Text("¿Borrar el driver Turnip?") },
+            text = { Text("Se borra el driver Turnip instalado (${settings?.turnipVersion ?: ""}). El juego seguirá usando el driver del sistema; puedes reinstalar Turnip después desde Ajustes → GPU.") },
+            confirmButton = {
+                TextButton(onClick = { vm.deleteTurnipDriver(); showDeleteTurnipConfirm = false }) { Text("Borrar") }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteTurnipConfirm = false }) { Text("Cancelar") } },
         )
     }
     deleteDlcTarget?.let { dlcId ->

@@ -102,6 +102,15 @@ class LogicAuditFixesTest {
         assertEquals(4f, SettingsRepository.clampResolution(99f))
         assertEquals(1f, SettingsRepository.clampResolution(Float.NaN))
         assertEquals(2f, SettingsRepository.clampResolution(2f))
+        // R2-S04: la UI solo ofrece 1x/2x/3x/4x: un valor intermedio
+        // (p. ej. de un backup editado a mano) se ajusta al valor
+        // ofrecido más cercano; en empate, al menor (conservador).
+        assertEquals(1f, SettingsRepository.clampResolution(1.5f))
+        assertEquals(1f, SettingsRepository.clampResolution(1.2f))
+        assertEquals(2f, SettingsRepository.clampResolution(2.5f))
+        assertEquals(3f, SettingsRepository.clampResolution(2.9f))
+        assertEquals(3f, SettingsRepository.clampResolution(3.5f))
+        assertEquals(4f, SettingsRepository.clampResolution(3.6f))
     }
 
     @Test

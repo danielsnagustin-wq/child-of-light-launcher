@@ -13,7 +13,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.danielsnagustin.childoflight.launcher.data.DeviceCompat
+import com.danielsnagustin.childoflight.launcher.model.effectiveSettings
+import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 import com.danielsnagustin.childoflight.launcher.data.DeviceMemory
 import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
 import com.danielsnagustin.childoflight.launcher.ui.ColMutedText
@@ -50,11 +51,14 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
     val gpu by vm.gpuFlow.collectAsState(initial = null)
     val benchmarks by vm.benchmarksFlow.collectAsState(initial = emptyList())
     val logText by vm.logText.collectAsState()
+    // R2-P1-02 (parte pantalla): mismo replace que la exportación del
+    // reporte: el nombre del paquete no sale en texto visible.
+    val safeLogText = logText.replace("com.danielsnagustin.childoflight.launcher", "child-of-light-launcher")
     val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
     val embeddedCore by vm.embeddedCoreFlow.collectAsState()
     val s = settings
     val lastFps = benchmarks.firstOrNull { it.fpsAvg != null }?.fpsAvg
-    val recentErrors = extractRecentErrorLines(logText)
+    val recentErrors = extractRecentErrorLines(safeLogText)
     SettingsCategoryScaffold(
         title = "Diagnóstico",
         subtitle = "Prueba de 30 s y corrección de errores.",
@@ -86,7 +90,18 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 )
                 Text("Firmware: ${FirmwareResolver.label(firmwareStatus)}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = Color.White)
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("Configuración activa: perfil ${s.activeProfile.label} · ${s.backend} · ${s.resolutionLabel} · filtro ${s.screenFilter} · VSync ${if (s.vSync) "ON" else "OFF"} · modo 60 FPS ${if (s.fpsHack) "ON" else "OFF"}.", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = Color.White)
+                // R2-P2-19: "Configuración activa" muestra la EFECTIVA
+                // (la que emite el generador): effectiveSettings aplica
+                // el Modo seguro (1x, SDL, High Accuracy OFF) y el
+                // paquete del modo 60 FPS, y resolveBackend el fallback
+                // Vulkan→OpenGL cuando el teléfono no tiene Vulkan.
+                // Antes se mostraban los valores guardados, que con
+                // Modo seguro o fallback no son los que corre el juego.
+                val effective = effectiveSettings(s)
+                Text("Configuración efectiva: perfil ${effective.activeProfile.label} · ${resolveBackend(effective, gpu).label} · ${effective.resolutionLabel} · filtro ${effective.screenFilter} · VSync ${if (effective.vSync) "ON" else "OFF"} · modo 60 FPS ${if (effective.fpsHack) "ON" else "OFF"}.", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = Color.White)
+                if (s.safeMode) {
+                    NoteText("Modo seguro activado: los valores efectivos de arriba (1x, SDL, High Accuracy OFF) mandan sobre los guardados.")
+                }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("Errores recientes del log:", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = Color.White)
                 if (recentErrors.isEmpty()) {

@@ -160,7 +160,7 @@ object DownloadsCleanup {
  * zRIF de 512 B, buscada junto al .pkg o pedida al usuario). El
  * launcher NO puede desencriptar ni extraer un .pkg por sí mismo: lo
  * instala el motor integrado al pulsar JUGAR (UseEmbeddedPkg). La
- * entrega a la app externa ("Instalar en la app externa", en la
+ * entrega a la app externa ("Copiar a la app externa", en la
  * pantalla Importar) sigue existiendo como alternativa: pide
  * confirmación y solo entonces copia ambos a Descargas/ChildOfLight/
  * y abre la app externa con la guía. El .pkg y su licencia viven
@@ -1158,7 +1158,7 @@ class GameLibraryRepository(private val context: Context) {
                     installDirAtomic(titleDir, dest)
                     val trp = TrophyStoreReader.gameBundledTrp(dest)
                     val detail = if (trp != null) {
-                        "Juego instalado. Traía su TROPHY.TRP (${trp.length()} bytes); la lista de 27 trofeos queda validada como referencia."
+                        "Juego instalado. Traía su TROPHY.TRP (${trp.length()} bytes); su contenido se verifica contra la lista en Logros (diagnóstico TRP)."
                     } else {
                         "Juego instalado. No traía TROPHY.TRP visible; se usa la lista bundled de 27 trofeos."
                     }
@@ -1546,17 +1546,23 @@ class GameLibraryRepository(private val context: Context) {
     }
 
     fun importSaves(titleId: String, uri: Uri): Result<Int> {
-        // M14: antes se sobrescribía la viva archivo a archivo desde el zip;
-        // un zip corrupto a mitad dejaba saves mezclados. Ahora se extrae
-        // primero a un temporal (si el zip está corrupto, la viva no se toca)
-        // y solo después se fusiona. El ViewModel además hace snapshot de la
-        // sesión activa antes de llamar aquí.
+        // M14 + R2-P2-31: REEMPLAZAR, no fusionar. Antes se copiaba el
+        // zip encima de la viva y los archivos viejos que el zip no
+        // traía sobrevivían (p. ej. importar solo la ranura 1 dejaba
+        // las ranuras 2-3 viejas: el juego veía una mezcla, no el set
+        // importado). Ahora, tras extraer a un temporal (si el zip está
+        // corrupto la viva no se toca), se borra el contenido de la
+        // viva y se copia el set importado. Es seguro porque el
+        // llamador (LauncherViewModel.importSaves) hace antes
+        // backupActiveSession() y aborta si el respaldo falla: los
+        // saves actuales quedan guardados en la sesión activa.
         val tmp = File(context.cacheDir, "import_saves_$titleId")
         return try {
             tmp.deleteRecursively()
             extractZip(uri, tmp)
             val dir = saveDir(titleId)
-            if (!dir.exists()) dir.mkdirs()
+            dir.deleteRecursively()
+            dir.mkdirs()
             var count = 0
             tmp.walkTopDown().filter { it.isFile }.forEach { file ->
                 val rel = file.relativeTo(tmp).path
@@ -1566,7 +1572,7 @@ class GameLibraryRepository(private val context: Context) {
                 file.copyTo(dest, overwrite = true)
                 count++
             }
-            LauncherLog.append(context, "saves", "Saves importados: $count archivos")
+            LauncherLog.append(context, "saves", "Saves importados: $count archivos (reemplazaron los saves actuales)")
             Result.success(count)
         } catch (e: Exception) {
             Result.failure(e)

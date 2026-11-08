@@ -13,6 +13,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -39,7 +40,10 @@ import com.danielsnagustin.childoflight.launcher.ui.settings.searchSettings
 @Composable
 fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Screen) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
-    val results = searchSettings(query)
+    // R2-P2-21a / R2-P2-28: la búsqueda oculta "Instalar Turnip" cuando
+    // la GPU detectada no es Adreno.
+    val gpu by vm.gpuFlow.collectAsState(initial = null)
+    val results = searchSettings(query, gpuVendor = gpu?.vendor)
     Box(
         modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
     ) {

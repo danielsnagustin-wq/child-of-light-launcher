@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!--
-      Child of Light Launcher — Etapa 1.
+      Child of Light Launcher.
       Sin permisos de red ni de ubicación. Todo el trabajo es local:
       importar la copia del usuario (SAF), guardarla en el almacenamiento
       privado de la app y escribir config.yml para Vita3K.
@@ -35,8 +35,13 @@
          el límite por defecto basta. Lo que sí ahorra RAM aquí es el
          perfil conservador de DeviceMemory (1x, Double Buffer) y
          copiar archivos grandes por streaming con buffer fijo. -->
+    <!-- R2-P2-38: allowBackup="false": los datos privados (sesiones,
+         ajustes, work.bin, saves) NO salen del teléfono con el backup
+         automático de Google, ni se resucitan sesiones borradas al
+         restaurar en otro teléfono. El launcher ya tiene su propia
+         exportación (sesiones, saves, logros, copia de ajustes). -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:largeHeap="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"

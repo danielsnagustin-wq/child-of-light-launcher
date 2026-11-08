@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
 import com.danielsnagustin.childoflight.launcher.model.GameSession
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -105,7 +106,7 @@ fun SessionsSection(vm: LauncherViewModel) {
                     Text("Capítulo: ${session.chapter}", style = MaterialTheme.typography.bodyMedium)
                 }
                 Text(
-                    "Saves: ${session.savedataFiles} archivos (${session.savedataBytes} bytes) · Logros: ${session.unlockedTrophies}/27",
+                    "Saves: ${session.savedataFiles} archivos (${DownloadsCleanup.formatBytes(session.savedataBytes)}) · Logros: ${session.unlockedTrophies}/27",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -212,16 +213,15 @@ fun SessionsSection(vm: LauncherViewModel) {
     }
 
     deleteTarget?.let { target ->
-        val onlyOne = sessions.size <= 1
+        // R2-P2-06: la rama "Es la ÚNICA sesión" era muerta: el botón
+        // Borrar solo se habilita con ≥2 sesiones, así que aquí siempre
+        // hay al menos otra sesión. Se borró la rama, no el guardado.
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
             title = { Text("¿Borrar la sesión «${target.name}»?") },
             text = {
                 Text(
-                    if (onlyOne) {
-                        "Es la ÚNICA sesión que queda. Se borrarán sus saves guardados y sus logros de esa sesión. " +
-                            "Expórtala antes si la quieres conservar."
-                    } else if (target.id == activeId) {
+                    if (target.id == activeId) {
                         "Es la sesión ACTIVA. Se guardará primero lo jugado hasta ahora y luego se borrará su copia; " +
                             "se activará otra sesión."
                     } else {

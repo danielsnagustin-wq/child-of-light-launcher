@@ -49,4 +49,25 @@ class DiagnosticsSummaryTest {
         val errors = extractRecentErrorLines("java.lang.Exception: boom")
         assertEquals(1, errors.size)
     }
+
+    @Test
+    fun fallbackLineIsNotAnError() {
+        // R2-P2-20: "fallback" contiene "fail" pero es informativo
+        // (Vulkan→OpenGL, normal): no debe aparecer como error.
+        val log = "2026-11-08 01:00:00 core: Sin Vulkan: fallback automático a OpenGL\n" +
+            "2026-11-08 01:01:00 core: fallback a Double Buffer en Mali"
+        assertTrue(extractRecentErrorLines(log).isEmpty())
+    }
+
+    @Test
+    fun fatalCrashLineCountsAsError() {
+        val errors = extractRecentErrorLines("FATAL: Uncaught exception (crash) en el hilo \"main\"")
+        assertEquals(1, errors.size)
+    }
+
+    @Test
+    fun bracketedErrorLevelCountsAsError() {
+        val errors = extractRecentErrorLines("[2026-11-08 01:00:00] [E] no se pudo abrir el archivo")
+        assertEquals(1, errors.size)
+    }
 }

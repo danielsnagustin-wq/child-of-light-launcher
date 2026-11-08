@@ -1,6 +1,5 @@
 package com.danielsnagustin.childoflight.launcher.ui.settings
 
-import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
 
@@ -15,8 +14,16 @@ import com.danielsnagustin.childoflight.launcher.model.presetSettings
  * resolución, filtro, mapping, driver…); aquí solo se AÑADE una nota
  * de compatibilidad en la UI. No se inventa ningún preset nuevo ni se
  * cambia ningún valor.
+ *
+ * R2-P2-23: la función ya no recibe la GPU. Su rama Mali/Turnip era
+ * muerta: el preset ADRENO_QUALITY_TURNIP nunca se lista cuando la
+ * GPU es Mali (la lista de General lo filtra por vendor), así que la
+ * advertencia "no se recomienda aquí" nunca se mostraba; y si se
+ * aplicara, el guard de applyPreset ya corrige el driver a Sistema y
+ * avisa. La nota estática ("Turnip no funciona en Mali") sigue
+ * diciendo lo mismo para quien la lea.
  */
-fun presetCompatibilityNote(profile: GpuProfileId, gpu: GpuInfo?): String = when (profile) {
+fun presetCompatibilityNote(profile: GpuProfileId): String = when (profile) {
     GpuProfileId.G99_RECOMMENDED ->
         "Recomendado en Helio G99 / Mali-G57: 1x estable, Double Buffer, sin Turnip."
     GpuProfileId.G99_QUALITY ->
@@ -28,10 +35,5 @@ fun presetCompatibilityNote(profile: GpuProfileId, gpu: GpuInfo?): String = when
     GpuProfileId.ADRENO_PERFORMANCE ->
         "Solo Snapdragon / Adreno: en Mali se usa el perfil G99 / Mali. Sin Turnip."
     GpuProfileId.ADRENO_QUALITY_TURNIP ->
-        "Solo Snapdragon / Adreno: Turnip no funciona en Mali. " +
-            if (gpu != null && gpu.vendor.name == "MALI") {
-                "Tu GPU es Mali: este preset no se recomienda aquí; el driver quedará en Sistema."
-            } else {
-                "Vulkan + Turnip a 2x."
-            }
+        "Solo Snapdragon / Adreno: Turnip no funciona en Mali. Vulkan + Turnip a 2x."
 }

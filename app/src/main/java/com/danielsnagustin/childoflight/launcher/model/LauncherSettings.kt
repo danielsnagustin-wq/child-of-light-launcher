@@ -239,7 +239,7 @@ data class LauncherSettings(
     /** Cerrar apps en segundo plano antes de jugar (best-effort, ver Vita3KLauncher). */
     val closeBackgroundApps: Boolean = true,
     /**
-     * Permitir la app externa como último recurso (Ajustes → Avanzado).
+     * Permitir la app externa como último recurso (Ajustes → General → Motor).
      * OFF por defecto: JUGAR siempre usa el motor integrado. Solo si
      * está ON y el motor integrado no está disponible, JUGAR abre el
      * juego en otra app instalada. Nunca es un respaldo automático:
@@ -536,13 +536,22 @@ enum class BenchmarkSource { MANUAL_OVERLAY, AUTO_MEASURED, NOT_MEASURED }
  * Media de las muestras de FPS de una prueba de 30 s medida por el
  * núcleo (EmbeddedGameActivity muestrea Vita3kCoreBridge.getFps()
  * cada segundo). Solo cuentan las muestras válidas (> 0: -1 es "sin
- * juego" y 0 es "sin medir"). null = sin muestras válidas. Pura y
- * testeable en JVM.
+ * juego" y 0 es "sin medir"). Media RECORTADA (R2-P2-29): se quitan
+ * el mínimo y el máximo para que un tirón a 1 fps o un pico a 240 no
+ * decidan la prueba; con menos de 3 muestras válidas no hay nada
+ * que recortar y es la media simple. null = sin muestras válidas.
+ * Pura y testeable en JVM.
  */
 fun averageBenchmarkFps(samples: List<Float>): Float? {
     val valid = samples.filter { it > 0f }
     if (valid.isEmpty()) return null
-    return valid.sum() / valid.size
+    val trimmed = if (valid.size >= 3) {
+        val sorted = valid.sorted()
+        sorted.subList(1, sorted.size - 1)
+    } else {
+        valid
+    }
+    return trimmed.sum() / trimmed.size
 }
 
 data class BenchmarkRun(

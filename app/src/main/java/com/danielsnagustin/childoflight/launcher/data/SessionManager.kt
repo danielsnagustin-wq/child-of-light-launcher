@@ -2,6 +2,7 @@ package com.danielsnagustin.childoflight.launcher.data
 
 import android.content.Context
 import com.danielsnagustin.childoflight.launcher.model.GameSession
+import com.danielsnagustin.childoflight.launcher.model.TROPHIES_27
 import com.danielsnagustin.childoflight.launcher.model.TitleId
 import java.io.InputStream
 import java.io.OutputStream
@@ -9,6 +10,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Sesiones / partidas múltiples.
@@ -60,6 +63,32 @@ class SessionManager(
     private var playStartMillis: Long? = null
 
     /**
+     * R2-P2-33: serializa todas las escrituras del índice de sesiones.
+     * Cada operación lee `_sessions.value`, transforma y escribe; sin
+     * este mutex dos toques rápidos (Duplicar + Crear, Renombrar +
+     * cambio de sesión) podían entrelazar lectura-modificación-
+     * escritura y perder una sesión del índice. El mutex solo se toma
+     * en los tramos síncronos de lectura-escritura (nunca se mantiene
+     * durante un snapshot/restore, que suspenden); `updateSession` es
+     * el punto único de escritura del índice en memoria y siempre lo
+     * toma. Por eso `updateSession`, `renameSession` y
+     * `notePlayStarted` son suspend: todos sus llamadores ya corrían
+     * en corrutinas (ViewModel / PauseMenuActivity).
+     */
+    private val indexMutex = Mutex()
+
+    /**
+     * R2-P1-11(b): huella de la savedata viva en el último snapshot
+     * (archivos, bytes, última modificación). Permite que
+     * `notePlayEnded()` sin medición abierta haga el snapshot final
+     * solo si la viva cambió desde el último snapshot, en vez de
+     * copiar toda la savedata en cada vuelta al launcher. En memoria:
+     * tras reiniciar el proceso es null y el primer snapshot copia
+     * siempre (opción segura).
+     */
+    private var lastSnapshotFingerprint: Triple<Int, Long, Long>? = null
+
+    /**
      * Vía del juego en curso (P2-A7): la embebida termina cuando su
      * Activity se cierra, así que al volver al launcher la medición se
      * puede cerrar; la externa sigue viva cuando el usuario vuelve al
@@ -71,15 +100,33 @@ class SessionManager(
 
     /** Recarga índice + activa desde disco; recalcula stats de savedata. */
     suspend fun refresh() {
+        // R2-P2-33: toda la recarga va bajo indexMutex: sin él un
+        // refresh() concurrente con una creación podía leer el índice
+        // de disco a medias y borrar la sesión nueva de la memoria.
+        // Ningún llamador mantiene el mutex al llamar a refresh().
+        indexMutex.withLock { refreshLocked() }
+    }
+
+    private suspend fun refreshLocked() {
         // savedataStats y setActiveSessionId hacen I/O que puede lanzar;
         // por eso van con runCatching: cada sesión que falle se muestra
         // con stats 0 en vez de tumbarlo todo.
         val sessions = repo.listSessions().map { session ->
+            // R2-P2-32: un .bak-* huérfano (proceso muerto a mitad de
+            // snapshot) se restaura o se limpia antes de medir: sin esto
+            // refresh() mostraba la sesión con 0 archivos ("vacía")
+            // aunque existiera el respaldo.
+            runCatching { repo.reconcileSavedataBackups(session.id) }
             val stats = runCatching { repo.savedataStats(session.id) }.getOrDefault(0 to 0L)
             session.copy(savedataFiles = stats.first, savedataBytes = stats.second)
         }
         _sessions.value = sessions
         val activeId = repo.getActiveSessionId()
+        // R2-P2-36: si la activa guardada ya no existe se cae a la
+        // primera, pero hay que restaurar su savedata: sin esto la viva
+        // seguía teniendo los saves de la sesión desaparecida y el
+        // siguiente snapshot los sobrescribía sobre la primera sesión.
+        var fellBackToFirst = false
         if (sessions.any { it.id == activeId }) {
             _activeSessionId.value = activeId
         } else {
@@ -88,11 +135,22 @@ class SessionManager(
             // silencioso y el usuario jugaba otra partida sin saberlo.
             if (activeId != null) {
                 LauncherLog.append(context, "session", "Sesión activa guardada ($activeId) no existe; se activó la primera de la lista.")
+                fellBackToFirst = true
             }
             _activeSessionId.value = sessions.firstOrNull()?.id
         }
         if (_activeSessionId.value != null) {
             runCatching { repo.setActiveSessionId(_activeSessionId.value) }
+        }
+        if (fellBackToFirst) {
+            // Solo en el camino de caída (id guardado que ya no existe):
+            // si nunca hubo activa guardada no se toca la viva.
+            val newlyActive = activeSession
+            if (newlyActive != null) {
+                runCatching { restoreSession(newlyActive) }.onFailure {
+                    LauncherLog.append(context, "session", "No se pudo restaurar la savedata de la sesión activada (${newlyActive.name}): ${it.message}")
+                }
+            }
         }
     }
 
@@ -134,9 +192,12 @@ class SessionManager(
             lastPlayedAtMillis = 0L,
             playTimeMillis = 0L,
         )
-        repo.saveSessions(listOf(session))
+        // R2-P2-33: la escritura del índice va bajo indexMutex.
+        indexMutex.withLock {
+            repo.saveSessions(listOf(session))
+            _sessions.value = listOf(session)
+        }
         repo.setActiveSessionId(session.id)
-        _sessions.value = listOf(session)
         _activeSessionId.value = session.id
         snapshotActive()
         refresh()
@@ -180,10 +241,15 @@ class SessionManager(
             lastPlayedAtMillis = 0L,
             playTimeMillis = 0L,
         )
-        val updated = _sessions.value + session
-        repo.saveSessions(updated)
+        // R2-P2-33: leer la lista actual y escribir el índice es una
+        // sola operación atómica bajo indexMutex: dos creaciones
+        // concurrentes no pueden leer la misma lista y perder una.
+        indexMutex.withLock {
+            val fresh = _sessions.value + session
+            repo.saveSessions(fresh)
+            _sessions.value = fresh
+        }
         repo.setActiveSessionId(session.id)
-        _sessions.value = updated
         _activeSessionId.value = session.id
         // 3. La viva queda vacía (nuevo juego desde cero) y los logros a 0/27.
         if (titleId.isNotBlank()) repo.clearLiveSavedata(titleId)
@@ -243,7 +309,9 @@ class SessionManager(
         return Result.success(target)
     }
 
-    fun renameSession(id: String, name: String, chapter: String): Result<Unit> {
+    // R2-P2-33: suspend para que updateSession pueda tomar indexMutex.
+    // Todos los llamadores ya corren en corrutinas (ViewModel).
+    suspend fun renameSession(id: String, name: String, chapter: String): Result<Unit> {
         return try {
             renameSessionImpl(id, name, chapter)
         } catch (e: Exception) {
@@ -251,7 +319,7 @@ class SessionManager(
         }
     }
 
-    private fun renameSessionImpl(id: String, name: String, chapter: String): Result<Unit> {
+    private suspend fun renameSessionImpl(id: String, name: String, chapter: String): Result<Unit> {
         val cleanName = name.trim().take(40)
         if (cleanName.isBlank()) return Result.failure(IllegalArgumentException("El nombre no puede estar vacío."))
         val found = _sessions.value.any { it.id == id }
@@ -272,6 +340,11 @@ class SessionManager(
     private suspend fun duplicateSessionImpl(id: String): Result<GameSession> {
         val source = _sessions.value.firstOrNull { it.id == id }
             ?: return Result.failure(IllegalArgumentException("Esa sesión ya no existe."))
+        // R2-P1-12: si se duplica la sesión ACTIVA, primero snapshot de
+        // la viva: sin esto la copia nacía con los saves y logros del
+        // último snapshot, no con la partida actual (mismo patrón que
+        // exportSession).
+        if (id == _activeSessionId.value) snapshotActive()
         val now = System.currentTimeMillis()
         // M8: el nombre "(copia)" puede colisionar con otra copia anterior;
         // se numera hasta que no exista.
@@ -291,9 +364,13 @@ class SessionManager(
         )
         try {
             repo.duplicateSessionDir(source.id, copy.id)
-            val updated = _sessions.value + copy
-            repo.saveSessions(updated)
-            _sessions.value = updated
+            // R2-P2-33: leer la lista actual y escribir el índice es una
+            // sola operación atómica bajo indexMutex.
+            indexMutex.withLock {
+                val fresh = _sessions.value + copy
+                repo.saveSessions(fresh)
+                _sessions.value = fresh
+            }
         } catch (e: Exception) {
             // M8: si el índice no se pudo guardar, la carpeta copiada
             // quedaría huérfana: se borra y se reporta el fallo.
@@ -334,15 +411,53 @@ class SessionManager(
             ?: return Result.failure(IllegalArgumentException("Esa sesión ya no existe."))
         val wasActive = id == _activeSessionId.value
         if (wasActive) snapshotActive()
-        repo.deleteSession(id)
-        val remaining = sessions.filter { it.id != id }
-        repo.saveSessions(remaining)
-        _sessions.value = remaining
         if (wasActive) {
+            // R2-P1-13: la siguiente sesión se RESTAURA ANTES de borrar
+            // la activa de disco. Antes el orden era borrar -> activar
+            // -> restaurar, y si el restore fallaba la sesión ya estaba
+            // borrada, el mensaje mentía ("no se pudo borrar") y la viva
+            // seguía con los saves de la borrada (el siguiente JUGAR los
+            // sobrescribía sobre la sesión siguiente). Si el restore
+            // falla aquí no se borra nada y se devuelve el fallo real.
+            // El rollback de la id activa basta: restoreSavedata ya
+            // restaura su propio respaldo de la viva si la copia falla.
+            val remaining = sessions.filter { it.id != id }
             val next = remaining.maxByOrNull { it.lastPlayedAtMillis } ?: remaining.first()
-            repo.setActiveSessionId(next.id)
-            _activeSessionId.value = next.id
-            restoreSession(next)
+            try {
+                repo.setActiveSessionId(next.id)
+                _activeSessionId.value = next.id
+                restoreSession(next)
+            } catch (e: Exception) {
+                runCatching {
+                    repo.setActiveSessionId(id)
+                    _activeSessionId.value = id
+                }
+                return Result.failure(
+                    IllegalStateException(
+                        "No se pudo activar la siguiente sesión (\"${next.name}\"): ${e.message}. " +
+                            "La sesión \"${target.name}\" NO se borró.",
+                    ),
+                )
+            }
+        }
+        // La siguiente ya está activa y restaurada (o no se borraba la
+        // activa): ahora sí se borra. Si ESTE paso falla, el mensaje lo
+        // distingue del fallo de activación anterior.
+        try {
+            repo.deleteSession(id)
+            // R2-P2-33: la lista restante se relee dentro del mutex para
+            // no perder una sesión creada en paralelo.
+            indexMutex.withLock {
+                val fresh = _sessions.value.filter { it.id != id }
+                repo.saveSessions(fresh)
+                _sessions.value = fresh
+            }
+        } catch (e: Exception) {
+            return Result.failure(
+                IllegalStateException(
+                    "No se pudo borrar la sesión \"${target.name}\" de disco o del índice: ${e.message}.",
+                ),
+            )
         }
         LauncherLog.append(context, "session", "Sesión borrada: \"${target.name}\"")
         refresh()
@@ -371,7 +486,37 @@ class SessionManager(
         }
     }
 
-    fun notePlayStarted(external: Boolean = false) {
+    /**
+     * R2-P1-11(a): si ya hay una medición abierta (JUGAR otra vez con
+     * el juego en segundo plano, o volver por Recientes), se cierra
+     * primero: el tiempo transcurrido se acumula en la sesión activa
+     * ANTES de sobrescribir el inicio. Antes se perdía ese intervalo.
+     * R2-P2-33: suspend para que updateSession pueda tomar indexMutex;
+     * los dos llamadores (ViewModel.play / startBenchmark) ya corren
+     * en corrutinas. No se hace snapshot aquí: el juego sigue vivo y
+     * copiar la savedata mientras escribe es arriesgado; el snapshot
+     * lo hace notePlayEnded().
+     */
+    suspend fun notePlayStarted(external: Boolean = false) {
+        val start = playStartMillis
+        if (start != null) {
+            val elapsed = (System.currentTimeMillis() - start).coerceIn(0L, 12 * 60 * 60 * 1000L)
+            val active = activeSession
+            if (active != null && elapsed > 0) {
+                runCatching {
+                    updateSession(active.id) {
+                        it.copy(
+                            playTimeMillis = it.playTimeMillis + elapsed,
+                            lastPlayedAtMillis = System.currentTimeMillis(),
+                        )
+                    }
+                }
+                LauncherLog.append(
+                    context, "session",
+                    "Medición anterior cerrada al relanzar: +${elapsed / 60_000} min en \"${active.name}\"",
+                )
+            }
+        }
         playStartMillis = System.currentTimeMillis()
         playExternal = external
     }
@@ -395,7 +540,26 @@ class SessionManager(
      * medición se cierra.
      */
     suspend fun notePlayEnded() {
-        val start = playStartMillis ?: return
+        val start = playStartMillis
+        if (start == null) {
+            // R2-P1-11(b): sin medición abierta (se volvió al juego por
+            // Recientes y se salió por el menú de pausa) antes esto era
+            // un no-op y no había snapshot final: la copia de la sesión
+            // quedaba con los saves de antes de pulsar Inicio. Ahora se
+            // hace snapshot aunque no haya tiempo que sumar, pero solo
+            // si la viva cambió desde el último snapshot: snapshotActive
+            // copia TODA la savedata cada vez, y hacerlo en cada vuelta
+            // al launcher sería copiar MBs por nada. La huella (nº de
+            // archivos, bytes, última modificación) es barata de
+            // calcular (un paseo por la carpeta viva) y decide.
+            val active = activeSession
+            if (active != null) {
+                runCatching { snapshotActiveIfLiveChanged() }.onFailure {
+                    LauncherLog.append(context, "session", "No se pudo guardar el snapshot final al salir del juego: ${it.message}")
+                }
+            }
+            return
+        }
         val elapsed = (System.currentTimeMillis() - start).coerceIn(0L, 12 * 60 * 60 * 1000L)
         val active = activeSession
         if (active == null) {
@@ -460,9 +624,12 @@ class SessionManager(
     suspend fun deleteAllSessions() {
         playStartMillis = null
         playExternal = false
+        lastSnapshotFingerprint = null
         runCatching { repo.deleteAll() }
-        _sessions.value = emptyList()
-        _activeSessionId.value = null
+        indexMutex.withLock {
+            _sessions.value = emptyList()
+            _activeSessionId.value = null
+        }
     }
 
     suspend fun exportSession(id: String, out: OutputStream): Result<Unit> {
@@ -489,15 +656,76 @@ class SessionManager(
                     IllegalArgumentException("La sesión importada es de otro juego (${imported.titleId}): solo se aceptan PCSE00480 / PCSB00598."),
                 )
             }
-            val clean = imported.copy(name = imported.name.trim().take(40).ifBlank { "Sesión importada" })
-            val updated = _sessions.value + clean
-            repo.saveSessions(updated)
-            _sessions.value = updated
-            LauncherLog.append(context, "session", "Sesión importada: \"${clean.name}\"")
+            // R2-P1-14: el conteo de logros del zip NO se confía: un zip
+            // manipulado podía traer 27/27 con logros vacíos. Se
+            // recomputa desde el achievements.txt importado.
+            val importedText = repo.readAchievementsText(imported.id)
+            val recomputedUnlocked = AchievementRepository.decode(importedText)
+                .keys.count { n -> TROPHIES_27.any { it.number == n } }
+            val clean = imported.copy(
+                name = imported.name.trim().take(40).ifBlank { "Sesión importada" },
+                unlockedTrophies = recomputedUnlocked,
+            )
+            // R2-P1-14: importar ACTIVA la sesión importada: snapshot de
+            // la activa actual (como switchTo) y luego restore de la
+            // importada. Antes la sesión quedaba en la lista pero JUGAR
+            // seguía jugando con los saves de la anterior.
+            val previous = activeSession
+            val previousId = _activeSessionId.value
+            snapshotActive()
+            // R2-P2-33: leer la lista actual y escribir el índice es una
+            // sola operación atómica bajo indexMutex.
+            indexMutex.withLock {
+                val fresh = _sessions.value + clean
+                repo.saveSessions(fresh)
+                _sessions.value = fresh
+            }
+            try {
+                repo.setActiveSessionId(clean.id)
+                _activeSessionId.value = clean.id
+                restoreSession(clean)
+            } catch (e: Exception) {
+                // La activación falló: rollback a la sesión anterior con
+                // sus saves (mismo patrón que switchTo). La importada
+                // QUEDA en el índice (no se borra lo importado) pero no
+                // activa: la viva no queda a medias.
+                runCatching {
+                    if (previous != null) {
+                        repo.setActiveSessionId(previousId)
+                        _activeSessionId.value = previousId
+                        restoreSession(previous)
+                    }
+                }
+                LauncherLog.append(context, "session", "Sesión importada pero no se pudo activar: ${e.message}")
+                return Result.failure(
+                    IllegalStateException(
+                        "La sesión \"${clean.name}\" se importó pero no se pudo activar: ${e.message}. " +
+                            "Sigue en la lista: pulsa Continuar sobre ella para jugarla.",
+                    ),
+                )
+            }
+            LauncherLog.append(context, "session", "Sesión importada y activa: \"${clean.name}\"")
             refresh()
             Result.success(clean)
         } catch (e: Exception) {
             Result.failure(IllegalStateException("No se pudo importar la sesión: ${e.message}"))
+        }
+    }
+
+    /**
+     * R2-P2-30: recomputa el contador `unlockedTrophies` de la sesión
+     * activa desde el almacén global de logros y persiste el índice
+     * (y el achievements.txt de la sesión). Lo llama el ViewModel tras
+     * `resetTrophies` e `importAchievements`: sin esto la lista de
+     * sesiones mostraba "Logros: X/27" viejo hasta el próximo snapshot.
+     * Best-effort: si falla, el contador queda viejo pero la app sigue.
+     */
+    suspend fun refreshActiveTrophyCount() {
+        val active = activeSession ?: return
+        try {
+            snapshotExtras(active, active.savedataFiles to active.savedataBytes)
+        } catch (_: Exception) {
+            // Best-effort: no bloquear al llamador por un fallo de disco.
         }
     }
 
@@ -524,6 +752,43 @@ class SessionManager(
         val titleId = installedTitleId() ?: active.titleId
         if (titleId.isBlank()) return
         val stats = repo.snapshotSavedata(titleId, active.id)
+        // R2-P1-11(b): la viva acaba de copiarse: su huella es la del
+        // snapshot. Un snapshot posterior sin cambios puede saltarse la
+        // copia (ver snapshotActiveIfLiveChanged).
+        lastSnapshotFingerprint = runCatching { repo.liveSavedataFingerprint(titleId) }.getOrNull()
+        snapshotExtras(active, stats)
+    }
+
+    /**
+     * R2-P1-11(b): snapshot final cuando no hay medición abierta, pero
+     * solo si la viva cambió desde el último snapshot. La parte barata
+     * (logros + perfil + contador) se actualiza siempre; la copia
+     * completa de la savedata solo si la huella viva difiere. Coste de
+     * la comprobación: un paseo por la carpeta viva (KBs-MBs de
+     * metadatos), frente a copiarla entera en cada vuelta al launcher.
+     * Sin huella previa (proceso recién arrancado) se copia siempre.
+     */
+    private suspend fun snapshotActiveIfLiveChanged() {
+        val active = activeSession ?: return
+        val titleId = installedTitleId() ?: active.titleId
+        if (titleId.isBlank()) return
+        val liveFingerprint = runCatching { repo.liveSavedataFingerprint(titleId) }.getOrNull()
+        val previousFingerprint = lastSnapshotFingerprint
+        if (liveFingerprint != null && previousFingerprint != null && liveFingerprint == previousFingerprint) {
+            // La viva no cambió: solo refrescar logros/perfil/contador.
+            snapshotExtras(active, active.savedataFiles to active.savedataBytes)
+            return
+        }
+        snapshotActive()
+    }
+
+    /**
+     * Parte barata del snapshot (logros + perfil de control + stats de
+     * la sesión en el índice). La comparten `snapshotActive` (tras
+     * copiar la savedata) y `refreshActiveTrophyCount` (que no toca la
+     * savedata). `stats` son los (archivos, bytes) que se persisten.
+     */
+    private suspend fun snapshotExtras(active: GameSession, stats: Pair<Int, Long>) {
         val unlocked = achievements.progressFlow.first().count { it.unlocked }
         val profileId = currentControlProfileId()
         // M38: si exportText() falla (DataStore corrupto), no debe abortar
@@ -531,7 +796,7 @@ class SessionManager(
         val achievementsText = runCatching { achievements.exportText() }
             .getOrDefault(repo.readAchievementsText(active.id))
         repo.writeSessionExtras(active.id, achievementsText, profileId)
-        val fixedTitle = if (active.titleId.isBlank()) titleId else active.titleId
+        val fixedTitle = if (active.titleId.isBlank()) installedTitleId() ?: active.titleId else active.titleId
         updateSession(active.id) {
             it.copy(
                 titleId = fixedTitle,
@@ -556,6 +821,10 @@ class SessionManager(
         val titleId = installedTitleId() ?: session.titleId
         if (titleId.isBlank()) return
         repo.restoreSavedata(titleId, session.id)
+        // R2-P1-11(b): tras el restore la viva ES la copia de la sesión:
+        // su huella es la del último snapshot válido, así que un
+        // snapshot posterior sin cambios puede saltarse la copia.
+        lastSnapshotFingerprint = runCatching { repo.liveSavedataFingerprint(titleId) }.getOrNull()
         restoreSessionExtras(session)
     }
 
@@ -586,9 +855,17 @@ class SessionManager(
         }
     }
 
-    private fun updateSession(id: String, transform: (GameSession) -> GameSession) {
-        val updated = _sessions.value.map { if (it.id == id) transform(it) else it }
-        _sessions.value = updated
-        repo.saveSessions(updated)
+    /**
+     * Punto único de escritura del índice en memoria + disco.
+     * R2-P2-33: la lectura de `_sessions.value`, la transformación y la
+     * escritura van juntas bajo indexMutex: sin él dos operaciones
+     * concurrentes podían leer la misma lista y perder una sesión.
+     */
+    private suspend fun updateSession(id: String, transform: (GameSession) -> GameSession) {
+        indexMutex.withLock {
+            val updated = _sessions.value.map { if (it.id == id) transform(it) else it }
+            _sessions.value = updated
+            repo.saveSessions(updated)
+        }
     }
 }

@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.sp
+import com.danielsnagustin.childoflight.launcher.data.GameActivityState
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.launcher.Vita3KLauncher
 import com.danielsnagustin.childoflight.launcher.model.ThemeMode
@@ -139,7 +140,14 @@ class MainActivity : ComponentActivity() {
         // 2: play() debe pasar external=true al lanzar fuera).
         vm.refreshStatus()
         vm.refreshLog()
-        vm.noteReturnedFromGame()
+        // R2-P1-11 (parte MainActivity): cerrar la medición de tiempo
+        // SOLO cuando el juego ya no sigue vivo. Si el usuario pasó por
+        // Inicio/Recientes a mitad de partida, EmbeddedGameActivity
+        // sigue viva en la pila (GameActivityState.gameActivityAlive) y
+        // cerrar aquí cortaba el tiempo de lo que se siguiera jugando.
+        // En el primer arranque (sin partida) la bandera es false y el
+        // comportamiento no cambia: notePlayEnded es no-op sin medición.
+        if (!GameActivityState.gameActivityAlive) vm.noteReturnedFromGame()
         // P2-A4a: si EmbeddedGameActivity falló su init DESPUÉS de que
         // launch() devolviera LaunchedEmbedded, el ViewModel ya puso
         // "Núcleo embebido: juego lanzado". La Activity anota el fallo
@@ -159,30 +167,39 @@ private fun LauncherApp(vm: LauncherViewModel) {
     // cualquier pantalla. Ahora la pantalla sobrevive a rotación y atrás
     // vuelve a Home (desde Limpiar, vuelve a Configuración).
     var screenName by rememberSaveable { mutableStateOf(Screen.HOME.name) }
+    // R2-P1-03: pila de vuelta real (sobrevive a rotación). Al navegar
+    // se apila la pantalla de origen y "Atrás" desapila: GPU vuelve a
+    // Home si se vino de Home y a Ajustes si se vino de Ajustes; igual
+    // TOUCH/SAVES/ACHIEVEMENTS; categorías de Ajustes -> hub. Antes el
+    // destino de atrás era fijo por pantalla e ignoraba el origen
+    // (Home -> GPU -> atrás caía en el hub de Ajustes, donde el
+    // usuario nunca estuvo).
+    var backStack by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    fun navigateTo(target: Screen) {
+        if (target.name != screenName) {
+            backStack = backStack + screenName
+            screenName = target.name
+        }
+    }
+    fun goBack() {
+        val previous = backStack.lastOrNull()
+        if (previous != null) {
+            backStack = backStack.dropLast(1)
+            screenName = previous
+        } else {
+            screenName = Screen.HOME.name
+        }
+    }
     // La animación de entrada de Home solo se reproduce una vez por sesión:
     // AnimatedContent descarta y recrea la composición de Home en cada
     // navegación, así que sin esta bandera la portada (650 ms) y las
     // tarjetas (450 ms + retardos) se repetían en cada vuelta a Home.
     var homeIntroDone by rememberSaveable { mutableStateOf(false) }
     val screen = runCatching { Screen.valueOf(screenName) }.getOrDefault(Screen.HOME)
-    // Atrás (Ola 2): categoría de Ajustes -> hub de Ajustes; Limpiar
-    // -> hub de Ajustes; GPU y diagnóstico -> hub de Ajustes (solo se
-    // llega desde Ajustes); resto -> Home.
+    // Atrás: desapilar (ver pila de arriba). Si la pila está vacía
+    // (no debería pasar fuera de Home), volver a Home.
     BackHandler(enabled = screen != Screen.HOME) {
-        screenName = when (screen) {
-            Screen.CLEANUP -> Screen.SETTINGS.name
-            Screen.GPU -> Screen.SETTINGS.name
-            Screen.SETTINGS_GENERAL,
-            Screen.SETTINGS_PERSONALIZATION,
-            Screen.SETTINGS_GPU,
-            Screen.SETTINGS_CPU,
-            Screen.SETTINGS_AUDIO,
-            Screen.SETTINGS_PERFORMANCE,
-            Screen.SETTINGS_CONTROLS,
-            Screen.SETTINGS_STORAGE,
-            Screen.SETTINGS_DIAGNOSTICS -> Screen.SETTINGS.name
-            else -> Screen.HOME.name
-        }
+        goBack()
     }
     val snackbarHostState = remember { SnackbarHostState() }
     val message by vm.message.collectAsState()
@@ -238,23 +255,23 @@ private fun LauncherApp(vm: LauncherViewModel) {
                 label = "screenTransition",
             ) { target ->
                 when (target) {
-                    Screen.HOME -> HomeScreen(vm, introDone = homeIntroDone, onIntroDone = { homeIntroDone = true }) { screenName = it.name }
-                    Screen.IMPORT -> ImportScreen(vm) { screenName = Screen.HOME.name }
-                    Screen.SETTINGS -> SettingsScreen(vm, { screenName = Screen.HOME.name }, { screenName = it.name })
-                    Screen.SETTINGS_GENERAL -> SettingsGeneralScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
-                    Screen.SETTINGS_PERSONALIZATION -> SettingsPersonalizationScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
-                    Screen.SETTINGS_GPU -> SettingsGpuScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
-                    Screen.SETTINGS_CPU -> SettingsCpuScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
-                    Screen.SETTINGS_AUDIO -> SettingsAudioScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
-                    Screen.SETTINGS_PERFORMANCE -> SettingsPerformanceScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
-                    Screen.SETTINGS_CONTROLS -> SettingsControlsScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
-                    Screen.SETTINGS_STORAGE -> SettingsStorageScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
-                    Screen.SETTINGS_DIAGNOSTICS -> SettingsDiagnosticsScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
-                    Screen.GPU -> GpuDiagnosticsScreen(vm) { screenName = Screen.SETTINGS.name }
-                    Screen.TOUCH -> TouchLayoutScreen(vm) { screenName = Screen.HOME.name }
-                    Screen.SAVES -> SavesScreen(vm) { screenName = Screen.HOME.name }
-                    Screen.ACHIEVEMENTS -> AchievementsScreen(vm) { screenName = Screen.HOME.name }
-                    Screen.CLEANUP -> CleanupScreen(vm) { screenName = Screen.SETTINGS.name }
+                    Screen.HOME -> HomeScreen(vm, introDone = homeIntroDone, onIntroDone = { homeIntroDone = true }) { navigateTo(it) }
+                    Screen.IMPORT -> ImportScreen(vm) { goBack() }
+                    Screen.SETTINGS -> SettingsScreen(vm, { goBack() }, { navigateTo(it) })
+                    Screen.SETTINGS_GENERAL -> SettingsGeneralScreen(vm, { goBack() }, { navigateTo(it) })
+                    Screen.SETTINGS_PERSONALIZATION -> SettingsPersonalizationScreen(vm, { goBack() }, { navigateTo(it) })
+                    Screen.SETTINGS_GPU -> SettingsGpuScreen(vm, { goBack() }, { navigateTo(it) })
+                    Screen.SETTINGS_CPU -> SettingsCpuScreen(vm, { goBack() }, { navigateTo(it) })
+                    Screen.SETTINGS_AUDIO -> SettingsAudioScreen(vm, { goBack() }, { navigateTo(it) })
+                    Screen.SETTINGS_PERFORMANCE -> SettingsPerformanceScreen(vm, { goBack() }, { navigateTo(it) })
+                    Screen.SETTINGS_CONTROLS -> SettingsControlsScreen(vm, { goBack() }, { navigateTo(it) })
+                    Screen.SETTINGS_STORAGE -> SettingsStorageScreen(vm, { goBack() }, { navigateTo(it) })
+                    Screen.SETTINGS_DIAGNOSTICS -> SettingsDiagnosticsScreen(vm, { goBack() }, { navigateTo(it) })
+                    Screen.GPU -> GpuDiagnosticsScreen(vm) { goBack() }
+                    Screen.TOUCH -> TouchLayoutScreen(vm) { goBack() }
+                    Screen.SAVES -> SavesScreen(vm) { goBack() }
+                    Screen.ACHIEVEMENTS -> AchievementsScreen(vm) { goBack() }
+                    Screen.CLEANUP -> CleanupScreen(vm) { goBack() }
                 }
             }
         }
@@ -275,8 +292,8 @@ private fun LauncherApp(vm: LauncherViewModel) {
             confirmButton = {
                 when (info.action) {
                     AlertAction.INSTALL_VITA3K -> TextButton(onClick = { vm.clearAlert(); vm.openVita3kReleases() }) { Text("Instalar app externa") }
-                    AlertAction.GO_IMPORT -> TextButton(onClick = { vm.clearAlert(); screenName = Screen.IMPORT.name }) { Text("Ir a importar") }
-                    AlertAction.DELIVER_PKG_TO_VITA3K -> TextButton(onClick = { vm.clearAlert(); vm.deliverPkgToVita3k() }) { Text("Instalar en la app externa") }
+                    AlertAction.GO_IMPORT -> TextButton(onClick = { vm.clearAlert(); navigateTo(Screen.IMPORT) }) { Text("Ir a importar") }
+                    AlertAction.DELIVER_PKG_TO_VITA3K -> TextButton(onClick = { vm.clearAlert(); vm.deliverPkgToVita3k() }) { Text("Copiar a la app externa") }
                     AlertAction.CONFIRM_DOWNLOADS_COPY -> TextButton(onClick = { vm.clearAlert(); vm.confirmDeliverPkgToDownloads() }) { Text("Copiar a Descargas") }
                     AlertAction.CONFIRM_PKG_INSTALLED -> TextButton(onClick = { vm.clearAlert(); vm.confirmPkgInstalledInVita3k() }) { Text("Ya lo instalé en la app externa") }
                     AlertAction.REPLACE_DUPLICATE -> TextButton(onClick = { vm.confirmReplaceDuplicate() }) { Text("Reemplazar") }

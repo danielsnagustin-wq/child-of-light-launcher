@@ -7,8 +7,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
 import com.danielsnagustin.childoflight.launcher.data.AchievementRepository
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
@@ -46,9 +47,11 @@ import kotlinx.coroutines.launch
  * - Ajustes rápidos: calidad (1x/2x) y Modo 60 FPS; se guardan y se
  *   aplican al reiniciar el juego (el núcleo lee config.yml al
  *   arrancar, no en caliente).
- * - Salir al inicio: guarda la sesión activa (tiempo + snapshot) y
- *   devuelve RESULT_EXIT_TO_LAUNCHER; la Activity del juego cierra
- *   el motor de forma limpia (requestAppQuit) y vuelve al inicio.
+ * - Salir al inicio: devuelve RESULT_EXIT_TO_LAUNCHER; la Activity del juego
+ *   cierra el motor de forma limpia (requestAppQuit) y vuelve al inicio.
+ *   El guardado real de la sesión (tiempo + snapshot) ocurre en
+ *   MainActivity.onResume al volver (R2-P2-35: el notePlayEnded() que
+ *   había aquí era no-op en esta instancia propia del SessionManager).
  */
 class PauseMenuActivity : ComponentActivity() {
 
@@ -62,6 +65,10 @@ class PauseMenuActivity : ComponentActivity() {
 
     private lateinit var sessionManager: SessionManager
     private lateinit var settingsRepo: SettingsRepository
+    // R2-P2-10: "Guardar sesión" no se puede pulsar hasta que refresh()
+    // complete: antes se podía pulsar con las sesiones aún sin cargar y
+    // el backup se hacía sobre el estado anterior (o vacío).
+    private var sessionsReady by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -84,6 +91,7 @@ class PauseMenuActivity : ComponentActivity() {
                 .onFailure {
                     LauncherLog.append(this@PauseMenuActivity, "session", "No se pudieron cargar las sesiones en el menú de pausa: ${it.message}")
                 }
+            sessionsReady = true
         }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = ColAccent, secondary = ColAccent)) {
@@ -92,13 +100,17 @@ class PauseMenuActivity : ComponentActivity() {
                     settings = settings,
                     sessionManager = sessionManager,
                     settingsRepo = settingsRepo,
+                    sessionsReady = sessionsReady,
                     onContinue = { finish() },
                     onExit = {
-                        lifecycleScope.launch {
-                            sessionManager.notePlayEnded()
-                            setResult(RESULT_EXIT_TO_LAUNCHER)
-                            finish()
-                        }
+                        // R2-P2-35: antes se llamaba aquí a
+                        // notePlayEnded(), que era no-op: este
+                        // SessionManager es una instancia propia y su
+                        // playStartMillis es siempre null. El guardado
+                        // real (tiempo + snapshot) ocurre en
+                        // MainActivity.onResume al volver al inicio.
+                        setResult(RESULT_EXIT_TO_LAUNCHER)
+                        finish()
                     },
                 )
             }

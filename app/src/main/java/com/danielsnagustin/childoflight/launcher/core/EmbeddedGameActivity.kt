@@ -5,11 +5,13 @@ import android.content.Intent
 import android.hardware.input.InputManager
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.Surface
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Toast
+import com.danielsnagustin.childoflight.launcher.data.GameActivityState
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.data.SettingsRepository
 import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
@@ -108,6 +110,15 @@ class EmbeddedGameActivity : SDLActivity() {
         /** Request code del menú de pausa (startActivityForResult). */
         const val REQUEST_PAUSE_MENU = 2001
 
+        /**
+         * Margen tras confirmar el juego en curso antes de empezar a
+         * muestrear FPS (R2-P2-29): la pantalla de título y la carga
+         * inicial renderizan a FPS real pero no son juego; sin este
+         * margen, 30 s en el título darían "60 fps medios" aunque el
+         * juego vaya a 25.
+         */
+        const val BENCHMARK_START_MARGIN_MS = 5_000L
+
         fun createLaunchIntent(context: Context, titleId: String, gameTitle: String, benchmark: Boolean = false): Intent {
             return Intent(context, EmbeddedGameActivity::class.java).apply {
                 putExtra(EXTRA_TITLE_ID, titleId)
@@ -124,6 +135,13 @@ class EmbeddedGameActivity : SDLActivity() {
     private var benchmarkMode: Boolean = false
     private var benchmarkJob: Job? = null
     private val benchmarkSamples = mutableListOf<Float>()
+    /**
+     * Momento (uptimeMillis) en que el núcleo confirmó el juego en
+     * curso (setCurrentGameId, hook on_launch). 0 = aún no confirmado:
+     * no se muestrea nada hasta entonces (R2-P2-29: menús y cargas
+     * no son juego). Solo se fija una vez por lanzamiento.
+     */
+    private var gameRunningSinceMillis: Long = 0L
     /**
      * P1-3: una prueba completa ya guardada no se vuelve a muestrear
      * ni a guardar en este lanzamiento (sin esto, al limpiar
@@ -345,6 +363,10 @@ class EmbeddedGameActivity : SDLActivity() {
     // núcleo es no-op (el puente devuelve false).
     override fun onResume() {
         super.onResume()
+        // R2-P1-11: el juego sigue vivo al volver de Inicio/Recientes
+        // o del menú de pausa; MainActivity lo comprueba para no
+        // cerrar la medición de tiempo en esos casos.
+        GameActivityState.gameActivityAlive = true
         runCatching {
             Vita3kCoreBridge.setPauseReasonEnabled(
                 Vita3kCoreBridge.PAUSE_REASON_BACKGROUND,
@@ -357,6 +379,12 @@ class EmbeddedGameActivity : SDLActivity() {
     }
 
     override fun onPause() {
+        // R2-P1-11: SOLO se limpia la bandera al salir de verdad
+        // (finish() ya llamado, p. ej. desde onActivityResult tras
+        // "Salir al inicio"): ir a segundo plano (Inicio, Recientes,
+        // llamada, menú de pausa) deja la Activity viva y la bandera
+        // en true, para que MainActivity no cierre la medición.
+        if (isFinishing) GameActivityState.gameActivityAlive = false
         // Soltar todo lo pulsado al pausar: sin botones atascados al volver.
         overlayView?.releaseAll()
         stopBenchmarkSamplingAndSave()
@@ -380,6 +408,13 @@ class EmbeddedGameActivity : SDLActivity() {
      * válidas no se guarda nada: la prueba queda para registro
      * manual. El muestreo no toca el juego: es una lectura JNI por
      * segundo, sin escribir nada en el núcleo.
+     *
+     * R2-P2-29: NO se muestrea hasta que el núcleo confirme el juego
+     * en curso (setCurrentGameId, hook on_launch) + 5 s de margen
+     * (título/carga inicial). Antes, el muestreo arrancaba en cada
+     * onResume y la pantalla de título contaba como juego. Si el
+     * núcleo nunca confirma el arranque, no se guarda nada (fallo
+     * seguro: mejor sin prueba que con una media de menús).
      */
     private fun maybeStartBenchmarkSampling() {
         if (!benchmarkMode || benchmarkSaved || !Vita3kCoreBridge.available) return
@@ -387,7 +422,15 @@ class EmbeddedGameActivity : SDLActivity() {
         // Prueba completa: 30 muestras válidas. Sin el tope, el muestreo
         // medía toda la sesión en vez de 30 s.
         if (benchmarkSamples.size >= BENCHMARK_MAX_SAMPLES) return
+        // Juego aún no confirmado por el núcleo: no muestrear; cuando
+        // llegue setCurrentGameId se reintentará desde ahí.
+        if (gameRunningSinceMillis == 0L) return
         benchmarkJob = overlayScope.launch {
+            // Margen tras el arranque (título/carga): solo se descuenta
+            // una vez; al reanudar tras una pausa ya pasó hace rato.
+            val elapsed = SystemClock.uptimeMillis() - gameRunningSinceMillis
+            val waitMs = BENCHMARK_START_MARGIN_MS - elapsed
+            if (waitMs > 0) delay(waitMs)
             while (isActive && benchmarkSamples.size < BENCHMARK_MAX_SAMPLES) {
                 val fps = runCatching { Vita3kCoreBridge.getFps() }.getOrDefault(-1f)
                 if (fps > 0f) benchmarkSamples += fps
@@ -462,6 +505,15 @@ class EmbeddedGameActivity : SDLActivity() {
     fun setCurrentGameId(gameId: String?) {
         runOnUiThread {
             currentTitleId = gameId.orEmpty()
+            // R2-P2-29: el núcleo confirma aquí que el juego está en
+            // curso (hook on_launch): fijar el momento una sola vez y
+            // arrancar el muestreo del benchmark si toca (con su
+            // margen de 5 s). Antes de esto, maybeStartBenchmarkSampling
+            // no muestrea nada (menús/cargas no cuentan).
+            if (gameId?.isNotEmpty() == true && gameRunningSinceMillis == 0L) {
+                gameRunningSinceMillis = SystemClock.uptimeMillis()
+                maybeStartBenchmarkSampling()
+            }
             // El juego arrancó: SDL está arriba y la sesión activa, así
             // que es el momento de crear el mando virtual del overlay
             // (antes, attach no crea nada). También re-carga el perfil
@@ -509,12 +561,18 @@ class EmbeddedGameActivity : SDLActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQUEST_PAUSE_MENU) return
         if (resultCode != com.danielsnagustin.childoflight.launcher.ui.PauseMenuActivity.RESULT_EXIT_TO_LAUNCHER) return
-        // Salir al inicio: la sesión ya se guardó en el menú
-        // (notePlayEnded: tiempo + snapshot). Cierre limpio del motor
-        // (requestAppQuit -> SDL_EVENT_QUIT -> cleanup_launch ->
+        // Salir al inicio: el guardado de la sesión (tiempo +
+        // snapshot) ocurre en MainActivity.onResume al volver al
+        // launcher (noteReturnedFromGame -> notePlayEnded). El
+        // notePlayEnded del menú de pausa es no-op: su SessionManager
+        // es una instancia propia, distinta de la del ViewModel, y su
+        // playStartMillis es siempre null (R2-P2-35). Cierre limpio
+        // del motor (requestAppQuit -> SDL_EVENT_QUIT -> cleanup_launch ->
         // session.stop -> shutdown_app_runtime, verificado en el pin
         // 3e43bc80: sdl-frontend/session.cpp:665-669,414-444 y
-        // app_init.cpp:890-992) y vuelta al inicio.
+        // app_init.cpp:890-992) y vuelta al inicio. finish() aquí
+        // hace que onPause corra con isFinishing=true y limpie
+        // GameActivityState.gameActivityAlive.
         runCatching {
             if (Vita3kCoreBridge.isAppRunning()) {
                 Vita3kCoreBridge.requestAppQuit()
@@ -559,6 +617,9 @@ class EmbeddedGameActivity : SDLActivity() {
             }
         }
         super.onDestroy()
+        // R2-P1-11 (refuerzo): si la Activity se cierra de verdad, la
+        // bandera debe quedar en false aunque onPause no la limpiara.
+        if (isFinishing) GameActivityState.gameActivityAlive = false
         // P1-1: apagar la sesión nativa DESPUÉS de super.onDestroy():
         // SDLActivity.onDestroy ya envió QUIT al hilo SDL y esperó
         // hasta 1 s a que terminara (join), así que la partida ya no
