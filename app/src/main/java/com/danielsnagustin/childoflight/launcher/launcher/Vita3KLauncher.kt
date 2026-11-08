@@ -19,10 +19,12 @@ import com.danielsnagustin.childoflight.launcher.core.EmbeddedPkgInstaller
 import com.danielsnagustin.childoflight.launcher.core.Vita3kCoreBridge
 import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
 import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
+import com.danielsnagustin.childoflight.launcher.data.LARGE_FILE_COPY_BUFFER_BYTES
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.data.SessionManager
 import com.danielsnagustin.childoflight.launcher.data.Vita3kConfigGenerator
+import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.TitleId
 import java.io.File
@@ -197,7 +199,7 @@ class Vita3KLauncher(private val context: Context) {
             val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                 ?: throw IllegalStateException("No se pudo crear $fileName en Descargas.")
             resolver.openOutputStream(uri)?.use { out ->
-                FileInputStream(file).use { it.copyTo(out) }
+                FileInputStream(file).use { it.copyTo(out, LARGE_FILE_COPY_BUFFER_BYTES) }
             } ?: throw IllegalStateException("No se pudo escribir $fileName en Descargas.")
             "Descargas/ChildOfLight/$fileName"
         } else {
@@ -207,7 +209,7 @@ class Vita3KLauncher(private val context: Context) {
             if (!dir.exists()) dir.mkdirs()
             val dest = File(dir, fileName)
             FileInputStream(file).use { input ->
-                FileOutputStream(dest).use { out -> input.copyTo(out) }
+                FileOutputStream(dest).use { out -> input.copyTo(out, LARGE_FILE_COPY_BUFFER_BYTES) }
             }
             dest.absolutePath
         }
@@ -225,16 +227,23 @@ class Vita3KLauncher(private val context: Context) {
         }
     }
 
+    /**
+     * gpu = GPU detectada (opcional): solo se usa para el config.yml
+     * (fallback Vulkan -> OpenGL si el teléfono no tiene Vulkan, ver
+     * Vita3kConfigGenerator). La vía externa no lee el config.yml del
+     * launcher, así que ahí el parámetro no cambia nada.
+     */
     suspend fun launch(
         library: GameLibraryRepository,
         settings: LauncherSettings,
         sessionManager: SessionManager? = null,
+        gpu: GpuInfo? = null,
     ): LaunchOutcome {
         // BUG (auditoría): writeConfig (file.writeText) y checkPrerequisites
         // pueden lanzar IOException y tumbar la corrutina del ViewModel en
         // play()/startBenchmark(). El lanzamiento nunca debe lanzar.
         return try {
-            launchImpl(library, settings, sessionManager)
+            launchImpl(library, settings, sessionManager, gpu)
         } catch (e: Exception) {
             LaunchOutcome.Blocked("No se pudo lanzar: ${e.message}")
         }
@@ -244,6 +253,7 @@ class Vita3KLauncher(private val context: Context) {
         library: GameLibraryRepository,
         settings: LauncherSettings,
         sessionManager: SessionManager? = null,
+        gpu: GpuInfo? = null,
     ): LaunchOutcome {
         val pre = checkPrerequisites(library)
         if (!pre.ready) {
@@ -266,7 +276,7 @@ class Vita3KLauncher(private val context: Context) {
             val killed = closeBackgroundApps()
             LauncherLog.append(context, "launch", "Apps en segundo plano cerradas (best-effort): $killed procesos")
         }
-        val configFile = Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot)
+        val configFile = Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu)
         val titleId = pre.titleId ?: return LaunchOutcome.Blocked("No se pudo determinar el Title ID instalado.")
 
         // 5. Núcleo embebido (Etapa 2): JUGAR DENTRO del launcher.

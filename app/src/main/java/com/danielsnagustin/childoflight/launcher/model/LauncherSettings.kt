@@ -14,7 +14,7 @@ package com.danielsnagustin.childoflight.launcher.model
 // GPU / dispositivo
 // ---------------------------------------------------------------------------
 
-enum class GpuVendor { ADRENO, MALI, OTHER, UNKNOWN }
+enum class GpuVendor { ADRENO, MALI, POWERVR, OTHER, UNKNOWN }
 
 enum class GpuBackend(val vita3kValue: String, val label: String) {
     VULKAN("Vulkan", "Vulkan (recomendado)"),
@@ -69,6 +69,7 @@ data class GpuInfo(
             isUserVerifiedDevice -> "Helio G99 · Mali-G57 MC2 (verificado)"
             vendor == GpuVendor.MALI -> "Mali ($renderer)"
             vendor == GpuVendor.ADRENO -> "Adreno ($renderer)"
+            vendor == GpuVendor.POWERVR -> "PowerVR ($renderer)"
             else -> renderer
         }
 }
@@ -226,8 +227,25 @@ fun defaultProfileFor(gpu: GpuInfo): GpuProfileId = when {
     gpu.isHelioG99 || gpu.isMaliG57 -> GpuProfileId.G99_RECOMMENDED
     gpu.vendor == GpuVendor.MALI -> GpuProfileId.MALI_PERFORMANCE
     gpu.vendor == GpuVendor.ADRENO -> GpuProfileId.ADRENO_PERFORMANCE
+    // PowerVR, OTHER y UNKNOWN: perfil Genérico seguro (1x, Double
+    // Buffer). NINGUNA GPU se queda sin perfil: el else es el suelo.
     else -> GpuProfileId.GENERIC_PERFORMANCE
 }
+
+/**
+ * Backend efectivo para el núcleo embebido. Si el ajuste pide Vulkan
+ * pero el teléfono NO tiene Vulkan (GpuInfo.vulkanSupported == false),
+ * se usa OpenGL: sin esto el núcleo arrancaría con un backend que el
+ * teléfono no tiene y fallaría. Con gpu == null (aún sin detectar) no
+ * se cambia nada: la detección ya ocurrió al primer arranque. Puro y
+ * testeable (GpuProfileTest).
+ */
+fun resolveBackend(settings: LauncherSettings, gpu: GpuInfo?): GpuBackend =
+    if (settings.backend == GpuBackend.VULKAN && gpu != null && !gpu.vulkanSupported) {
+        GpuBackend.OPENGL
+    } else {
+        settings.backend
+    }
 
 /**
  * Todos los presets. Valores pensados para Child of Light (2D, UbiArt):
@@ -378,6 +396,42 @@ fun applySafeMode(settings: LauncherSettings): LauncherSettings = settings.copy(
 /** Ajustes efectivos para generar config.yml: el modo seguro manda sobre el resto. */
 fun effectiveSettings(settings: LauncherSettings): LauncherSettings =
     if (settings.safeMode) applySafeMode(settings) else settings
+
+/**
+ * Perfil conservador para teléfonos con ≤ 4 GB de RAM (ver DeviceMemory).
+ * Se aplica SOLO por defecto en el primer arranque y al restablecer
+ * ajustes; nunca sobrescribe un perfil que el usuario eligió a mano
+ * (p. ej. G99 Calidad 2x sigue disponible si el usuario lo elige, y
+ * el auto-revert a 1x por debajo de 28 fps sigue activo).
+ *
+ * Forzado: 1x (960x544; 2x cuadruplica el framebuffer y las texturas),
+ * filtro Bilinear (sin FXAA ni FSR: ambos cuestan GPU/memoria extra),
+ * anisotrópico 1, Double Buffer, VSync off, High Accuracy off,
+ * Surface Sync off, límite 30 fps.
+ *
+ * Caché: config.yml NO tiene claves de TAMAÑO de caché (verificado
+ * en Vita3kConfigGenerator contra config.h: solo existen los
+ * booleanos texture-cache y shader-cache). La única palanca es el
+ * booleano: texture-cache OFF (las texturas decodificadas en RAM/VRAM
+ * son el mayor gasto evitable del launcher; se pagan con recargas al
+ * cambiar de escena) y shader-cache ON (es caché en DISCO: evita
+ * recompilar shaders en cada arranque y su huella en RAM es
+ * transitoria). Sin verificar en dispositivo: el coste real de
+ * texture-cache OFF en este juego no está medido; si se nota
+ * tirón al cambiar de escena, el usuario puede reactivarlo en Ajustes.
+ */
+fun applyLowRamDefaults(settings: LauncherSettings): LauncherSettings = settings.copy(
+    resolutionMultiplier = 1f,
+    screenFilter = ScreenFilter.BILINEAR,
+    anisotropicFiltering = 1,
+    vSync = false,
+    highAccuracy = false,
+    surfaceSyncEnabled = false,
+    memoryMapping = MemoryMapping.DOUBLE_BUFFER,
+    textureCache = false,
+    shaderCache = true,
+    frameLimiter = FrameLimiter.FPS_30,
+)
 
 // ---------------------------------------------------------------------------
 // Prueba de rendimiento (30 s)

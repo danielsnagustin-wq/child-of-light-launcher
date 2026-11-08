@@ -231,7 +231,7 @@ class SessionRepository(private val vitaRoot: File) {
             dir.walkTopDown().filter { it.isFile }.forEach { file ->
                 val rel = file.relativeTo(dir).path.replace(File.separatorChar, '/')
                 zip.putNextEntry(ZipEntry(rel))
-                file.inputStream().use { it.copyTo(zip) }
+                file.inputStream().use { it.copyTo(zip, LARGE_FILE_COPY_BUFFER_BYTES) }
                 zip.closeEntry()
             }
         }
@@ -263,7 +263,7 @@ class SessionRepository(private val vitaRoot: File) {
                         requireInside(tmp, dest)
                         dest.parentFile?.mkdirs()
                         dest.outputStream().use { out ->
-                            totalBytes += zip.copyTo(out)
+                            totalBytes += zip.copyTo(out, LARGE_FILE_COPY_BUFFER_BYTES)
                             if (totalBytes > 1_000_000_000L) throw IllegalArgumentException("El zip es demasiado grande (> 1 GB).")
                         }
                     }

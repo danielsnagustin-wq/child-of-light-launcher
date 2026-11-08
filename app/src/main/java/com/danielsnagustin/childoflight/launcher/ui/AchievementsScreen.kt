@@ -101,8 +101,12 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         // Cabecera: mini portada + título + progreso con barra dorada.
         PremiumCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // Miniatura 384x216 (~0,33 MB decodificada) en vez de la
+                // portada completa 1080x608 (~2,6 MB): aquí solo se ve a
+                // 96x54 dp. La Home sí usa la completa (se muestra casi
+                // a tamaño nativo). Ver auditoría RAM ≤ 4 GB 2026-11-07.
                 Image(
-                    painter = painterResource(R.drawable.col_cover),
+                    painter = painterResource(R.drawable.col_cover_thumb),
                     contentDescription = "Child of Light",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.size(width = 96.dp, height = 54.dp).clip(RoundedCornerShape(12.dp)),

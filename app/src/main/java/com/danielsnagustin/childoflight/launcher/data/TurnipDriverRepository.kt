@@ -44,25 +44,102 @@ class TurnipDriverRepository(private val context: Context) {
             // perdido. Ahora se copia a temporal y solo se sustituye al final.
             val tmp = File(dir, "$safeName.tmp")
             context.contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(tmp).use { out -> input.copyTo(out) }
+                FileOutputStream(tmp).use { out -> input.copyTo(out, LARGE_FILE_COPY_BUFFER_BYTES) }
             } ?: return Result.failure(IllegalStateException("No se pudo abrir el zip."))
-            val dest = File(dir, safeName)
-            var renamed = tmp.renameTo(dest)
-            if (!renamed && dest.exists()) {
-                dest.delete()
-                renamed = tmp.renameTo(dest)
-            }
-            if (!renamed) {
-                tmp.delete()
-                return Result.failure(IllegalStateException("No se pudo guardar el driver."))
-            }
+            val committed = commitTempFile(dir, tmp, safeName)
+            val savedName = committed.getOrElse { return Result.failure(it) }
             // Solo se guarda el último driver instalado.
-            dir.listFiles()?.forEach { if (it != dest) it.delete() }
-            LauncherLog.append(context, "driver", "Turnip instalado: $safeName (${dest.length()} bytes)")
-            Result.success(safeName)
+            dir.listFiles()?.forEach { if (it.name != savedName) it.delete() }
+            LauncherLog.append(context, "driver", "Turnip instalado: $savedName (${File(dir, savedName).length()} bytes)")
+            Result.success(savedName)
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    /**
+     * true si hay un zip de driver incluido en assets (ver
+     * BundledTurnipDriver.ASSET_PATH). No abre el zip, solo lista la
+     * carpeta de assets. Sin binario en assets devuelve false y el
+     * launcher sigue con el driver del sistema.
+     */
+    fun bundledAssetPresent(): Boolean {
+        return try {
+            context.assets.list(BundledTurnipDriver.ASSET_DIR)
+                ?.contains(BundledTurnipDriver.EXPECTED_FILE_NAME) == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Instala el driver Turnip incluido en assets ("de raíz").
+     *
+     * Copia el zip de assets a temporal, lo VALIDA (formato
+     * AdrenoTools: meta.json + .so, ver BundledTurnipDriver) y solo
+     * entonces lo confirma como driver activo. Si assets no trae el
+     * zip, si la validación falla o si la copia falla, NO se toca el
+     * driver que hubiera instalado y se devuelve el fallo: el
+     * llamador debe seguir con el driver del sistema.
+     * No descarga nada: el binario solo llega si se puso en assets
+     * al compilar la APK.
+     */
+    fun installBundledAsset(
+        assetPath: String = BundledTurnipDriver.ASSET_PATH,
+    ): Result<BundledInstall> {
+        val safeName = File(assetPath).name
+        if (!safeName.lowercase().endsWith(".zip")) {
+            return Result.failure(IllegalArgumentException("El driver incluido debe ser un archivo .zip."))
+        }
+        return try {
+            val dir = File(context.filesDir, "vita3k/drivers/turnip")
+            if (!dir.exists()) dir.mkdirs()
+            val tmp = File(dir, "$safeName.tmp")
+            try {
+                context.assets.open(assetPath).use { input ->
+                    FileOutputStream(tmp).use { out -> input.copyTo(out, LARGE_FILE_COPY_BUFFER_BYTES) }
+                }
+            } catch (e: Exception) {
+                tmp.delete()
+                return Result.failure(IllegalStateException("No hay driver incluido en assets ($assetPath)."))
+            }
+            val info = BundledTurnipDriver.validatePackage(tmp).getOrElse { e ->
+                tmp.delete()
+                return Result.failure(e)
+            }
+            val committed = commitTempFile(dir, tmp, safeName)
+            val savedName = committed.getOrElse { return Result.failure(it) }
+            // Solo se guarda el último driver instalado.
+            dir.listFiles()?.forEach { if (it.name != savedName) it.delete() }
+            if (BundledTurnipDriver.EXPECTED_SHA256.isBlank()) {
+                LauncherLog.append(context, "driver", "AVISO: driver incluido instalado sin comprobar SHA-256 (hash aún sin rellenar en BundledTurnipDriver).")
+            }
+            LauncherLog.append(context, "driver", "Driver incluido instalado: $savedName (${info.sizeBytes} bytes, ${info.libraryName ?: "sin libraryName"}, sha256 ${info.sha256Hex.take(12)}…)")
+            Result.success(BundledInstall(savedName, info))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Confirma un temporal como driver activo (rename atómico con
+     * reintento si ya había un destino). Si no se puede confirmar,
+     * borra el temporal y devuelve el fallo; el driver anterior
+     * sigue intacto. Extraído de installDriverZip para compartirlo
+     * con installBundledAsset sin duplicar la lógica.
+     */
+    private fun commitTempFile(dir: File, tmp: File, safeName: String): Result<String> {
+        val dest = File(dir, safeName)
+        var renamed = tmp.renameTo(dest)
+        if (!renamed && dest.exists()) {
+            dest.delete()
+            renamed = tmp.renameTo(dest)
+        }
+        if (!renamed) {
+            tmp.delete()
+            return Result.failure(IllegalStateException("No se pudo guardar el driver."))
+        }
+        return Result.success(safeName)
     }
 
     fun installedDriverFile(): File? {
@@ -110,3 +187,6 @@ class TurnipDriverRepository(private val context: Context) {
 }
 
 data class ClearCacheResult(val deletedFiles: Int, val deletedDirs: Int)
+
+/** Driver incluido instalado desde assets: nombre guardado + validación. */
+data class BundledInstall(val savedName: String, val info: BundledTurnipDriver.PackageInfo)

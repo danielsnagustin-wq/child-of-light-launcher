@@ -106,6 +106,12 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
                         .aspectRatio(16f / 9f)
                         .clip(RoundedCornerShape(16.dp)),
                 ) {
+                    // Portada 1080x608 en drawable-nodpi: sin escalado por
+                    // densidad y decodificada ~2,6 MB (ARGB_8888), que es
+                    // casi el tamaño al que se muestra (ancho de pantalla
+                    // a ~3x). No se subescala: no hay sobrecarga que
+                    // corregir aquí. La miniatura de Logros usa
+                    // col_cover_thumb (384x216). Auditoría RAM 2026-11-07.
                     Image(
                         painter = painterResource(R.drawable.col_cover),
                         contentDescription = "Child of Light",

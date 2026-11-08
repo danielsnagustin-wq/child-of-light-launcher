@@ -25,8 +25,19 @@
         <package android:name="org.vita3k.emulator" />
     </queries>
 
+    <!-- RAM ≤ 4 GB (auditoría 2026-11-07): largeHeap NO se activa.
+         largeHeap solo sube el límite del heap JAVA; la memoria del
+         núcleo embebido es NATIVA (mmap, fuera del heap Java), así que
+         no le ayudaría y sí competiría con el sistema y con el propio
+         núcleo por los 4 GB (más GC, más riesgo de que el sistema
+         mate el proceso). El heap Java del launcher es pequeño
+         (Compose + listas de KBs: 27 trofeos, índice de sesiones);
+         el límite por defecto basta. Lo que sí ahorra RAM aquí es el
+         perfil conservador de DeviceMemory (1x, Double Buffer) y
+         copiar archivos grandes por streaming con buffer fijo. -->
     <application
         android:allowBackup="true"
+        android:largeHeap="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"

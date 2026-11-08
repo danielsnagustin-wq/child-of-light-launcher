@@ -51,6 +51,12 @@ object GpuDetector {
             // GPU ARM no-Mali se clasificaba mal. Ahora solo el renderer manda
             // (Mali/Immortalis); un vendor ARM con otro renderer es OTHER.
             r.contains("MALI") || r.contains("IMMORTALIS") -> GpuVendor.MALI
+            // PowerVR (Imagination): renderer "PowerVR ..." o vendor
+            // "Imagination Technologies". Sin perfil propio: cae en el
+            // perfil Genérico seguro (defaultProfileFor).
+            r.contains("POWERVR") || v.contains("IMAGINATION") -> GpuVendor.POWERVR
+            // Xclipse (Samsung/AMD), Apple, emuladores y resto: OTHER ->
+            // perfil Genérico seguro. No se inventa un perfil para ellos.
             r.isBlank() -> GpuVendor.UNKNOWN
             else -> GpuVendor.OTHER
         }

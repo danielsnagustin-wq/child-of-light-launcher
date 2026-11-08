@@ -22,12 +22,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.danielsnagustin.childoflight.launcher.data.DeviceCompat
+import com.danielsnagustin.childoflight.launcher.data.DeviceMemory
+import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 
 /**
  * GPU y diagnóstico.
@@ -77,6 +82,29 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             Text("Vendor: ${g.vendorString.ifBlank { "—" }}")
             Text("GLES: ${g.glesVersion.ifBlank { "—" }}")
             Text("Vulkan: ${g.vulkanVersionLabel} (soportado: ${if (g.vulkanSupported) "sí" else "no"})")
+            // Dispositivo: arquitectura y RAM (lecturas reales, no
+            // estimadas). La RAM la lee DeviceMemory (auditoría ≤ 4 GB).
+            val context = LocalContext.current
+            val ramGb = remember { DeviceMemory.totalRamBytes(context)?.let { it / 1_073_741_824.0 } }
+            Text("Arquitectura: ${DeviceCompat.architectureLabel()}")
+            Text("RAM total: ${ramGb?.let { "%.1f GB".format(it) } ?: "no detectada"}")
+            if (settings != null) {
+                Text("Backend efectivo: ${resolveBackend(settings, g).label}")
+            }
+            if (!DeviceCompat.is64BitDevice()) {
+                Text(
+                    "⚠ Este teléfono es de 32 bits: el núcleo embebido necesita 64 bits (arm64), así que el juego se abrirá con la app externa.",
+                    color = ColGold,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            if (!g.vulkanSupported) {
+                Text(
+                    "⚠ Sin Vulkan en este teléfono. El núcleo usará OpenGL en su lugar: puede ir más lento o con fallos gráficos. Si el juego no arranca o se ve mal, activa el modo seguro en Ajustes.",
+                    color = ColGold,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
             if (g.isUserVerifiedDevice) {
                 Text("✓ Procesador verificado por el usuario: Child of Light va muy bien en este procesador.", color = ColGold, fontWeight = FontWeight.Bold)
                 NoteText("Por eso el preset por defecto es G99 Recomendado (1x, Frame Skip 0): se optimiza para mantener esa fluidez estable, no para recortar de más.")
@@ -84,6 +112,10 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 NoteText("Mali: hay cosas que definitivamente no funcionan y es posible que nunca funcionen, pero el núcleo trae arreglos para Mali (vertex fix, Double Buffer mejorado) y Child of Light, al ser 2D UbiArt, es más ligero que un juego 3D: a 1x tiene más chance. No se prometen 60 fps en Mali.")
             } else if (g.vendor.name == "ADRENO") {
                 NoteText("Snapdragon/Adreno: usa Turnip para mejor compatibilidad (ver Ajustes → Driver GPU).")
+            } else if (g.vendor.name == "POWERVR") {
+                NoteText("PowerVR: no hay perfil específico para esta GPU; se usa el perfil Genérico seguro (1x, Double Buffer). Si el juego va mal, prueba el backend OpenGL o el modo seguro en Ajustes.")
+            } else {
+                NoteText("GPU sin perfil propio (o no detectada): se usa el perfil Genérico seguro (1x, Double Buffer). Ninguna GPU se queda sin perfil.")
             }
             OutlinedButton(onClick = { vm.detectGpu() }, modifier = Modifier.fillMaxWidth()) { Text("Volver a detectar GPU") }
         }

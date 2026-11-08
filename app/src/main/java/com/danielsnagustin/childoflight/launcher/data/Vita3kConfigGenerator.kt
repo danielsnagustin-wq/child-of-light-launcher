@@ -1,8 +1,12 @@
 package com.danielsnagustin.childoflight.launcher.data
 
 import android.content.Context
+import com.danielsnagustin.childoflight.launcher.model.GpuBackend
+import com.danielsnagustin.childoflight.launcher.model.GpuDriver
+import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.effectiveSettings
+import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 import java.io.File
 
 /**
@@ -43,8 +47,14 @@ import java.io.File
  */
 object Vita3kConfigGenerator {
 
-    fun generate(settings: LauncherSettings, vitaFsPath: String): String {
+    /**
+     * gpu = GPU detectada (opcional, null = sin detectar): si el ajuste
+     * pide Vulkan pero el teléfono NO tiene Vulkan, el backend emitido
+     * es OpenGL (resolveBackend). Sin gpu no se cambia nada.
+     */
+    fun generate(settings: LauncherSettings, vitaFsPath: String, gpu: GpuInfo? = null): String {
         val s = effectiveSettings(settings)
+        val backend = resolveBackend(s, gpu)
         val sb = StringBuilder()
         sb.appendLine("# config.yml generado por Child of Light Launcher (Etapa 1)")
         sb.appendLine("# Perfil activo: ${s.activeProfile.label}")
@@ -57,7 +67,10 @@ object Vita3kConfigGenerator {
         sb.appendLine()
         // --- GPU ---
         sb.appendLine("# GPU — backend-renderer verificado (\"Vulkan\" / \"OpenGL\").")
-        sb.appendLine("backend-renderer: \"${s.backend.vita3kValue}\"")
+        if (backend == GpuBackend.OPENGL && s.backend == GpuBackend.VULKAN) {
+            sb.appendLine("# Sin Vulkan en este teléfono: fallback automático a OpenGL (el ajuste pedía Vulkan).")
+        }
+        sb.appendLine("backend-renderer: \"${backend.vita3kValue}\"")
         sb.appendLine("# GPU — resolution-multiplier es float en config.h: 1.0 = 960x544, 2.0 = 1920x1088, 3.0 = 2880x1632, 4.0 = 3840x2176.")
         sb.appendLine("resolution-multiplier: ${formatFloat(s.resolutionMultiplier)}")
         sb.appendLine("# GPU — screen-filter verificado (default \"Bilinear\").")
@@ -79,7 +92,13 @@ object Vita3kConfigGenerator {
         sb.appendLine("texture-cache: ${s.textureCache}")
         sb.appendLine("shader-cache: ${s.shaderCache}")
         // --- Driver ---
-        if (s.turnipInstalled && s.customDriverName.isNotBlank()) {
+        // Turnip SOLO si el driver activo es TURNIP: antes bastaba con
+        // tenerlo instalado + nombre guardado, así que un usuario que
+        // instalaba Turnip en Adreno y luego cambiaba a "Sistema"
+        // (ADRENO_PERFORMANCE o useSystemDriver) seguía con Turnip
+        // activo en el config.yml sin saberlo. El nombre/versión
+        // guardados se conservan, pero no se emiten si no está activo.
+        if (s.gpuDriver == GpuDriver.TURNIP && s.turnipInstalled && s.customDriverName.isNotBlank()) {
             sb.appendLine("# Driver personalizado Turnip (solo Adreno). custom-driver-name verificado como clave; el valor esperado exacto (nombre del zip) es TODO-VERIFY contra el build de Android.")
             sb.appendLine("custom-driver-name: \"${s.customDriverName}\"")
         } else {
@@ -116,8 +135,8 @@ object Vita3kConfigGenerator {
     }
 
     /** Escribe config.yml en <vitaFs>/config.yml y devuelve el archivo. */
-    fun writeConfig(context: Context, settings: LauncherSettings, vitaRoot: File): File {
-        val content = generate(settings, vitaRoot.absolutePath)
+    fun writeConfig(context: Context, settings: LauncherSettings, vitaRoot: File, gpu: GpuInfo? = null): File {
+        val content = generate(settings, vitaRoot.absolutePath, gpu)
         if (!vitaRoot.exists()) vitaRoot.mkdirs()
         val file = File(vitaRoot, "config.yml")
         file.writeText(content)

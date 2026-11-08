@@ -10,7 +10,10 @@ import androidx.lifecycle.viewModelScope
 import com.danielsnagustin.childoflight.launcher.core.EmbeddedPkgInstaller
 import com.danielsnagustin.childoflight.launcher.core.Vita3kCoreBridge
 import com.danielsnagustin.childoflight.launcher.data.AchievementRepository
+import com.danielsnagustin.childoflight.launcher.data.BundledTurnipDriver
 import com.danielsnagustin.childoflight.launcher.data.ControlProfile
+import com.danielsnagustin.childoflight.launcher.data.DeviceCompat
+import com.danielsnagustin.childoflight.launcher.data.DeviceMemory
 import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
 import com.danielsnagustin.childoflight.launcher.data.DownloadsCopy
 import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
@@ -244,7 +247,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // preset G99 por defecto.
             runCatching {
                 val gpu = settingsRepo.gpuInfoFlow.first()
-                if (gpu == null) detectGpu()
+                if (gpu == null) {
+                    detectGpu()
+                } else if (gpu.vendor == GpuVendor.ADRENO) {
+                    // GPU ya conocida de un arranque anterior: si una
+                    // build posterior trae el driver incluido en
+                    // assets, instalarlo sin esperar a re-detectar.
+                    ensureBundledTurnipDriver()
+                }
             }
         }
     }
@@ -280,7 +290,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun refreshConfigPreview(settings: LauncherSettings) {
-        _generatedConfig.value = Vita3kConfigGenerator.generate(settings, library.vitaRoot.absolutePath)
+        // La vista previa debe mostrar lo mismo que se escribirá al
+        // lanzar (incluido el fallback Vulkan -> OpenGL): por eso se
+        // lee la GPU detectada antes de generar.
+        viewModelScope.launch {
+            val gpu = settingsRepo.gpuInfoFlow.first()
+            _generatedConfig.value = Vita3kConfigGenerator.generate(settings, library.vitaRoot.absolutePath, gpu)
+        }
     }
 
     // --- GPU ---
@@ -293,23 +309,39 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // M34: el preset solo se aplica automáticamente en el primer
             // arranque real. Si el usuario ya personalizó sus ajustes,
             // re-detectar no debe sobrescribirlos.
+            // RAM baja (≤ 4 GB): el primer preset es el conservador
+            // (1x, Double Buffer, sin FXAA/FSR); el usuario puede
+            // subir a 2x después si quiere.
+            val lowRam = DeviceMemory.isLowRamDevice(context)
             val appliedPreset = if (!settingsRepo.isPresetApplied()) {
                 val profile = defaultProfileFor(gpu)
-                settingsRepo.applyPreset(profile, current = current)
+                settingsRepo.applyPreset(profile, current = current, lowRam = lowRam)
                 true
             } else {
                 false
             }
+            val lowRamNote = if (appliedPreset && lowRam) " Memoria baja (4 GB o menos): perfil conservador (1x) aplicado." else ""
             withContext(Dispatchers.Main) {
-                _message.value = if (gpu.isUserVerifiedDevice) {
+                // Sin Vulkan, el aviso va en el mismo mensaje de detección
+                // (primer arranque): el config.yml ya cae a OpenGL solo
+                // (resolveBackend), pero el usuario debe saberlo.
+                val vulkanWarning = if (!gpu.vulkanSupported) {
+                    " Aviso: este teléfono no tiene Vulkan; el juego usará OpenGL y puede ir más lento o con fallos gráficos."
+                } else {
+                    ""
+                }
+                _message.value = (if (gpu.isUserVerifiedDevice) {
                     "GPU detectada: Helio G99 · Mali-G57 MC2. Procesador verificado por ti: " +
                         if (appliedPreset) "preset G99 Recomendado aplicado." else "tus ajustes personalizados no se tocaron."
                 } else {
                     "GPU detectada: ${gpu.shortLabel}. " +
                         if (appliedPreset) "Preset ${defaultProfileFor(gpu).label} aplicado." else "Tus ajustes personalizados no se tocaron."
-                }
+                }) + lowRamNote + vulkanWarning
             }
             LauncherLog.append(context, "gpu", "Detectada: ${gpu.renderer} | SoC ${gpu.socModel} | ${gpu.vulkanVersionLabel}")
+            // En Adreno, instalar el driver incluido si lo trae la APK
+            // (no-op mientras assets no tenga el zip; nunca en Mali).
+            ensureBundledTurnipDriver()
         }
     }
 
@@ -923,6 +955,52 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /**
+     * Instala el driver Turnip incluido en assets, SOLO en Adreno y
+     * SOLO si no hay ya un driver instalado (manual o incluido).
+     * Best-effort y silencioso cuando no hay nada que hacer: si no
+     * hay zip en assets (estado actual: sin binario), si la GPU no
+     * es Adreno, si el modelo no tiene variante incluida (8xx,
+     * 710/720, A32) o si la validación falla, NO se muestra ningún
+     * error y se sigue con el driver del sistema. Solo se avisa
+     * cuando la instalación tuvo éxito. Nunca bloquea el arranque ni
+     * el lanzamiento del juego; nunca toca el juego ni los saves.
+     * Se llama tras detectar la GPU (primer arranque y re-detección)
+     * y en init si la GPU ya estaba guardada.
+     */
+    fun ensureBundledTurnipDriver() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val gpu = settingsRepo.gpuInfoFlow.first()
+                if (gpu?.vendor != GpuVendor.ADRENO) return@runCatching
+                val current = settingsRepo.settingsFlow.first()
+                if (current.turnipInstalled) return@runCatching
+                if (turnipRepo.installedDriverFile() != null) return@runCatching
+                // Sin variante incluida para este modelo Adreno, no se
+                // hace nada: el driver del sistema sigue mandando.
+                if (BundledTurnipDriver.selectVariant(gpu.renderer) == null) return@runCatching
+                val result = turnipRepo.installBundledAsset()
+                result.onSuccess { installed ->
+                    settingsRepo.save(
+                        current.copy(
+                            turnipInstalled = true,
+                            turnipVersion = installed.savedName,
+                            customDriverName = installed.savedName.substringBeforeLast("."),
+                            gpuDriver = com.danielsnagustin.childoflight.launcher.model.GpuDriver.TURNIP,
+                        ),
+                    )
+                    withContext(Dispatchers.Main) {
+                        _message.value = "Driver incluido instalado: ${installed.savedName}. Si ves glitches, vuelve al driver del sistema en Ajustes → Driver GPU."
+                    }
+                }.onFailure { e ->
+                    LauncherLog.append(context, "driver", "Driver incluido no instalado: ${e.message}")
+                }
+            }.onFailure { e ->
+                LauncherLog.append(context, "driver", "No se pudo revisar el driver incluido: ${e.message}")
+            }
+        }
+    }
+
     fun useSystemDriver() {
         viewModelScope.launch {
             val current = settingsRepo.settingsFlow.first()
@@ -936,10 +1014,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun play() {
         viewModelScope.launch(Dispatchers.IO) {
             val settings = settingsRepo.settingsFlow.first()
+            val gpu = settingsRepo.gpuInfoFlow.first()
+            // 32 bits: el núcleo embebido necesita 64 bits (arm64). No se
+            // bloquea nada (la vía externa sigue funcionando), pero el
+            // usuario debe saber por qué nunca se activa el núcleo.
+            // La GPU se pasa al lanzador para el fallback Vulkan->OpenGL
+            // del config.yml (solo lo lee el núcleo embebido).
+            if (!DeviceCompat.is64BitDevice()) {
+                withContext(Dispatchers.Main) {
+                    _message.value = "Este teléfono es de 32 bits: el núcleo embebido necesita 64 bits, así que el juego se abrirá con la app externa."
+                }
+            }
             // Firmware: si hay PUP guardado y núcleo presente, instalarlo
             // ahora (best-effort, nunca bloquea el lanzamiento).
             ensureFirmwareForEmbedded()
-            val outcome = launcher.launch(library, settings, sessionManager)
+            val outcome = launcher.launch(library, settings, sessionManager, gpu)
             if (outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternal ||
                 outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ||
                 outcome is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded
@@ -1003,7 +1092,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                             )
                         }
                     is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded ->
-                        _message.value = "Núcleo embebido: juego lanzado (${outcome.configPath})."
+                        // Sin Vulkan, el config.yml ya cayó a OpenGL solo;
+                        // se avisa aquí porque es el momento en que importa.
+                        _message.value = "Núcleo embebido: juego lanzado (${outcome.configPath})." +
+                            if (gpu?.vulkanSupported == false) " Sin Vulkan en este teléfono: se usa OpenGL, puede ir más lento o con fallos gráficos." else ""
                     is Vita3KLauncher.LaunchOutcome.EmbeddedCorePresent ->
                         _message.value = "Núcleo embebido detectado, pero falta el punto de entrada JNI (Etapa 2)."
                     is Vita3KLauncher.LaunchOutcome.Blocked -> {
@@ -1150,7 +1242,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // Firmware: igual que en play(), instalar el PUP guardado
             // en el núcleo si está presente (best-effort, no bloquea).
             ensureFirmwareForEmbedded()
-            val outcome = launcher.launch(library, settings, sessionManager)
+            val outcome = launcher.launch(library, settings, sessionManager, gpu)
             if (outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternal ||
                 outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ||
                 outcome is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded
@@ -1164,7 +1256,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ->
                         "Prueba de 30 s en marcha. ${Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL}"
                     is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded ->
-                        "Prueba de 30 s en marcha (núcleo embebido). Juega 30 segundos y al volver registra el FPS."
+                        "Prueba de 30 s en marcha (núcleo embebido). Juega 30 segundos y al volver registra el FPS." +
+                            if (gpu?.vulkanSupported == false) " Sin Vulkan en este teléfono: se usa OpenGL, puede ir más lento." else ""
                     is Vita3KLauncher.LaunchOutcome.Blocked -> {
                         _pendingBenchmark.value = null
                         outcome.reason
@@ -1266,10 +1359,35 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /**
+     * Lee un archivo de texto elegido por el usuario con tope
+     * (auditoría RAM ≤ 4 GB, 2026-11-07): readText() sin límite sobre
+     * un URI elegido a mano cargaría el archivo entero en RAM si el
+     * usuario eligiera por error un archivo grande. Estos archivos
+     * (progreso de logros, perfil de control) pesan KBs; 64 KB sobran.
+     */
+    private fun readTextCapped(uri: Uri, maxChars: Int = 64 * 1024): String {
+        context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
+            val buf = CharArray(8192)
+            val sb = StringBuilder()
+            while (true) {
+                val n = reader.read(buf)
+                if (n < 0) break
+                if (sb.length + n > maxChars) {
+                    throw IllegalArgumentException(
+                        "El archivo es demasiado grande (más de ${maxChars / 1024} KB). Elige el archivo exportado correcto.",
+                    )
+                }
+                sb.append(buf, 0, n)
+            }
+            return sb.toString()
+        } ?: return ""
+    }
+
     fun importAchievements(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText() ?: ""
+                val text = readTextCapped(uri)
                 val result = achievementsRepo.importText(text)
                 withContext(Dispatchers.Main) {
                     // BUG (auditoría): addedOrKept es el nº de entradas VÁLIDAS
@@ -1390,7 +1508,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun importControlProfile(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText() ?: ""
+                val text = readTextCapped(uri)
                 val profile = touchRepo.importProfileText(text)
                 withContext(Dispatchers.Main) {
                     _message.value = if (profile != null) "Perfil \"${profile.name}\" importado." else "Archivo no válido: no es un perfil de control exportado."
@@ -1648,7 +1766,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             appendLine("Driver: ${settings.gpuDriver} | Turnip: ${settings.turnipVersion} (instalado: ${settings.turnipInstalled})")
             appendLine()
             appendLine("--- config.yml generado ---")
-            appendLine(Vita3kConfigGenerator.generate(settings, library.vitaRoot.absolutePath))
+            appendLine(Vita3kConfigGenerator.generate(settings, library.vitaRoot.absolutePath, gpu))
             appendLine("--- Log del launcher (últimas líneas) ---")
             appendLine(LauncherLog.readLast(context, 60))
         }

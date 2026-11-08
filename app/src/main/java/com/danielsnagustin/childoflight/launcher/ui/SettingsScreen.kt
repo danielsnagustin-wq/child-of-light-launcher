@@ -303,7 +303,15 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
             NoteText("Turnip es el driver Mesa open-source para Adreno. Se carga solo para esta app. Al cambiar de driver, el núcleo limpia la caché de shaders al arrancar.")
         } else {
             Text("Driver del sistema (${gpu?.renderer ?: "GPU no detectada"})", fontWeight = FontWeight.SemiBold)
-            NoteText("Turnip solo funciona en Qualcomm Adreno, no en Mali. Por eso no se muestra aquí.")
+            // El texto depende de la GPU: en Mali la frase antigua ("no
+            // en Mali") era correcta; en PowerVR u otra GPU sería falsa.
+            NoteText(
+                if (gpu?.vendor == GpuVendor.MALI) {
+                    "Turnip solo funciona en Qualcomm Adreno, no en Mali. Por eso no se muestra aquí."
+                } else {
+                    "Turnip solo funciona en Qualcomm Adreno. Por eso no se muestra aquí."
+                },
+            )
             if (gpu?.vendor == GpuVendor.MALI) {
                 NoteText("En Mali, si ves glitches gráficos, prueba el backend OpenGL como fallback (sección GPU, arriba).")
             }

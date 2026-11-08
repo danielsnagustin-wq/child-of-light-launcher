@@ -21,6 +21,7 @@ import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.MemoryMapping
 import com.danielsnagustin.childoflight.launcher.model.ScreenFilter
+import com.danielsnagustin.childoflight.launcher.model.applyLowRamDefaults
 import com.danielsnagustin.childoflight.launcher.model.defaultProfileFor
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import kotlinx.coroutines.flow.Flow
@@ -196,9 +197,15 @@ class SettingsRepository(private val context: Context) {
         return context.settingsDataStore.data.first()[Keys.PRESET_APPLIED] == true
     }
 
-    /** Aplica un preset completo (sobrescribe los ajustes actuales). */
-    suspend fun applyPreset(profile: GpuProfileId, current: LauncherSettings? = null) {
-        val base = presetSettings(profile)
+    /**
+     * Aplica un preset completo (sobrescribe los ajustes actuales).
+     * lowRam=true aplica además el perfil conservador de ≤ 4 GB
+     * (applyLowRamDefaults) sobre el preset; solo lo pasa el primer
+     * arranque automático (detectGpu) y resetToDefaults, nunca la
+     * elección manual de un perfil por el usuario.
+     */
+    suspend fun applyPreset(profile: GpuProfileId, current: LauncherSettings? = null, lowRam: Boolean = false) {
+        val base = if (lowRam) applyLowRamDefaults(presetSettings(profile)) else presetSettings(profile)
         // El driver sí forma parte del preset: Turnip solo tiene sentido en
         // ADRENO_QUALITY_TURNIP; en Mali/G99 el driver siempre es Sistema.
         // La info de Turnip instalado (nombre/versión) se conserva siempre.
@@ -235,12 +242,15 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun resetToDefaults(gpu: GpuInfo?) {
         val profile = if (gpu != null) defaultProfileFor(gpu) else GpuProfileId.G99_RECOMMENDED
+        // RAM baja (≤ 4 GB): restablecer también vuelve al perfil
+        // conservador; el usuario puede subir a 2x después si quiere.
+        val base = if (DeviceMemory.isLowRamDevice(context)) applyLowRamDefaults(presetSettings(profile)) else presetSettings(profile)
         // El estado de entrega del .pkg NO es un ajuste: restablecer no
         // debe obligar a volver a copiar 1.1 GB a Descargas ni a
         // reconfirmar la instalación (igual que applyPreset, M21).
         val current = runCatching { settingsFlow.first() }.getOrNull()
         save(
-            presetSettings(profile).copy(
+            base.copy(
                 pkgDeliveredToVita3k = current?.pkgDeliveredToVita3k ?: false,
                 pkgInstalledInVita3k = current?.pkgInstalledInVita3k ?: false,
             ),

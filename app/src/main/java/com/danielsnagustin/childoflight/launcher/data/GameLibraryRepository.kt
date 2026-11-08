@@ -22,6 +22,17 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 /**
+ * Buffer de copia para archivos grandes (auditoría RAM ≤ 4 GB, 2026-11-07).
+ * InputStream.copyTo() sin tamaño usa 8 KiB por defecto: para un .pkg de
+ * 1,14 GB son ~140.000 lecturas/escrituras. Con 256 KiB son ~4.500 y la
+ * RAM extra es solo ese buffer transitorio (0,25 MB, se libera al cerrar
+ * el stream). La copia sigue siendo por streaming: NUNCA se carga el
+ * archivo entero en RAM (no hay readBytes/readText sobre archivos grandes
+ * en este repositorio; el único readBytes es param.sfo, con tope de 256 KB).
+ */
+internal const val LARGE_FILE_COPY_BUFFER_BYTES = 256 * 1024
+
+/**
  * Guía pura (sin Android) de qué archivo elegir al importar.
  * Sin Context ni I/O: testeable en ImportClassifierTest.
  *
@@ -1102,7 +1113,7 @@ class GameLibraryRepository(private val context: Context) {
                 copyDocumentTree(child, sub)
             } else if (child.isFile) {
                 context.contentResolver.openInputStream(child.uri)?.use { input ->
-                    FileOutputStream(File(destDir, name)).use { out -> input.copyTo(out) }
+                    FileOutputStream(File(destDir, name)).use { out -> input.copyTo(out, LARGE_FILE_COPY_BUFFER_BYTES) }
                 } ?: throw IllegalStateException("No se pudo leer ${child.name} de la carpeta.")
             }
         }
@@ -1165,7 +1176,7 @@ class GameLibraryRepository(private val context: Context) {
                     dir.walkTopDown().filter { it.isFile }.forEach { file ->
                         val rel = file.relativeTo(dir).path
                         zip.putNextEntry(ZipEntry(rel))
-                        FileInputStream(file).use { it.copyTo(zip) }
+                        FileInputStream(file).use { it.copyTo(zip, LARGE_FILE_COPY_BUFFER_BYTES) }
                         zip.closeEntry()
                         count++
                     }
@@ -1287,7 +1298,7 @@ class GameLibraryRepository(private val context: Context) {
 
     private fun copyUriToFile(uri: Uri, dest: File) {
         context.contentResolver.openInputStream(uri)?.use { input ->
-            FileOutputStream(dest).use { out -> input.copyTo(out) }
+            FileOutputStream(dest).use { out -> input.copyTo(out, LARGE_FILE_COPY_BUFFER_BYTES) }
         } ?: throw IllegalStateException("No se pudo abrir el archivo elegido.")
     }
 
@@ -1313,7 +1324,7 @@ class GameLibraryRepository(private val context: Context) {
                         requireInside(destDir, dest)
                         dest.parentFile?.mkdirs()
                         FileOutputStream(dest).use { out ->
-                            totalBytes += zip.copyTo(out)
+                            totalBytes += zip.copyTo(out, LARGE_FILE_COPY_BUFFER_BYTES)
                             if (totalBytes > 6_000_000_000L) throw IllegalArgumentException("El archivo es demasiado grande (> 6 GB).")
                         }
                     }
