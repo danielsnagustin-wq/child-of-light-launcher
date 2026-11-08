@@ -18,6 +18,21 @@
 // Algunas están declaradas para uso futuro (isInitialized, IME):
 // declararlas no cuesta nada y documenta la superficie JNI
 // disponible de upstream.
+//
+// Si una llamada a upstream dejó una excepción JNI pendiente, la
+// limpia y devuelve true. El puente usa códigos de error, no
+// excepciones: el llamador Kotlin solo captura UnsatisfiedLinkError,
+// así que una excepción pendiente aquí llegaría como crash a
+// EmbeddedGameActivity / EmbeddedPkgInstaller en vez de como
+// código de error. Upstream normalmente devuelve false/"" sin
+// lanzar, pero si lanza, el puente lo convierte en error.
+static inline bool launcher_clear_pending_exception(JNIEnv *env) {
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return true;
+    }
+    return false;
+}
 
 #pragma once
 

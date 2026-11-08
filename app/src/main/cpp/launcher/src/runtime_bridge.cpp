@@ -34,10 +34,13 @@
 // Códigos de Vita3kCoreBridge: 0 = OK, -1 = NOT_IMPLEMENTED.
 static constexpr jint kOk = 0;
 static constexpr jint kNotImplemented = -1;
-// Errores del núcleo (otros negativos, ver Vita3kCoreBridge).
+// Errores del núcleo (otros negativos, ver Vita3kCoreBridge.kt):
+// loadGame devuelve -2 si no hay sesión y -3 si el Title ID no está
+// instalado (el .kt lo documenta así); init fallido también es -2
+// (otra función, mismo "no se puede continuar").
 static constexpr jint kInitFailed = -2;
-static constexpr jint kNotInitialized = -3;
-static constexpr jint kTitleNotInstalled = -4;
+static constexpr jint kNotInitialized = -2;
+static constexpr jint kTitleNotInstalled = -3;
 
 #ifdef LAUNCHER_HAS_VITA3K
 #include "launcher_bridge.h"
@@ -87,6 +90,10 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInit(
     JNIEnv *env, jobject /* thiz */, jstring storagePath) {
 #ifdef LAUNCHER_HAS_VITA3K
+    if (storagePath == nullptr) {
+        LOGE("nativeInit: storagePath nulo");
+        return kInitFailed;
+    }
     // prepareFrontend primero (idempotente): SDL_SetMainReady debe
     // preceder a cualquier SDL_Init del hilo SDL.
     if (!prepare_frontend_runtime()) {
@@ -94,8 +101,8 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInit(
         return kInitFailed;
     }
     const jboolean ok = Java_org_vita3k_emulator_NativeLib_init(env, nullptr, storagePath);
-    if (ok != JNI_TRUE) {
-        LOGE("nativeInit: NativeLib.init devolvió false");
+    if (launcher_clear_pending_exception(env) || ok != JNI_TRUE) {
+        LOGE("nativeInit: NativeLib.init devolvió false o lanzó excepción");
         return kInitFailed;
     }
     LOGI("nativeInit: núcleo inicializado");
@@ -164,6 +171,9 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeShutd
     JNIEnv *env, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
     const jboolean ok = Java_org_vita3k_emulator_NativeLib_requestAppQuit(env, nullptr);
+    if (launcher_clear_pending_exception(env)) {
+        return kNotInitialized;
+    }
     return ok == JNI_TRUE ? kOk : kNotInitialized;
 #else
     LOGW("nativeShutdown STUB (TODO-ETAPA2): núcleo no embebido");

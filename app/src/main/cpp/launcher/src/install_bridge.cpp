@@ -14,6 +14,15 @@
 // Orden de instalación de un .pkg (ver core/EmbeddedPkgInstaller.kt):
 // convertRifToZrif(work.bin) -> installPkg(pkg, zrif, cb) ->
 // si no había zRIF, copyLicense(work.bin) como respaldo.
+//
+// Robustez JNI: los jstring nunca deben ser null (Kotlin los declara
+// no nulos), pero si llegara uno, upstream haría GetStringUTFChars
+// sobre null; el puente devuelve el error antes. Y si upstream deja
+// una excepción pendiente, se limpia y se devuelve el error: el
+// llamador Kotlin solo captura UnsatisfiedLinkError y trata ""/false
+// como fallo, así que una excepción pendiente sería un crash en vez
+// de un fallo controlado. Las funciones que devuelven String nunca
+// devuelven null (Kotlin haría .isEmpty() sobre el resultado).
 
 #include <jni.h>
 #include <android/log.h>
@@ -24,13 +33,28 @@
 
 #ifdef LAUNCHER_HAS_VITA3K
 #include "launcher_bridge.h"
+
+// Upstream devolvió null o lanzó: error limpio ("") en vez de null.
+static jstring launcher_empty_string_or_null(JNIEnv *env, jstring result) {
+    if (result == nullptr || launcher_clear_pending_exception(env)) {
+        return env->NewStringUTF("");
+    }
+    return result;
+}
 #endif
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInstallPkg(
     JNIEnv *env, jobject /* thiz */, jstring pkgPath, jstring zrif, jobject callback) {
 #ifdef LAUNCHER_HAS_VITA3K
+    if (pkgPath == nullptr || zrif == nullptr) {
+        LOGW("nativeInstallPkg: ruta o zrif nulos");
+        return JNI_FALSE;
+    }
     const jboolean ok = Java_org_vita3k_emulator_NativeLib_installPkg(env, nullptr, pkgPath, zrif, callback);
+    if (launcher_clear_pending_exception(env)) {
+        return JNI_FALSE;
+    }
     LOGI("nativeInstallPkg: %s", ok == JNI_TRUE ? "OK" : "falló");
     return ok;
 #else
@@ -43,7 +67,14 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInstallArchive(
     JNIEnv *env, jobject /* thiz */, jstring archivePath, jobject callback, jboolean forceReinstall) {
 #ifdef LAUNCHER_HAS_VITA3K
+    if (archivePath == nullptr) {
+        LOGW("nativeInstallArchive: ruta nula");
+        return JNI_FALSE;
+    }
     const jboolean ok = Java_org_vita3k_emulator_NativeLib_installArchive(env, nullptr, archivePath, callback, forceReinstall);
+    if (launcher_clear_pending_exception(env)) {
+        return JNI_FALSE;
+    }
     LOGI("nativeInstallArchive: %s", ok == JNI_TRUE ? "OK" : "falló");
     return ok;
 #else
@@ -56,7 +87,12 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInstallFirmware(
     JNIEnv *env, jobject /* thiz */, jstring pupPath, jobject callback) {
 #ifdef LAUNCHER_HAS_VITA3K
-    return Java_org_vita3k_emulator_NativeLib_installFirmware(env, nullptr, pupPath, callback);
+    if (pupPath == nullptr) {
+        LOGW("nativeInstallFirmware: ruta nula");
+        return env->NewStringUTF("");
+    }
+    return launcher_empty_string_or_null(
+        env, Java_org_vita3k_emulator_NativeLib_installFirmware(env, nullptr, pupPath, callback));
 #else
     LOGW("nativeInstallFirmware STUB: núcleo no embebido");
     return env->NewStringUTF("");
@@ -67,7 +103,14 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeCopyLicense(
     JNIEnv *env, jobject /* thiz */, jstring licensePath) {
 #ifdef LAUNCHER_HAS_VITA3K
-    return Java_org_vita3k_emulator_NativeLib_copyLicense(env, nullptr, licensePath);
+    if (licensePath == nullptr) {
+        return JNI_FALSE;
+    }
+    const jboolean ok = Java_org_vita3k_emulator_NativeLib_copyLicense(env, nullptr, licensePath);
+    if (launcher_clear_pending_exception(env)) {
+        return JNI_FALSE;
+    }
+    return ok;
 #else
     LOGW("nativeCopyLicense STUB: núcleo no embebido");
     return JNI_FALSE;
@@ -78,7 +121,14 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeCreateLicense(
     JNIEnv *env, jobject /* thiz */, jstring zrif) {
 #ifdef LAUNCHER_HAS_VITA3K
-    return Java_org_vita3k_emulator_NativeLib_createLicense(env, nullptr, zrif);
+    if (zrif == nullptr) {
+        return JNI_FALSE;
+    }
+    const jboolean ok = Java_org_vita3k_emulator_NativeLib_createLicense(env, nullptr, zrif);
+    if (launcher_clear_pending_exception(env)) {
+        return JNI_FALSE;
+    }
+    return ok;
 #else
     LOGW("nativeCreateLicense STUB: núcleo no embebido");
     return JNI_FALSE;
@@ -89,7 +139,11 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeFindPkgZrif(
     JNIEnv *env, jobject /* thiz */, jstring pkgPath) {
 #ifdef LAUNCHER_HAS_VITA3K
-    return Java_org_vita3k_emulator_NativeLib_findPkgZrif(env, nullptr, pkgPath);
+    if (pkgPath == nullptr) {
+        return env->NewStringUTF("");
+    }
+    return launcher_empty_string_or_null(
+        env, Java_org_vita3k_emulator_NativeLib_findPkgZrif(env, nullptr, pkgPath));
 #else
     LOGW("nativeFindPkgZrif STUB: núcleo no embebido");
     return env->NewStringUTF("");
@@ -100,7 +154,11 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeConvertRifToZrif(
     JNIEnv *env, jobject /* thiz */, jstring licensePath) {
 #ifdef LAUNCHER_HAS_VITA3K
-    return Java_org_vita3k_emulator_NativeLib_convertRifToZrif(env, nullptr, licensePath);
+    if (licensePath == nullptr) {
+        return env->NewStringUTF("");
+    }
+    return launcher_empty_string_or_null(
+        env, Java_org_vita3k_emulator_NativeLib_convertRifToZrif(env, nullptr, licensePath));
 #else
     LOGW("nativeConvertRifToZrif STUB: núcleo no embebido");
     return env->NewStringUTF("");

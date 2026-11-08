@@ -9,6 +9,13 @@
 // Los usa EmbeddedGameActivity (pausa con el botón guía, cierre
 // limpio al salir) y, en el futuro, la medición automática de FPS
 // (getFps vive en runtime_bridge.cpp).
+//
+// Robustez JNI: si upstream deja una excepción pendiente, se limpia
+// y se devuelve el valor de "no hay partida" (false / "" / 0): el
+// llamador Kotlin solo captura UnsatisfiedLinkError, así que una
+// excepción pendiente sería un crash en vez de un estado controlado.
+// getRunningAppTitle nunca devuelve null (Kotlin lo trata como
+// String no nulo).
 
 #include <jni.h>
 #include <android/log.h>
@@ -24,7 +31,11 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeIsAppRunning(
     JNIEnv *env, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
-    return Java_org_vita3k_emulator_NativeLib_isAppRunning(env, nullptr);
+    const jboolean ok = Java_org_vita3k_emulator_NativeLib_isAppRunning(env, nullptr);
+    if (launcher_clear_pending_exception(env)) {
+        return JNI_FALSE;
+    }
+    return ok;
 #else
     return JNI_FALSE;
 #endif
@@ -34,7 +45,11 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeRequestAppQuit(
     JNIEnv *env, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
-    return Java_org_vita3k_emulator_NativeLib_requestAppQuit(env, nullptr);
+    const jboolean ok = Java_org_vita3k_emulator_NativeLib_requestAppQuit(env, nullptr);
+    if (launcher_clear_pending_exception(env)) {
+        return JNI_FALSE;
+    }
+    return ok;
 #else
     LOGW("nativeRequestAppQuit STUB: núcleo no embebido");
     return JNI_FALSE;
@@ -45,7 +60,11 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeIsAppPaused(
     JNIEnv *env, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
-    return Java_org_vita3k_emulator_NativeLib_isAppPaused(env, nullptr);
+    const jboolean ok = Java_org_vita3k_emulator_NativeLib_isAppPaused(env, nullptr);
+    if (launcher_clear_pending_exception(env)) {
+        return JNI_FALSE;
+    }
+    return ok;
 #else
     return JNI_FALSE;
 #endif
@@ -55,7 +74,11 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetRunningAppTitle(
     JNIEnv *env, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
-    return Java_org_vita3k_emulator_NativeLib_getRunningAppTitle(env, nullptr);
+    jstring title = Java_org_vita3k_emulator_NativeLib_getRunningAppTitle(env, nullptr);
+    if (title == nullptr || launcher_clear_pending_exception(env)) {
+        return env->NewStringUTF("");
+    }
+    return title;
 #else
     return env->NewStringUTF("");
 #endif
@@ -65,7 +88,11 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetFirmwareInstallStateMask(
     JNIEnv *env, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
-    return Java_org_vita3k_emulator_NativeLib_getFirmwareInstallStateMask(env, nullptr);
+    const jint mask = Java_org_vita3k_emulator_NativeLib_getFirmwareInstallStateMask(env, nullptr);
+    if (launcher_clear_pending_exception(env)) {
+        return 0;
+    }
+    return mask;
 #else
     return 0;
 #endif
@@ -76,6 +103,7 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeRefre
     JNIEnv *env, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
     Java_org_vita3k_emulator_NativeLib_refreshAppsList(env, nullptr);
+    launcher_clear_pending_exception(env);
 #else
     LOGW("nativeRefreshAppsList STUB: núcleo no embebido");
 #endif
@@ -85,7 +113,11 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeSetPauseReasonEnabled(
     JNIEnv *env, jobject /* thiz */, jint reasonMask, jboolean enabled) {
 #ifdef LAUNCHER_HAS_VITA3K
-    return Java_org_vita3k_emulator_NativeLib_setPauseReasonEnabled(env, nullptr, reasonMask, enabled);
+    const jboolean ok = Java_org_vita3k_emulator_NativeLib_setPauseReasonEnabled(env, nullptr, reasonMask, enabled);
+    if (launcher_clear_pending_exception(env)) {
+        return JNI_FALSE;
+    }
+    return ok;
 #else
     LOGW("nativeSetPauseReasonEnabled STUB: núcleo no embebido");
     return JNI_FALSE;
@@ -96,7 +128,11 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeSetInputIntercepted(
     JNIEnv *env, jobject /* thiz */, jboolean intercepted) {
 #ifdef LAUNCHER_HAS_VITA3K
-    return Java_org_vita3k_emulator_NativeLib_setInputIntercepted(env, nullptr, intercepted);
+    const jboolean ok = Java_org_vita3k_emulator_NativeLib_setInputIntercepted(env, nullptr, intercepted);
+    if (launcher_clear_pending_exception(env)) {
+        return JNI_FALSE;
+    }
+    return ok;
 #else
     LOGW("nativeSetInputIntercepted STUB: núcleo no embebido");
     return JNI_FALSE;
