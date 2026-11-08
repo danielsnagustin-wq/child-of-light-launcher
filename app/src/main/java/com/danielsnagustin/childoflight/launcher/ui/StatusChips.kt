@@ -76,10 +76,11 @@ fun homeStatusChips(status: GameStatus, firmware: FirmwareStatus): List<StatusCh
         StatusChipData(
             key = HomeStatusKey.FIRMWARE,
             level = firmwareLevel,
-            // Ready: la versión instalada (firmwareName = "3.74" o la
-            // fuente). Saved: "importado" — el PUP está guardado pero
-            // NO instalado en el núcleo; no se muestra el texto largo
-            // "PSVUPDAT.PUP (guardado, no instalado)" en el chip.
+            // Ready: la versión instalada (firmwareName = "3.74", o
+            // vacío si no hay marcador con versión). Saved: "importado"
+            // — el PUP está guardado pero NO instalado en el núcleo;
+            // no se muestra el texto largo "PSVUPDAT.PUP (guardado, no
+            // instalado)" en el chip.
             detail = when (firmware) {
                 is FirmwareStatus.Ready -> status.firmwareName ?: ""
                 is FirmwareStatus.Saved -> "importado"

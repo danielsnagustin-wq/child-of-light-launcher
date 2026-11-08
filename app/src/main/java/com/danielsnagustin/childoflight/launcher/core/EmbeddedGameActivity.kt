@@ -73,7 +73,7 @@ import org.libsdl.app.SDLActivity
  * aquí, se cierra con un mensaje y el usuario vuelve al launcher
  * (no se finge que el juego arrancó).
  *
- * TODO (Etapa 2, tras la primera build que arranque el juego):
+ * Estado de la Etapa 2 (tras la primera build que arranque el juego):
  * - Overlay táctil: IMPLEMENTADO (GamepadOverlayView + puente JNI
  *   al mando virtual SDL de upstream, input_overlay.cpp). El perfil
  *   táctil activo del launcher (TouchLayoutRepository: posiciones,
@@ -89,8 +89,8 @@ import org.libsdl.app.SDLActivity
  *   IMPLEMENTADO (PauseMenuActivity + PauseMenuScreen, Compose):
  *   se abre con atrás o con el botón guía; Continuar reanuda, Salir
  *   guarda la sesión y cierra el motor de forma limpia.
- * - Relanzamiento en proceso (requestAppRelaunch) para cambiar de
- *   Title ID sin recrear la Activity.
+ * - PENDIENTE: relanzamiento en proceso (requestAppRelaunch) para
+ *   cambiar de Title ID sin recrear la Activity.
  */
 class EmbeddedGameActivity : SDLActivity() {
 
@@ -99,6 +99,8 @@ class EmbeddedGameActivity : SDLActivity() {
         const val EXTRA_GAME_TITLE = "game_title"
         /** true = prueba de 30 s: muestrear el FPS del núcleo y guardarlo al salir. */
         const val EXTRA_BENCHMARK = "benchmark"
+        /** Muestras válidas de la prueba de 30 s: 1 por segundo de juego real. */
+        const val BENCHMARK_MAX_SAMPLES = 30
 
         /** Request code del menú de pausa (startActivityForResult). */
         const val REQUEST_PAUSE_MENU = 2001
@@ -338,8 +340,9 @@ class EmbeddedGameActivity : SDLActivity() {
      * Prueba de 30 s (auditoría de funcionalidad 2026-11-08): si el
      * lanzamiento vino con benchmark=true, muestrea el FPS real del
      * núcleo (Vita3kCoreBridge.getFps(), que lee EmuEnvState::fps)
-     * cada segundo mientras el juego está en primer plano. Al salir
-     * (onPause) guarda la media en DataStore; el launcher la consume
+     * cada segundo mientras el juego está en primer plano, hasta 30
+     * muestras válidas (~30 s de juego real). Al salir (onPause) guarda
+     * la media en DataStore; el launcher la consume
      * una sola vez al volver y registra la prueba solo. Sin muestras
      * válidas no se guarda nada: la prueba queda para registro
      * manual. El muestreo no toca el juego: es una lectura JNI por
@@ -348,8 +351,11 @@ class EmbeddedGameActivity : SDLActivity() {
     private fun maybeStartBenchmarkSampling() {
         if (!benchmarkMode || !Vita3kCoreBridge.available) return
         if (benchmarkJob?.isActive == true) return
+        // Prueba completa: 30 muestras válidas. Sin el tope, el muestreo
+        // medía toda la sesión en vez de 30 s.
+        if (benchmarkSamples.size >= BENCHMARK_MAX_SAMPLES) return
         benchmarkJob = overlayScope.launch {
-            while (isActive) {
+            while (isActive && benchmarkSamples.size < BENCHMARK_MAX_SAMPLES) {
                 val fps = runCatching { Vita3kCoreBridge.getFps() }.getOrDefault(-1f)
                 if (fps > 0f) benchmarkSamples += fps
                 delay(1000)

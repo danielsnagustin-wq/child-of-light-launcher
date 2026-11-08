@@ -70,7 +70,7 @@ object FirmwareResolver {
      */
     const val NO_FIRMWARE_MESSAGE =
         "No hay firmware en este teléfono: el núcleo embebido no puede arrancar el juego sin tu archivo PSVUPDAT.PUP. " +
-            "Si lo tienes, impórtalo en Ajustes → Avanzado → Firmware; si no lo tienes, sigue jugando con la app externa, que usa su propio firmware. " +
+            "Si lo tienes, impórtalo aquí mismo, en Importar (junto al juego y los DLC); si no lo tienes, sigue jugando con la app externa, que usa su propio firmware. " +
             "No tienes que enviar el archivo por chat ni subirlo a ningún sitio: el launcher lo lee directamente de tu teléfono."
 
     /** Magia de un PUP de firmware de Vita ("SCEUF" al inicio). */

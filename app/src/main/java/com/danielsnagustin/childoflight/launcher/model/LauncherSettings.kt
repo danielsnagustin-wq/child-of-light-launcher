@@ -230,7 +230,6 @@ data class LauncherSettings(
     val autoRevertTo1xIfBelow28Fps: Boolean = true,
     /** Modo rendimiento del launcher: mantener pantalla encendida durante el juego. */
     val performanceMode: Boolean = true,
-    val batteryOptimizationDisabled: Boolean = false,
     /**
      * Modo seguro: cuando está ON, el generador de config.yml fuerza
      * 1x, SDL y High Accuracy OFF, por encima de los ajustes

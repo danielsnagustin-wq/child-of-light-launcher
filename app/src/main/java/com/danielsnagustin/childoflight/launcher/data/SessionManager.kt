@@ -61,9 +61,9 @@ class SessionManager(
 
     /** Recarga índice + activa desde disco; recalcula stats de savedata. */
     suspend fun refresh() {
-        // BUG (auditoría): savedataStats y setActiveSessionId hacen I/O que
-        // puede lanzar; refresh() se llama desde el ViewModel sin try/catch.
-        // Cada sesión que falle se muestra con stats 0 en vez de tumbarlo todo.
+        // savedataStats y setActiveSessionId hacen I/O que puede lanzar;
+        // por eso van con runCatching: cada sesión que falle se muestra
+        // con stats 0 en vez de tumbarlo todo.
         val sessions = repo.listSessions().map { session ->
             val stats = runCatching { repo.savedataStats(session.id) }.getOrDefault(0 to 0L)
             session.copy(savedataFiles = stats.first, savedataBytes = stats.second)
@@ -102,8 +102,8 @@ class SessionManager(
      * usuarios que ya jugaban sin sesiones). Devuelve la sesión activa.
      */
     suspend fun ensureDefaultSession(): GameSession? {
-        // BUG (auditoría): se llama desde el init del ViewModel sin
-        // try/catch; cualquier fallo de I/O tumbaba esa corrutina.
+        // Cualquier fallo de I/O se contiene aquí y devuelve null: el
+        // init del ViewModel no debe tumbarse por un fallo de disco.
         return try {
             ensureDefaultSessionImpl()
         } catch (_: Exception) {

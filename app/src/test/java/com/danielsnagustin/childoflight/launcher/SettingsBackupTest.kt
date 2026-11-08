@@ -108,12 +108,10 @@ class SettingsBackupTest {
             customDriverName = "turnip-test",
             turnipInstalled = true,
             turnipVersion = "26.0.0",
-            batteryOptimizationDisabled = true,
         )
         val json = encodeSettingsBackup(withState, ui)
         assertFalse(json.contains("pkgInstalledInVita3k"))
         assertFalse(json.contains("turnipInstalled"))
-        assertFalse(json.contains("batteryOptimizationDisabled"))
         val decoded = decodeSettingsBackup(json, LauncherSettings(), UiPreferences()).getOrThrow()
         assertFalse(decoded.first.pkgInstalledInVita3k)
         assertFalse(decoded.first.turnipInstalled)

@@ -113,7 +113,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             LinearProgressIndicator(
-                                progress = (progress.percent ?: 0) / 100f,
+                                progress = { (progress.percent ?: 0) / 100f },
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         } else {

@@ -65,7 +65,7 @@ import kotlinx.coroutines.delay
  *
  * Rediseño 2026-11-08 (petición del usuario: portada sin logo
  * duplicado + estados reales + tarjetas pulsables + sesiones):
- * - Portada 4:3 con el arte oficial SIN logo: col_cover_clean.jpg
+ * - Portada 1,4:1 con el arte oficial SIN logo: col_cover_clean.jpg
  *   (1024x734, recorte de col_cover_full.jpg quitando los 290 px
  *   superiores donde estaba el logo "CHILD OF LIGHT"). El título
  *   "Child of Light" queda solo como texto, sin duplicar. La

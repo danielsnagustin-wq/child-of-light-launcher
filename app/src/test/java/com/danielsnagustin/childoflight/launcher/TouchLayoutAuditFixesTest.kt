@@ -1,7 +1,6 @@
 package com.danielsnagustin.childoflight.launcher
 
 import com.danielsnagustin.childoflight.launcher.data.ControlProfile
-import com.danielsnagustin.childoflight.launcher.data.TouchControl
 import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
 import com.danielsnagustin.childoflight.launcher.data.VitaButton
 import com.danielsnagustin.childoflight.launcher.data.defaultTouchLayout

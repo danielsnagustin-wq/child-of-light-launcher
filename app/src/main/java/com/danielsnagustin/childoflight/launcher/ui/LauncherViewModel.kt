@@ -55,7 +55,6 @@ import com.danielsnagustin.childoflight.launcher.ui.settings.extractRecentErrorL
 import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategorySettings
 import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategoryUiPrefs
 import com.danielsnagustin.childoflight.launcher.model.defaultProfileFor
-import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import com.danielsnagustin.childoflight.launcher.model.shouldAutoRevertTo1x
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -468,6 +467,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun resetSettings() {
         viewModelScope.launch {
             val gpu = settingsRepo.gpuInfoFlow.first()
+            // Si el Modo seguro estaba ON, su copia queda huérfana al
+            // restablecer todo: se borra (el reseteo es intencionado, los
+            // ajustes previos se descartan a propósito).
+            deleteSettingsSnapshot(safeModeSnapshotFile())
             settingsRepo.resetToDefaults(gpu)
             _message.value = "Ajustes restablecidos al preset de tu GPU."
         }
@@ -1872,9 +1875,25 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             }
             val current = settingsRepo.settingsFlow.first()
             val currentUi = uiRepo.uiFlow.first()
-            settingsRepo.save(resetCategorySettings(current, category))
+            // Modo seguro: si está ON, restablecer Diagnóstico sin restaurar
+            // la copia previa perdería los ajustes anteriores al Modo seguro
+            // (quedarían los valores forzados 1x/SDL como permanentes y la
+            // copia huérfana). Se restaura primero y el reseteo se aplica
+            // encima de los ajustes restaurados.
+            val base = if (category == SettingsCategory.DIAGNOSTICS && current.safeMode) {
+                val snapshot = readSettingsSnapshot(safeModeSnapshotFile())
+                deleteSettingsSnapshot(safeModeSnapshotFile())
+                snapshot?.copy(safeMode = false) ?: current
+            } else {
+                current
+            }
+            settingsRepo.save(resetCategorySettings(base, category))
             uiRepo.save(resetCategoryUiPrefs(currentUi, category))
-            _message.value = "Categoría ${category.title} restablecida a los valores del preset ${current.activeProfile.label}."
+            _message.value = if (category == SettingsCategory.PERSONALIZATION) {
+                "Personalización restablecida a los valores por defecto."
+            } else {
+                "Categoría ${category.title} restablecida a los valores del preset ${current.activeProfile.label}."
+            }
         }
     }
 
@@ -2124,15 +2143,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun isBatteryOptimizationDisabled(): Boolean = launcher.isBatteryOptimizationDisabled()
     fun batteryOptimizationIntent() = launcher.batteryOptimizationIntent()
 
-    fun markBatteryOptimizationDisabled() {
+    fun refreshBatteryOptimizationState() {
         viewModelScope.launch {
-            // Se guarda el estado REAL (PowerManager), no un "sí" optimista:
-            // este método se llama al volver del diálogo del sistema, lo
-            // conceda el usuario o no. Antes se persistía true siempre.
-            val disabled = launcher.isBatteryOptimizationDisabled()
-            val current = settingsRepo.settingsFlow.first()
-            settingsRepo.save(current.copy(batteryOptimizationDisabled = disabled))
-            _batteryOptDisabled.value = disabled
+            // Se lee el estado REAL (PowerManager) al volver del diálogo
+            // del sistema, lo conceda el usuario o no. No se persiste
+            // nada: el campo guardado no lo leía nadie y el valor vivo
+            // es el del sistema (ronda de verificación 2026-11-08).
+            _batteryOptDisabled.value =
+                runCatching { launcher.isBatteryOptimizationDisabled() }.getOrDefault(false)
         }
     }
 

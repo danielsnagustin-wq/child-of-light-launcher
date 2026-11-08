@@ -603,8 +603,8 @@ class GameLibraryRepository(private val context: Context) {
         // vacío o cualquier PUP con tamaño > 0 se daba por instalado.
         val fwStatus = FirmwareResolver.resolve(vitaRoot)
         val firmwareInstalled = fwStatus.ready
-        val firmwareName = when (val s = fwStatus) {
-            is FirmwareStatus.Ready -> FirmwareResolver.installedVersion(vitaRoot) ?: s.source
+        val firmwareName = when (fwStatus) {
+            is FirmwareStatus.Ready -> FirmwareResolver.installedVersion(vitaRoot) ?: ""
             is FirmwareStatus.Saved -> "PSVUPDAT.PUP (guardado, no instalado)"
             FirmwareStatus.Missing -> null
         }

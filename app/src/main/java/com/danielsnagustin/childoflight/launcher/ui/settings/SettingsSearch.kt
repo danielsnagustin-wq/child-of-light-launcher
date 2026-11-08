@@ -12,7 +12,7 @@ package com.danielsnagustin.childoflight.launcher.ui.settings
  * categoría. La normalización quita mayúsculas y tildes, así que
  * "diagnostico" encuentra "Diagnóstico" y "60 fps" encuentra el modo
  * 60 FPS. Una consulta vacía no devuelve nada: el hub muestra entonces
- * las 10 categorías.
+ * las 9 categorías.
  */
 data class SearchableSetting(
     val title: String,

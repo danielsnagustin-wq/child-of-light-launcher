@@ -38,9 +38,8 @@ import com.danielsnagustin.childoflight.launcher.model.UiPreferences
  * NO se respaldan estados que describen archivos o el sistema, no
  * preferencias: pkgDeliveredToVita3k / pkgInstalledInVita3k (confirman
  * una instalación real en la app externa), customDriverName /
- * turnipVersion / turnipInstalled (driver instalado en disco) ni
- * batteryOptimizationDisabled (permiso del sistema). Al restaurar,
- * esos campos se conservan como estén en el teléfono.
+ * turnipVersion / turnipInstalled (driver instalado en disco).
+ * Al restaurar, esos campos se conservan como estén en el teléfono.
  */
 const val SETTINGS_BACKUP_FORMAT = "col-settings-backup"
 const val SETTINGS_BACKUP_VERSION = 1

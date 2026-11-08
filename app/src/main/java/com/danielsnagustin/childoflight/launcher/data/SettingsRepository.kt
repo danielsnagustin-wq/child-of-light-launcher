@@ -67,7 +67,6 @@ class SettingsRepository(private val context: Context) {
         val ACTIVE_PROFILE = stringPreferencesKey("active_profile")
         val AUTO_REVERT = booleanPreferencesKey("auto_revert_1x")
         val PERFORMANCE_MODE = booleanPreferencesKey("performance_mode")
-        val BATTERY_OPT_DISABLED = booleanPreferencesKey("battery_opt_disabled")
         val SAFE_MODE = booleanPreferencesKey("safe_mode")
         val CLOSE_BACKGROUND = booleanPreferencesKey("close_background_apps")
         val ALLOW_EXTERNAL_VITA3K = booleanPreferencesKey("allow_external_vita3k")
@@ -134,7 +133,6 @@ class SettingsRepository(private val context: Context) {
             activeProfile = runCatching { GpuProfileId.valueOf(p[Keys.ACTIVE_PROFILE] ?: "G99_RECOMMENDED") }.getOrDefault(GpuProfileId.G99_RECOMMENDED),
             autoRevertTo1xIfBelow28Fps = p[Keys.AUTO_REVERT] ?: true,
             performanceMode = p[Keys.PERFORMANCE_MODE] ?: true,
-            batteryOptimizationDisabled = p[Keys.BATTERY_OPT_DISABLED] ?: false,
             safeMode = p[Keys.SAFE_MODE] ?: false,
             closeBackgroundApps = p[Keys.CLOSE_BACKGROUND] ?: true,
             allowExternalVita3k = p[Keys.ALLOW_EXTERNAL_VITA3K] ?: false,
@@ -198,7 +196,6 @@ class SettingsRepository(private val context: Context) {
             p[Keys.ACTIVE_PROFILE] = settings.activeProfile.name
             p[Keys.AUTO_REVERT] = settings.autoRevertTo1xIfBelow28Fps
             p[Keys.PERFORMANCE_MODE] = settings.performanceMode
-            p[Keys.BATTERY_OPT_DISABLED] = settings.batteryOptimizationDisabled
             p[Keys.SAFE_MODE] = settings.safeMode
             p[Keys.CLOSE_BACKGROUND] = settings.closeBackgroundApps
             p[Keys.ALLOW_EXTERNAL_VITA3K] = settings.allowExternalVita3k

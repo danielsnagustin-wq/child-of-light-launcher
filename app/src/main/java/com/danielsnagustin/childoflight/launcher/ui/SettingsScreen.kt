@@ -27,7 +27,7 @@ import com.danielsnagustin.childoflight.launcher.ui.settings.searchSettings
 
 /**
  * Hub de Ajustes (Fase 2, Ola 2, Etapa 1). La antigua pantalla única
- * se dividió en 10 categorías, cada una con su pantalla propia
+ * se dividió en 9 categorías, cada una con su pantalla propia
  * (ui/settings/): nada se perdió, todo tiene su categoría (ver el
  * inventario en el manifiesto de la Ola 2).
  *

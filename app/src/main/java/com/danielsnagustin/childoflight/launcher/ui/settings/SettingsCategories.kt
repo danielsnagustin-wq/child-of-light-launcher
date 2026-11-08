@@ -32,12 +32,12 @@ enum class SettingsCategory(val screen: Screen, val title: String, val subtitle:
     AUDIO(
         Screen.SETTINGS_AUDIO,
         "Audio",
-        "Backend, buffer, NGS, volumen y Corregir audio.",
+        "Backend, NGS, volumen y Corregir audio.",
     ),
     PERFORMANCE(
         Screen.SETTINGS_PERFORMANCE,
         "Rendimiento",
-        "Límite de FPS, cachés, overlay y valores recomendados.",
+        "Cachés, overlay y valores recomendados.",
     ),
     CONTROLS(
         Screen.SETTINGS_CONTROLS,
