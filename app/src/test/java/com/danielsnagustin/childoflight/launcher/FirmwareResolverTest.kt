@@ -158,9 +158,11 @@ class FirmwareResolverTest {
 
     @Test
     fun `PUP guardado no habilita el nucleo embebido`() {
-        // Saved.ready == false -> decide() elige la vía externa (avisa
-        // una vez y lanza igual) hasta que la instalación en el núcleo
-        // tenga éxito. Nunca se bloquea pudiendo jugar por fuera.
+        // Saved.ready == false -> con núcleo presente, decide() BLOQUEA
+        // con el motivo exacto (pasos 1-2): el núcleo no puede arrancar
+        // sin firmware y ya no se salta a la app externa por detrás.
+        // El PUP guardado solo habilita el núcleo cuando su instalación
+        // en el núcleo tiene éxito (saved.ready == true).
         val status = GameStatus(
             titleId = TitleId.EU,
             extractedTitleId = TitleId.EU,
@@ -170,6 +172,9 @@ class FirmwareResolverTest {
         val saved = FirmwareStatus.Saved("PSVUPDAT.PUP guardado")
         assertFalse(saved.ready)
         val decision = EmbeddedGameLauncher.decide(status, coreAvailable = true, firmwareReady = saved.ready)
-        assertTrue(decision is EmbeddedGameLauncher.Decision.UseExternal)
+        assertTrue(decision is EmbeddedGameLauncher.Decision.Blocked)
+        val reason = (decision as EmbeddedGameLauncher.Decision.Blocked).reason
+        assertTrue(reason.contains("Ajustes → Avanzado → Firmware"))
+        assertFalse(reason.contains("Vita3K"))
     }
 }
