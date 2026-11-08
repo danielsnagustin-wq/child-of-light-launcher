@@ -3,6 +3,7 @@ package com.danielsnagustin.childoflight.launcher.ui
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize

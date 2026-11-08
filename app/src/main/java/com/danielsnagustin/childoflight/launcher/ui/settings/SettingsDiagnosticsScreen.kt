@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.model.effectiveSettings
 import com.danielsnagustin.childoflight.launcher.model.resolveBackend
+import com.danielsnagustin.childoflight.launcher.data.DeviceCompat
 import com.danielsnagustin.childoflight.launcher.data.DeviceMemory
 import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
 import com.danielsnagustin.childoflight.launcher.ui.ColMutedText
