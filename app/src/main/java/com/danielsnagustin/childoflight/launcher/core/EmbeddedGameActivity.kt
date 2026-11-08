@@ -50,19 +50,23 @@ import org.libsdl.app.SDLActivity
  * el hilo SDL busca estos métodos en la Activity con GetMethodID.
  * Si falta getNativeDisplayRotation, SDL_main SE CIERRA (no hay
  * comprobación de null en get_display_rotation()). Por eso existen
- * aquí con ESTAS firmas exactas, aunque el launcher aún no tenga
- * menú de pausa:
+ * aquí con ESTAS firmas exactas:
  * - setCurrentGameId(String): el núcleo avisa qué juego arrancó.
- * - openPauseMenuFromController(): botón guía del mando. Hoy solo
- *   pausa/reanuda el juego (el menú de pausa con UI es trabajo
- *   futuro); nunca cierra el juego.
+ * - openPauseMenuFromController(): botón guía del mando. Abre el
+ *   menú de pausa propio (PauseMenuActivity, Compose); nunca cierra
+ *   el juego directamente.
  * - getNativeDisplayRotation(): Int: rotación de la pantalla
  *   (0/90/180/270) para el motion del núcleo.
  *
+ * El botón atrás también abre el menú de pausa propio
+ * (onBackPressed -> openPauseMenu). SDLActivity por defecto cerraría
+ * la Activity; aquí atrás nunca cierra el juego sin preguntar.
+ *
  * SIN núcleo embebido esta Activity no se lanza nunca (el launcher
- * decide con EmbeddedGameLauncher y Vita3KLauncher hace fallback a
- * Vita3K externo). Si init falla aquí, se cierra con un mensaje y
- * el usuario vuelve al launcher (no se finge que el juego arrancó).
+ * decide con EmbeddedGameLauncher; sin núcleo, JUGAR bloquea con el
+ * motivo exacto salvo la opción avanzada de Ajustes). Si init falla
+ * aquí, se cierra con un mensaje y el usuario vuelve al launcher
+ * (no se finge que el juego arrancó).
  *
  * TODO (Etapa 2, tras la primera build que arranque el juego):
  * - Overlay táctil: IMPLEMENTADO (GamepadOverlayView + puente JNI
@@ -77,6 +81,9 @@ import org.libsdl.app.SDLActivity
  *   juego (Igniculus). Con mando físico conectado y el ajuste activo,
  *   el overlay se oculta y el mando virtual se suelta.
  * - Menú de pausa con UI (reanudar / salir / ajustes).
+ *   IMPLEMENTADO (PauseMenuActivity + PauseMenuScreen, Compose):
+ *   se abre con atrás o con el botón guía; Continuar reanuda, Salir
+ *   guarda la sesión y cierra el motor de forma limpia.
  * - Relanzamiento en proceso (requestAppRelaunch) para cambiar de
  *   Title ID sin recrear la Activity.
  */
@@ -85,6 +92,9 @@ class EmbeddedGameActivity : SDLActivity() {
     companion object {
         const val EXTRA_TITLE_ID = "title_id"
         const val EXTRA_GAME_TITLE = "game_title"
+
+        /** Request code del menú de pausa (startActivityForResult). */
+        const val REQUEST_PAUSE_MENU = 2001
 
         fun createLaunchIntent(context: Context, titleId: String, gameTitle: String): Intent {
             return Intent(context, EmbeddedGameActivity::class.java).apply {
@@ -96,7 +106,6 @@ class EmbeddedGameActivity : SDLActivity() {
     }
 
     private var currentTitleId: String = ""
-    private var pausedByGuideButton: Boolean = false
 
     // --- Overlay táctil (GamepadOverlayView + mando virtual SDL) ---
     private var overlayView: GamepadOverlayView? = null
@@ -145,7 +154,7 @@ class EmbeddedGameActivity : SDLActivity() {
         if (rc != Vita3kCoreBridge.OK) {
             Toast.makeText(
                 this,
-                "El núcleo embebido no se pudo iniciar (código $rc). Vuelve al launcher e inténtalo con la app externa.",
+                "El motor integrado no se pudo iniciar (código $rc). Vuelve al inicio e inténtalo de nuevo.",
                 Toast.LENGTH_LONG,
             ).show()
             finish()
@@ -280,10 +289,11 @@ class EmbeddedGameActivity : SDLActivity() {
     // Al irse a segundo plano (Inicio, Recientes, llamada), pausar el
     // NÚCLEO, no solo SDL: PAUSE_REASON_BACKGROUND existe para esto.
     // Sin esto, el juego seguiría corriendo (CPU + audio) con la
-    // pantalla apagada. Al volver se quita SOLO el motivo de fondo:
-    // si el usuario pausó con el botón guía (PAUSE_REASON_USER), el
-    // juego sigue en pausa al volver. Best-effort y sin núcleo es
-    // no-op (el puente devuelve false).
+    // pantalla apagada. Al volver se quita el motivo de fondo y el
+    // juego se reanuda. El motivo de usuario (botón guía) ya no se
+    // usa para pausar: el botón guía abre el menú de pausa y
+    // openPauseMenu lo quita antes de abrirlo. Best-effort y sin
+    // núcleo es no-op (el puente devuelve false).
     override fun onResume() {
         super.onResume()
         runCatching {
@@ -338,25 +348,65 @@ class EmbeddedGameActivity : SDLActivity() {
     }
 
     /**
-     * Botón guía del mando (hook on_guide_button). Firma exacta:
-     * ()V. Hoy pausa/reanuda; el menú de pausa con UI es futuro.
+     * Abre el menú de pausa propio (PauseMenuActivity, Compose).
+     * Antes de abrirlo se quita el motivo de pausa de usuario: el
+     * menú es la única autoridad de pausa mientras está abierto (el
+     * juego se pausa por fondo al abrirse la Activity del menú y se
+     * reanuda al volver con Continuar). Si no se quitara, al volver
+     * el juego seguiría pausado por el botón guía sin que se viera
+     * por qué.
      */
-    fun openPauseMenuFromController() {
-        runOnUiThread {
-            val paused = Vita3kCoreBridge.isAppPaused()
-            val ok = Vita3kCoreBridge.setPauseReasonEnabled(
+    private fun openPauseMenu() {
+        runCatching {
+            Vita3kCoreBridge.setPauseReasonEnabled(
                 Vita3kCoreBridge.PAUSE_REASON_USER,
-                !paused,
+                false,
             )
-            if (ok) {
-                pausedByGuideButton = !paused
-                Toast.makeText(
-                    this,
-                    if (!paused) "Juego en pausa (pulsa el botón guía para seguir)" else "Juego reanudado",
-                    Toast.LENGTH_SHORT,
-                ).show()
+        }
+        runCatching {
+            startActivityForResult(
+                com.danielsnagustin.childoflight.launcher.ui.PauseMenuActivity.createIntent(this),
+                REQUEST_PAUSE_MENU,
+            )
+        }
+    }
+
+    /**
+     * Atrás en el juego abre el menú de pausa propio (no cierra el
+     * juego ni lo deja en segundo plano). SDLActivity por defecto
+     * cerraría la Activity; el juego se pausa por fondo mientras el
+     * menú está abierto y se reanuda al elegir Continuar.
+     */
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        openPauseMenu()
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_PAUSE_MENU) return
+        if (resultCode != com.danielsnagustin.childoflight.launcher.ui.PauseMenuActivity.RESULT_EXIT_TO_LAUNCHER) return
+        // Salir al inicio: la sesión ya se guardó en el menú
+        // (notePlayEnded: tiempo + snapshot). Cierre limpio del motor
+        // (requestAppQuit -> SDL_EVENT_QUIT -> cleanup_launch ->
+        // session.stop -> shutdown_app_runtime, verificado en el pin
+        // 3e43bc80: sdl-frontend/session.cpp:665-669,414-444 y
+        // app_init.cpp:890-992) y vuelta al inicio.
+        runCatching {
+            if (Vita3kCoreBridge.isAppRunning()) {
+                Vita3kCoreBridge.requestAppQuit()
             }
         }
+        finish()
+    }
+
+    /**
+     * Botón guía del mando (hook on_guide_button). Firma exacta:
+     * ()V. Abre el menú de pausa propio, igual que atrás; nunca
+     * cierra el juego directamente.
+     */
+    fun openPauseMenuFromController() {
+        runOnUiThread { openPauseMenu() }
     }
 
     /**

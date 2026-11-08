@@ -9,7 +9,11 @@ import org.junit.Test
 
 /**
  * Tests de la decisión de lanzamiento de Etapa 2 (función pura).
- * La regla clave: nunca se bloquea pudiendo jugar por fuera.
+ * Regla clave: el motor integrado es el camino normal; la app externa
+ * solo se usa si no hay núcleo Y el usuario activó la opción avanzada
+ * en Ajustes (allowExternal). Sin núcleo y sin permiso, se bloquea con
+ * el motivo exacto en vez de saltar por fuera. Sin firmware con núcleo
+ * presente, también se bloquea (el motivo dice dónde importarlo).
  */
 class EmbeddedLaunchDecisionTest {
 
@@ -46,17 +50,46 @@ class EmbeddedLaunchDecisionTest {
     }
 
     @Test
-    fun `extraido sin nucleo usa externo`() {
-        val decision = EmbeddedGameLauncher.decide(extracted(), coreAvailable = false, firmwareReady = true)
+    fun `extraido sin nucleo con permiso externo usa externo`() {
+        val decision = EmbeddedGameLauncher.decide(
+            extracted(),
+            coreAvailable = false,
+            firmwareReady = true,
+            allowExternal = true,
+        )
         assertTrue(decision is EmbeddedGameLauncher.Decision.UseExternal)
     }
 
     @Test
-    fun `extraido con nucleo pero sin firmware usa externo no bloquea`() {
-        // Sin firmware el núcleo no arranca, pero Vita3K externo
-        // gestiona su propio firmware: nunca bloquear pudiendo jugar.
-        val decision = EmbeddedGameLauncher.decide(extracted(), coreAvailable = true, firmwareReady = false)
-        assertTrue(decision is EmbeddedGameLauncher.Decision.UseExternal)
+    fun `extraido sin nucleo y sin permiso externo bloquea`() {
+        val decision = EmbeddedGameLauncher.decide(
+            extracted(),
+            coreAvailable = false,
+            firmwareReady = true,
+            allowExternal = false,
+        )
+        assertTrue(decision is EmbeddedGameLauncher.Decision.Blocked)
+    }
+
+    @Test
+    fun `extraido con nucleo pero sin firmware bloquea`() {
+        // Sin firmware el núcleo no arranca y ya no se salta a la app
+        // externa por detrás: el motivo dice dónde importarlo. La
+        // opción avanzada no cambia nada con núcleo presente.
+        val sinPermiso = EmbeddedGameLauncher.decide(
+            extracted(),
+            coreAvailable = true,
+            firmwareReady = false,
+            allowExternal = false,
+        )
+        assertTrue(sinPermiso is EmbeddedGameLauncher.Decision.Blocked)
+        val conPermiso = EmbeddedGameLauncher.decide(
+            extracted(),
+            coreAvailable = true,
+            firmwareReady = false,
+            allowExternal = true,
+        )
+        assertTrue(conPermiso is EmbeddedGameLauncher.Decision.Blocked)
     }
 
     @Test
@@ -69,15 +102,31 @@ class EmbeddedLaunchDecisionTest {
     }
 
     @Test
-    fun `solo pkg sin nucleo usa externo`() {
-        val decision = EmbeddedGameLauncher.decide(pkgOnly(), coreAvailable = false, firmwareReady = true)
+    fun `solo pkg sin nucleo con permiso externo usa externo`() {
+        val decision = EmbeddedGameLauncher.decide(
+            pkgOnly(),
+            coreAvailable = false,
+            firmwareReady = true,
+            allowExternal = true,
+        )
         assertTrue(decision is EmbeddedGameLauncher.Decision.UseExternal)
     }
 
     @Test
-    fun `solo pkg con nucleo pero sin firmware usa externo`() {
+    fun `solo pkg sin nucleo y sin permiso externo bloquea`() {
+        val decision = EmbeddedGameLauncher.decide(
+            pkgOnly(),
+            coreAvailable = false,
+            firmwareReady = true,
+            allowExternal = false,
+        )
+        assertTrue(decision is EmbeddedGameLauncher.Decision.Blocked)
+    }
+
+    @Test
+    fun `solo pkg con nucleo pero sin firmware bloquea`() {
         val decision = EmbeddedGameLauncher.decide(pkgOnly(), coreAvailable = true, firmwareReady = false)
-        assertTrue(decision is EmbeddedGameLauncher.Decision.UseExternal)
+        assertTrue(decision is EmbeddedGameLauncher.Decision.Blocked)
     }
 
     @Test
@@ -87,5 +136,25 @@ class EmbeddedLaunchDecisionTest {
             EmbeddedGameLauncher.Decision.UseEmbedded("PCSE00480"),
             decision,
         )
+    }
+
+    @Test
+    fun `titleId nulo bloquea aunque el juego este instalado`() {
+        val decision = EmbeddedGameLauncher.decide(
+            GameStatus(titleId = null, gameInstalled = true, gameExtracted = true),
+            coreAvailable = true,
+            firmwareReady = true,
+        )
+        assertTrue(decision is EmbeddedGameLauncher.Decision.Blocked)
+    }
+
+    @Test
+    fun `instalado pero ni extraido ni pkg bloquea`() {
+        val decision = EmbeddedGameLauncher.decide(
+            GameStatus(titleId = TitleId.EU, gameInstalled = true, gameExtracted = false, pkgTitleId = null),
+            coreAvailable = true,
+            firmwareReady = true,
+        )
+        assertTrue(decision is EmbeddedGameLauncher.Decision.Blocked)
     }
 }

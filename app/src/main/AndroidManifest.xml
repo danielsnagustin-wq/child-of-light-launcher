@@ -62,5 +62,16 @@
             android:launchMode="singleTop"
             android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:theme="@style/Theme.ChildOfLightLauncher" />
+
+        <!-- Menú de pausa propio (Compose): Activity transparente
+             encima del juego. Solo la abre EmbeddedGameActivity (con
+             atrás o con el botón guía); nunca se lanza desde el
+             launcher. El juego se pausa por fondo mientras está
+             abierta y se reanuda al elegir Continuar. -->
+        <activity
+            android:name=".ui.PauseMenuActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     </application>
 </manifest>

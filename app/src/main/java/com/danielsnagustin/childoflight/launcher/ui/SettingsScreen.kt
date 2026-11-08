@@ -498,6 +498,19 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
                 "El launcher no incluye firmware ni claves.",
         )
 
+        // --- Avanzado: motor (la app externa solo existe aquí) ---
+        // JUGAR siempre usa el motor integrado. Este interruptor es la
+        // única vía a la app externa: solo si está ON y el motor
+        // integrado no está disponible, JUGAR abre el juego fuera.
+        // Con el motor presente, no cambia nada. Nunca es un respaldo
+        // automático.
+        SectionTitle("Avanzado — Motor")
+        SettingSwitch(
+            "Permitir app externa (solo casos especiales)",
+            "Apagado: JUGAR siempre abre el juego dentro de este launcher. Encendido: si el motor integrado no está disponible, el juego se abre en otra app instalada.",
+            s.allowExternalVita3k,
+        ) { vm.saveSettings(s.copy(allowExternalVita3k = it)) }
+
         // --- Aviso legal ---
         SectionTitle("Aviso legal")
         PremiumCard {

@@ -75,6 +75,7 @@ class SettingsRepository(private val context: Context) {
         val BATTERY_OPT_DISABLED = booleanPreferencesKey("battery_opt_disabled")
         val SAFE_MODE = booleanPreferencesKey("safe_mode")
         val CLOSE_BACKGROUND = booleanPreferencesKey("close_background_apps")
+        val ALLOW_EXTERNAL_VITA3K = booleanPreferencesKey("allow_external_vita3k")
         val PKG_DELIVERED = booleanPreferencesKey("pkg_delivered_to_vita3k")
         val PKG_INSTALLED_IN_VITA3K = booleanPreferencesKey("pkg_installed_in_vita3k")
         val HIDE_TOUCH_GAMEPAD = booleanPreferencesKey("hide_touch_when_gamepad")
@@ -138,6 +139,7 @@ class SettingsRepository(private val context: Context) {
             batteryOptimizationDisabled = p[Keys.BATTERY_OPT_DISABLED] ?: false,
             safeMode = p[Keys.SAFE_MODE] ?: false,
             closeBackgroundApps = p[Keys.CLOSE_BACKGROUND] ?: true,
+            allowExternalVita3k = p[Keys.ALLOW_EXTERNAL_VITA3K] ?: false,
             pkgDeliveredToVita3k = p[Keys.PKG_DELIVERED] ?: false,
             pkgInstalledInVita3k = p[Keys.PKG_INSTALLED_IN_VITA3K] ?: false,
             hideTouchWhenGamepadConnected = p[Keys.HIDE_TOUCH_GAMEPAD] ?: true,
@@ -205,6 +207,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.BATTERY_OPT_DISABLED] = settings.batteryOptimizationDisabled
             p[Keys.SAFE_MODE] = settings.safeMode
             p[Keys.CLOSE_BACKGROUND] = settings.closeBackgroundApps
+            p[Keys.ALLOW_EXTERNAL_VITA3K] = settings.allowExternalVita3k
             p[Keys.PKG_DELIVERED] = settings.pkgDeliveredToVita3k
             p[Keys.PKG_INSTALLED_IN_VITA3K] = settings.pkgInstalledInVita3k
             p[Keys.HIDE_TOUCH_GAMEPAD] = settings.hideTouchWhenGamepadConnected

@@ -44,12 +44,23 @@ import java.io.File
  *   páginas para texturas grandes), show-compile-shaders (bool,
  *   default true en upstream; el launcher emite false por defecto =
  *   mensajes ocultos, pantalla limpia),
+ *   show-welcome (bool, default true en upstream; verificado en
+ *   config.h:380; su único consumo verificado es el diálogo de
+ *   bienvenida de la GUI Qt (gui-qt/src/main_window.cpp:1031-1037):
+ *   en el camino Android/SDL ese diálogo ni siquiera se ejecuta,
+ *   pero la clave es real y se emite false siempre),
  *   custom-driver-name (string: nombre del driver instalado = stem
  *   del zip, sin .zip; el driver debe estar instalado en el núcleo
  *   con installCustomDriver, ver driver_bridge.cpp),
  *   pref-path (string, ruta del vita_fs).
  *
  * NO verificadas (comentario TODO, no se emiten):
+ * - display-info-message: NO existe en config.h (lectura completa
+ *   0-465, pin 3e43bc80) ni en Config::CurrentConfig
+ *   (config/state.h:136-224). No hay ningún mecanismo de "mensajes
+ *   informativos" en config; lo más cercano es warn-missing-firmware
+ *   (config.h:382) y show-live-area-screen (:322), ninguno es un
+ *   aviso informativo general. Por eso NO se emite.
  * - frame limiter (no hay clave en config.h ni en config.cpp)
  * - frame skipping (no hay clave en config.h ni en config.cpp)
  * - accurate thread scheduling (no hay clave en config.h ni en
@@ -162,6 +173,19 @@ object Vita3kConfigGenerator {
         sb.appendLine("performance-overlay-position: ${s.performanceOverlayPosition.value}")
         sb.appendLine("hashless-texture-cache: ${s.hashlessTextureCache}")
         sb.appendLine("show-compile-shaders: ${s.showCompileShaders}")
+        // --- Interfaz del núcleo ---
+        // show-welcome VERIFICADO (config.h:380): bool, default true.
+        // Su único consumo verificado es el diálogo de bienvenida de
+        // la GUI Qt (gui-qt/src/main_window.cpp:1031-1037); en el
+        // camino Android/SDL ese diálogo ni siquiera se ejecuta. Se
+        // emite false siempre: el launcher es un port, no muestra la
+        // bienvenida del emulador.
+        sb.appendLine("show-welcome: false")
+        // display-info-message NO existe en config.h (lectura completa
+        // 0-465, pin 3e43bc80) ni en Config::CurrentConfig
+        // (config/state.h:136-224): NO se emite como clave real, solo
+        // queda este TODO-VERIFY en el YAML para que se vea por qué.
+        sb.appendLine("# TODO-VERIFY: display-info-message NO existe en config.h (pin 3e43bc80) ni en Config::CurrentConfig: no hay ningún mecanismo de mensajes informativos en config, así que NO se emite como clave real. Lo más cercano es warn-missing-firmware (config.h:382), que es un aviso de firmware, no de info.")
         // --- Ajustes solo-launcher ---
         sb.appendLine("# TODO-VERIFY: frame-limiter (${s.frameLimiter.label}) no tiene clave en config.h ni en config.cpp (pin 3e43bc80); lo aplica el launcher al lanzar (límite objetivo), no el núcleo vía YAML.")
         sb.appendLine("# TODO-VERIFY: frame-skipping (${s.frameSkipping}) no tiene clave en config.h ni en config.cpp (pin 3e43bc80); ajuste del launcher.")

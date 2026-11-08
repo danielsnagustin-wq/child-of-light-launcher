@@ -4,7 +4,9 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -127,6 +129,18 @@ private fun LauncherApp(vm: LauncherViewModel) {
     val alert by vm.alert.collectAsState()
     val justUnlocked by vm.justUnlocked.collectAsState()
     val settings by vm.settingsFlow.collectAsState(initial = null)
+    val gpu by vm.gpuFlow.collectAsState(initial = null)
+
+    // "Reportar" del diálogo de fallo del motor reutiliza la exportación
+    // de bug que ya existe (Diagnóstico → Reportar bug): mismo archivo
+    // .txt con log + ajustes + dispositivo, que el usuario comparte a
+    // mano. El launcher se registra siempre (no dentro del diálogo):
+    // rememberLauncherForActivityResult no debe llamarse condicional.
+    val exportBug = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        val s = settings
+        val g = gpu
+        if (uri != null && s != null) vm.exportBugReport(uri, s, g)
+    }
 
     // Modo rendimiento: pantalla encendida mientras el launcher está abierto.
     val activity = androidx.compose.ui.platform.LocalContext.current as? ComponentActivity
@@ -195,13 +209,20 @@ private fun LauncherApp(vm: LauncherViewModel) {
                     AlertAction.CONFIRM_DOWNLOADS_COPY -> TextButton(onClick = { vm.clearAlert(); vm.confirmDeliverPkgToDownloads() }) { Text("Copiar a Descargas") }
                     AlertAction.CONFIRM_PKG_INSTALLED -> TextButton(onClick = { vm.clearAlert(); vm.confirmPkgInstalledInVita3k() }) { Text("Ya lo instalé en la app externa") }
                     AlertAction.REPLACE_DUPLICATE -> TextButton(onClick = { vm.confirmReplaceDuplicate() }) { Text("Reemplazar") }
+                    AlertAction.RETRY_LAUNCH -> TextButton(onClick = { vm.clearAlert(); vm.play() }) { Text("Reintentar") }
                     null -> TextButton(onClick = { vm.clearAlert() }) { Text("Entendido") }
                 }
             },
-            dismissButton = if (info.action != null) {
-                { TextButton(onClick = { vm.clearAlert() }) { Text("Cerrar") } }
-            } else {
-                null
+            dismissButton = when (info.action) {
+                // Fallo del motor integrado: el botón secundario es
+                // "Reportar" (exporta el reporte de bug), no "Cerrar".
+                AlertAction.RETRY_LAUNCH -> {
+                    { TextButton(onClick = { vm.clearAlert(); exportBug.launch("col-bug-report.txt") }) { Text("Reportar") } }
+                }
+                null -> null
+                else -> {
+                    { TextButton(onClick = { vm.clearAlert() }) { Text("Cerrar") } }
+                }
             },
         )
     }

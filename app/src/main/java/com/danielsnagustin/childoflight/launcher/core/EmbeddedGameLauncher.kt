@@ -3,29 +3,31 @@ package com.danielsnagustin.childoflight.launcher.core
 import com.danielsnagustin.childoflight.launcher.model.GameStatus
 
 /**
- * Decisión de por dónde lanzar el juego (Etapa 2).
+ * Decisión de por dónde lanzar el juego (Etapa 2: motor embebido
+ * como camino principal).
  *
  * Función PURA (sin Android ni I/O) para poder probarla en unit tests.
  * La usa Vita3KLauncher antes de tocar nada; el lanzamiento real
  * (Activity SDL embebida o intent externo) vive en Vita3KLauncher.
  *
- * Reglas:
+ * Reglas (el motor integrado es el camino normal; la app externa
+ * nunca es un respaldo automático):
  * - Sin juego instalado -> Blocked (falta el juego).
+ * - Sin Title ID -> Blocked (no se sabe qué arrancar).
  * - Núcleo embebido disponible + juego EXTRAÍDO + firmware local
  *   -> UseEmbedded: el juego arranca dentro del launcher.
  * - Núcleo disponible + juego solo en .pkg + firmware local
  *   -> UseEmbeddedPkg: primero se instala el .pkg con el propio
  *   núcleo (EmbeddedPkgInstaller) y luego se arranca embebido.
- * - Sin núcleo embebido, o sin firmware local -> UseExternal
- *   (Vita3K externo, Etapa 1). Sin firmware, el núcleo no puede
- *   arrancar, pero Vita3K externo gestiona su propio firmware: se
- *   intenta la vía externa (con su aviso) en vez de bloquear al
- *   usuario. Solo si TAMPOCO está Vita3K externo, Vita3KLauncher
- *   bloquea al final con la frase de firmware.
- *   (El plan original bloqueaba con núcleo presente y sin firmware;
- *   se cambió en la fundación de Etapa 2 porque bloquear pudiendo
- *   jugar por fuera es peor para el usuario. Ver
- *   docs/etapa2/ETAPA2-ESTADO.md.)
+ * - Núcleo disponible pero SIN firmware local -> Blocked: el núcleo
+ *   no puede arrancar sin firmware y ya no se salta a la app externa
+ *   por detrás. El motivo dice dónde importarlo (Ajustes ->
+ *   Avanzado -> Firmware).
+ * - Sin núcleo embebido -> Blocked, SALVO que el usuario haya
+ *   activado la opción avanzada en Ajustes (allowExternal): solo
+ *   entonces UseExternal. La opción avanzada no cambia nada cuando
+ *   el núcleo SÍ está presente: con núcleo, JUGAR siempre usa el
+ *   motor integrado (o bloquea con el motivo exacto si algo falta).
  */
 object EmbeddedGameLauncher {
 
@@ -34,13 +36,22 @@ object EmbeddedGameLauncher {
         data class UseEmbedded(val titleId: String) : Decision()
         /** Instalar el .pkg con el núcleo y luego arrancar embebido. */
         data class UseEmbeddedPkg(val titleId: String) : Decision()
-        /** Lanzar Vita3K externo (Etapa 1). reason es solo para el log. */
+        /**
+         * Lanzar la app externa. Solo llega aquí si no hay núcleo
+         * embebido Y el usuario activó la opción avanzada en Ajustes.
+         * reason es solo para el log.
+         */
         data class UseExternal(val reason: String) : Decision()
         /** No lanzar. reason es el mensaje para el usuario. */
         data class Blocked(val reason: String) : Decision()
     }
 
-    fun decide(status: GameStatus, coreAvailable: Boolean, firmwareReady: Boolean): Decision {
+    fun decide(
+        status: GameStatus,
+        coreAvailable: Boolean,
+        firmwareReady: Boolean,
+        allowExternal: Boolean = false,
+    ): Decision {
         val titleId = status.titleId?.id
             ?: return Decision.Blocked("No se pudo determinar el Title ID instalado.")
         if (!status.gameInstalled) {
@@ -48,16 +59,29 @@ object EmbeddedGameLauncher {
                 "El juego no está instalado. Importa tu copia de Child of Light (PCSE00480 o PCSB00598).",
             )
         }
-        if (!coreAvailable) {
-            return Decision.UseExternal("Núcleo embebido no presente (Etapa 2).")
+        if (coreAvailable) {
+            if (!firmwareReady) {
+                return Decision.Blocked(
+                    "Falta el firmware de Vita: el motor integrado no puede arrancar el juego sin él " +
+                        "(Ajustes → Avanzado → Firmware, opción avanzada).",
+                )
+            }
+            return when {
+                status.gameExtracted -> Decision.UseEmbedded(titleId)
+                status.pkgInstalled -> Decision.UseEmbeddedPkg(titleId)
+                else -> Decision.Blocked("El juego no está instalado. Importa tu copia de Child of Light (PCSE00480 o PCSB00598).")
+            }
         }
-        if (!firmwareReady) {
-            return Decision.UseExternal("Sin firmware local: se usa la app externa.")
+        // Sin núcleo embebido: la app externa solo se usa si el usuario
+        // lo permitió explícitamente en Ajustes → Avanzado. Sin ese
+        // permiso, se bloquea con el motivo exacto (reintentar /
+        // reportar en el diálogo) en vez de saltar por fuera.
+        if (allowExternal) {
+            return Decision.UseExternal("Núcleo embebido no presente; opción avanzada activada.")
         }
-        return when {
-            status.gameExtracted -> Decision.UseEmbedded(titleId)
-            status.pkgInstalled -> Decision.UseEmbeddedPkg(titleId)
-            else -> Decision.Blocked("El juego no está instalado. Importa tu copia de Child of Light (PCSE00480 o PCSB00598).")
-        }
+        return Decision.Blocked(
+            "El motor integrado no está disponible en esta versión: no se encontró el núcleo embebido. " +
+                "Reinstala el launcher y reintenta; si sigue igual, repórtalo desde aquí.",
+        )
     }
 }

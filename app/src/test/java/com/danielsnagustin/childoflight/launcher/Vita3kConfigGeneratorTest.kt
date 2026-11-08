@@ -230,4 +230,30 @@ class Vita3kConfigGeneratorTest {
         )
         assertTrue(yamlVulkan.contains("backend-renderer: \"Vulkan\""))
     }
+
+    @Test
+    fun showWelcomeFalseAlwaysEmitted() {
+        // Verificado en el pin (config.h:380): show-welcome existe,
+        // bool, default true. El launcher siempre emite false: es un
+        // port, no muestra la bienvenida del emulador. Su único
+        // consumo verificado es la GUI Qt (main_window.cpp:1031-1037);
+        // en Android/SDL ni siquiera se ejecuta ese diálogo.
+        val yaml = Vita3kConfigGenerator.generate(
+            LauncherSettings(), "/data/vita3k",
+        )
+        assertTrue(yaml.contains("show-welcome: false"))
+        assertFalse(yaml.contains("show-welcome: true"))
+    }
+
+    @Test
+    fun displayInfoMessageNeverEmittedAsRealKey() {
+        // display-info-message NO existe en config.h (lectura completa
+        // 0-465, pin 3e43bc80): nunca debe salir como clave real, solo
+        // como comentario TODO-VERIFY que explica por qué no se emite.
+        val yaml = Vita3kConfigGenerator.generate(
+            LauncherSettings(), "/data/vita3k",
+        )
+        assertFalse(yaml.contains("display-info-message: "))
+        assertTrue(yaml.contains("TODO-VERIFY: display-info-message"))
+    }
 }

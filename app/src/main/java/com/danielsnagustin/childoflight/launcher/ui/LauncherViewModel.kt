@@ -57,7 +57,7 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Acción que puede ofrecer el diálogo de aviso importante. */
-enum class AlertAction { INSTALL_VITA3K, GO_IMPORT, DELIVER_PKG_TO_VITA3K, CONFIRM_PKG_INSTALLED, REPLACE_DUPLICATE, CONFIRM_DOWNLOADS_COPY }
+enum class AlertAction { INSTALL_VITA3K, GO_IMPORT, DELIVER_PKG_TO_VITA3K, CONFIRM_PKG_INSTALLED, REPLACE_DUPLICATE, CONFIRM_DOWNLOADS_COPY, RETRY_LAUNCH }
 
 /**
  * Un .pkg guardado al que le falta su work.bin (licencia). La tarjeta
@@ -1129,13 +1129,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val settings = settingsRepo.settingsFlow.first()
             val gpu = settingsRepo.gpuInfoFlow.first()
             // 32 bits: el núcleo embebido necesita 64 bits (arm64). No se
-            // bloquea nada (la vía externa sigue funcionando), pero el
-            // usuario debe saber por qué nunca se activa el núcleo.
+            // bloquea nada aquí (la decisión lo dirá con su motivo), pero
+            // el usuario debe saber por qué nunca se activa el núcleo.
             // La GPU se pasa al lanzador para el fallback Vulkan->OpenGL
             // del config.yml (solo lo lee el núcleo embebido).
             if (!DeviceCompat.is64BitDevice()) {
                 withContext(Dispatchers.Main) {
-                    _message.value = "Este teléfono es de 32 bits: el núcleo embebido necesita 64 bits, así que el juego se abrirá con la app externa."
+                    _message.value = "Este teléfono es de 32 bits: el núcleo embebido necesita 64 bits."
                 }
             }
             // config.yml ANTES del firmware: instalar el firmware
@@ -1221,10 +1221,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                             if (gpu?.vulkanSupported == false) " Sin Vulkan en este teléfono: se usa OpenGL, puede ir más lento o con fallos gráficos." else ""
                     is Vita3KLauncher.LaunchOutcome.EmbeddedCorePresent ->
                         _message.value = "Núcleo embebido detectado, pero falta el punto de entrada JNI (Etapa 2)."
+                    is Vita3KLauncher.LaunchOutcome.EmbeddedFailed ->
+                        // El motor integrado falló al cargar o al arrancar:
+                        // diálogo con el motivo exacto, Reintentar y
+                        // Reportar (nunca salto automático a la app externa).
+                        _alert.value = AlertInfo(outcome.reason, AlertAction.RETRY_LAUNCH)
                     is Vita3KLauncher.LaunchOutcome.Blocked -> {
                         // El diálogo ofrece la acción que resuelve el bloqueo:
-                        // instalar Vita3K, o ir a importar el juego.
+                        // ir a importar el firmware, reintentar el motor,
+                        // instalar la app externa, o ir a importar el juego.
                         val action = when {
+                            outcome.reason.contains("Falta el firmware") -> AlertAction.GO_IMPORT
+                            outcome.reason.contains("motor integrado") -> AlertAction.RETRY_LAUNCH
                             outcome.reason.contains("app externa no está instalada") -> AlertAction.INSTALL_VITA3K
                             outcome.reason.contains("El juego no está instalado") -> AlertAction.GO_IMPORT
                             else -> null
@@ -1392,6 +1400,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         "Prueba de 30 s en marcha (núcleo embebido). Juega 30 segundos y al volver registra el FPS." +
                             if (gpu?.vulkanSupported == false) " Sin Vulkan en este teléfono: se usa OpenGL, puede ir más lento." else ""
                     is Vita3KLauncher.LaunchOutcome.Blocked -> {
+                        _pendingBenchmark.value = null
+                        outcome.reason
+                    }
+                    is Vita3KLauncher.LaunchOutcome.EmbeddedFailed -> {
                         _pendingBenchmark.value = null
                         outcome.reason
                     }
@@ -1877,7 +1889,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun buildBugReportText(settings: LauncherSettings, gpu: GpuInfo?): String {
         val status = _status.value
         return buildString {
-            appendLine("=== Reporte de bug — Child of Light Launcher (Etapa 1) ===")
+            appendLine("=== Reporte de bug — Child of Light Launcher ===")
             appendLine("Fecha: ${java.util.Date()}")
             appendLine("App: com.danielsnagustin.childoflight.launcher v0.1.0")
             appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")

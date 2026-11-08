@@ -260,6 +260,14 @@ data class LauncherSettings(
     /** Cerrar apps en segundo plano antes de jugar (best-effort, ver Vita3KLauncher). */
     val closeBackgroundApps: Boolean = true,
     /**
+     * Permitir la app externa como último recurso (Ajustes → Avanzado).
+     * OFF por defecto: JUGAR siempre usa el motor integrado. Solo si
+     * está ON y el motor integrado no está disponible, JUGAR abre el
+     * juego en otra app instalada. Nunca es un respaldo automático:
+     * con núcleo presente, este interruptor no cambia nada.
+     */
+    val allowExternalVita3k: Boolean = false,
+    /**
      * .pkg entregado a Vita3K: el launcher copió el .pkg + work.bin a
      * Descargas/ChildOfLight/ y abrió Vita3K con la guía. Se resetea
      * al importar un .pkg nuevo o borrar los datos del juego.
