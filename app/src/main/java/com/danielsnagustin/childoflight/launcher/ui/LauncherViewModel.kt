@@ -1303,9 +1303,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // Instalación del .pkg en el núcleo (al jugar con .pkg
             // guardado): el % real del núcleo llega a installProgress
             // y se muestra en Import; al terminar se limpia.
-            val outcome = launcher.launch(library, settings, sessionManager, gpu) { percent, status ->
-                _installProgress.value = InstallProgress(percent, status)
-            }
+            val outcome = launcher.launch(
+                library, settings, sessionManager, gpu,
+                onInstallProgress = { percent, status ->
+                    _installProgress.value = InstallProgress(percent, status)
+                },
+            )
             _installProgress.value = null
             if (outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternal ||
                 outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ||
