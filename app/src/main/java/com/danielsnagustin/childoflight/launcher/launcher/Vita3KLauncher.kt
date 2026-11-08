@@ -374,6 +374,27 @@ class Vita3KLauncher(private val context: Context) {
         val status = library.scanStatus()
         when (val decision = EmbeddedGameLauncher.decide(status, Vita3kCoreBridge.available, pre.firmwareStatus.ready, settings.allowExternalVita3k)) {
             is EmbeddedGameLauncher.Decision.UseEmbedded -> {
+                // Red de seguridad (bug -3, 2026-11-08): si el eboot
+                // instalado NO es un ELF válido, la instalación del
+                // .pkg se interrumpió a mitad del descifrado F00D (la
+                // app se cerró a mitad: 1,14 GB) y el juego no
+                // arrancaría aunque loadGame lo viera. Si el .pkg
+                // sigue guardado, se reinstala antes de validar, por
+                // el mismo camino que UseEmbeddedPkg.
+                if (!library.isEbootDecrypted(titleId)) {
+                    val pkgFile = library.findPkgGameFile(titleId)
+                    if (pkgFile != null) {
+                        LauncherLog.append(context, "pkg", "Eboot sin descifrar en $titleId: reinstalando el .pkg guardado.")
+                        val reinstalled = reinstallGamePkg(library, titleId, pkgFile, onInstallProgress)
+                        if (reinstalled.isFailure) {
+                            val reason = reinstalled.exceptionOrNull()?.message ?: "No se pudo reinstalar el .pkg."
+                            LauncherLog.append(context, "launch", "Reinstalación del .pkg falló: $reason")
+                            return LaunchOutcome.EmbeddedFailed("No se pudo preparar el juego en el motor integrado: $reason")
+                        }
+                    } else {
+                        LauncherLog.append(context, "pkg", "Eboot sin descifrar en $titleId y no hay .pkg guardado para reinstalar.")
+                    }
+                }
                 return when (val attempt = tryLaunchEmbedded(library, titleId, configFile.absolutePath, benchmark)) {
                     is EmbeddedAttempt.Ok -> attempt.outcome
                     is EmbeddedAttempt.Failed -> {
@@ -467,6 +488,10 @@ class Vita3KLauncher(private val context: Context) {
                     "El motor integrado no se pudo iniciar (código $initRc). Vuelve a intentarlo; si sigue igual, repórtalo.",
                 )
             }
+            // Log de instrumentación (crash ~15:06 sin stack trace):
+            // deja constancia de cada paso del arranque para que el
+            // próximo reporte muestre hasta dónde llegó el intento.
+            LauncherLog.append(context, "launch", "Núcleo inicializado (init OK)")
             // La lista de apps del núcleo es la del momento de init: si
             // el .pkg se instaló en este mismo lanzamiento (o en otro
             // anterior del mismo proceso, con init ya hecho), loadGame
@@ -474,6 +499,7 @@ class Vita3KLauncher(private val context: Context) {
             // Re-escanear antes de validar es lo que hace la UI de
             // upstream tras instalar; sin núcleo es no-op.
             Vita3kCoreBridge.refreshAppsList()
+            LauncherLog.append(context, "launch", "Lista de apps del núcleo re-escaneada; validando $titleId")
             val loadRc = Vita3kCoreBridge.loadGame(titleId)
             if (loadRc != Vita3kCoreBridge.OK) {
                 val detail = when (loadRc) {
@@ -507,6 +533,30 @@ class Vita3KLauncher(private val context: Context) {
      * bloquea el lanzamiento del juego base, pero queda registrado
      * (no silencioso).
      */
+    /**
+     * Reinstala el .pkg del juego desde un archivo concreto (puede
+     * vivir en el ux0 antiguo: findPkgGameFile lo busca en los dos).
+     * Es la red de seguridad del UseEmbedded cuando el eboot
+     * instalado no es un ELF válido: installGamePkg no sirve aquí
+     * porque busca el .pkg solo en el ux0 efectivo.
+     */
+    private suspend fun reinstallGamePkg(
+        library: GameLibraryRepository,
+        titleId: String,
+        pkgFile: File,
+        onInstallProgress: EmbeddedPkgInstaller.ProgressListener? = null,
+    ): Result<Unit> {
+        LauncherLog.append(context, "pkg", "Reinstalando .pkg en el núcleo embebido: $titleId")
+        val installer = EmbeddedPkgInstaller(library)
+        val progress: EmbeddedPkgInstaller.ProgressListener =
+            onInstallProgress ?: EmbeddedPkgInstaller.ProgressListener { _, _ -> }
+        val result = installer.installPkgFile(pkgFile, library.findPkgWorkBinFile(pkgFile), progress)
+        result.onFailure {
+            LauncherLog.append(context, "pkg", "Reinstalación .pkg embebida falló: ${it.message}")
+        }
+        return result
+    }
+
     private suspend fun installPkgWithEmbeddedCore(
         library: GameLibraryRepository,
         titleId: TitleId,

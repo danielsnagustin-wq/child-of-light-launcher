@@ -71,7 +71,7 @@ import kotlin.math.sin
  *
  * - Son logros LOCALES: no se sincronizan con PSN ni con Steam.
  * - No hay platino: el juego no tiene platino en PS4 ni en Vita.
- * - "Through the Looking Glass" avisa que puede no desbloquearse sin
+ * - "A través del cristal" (EN: Through the Looking Glass) avisa que puede no desbloquearse sin
  *   la función online de Vita (enviar Oculi a un amigo).
  * - Los nombres y descripciones son los 27 trofeos locales que ya lee
  *   la app (TrophyStoreReader): no se inventa ni se renombra ninguno.

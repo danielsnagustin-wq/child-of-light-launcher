@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -182,6 +183,12 @@ private fun GameCard(
     // Deshabilitar JUGAR mientras hay un lanzamiento en curso (doble
     // toque = dos launch() a la vez); la guarda vive en el ViewModel.
     val launching by vm.launchingFlow.collectAsState()
+    // Progreso REAL de la instalación del .pkg en el núcleo (el
+    // ViewModel lo alimenta en play() vía onInstallProgress): antes
+    // Home nunca lo recogía y al pulsar JUGAR con solo .pkg el botón
+    // se apagaba sin mostrar nada durante varios minutos (1,14 GB),
+    // así que parecía que el juego no iniciaba. Ahora se ve aquí.
+    val installProgress by vm.installProgress.collectAsState()
     val cover by vm.coverBitmap.collectAsState()
 
     val lastFps = benchmarks.firstOrNull()?.fpsAvg
@@ -307,8 +314,58 @@ private fun GameCard(
             } else {
                 PrimaryButton(strings.importGame.uppercase(), onClick = { onNavigate(Screen.IMPORT) })
             }
+            // Mientras JUGAR trabaja (sobre todo instalando el .pkg en
+            // el núcleo, varios minutos): tarjeta de progreso visible
+            // debajo del botón, con el % real del núcleo cuando lo hay.
+            if (launching) {
+                Spacer(modifier = Modifier.height(12.dp))
+                LaunchProgressCard(installProgress)
+            }
         }
     }
+
+/**
+ * Tarjeta de progreso del lanzamiento (Home): % real del núcleo +
+ * su mensaje cuando installProgress trae percent; si no, texto
+ * "Preparando el juego…" + barra indeterminada. El % nunca se
+ * inventa: solo se muestra el de installProgress. Azul hielo /
+ * turquesa sobre #10131D, sin dorado.
+ */
+@Composable
+private fun LaunchProgressCard(installProgress: InstallProgress?) {
+    Column(
+        modifier = Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(ColCard)
+            .padding(12.dp),
+    ) {
+        val progress = installProgress
+        if (progress?.percent != null) {
+            Text(
+                "Instalando en el núcleo… ${progress.percent}% — ${progress.message}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            PrimaryProgressBar(progress = (progress.percent ?: 0) / 100f)
+        } else {
+            PulsingText(
+                progress?.message ?: "Preparando el juego…",
+                ColIceBlue,
+                MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            "No cierres la app. Instalar el juego puede tardar varios minutos.",
+            style = MaterialTheme.typography.bodySmall,
+            color = ColMutedText,
+        )
+    }
+}
 
 // Fila de dos tarjetas: Rendimiento (GPU + perfil) y Logros (X/27).
 // La de Logros respeta "Mostrar logros en la pantalla principal": si

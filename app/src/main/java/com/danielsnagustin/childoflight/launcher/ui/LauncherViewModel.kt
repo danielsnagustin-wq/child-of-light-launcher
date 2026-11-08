@@ -46,6 +46,7 @@ import com.danielsnagustin.childoflight.launcher.model.ImportResult
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.TROPHIES_27
 import com.danielsnagustin.childoflight.launcher.model.TrophyProgress
+import com.danielsnagustin.childoflight.launcher.model.TrophyUnlockAnnouncer
 import com.danielsnagustin.childoflight.launcher.model.UiPreferences
 import com.danielsnagustin.childoflight.launcher.model.applySafeMode
 import com.danielsnagustin.childoflight.launcher.ui.settings.audioFixTarget
@@ -66,6 +67,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /** Acción que puede ofrecer el diálogo de aviso importante. */
 enum class AlertAction { INSTALL_VITA3K, GO_IMPORT, DELIVER_PKG_TO_VITA3K, CONFIRM_PKG_INSTALLED, REPLACE_DUPLICATE, CONFIRM_DOWNLOADS_COPY, RETRY_LAUNCH }
@@ -286,9 +288,19 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /** Trofeo recién desbloqueado: la UI muestra popup + sonido. */
+    /** Trofeo recién desbloqueado: la UI muestra popup + sonido.
+     * BUG 2026-11-08: el popup nombraba el trofeo equivocado (15 en
+     * vez de 17) porque dos unlockTrophy en vuelo escribían este
+     * StateFlow sin orden ni identidad de evento. El anuncio pasa por
+     * [TrophyUnlockAnnouncer] (secuencia por pulsación + construcción
+     * directa desde TROPHIES_27) y los desbloqueos se serializan con
+     * [unlockTrophyMutex]: el popup siempre nombra el trofeo del
+     * desbloqueo más reciente. */
     private val _justUnlocked = MutableStateFlow<TrophyProgress?>(null)
     val justUnlocked: StateFlow<TrophyProgress?> = _justUnlocked.asStateFlow()
+    private val unlockAnnouncer = TrophyUnlockAnnouncer()
+    private val unlockSeq = AtomicLong(0)
+    private val unlockTrophyMutex = Mutex()
 
     private val _trophyScan = MutableStateFlow<TrophyStoreScan?>(null)
     val trophyScan: StateFlow<TrophyStoreScan?> = _trophyScan.asStateFlow()
@@ -335,7 +347,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun clearJustUnlocked() { _justUnlocked.value = null }
+    fun clearJustUnlocked() {
+        unlockAnnouncer.clear()
+        _justUnlocked.value = null
+    }
 
     fun refreshStatus() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -1641,17 +1656,32 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     // --- Logros ---
 
     fun unlockTrophy(number: Int) {
+        // La secuencia se asigna AQUÍ, en el momento de la pulsación
+        // (orden de llamada): si dos desbloqueos van seguidos, el
+        // anunciador ignora el que termine tarde (ver
+        // TrophyUnlockAnnouncer). Sin esto, el popup podía nombrar el
+        // trofeo anterior (BUG 2026-11-08: 15 en vez de 17).
+        val seq = unlockSeq.incrementAndGet()
         viewModelScope.launch {
-            val isNew = achievementsRepo.unlock(number)
-            if (isNew) {
-                val progress = achievementsRepo.progressFlow.first()
-                val trophy = progress.firstOrNull { it.trophy.number == number }
-                _justUnlocked.value = trophy
-                playUnlockSound()
-                val name = TROPHIES_27.firstOrNull { it.number == number }?.name ?: "Trofeo $number"
-                LauncherLog.append(context, "trophy", "Logro desbloqueado: $name")
-            } else {
-                _message.value = "Ese logro ya estaba desbloqueado."
+            // Serializa desbloqueo + anuncio: dos pulsaciones seguidas
+            // se ejecutan en orden de llamada, no en orden de llegada.
+            unlockTrophyMutex.withLock {
+                val atMillis = System.currentTimeMillis()
+                val isNew = achievementsRepo.unlock(number, atMillis)
+                if (isNew) {
+                    // El trofeo anunciado se construye directamente
+                    // desde TROPHIES_27 con el número y el instante del
+                    // desbloqueo: antes se releía de progressFlow.first()
+                    // tras el edit, una relectura que podía ir por
+                    // detrás de la escritura y anunciar otro trofeo.
+                    val announced = unlockAnnouncer.announce(number, atMillis, seq)
+                    if (announced != null) _justUnlocked.value = announced
+                    playUnlockSound()
+                    val name = TROPHIES_27.firstOrNull { it.number == number }?.name ?: "Trofeo $number"
+                    LauncherLog.append(context, "trophy", "Logro desbloqueado: $name")
+                } else {
+                    _message.value = "Ese logro ya estaba desbloqueado."
+                }
             }
         }
     }
@@ -1663,6 +1693,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun resetTrophies() {
         viewModelScope.launch {
             achievementsRepo.resetAll()
+            clearJustUnlocked()
             _message.value = "Progreso de logros borrado (local, no afecta a PSN porque nunca se sincroniza)."
         }
     }
@@ -2159,10 +2190,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         // Ola 3, Etapa 10: el log se lee una vez y se reutiliza para el
         // log completo y para los errores recientes.
         val recentLog = LauncherLog.readLast(context, 60)
-        return buildString {
+        val raw = buildString {
             appendLine("=== Reporte de bug — Child of Light Launcher ===")
             appendLine("Fecha: ${java.util.Date()}")
-            appendLine("App: com.danielsnagustin.childoflight.launcher v0.1.0")
+            appendLine("App: Child of Light Launcher v0.1.0")
             appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
             // Modelo: solo en el informe de diagnóstico y en Ajustes →
             // Diagnóstico (ver SettingsDiagnosticsScreen).
@@ -2207,6 +2238,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             appendLine("--- Log del launcher (últimas líneas) ---")
             appendLine(recentLog)
         }
+        // Privacidad: el nombre del paquete no sale en el reporte
+        // (ni en la cabecera ni en las rutas del log/config): se
+        // sustituye por un nombre neutro; las rutas siguen siendo
+        // legibles para depurar.
+        return raw.replace("com.danielsnagustin.childoflight.launcher", "child-of-light-launcher")
     }
 
     fun exportBugReport(uri: Uri, settings: LauncherSettings, gpu: GpuInfo?) {

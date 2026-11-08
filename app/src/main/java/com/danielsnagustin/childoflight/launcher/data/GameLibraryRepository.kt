@@ -189,6 +189,25 @@ class GameLibraryRepository(private val context: Context) {
          * prefijo es el mensaje para el usuario (sin el prefijo).
          */
         const val DUPLICATE_MARKER = "DUPLICATE::"
+
+        /**
+         * ¿El archivo es un ELF válido? Un eboot.bin de Vita descifrado
+         * empieza por 0x7F 'E' 'L' 'F'. Puro (solo File) para poder
+         * probarlo en la JVM sin Context.
+         */
+        fun isElfFile(file: File): Boolean {
+            if (!file.isFile) return false
+            return try {
+                file.inputStream().use { input ->
+                    val magic = ByteArray(4)
+                    if (input.read(magic) != 4) return false
+                    magic[0] == 0x7F.toByte() && magic[1] == 'E'.code.toByte() &&
+                        magic[2] == 'L'.code.toByte() && magic[3] == 'F'.code.toByte()
+                }
+            } catch (_: Exception) {
+                false
+            }
+        }
     }
 
     /** ¿El juego ya está subido (extraído en ux0/app/ o como .pkg)? */
@@ -283,6 +302,40 @@ class GameLibraryRepository(private val context: Context) {
     fun pkgDir(): File = File(ux0Dir, "pkg")
     fun pkgGameFile(titleId: String): File = File(pkgDir(), "$titleId.pkg")
     fun pkgWorkBinFile(titleId: String): File = File(pkgDir(), "$titleId.work.bin")
+
+    /**
+     * ¿El eboot.bin instalado es un ELF válido? Tras instalar un .pkg
+     * el núcleo descifra el PFS (install_pkg de upstream: extrae
+     * cifrado y luego F00D lo pasa a <TITLE>_dec y lo renombra). Si
+     * ese proceso se interrumpe (app cerrada a mitad: 1,14 GB),
+     * queda eboot.bin en disco pero CIFRADO: el escáner lo ve como
+     * "extraído" y el núcleo no puede arrancar el juego. Un ELF de
+     * Vita empieza por 0x7F 'E' 'L' 'F'; el contenido cifrado no.
+     * false también si no hay eboot.bin.
+     */
+    fun isEbootDecrypted(titleId: String): Boolean {
+        val eboot = runCatching { ImportTreeSearch.findEboot(appDir(titleId)) }.getOrNull() ?: return false
+        return isElfFile(eboot)
+    }
+
+    /**
+     * .pkg del juego esté donde esté: en el ux0 efectivo o en el
+     * antiguo. Tras instalarse el juego, el ux0 efectivo pasa a ser
+     * vita/ux0 pero el .pkg sigue en el ux0 antiguo (la migración
+     * AlreadyMigrated no mueve nada): pkgGameFile() ya no lo ve.
+     * null si no hay .pkg en ninguno de los dos.
+     */
+    fun findPkgGameFile(titleId: String): File? {
+        val resolved = pkgGameFile(titleId)
+        if (resolved.isFile) return resolved
+        val legacy = File(EmbeddedCoreLayout.legacyUx0Dir(vitaRoot), "pkg/$titleId.pkg")
+        if (legacy.isFile) return legacy
+        return null
+    }
+
+    /** work.bin junto a un .pkg encontrado por findPkgGameFile. */
+    fun findPkgWorkBinFile(pkgFile: File): File =
+        File(pkgFile.parentFile, "${pkgFile.nameWithoutExtension}.work.bin")
     fun pkgDlcDir(): File = File(pkgDir(), "dlc")
     fun pkgDlcFile(dlcId: String): File = File(pkgDlcDir(), "$dlcId.pkg")
     fun pkgDlcWorkBinFile(dlcId: String): File = File(pkgDlcDir(), "$dlcId.work.bin")

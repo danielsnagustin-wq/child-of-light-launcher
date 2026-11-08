@@ -276,4 +276,27 @@ class Vita3kConfigGeneratorTest {
         assertFalse(yaml.contains("psn-signed-in: 0"))
         assertFalse(yaml.contains("psn-signed-in: true"))
     }
+
+    @Test
+    fun prefPathIsVitaFsNotStorageRoot() {
+        // Bug -3 (2026-11-08): pref-path ES el vita_fs en upstream
+        // (config.h:182 del pin 3e43bc80: pref-path es
+        // cfg.vita_fs_path; app_init.cpp:434-440 lo usa como
+        // state.vita_fs_path). El vita_fs del núcleo es
+        // <vitaRoot>/vita (initialize_session). Emitir la raíz hacía
+        // que en un proceso fresco el núcleo escaneara el ux0
+        // antiguo (vacío) y loadGame devolviera -3 aunque el juego
+        // estuviera instalado en vita/ux0.
+        val root = java.io.File("/data/vita3k")
+        val vitaFs = Vita3kConfigGenerator.vitaFsPathFor(root)
+        assertTrue(vitaFs.absolutePath.endsWith("/vita"))
+        val yaml = Vita3kConfigGenerator.generate(
+            LauncherSettings(), vitaFs.absolutePath,
+        )
+        assertTrue(yaml.contains("pref-path: \"${vitaFs.absolutePath}\""))
+        // La ruta SIN /vita no debe aparecer como valor completo
+        // (con comillas de cierre): es prefijo de la buena, así que
+        // se comprueba con el cierre de comillas.
+        assertFalse(yaml.contains("pref-path: \"${root.absolutePath}\"\n"))
+    }
 }

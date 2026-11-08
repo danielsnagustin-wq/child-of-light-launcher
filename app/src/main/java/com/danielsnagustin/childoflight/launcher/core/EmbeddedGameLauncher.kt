@@ -78,8 +78,8 @@ object EmbeddedGameLauncher {
             return Decision.UseExternal("Núcleo embebido no presente; opción avanzada activada.")
         }
         return Decision.Blocked(
-            "El motor integrado no está disponible en esta versión: no se encontró el núcleo embebido. " +
-                "Reinstala el launcher y reintenta; si sigue igual, repórtalo desde aquí.",
+            "El motor integrado no está disponible en esta versión: parece que instalaste la versión pequeña, sin núcleo. " +
+                "Instala la APK del archivo grande «child-of-light-launcher-apks-native» (unos 66 MB, con el motor integrado) y reintenta.",
         )
     }
 }

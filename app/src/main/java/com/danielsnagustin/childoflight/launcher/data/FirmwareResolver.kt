@@ -188,10 +188,21 @@ object FirmwareResolver {
         }
     }
 
-    /** Texto corto para Diagnóstico y Ajustes. */
+    /**
+     * Etiqueta CORTA para Diagnóstico, GPU e Importar: solo estado +
+     * versión si se conoce. La fuente larga ("extraído en el núcleo
+     * (vita/vs0)") ya no se muestra: en Importar se veía como un
+     * párrafo y el usuario pidió una pantalla que se entienda de un
+     * vistazo. La versión solo existe cuando el marcador la trae
+     * ("instalado (versión 3.74)"); con vs0 extraído sin marcador
+     * no se conoce y se muestra solo "Instalado".
+     */
     fun label(status: FirmwareStatus): String = when (status) {
-        is FirmwareStatus.Ready -> "Instalado (${status.source})"
-        is FirmwareStatus.Saved -> "Guardado, pendiente de instalar en el núcleo (${status.source})"
-        FirmwareStatus.Missing -> "No guardado en el launcher (la app externa usa el suyo)"
+        is FirmwareStatus.Ready -> {
+            val version = Regex("versión\\s+([0-9.]+)").find(status.source)?.groupValues?.getOrNull(1)
+            if (!version.isNullOrBlank()) "Instalado · $version" else "Instalado"
+        }
+        is FirmwareStatus.Saved -> "Guardado · pendiente de instalar"
+        FirmwareStatus.Missing -> "Ausente"
     }
 }

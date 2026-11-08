@@ -212,9 +212,34 @@ object Vita3kConfigGenerator {
         return if (value == value.toInt().toFloat()) "${value.toInt()}.0" else value.toString()
     }
 
-    /** Escribe config.yml en <vitaFs>/config.yml y devuelve el archivo. */
+    /**
+     * Ruta del vita_fs del núcleo para una raíz de almacenamiento:
+     * <vitaRoot>/vita (initialize_session: vita_fs = storage / "vita").
+     * Pura para poder probarla en la JVM: pref-path DEBE ser esta
+     * ruta, no la raíz (ver writeConfig).
+     */
+    fun vitaFsPathFor(vitaRoot: File): File = File(vitaRoot, "vita")
+
+    /**
+     * Escribe config.yml en <vitaFs>/config.yml y devuelve el archivo.
+     *
+     * OJO (bug -3, 2026-11-08): pref-path NO es la raíz de
+     * almacenamiento: upstream lo trata COMO el vita_fs (config.h:182
+     * del pin 3e43bc80: pref-path es cfg.vita_fs_path; app_init.cpp
+     * :434-440 usa ese valor como state.vita_fs_path cuando difiere
+     * del root). El vita_fs del núcleo es <vitaRoot>/vita
+     * (initialize_session: vita_fs = storage_path / "vita"), así que
+     * pref-path DEBE ser <vitaRoot>/vita. Emitir <vitaRoot> hacía que
+     * en un proceso fresco el núcleo buscara los juegos en el ux0
+     * antiguo (vacío) en vez de en vita/ux0: loadGame devolvía -3
+     * ("no encontró el juego instalado") aunque el juego estuviera
+     * instalado, y refreshAppsList no lo arreglaba porque re-escanea
+     * ese mismo ux0 equivocado. generate() ya recibe el parámetro
+     * como vitaFsPath: aquí se le pasa la ruta correcta.
+     */
     fun writeConfig(context: Context, settings: LauncherSettings, vitaRoot: File, gpu: GpuInfo? = null): File {
-        val content = generate(settings, vitaRoot.absolutePath, gpu)
+        val vitaFs = vitaFsPathFor(vitaRoot)
+        val content = generate(settings, vitaFs.absolutePath, gpu)
         if (!vitaRoot.exists()) vitaRoot.mkdirs()
         val file = File(vitaRoot, "config.yml")
         file.writeText(content)

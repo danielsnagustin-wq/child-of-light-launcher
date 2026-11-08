@@ -4,7 +4,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,17 +35,22 @@ import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
 import com.danielsnagustin.childoflight.launcher.model.AppLanguage
 
 /**
- * Pantalla de Importación (Fase 2, Ola 1): juego principal, DLCs,
- * updates y firmware, todo en un solo lugar. Antes vivía en Ajustes;
- * se muda aquí tal cual (mismos pickers, mismas funciones del
- * ViewModel, mismo resultado detallado), y la Home apunta aquí. El
- * firmware también vive aquí desde 2026-11-08: ya no es una sección
- * de Ajustes, porque va con el juego y los DLCs.
+ * Pantalla de Importación: juego principal, DLCs, updates y
+ * firmware, todo en un solo lugar.
  *
- * Estados REALES desde GameStatus (disco): nada ficticio. Cada
- * apartado muestra lo que hay instalado (Title ID, tamaño, lista
- * de DLCs con id + tamaño, update sí/no) y el estado vacío útil
- * cuando no hay nada.
+ * Diseño (2026-11-08, petición del usuario: "no se entiende con
+ * tanto en esta parte"): cada tarjeta muestra SOLO su estado
+ * (✓ Guardado / ✓ Instalado / Ausente) + un dato corto + UNA
+ * acción como mucho. Nada de párrafos explicativos: lo ya subido
+ * no vuelve a pedir subir, solo queda como guardado con un
+ * "Reemplazar" pequeño. Los botones grandes de Importar solo
+ * aparecen cuando el elemento falta.
+ *
+ * Estados REALES desde GameStatus (disco): nada ficticio. La
+ * licencia pendiente (work.bin) y la copia a la app externa viven
+ * aquí solo cuando hacen falta: la copia externa es una opción
+ * avanzada y solo se muestra si el núcleo embebido NO está
+ * presente (con núcleo, el .pkg se instala solo al pulsar JUGAR).
  *
  * Progreso (honesto):
  * - Copia del archivo (sin hook de progreso en copyUriAtomic):
@@ -80,7 +87,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     val pickWorkBin = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) vm.importWorkBin(uri)
     }
-    // Firmware (mudado desde Ajustes): mismo flujo del ViewModel.
+    // Firmware: mismo flujo del ViewModel.
     val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
     val firmwareInstalling by vm.firmwareInstallingFlow.collectAsState()
     val embeddedCore by vm.embeddedCoreFlow.collectAsState()
@@ -126,53 +133,77 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
                         Spacer(modifier = Modifier.height(8.dp))
-                        NoteText("No cierres la app mientras dura. Un juego completo puede tardar varios minutos.")
+                        Text(
+                            "No cierres la app mientras dura.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ColMutedText,
+                        )
                     }
                 }
             }
-            // --- Juego principal ---
+            // --- Juego principal: estado + un dato + una acción ---
             item {
                 SectionTitle(strings.mainGame)
                 PremiumCard {
-                    Text(
-                        "Juego y DLCs: solo se aceptan PCSE00480 (US) y PCSB00598 (EU).",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White,
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        "${strings.state}: ${status.installedLabel}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White,
-                    )
                     if (status.gameExtracted) {
                         Text(
-                            "Title ID: ${status.extractedTitleId?.id ?: "—"} · Tamaño: ${DownloadsCleanup.formatBytes(status.gameSizeBytes)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = ColMutedText,
-                        )
-                    } else if (status.pkgInstalled) {
-                        Text(
-                            "Guardado como .pkg (${status.pkgTitleId?.id ?: "—"} · ${DownloadsCleanup.formatBytes(status.pkgSizeBytes)}): se instala en el motor integrado al pulsar JUGAR.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = ColMutedText,
-                        )
-                    } else {
-                        Text(
-                            strings.pendingImport,
+                            "✓ ${strings.installed} · ${status.extractedTitleId?.id ?: status.titleId?.id ?: "—"} · ${DownloadsCleanup.formatBytes(status.gameSizeBytes)}",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = ColAccent,
+                            color = Color.White,
                         )
+                        if (status.pkgInstalled) {
+                            Text(
+                                "Licencia (work.bin): ${if (status.pkgLicensePresent) "guardada ✓" else "falta ✗"}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (status.pkgLicensePresent) ColTurquoise else Color.White,
+                            )
+                        }
+                        TextButton(onClick = { pickGame.launch("*/*") }, enabled = !importing) { Text("Reemplazar") }
+                    } else if (status.pkgInstalled) {
+                        Text(
+                            "✓ Guardado · ${status.pkgTitleId?.id ?: "—"} · ${DownloadsCleanup.formatBytes(status.pkgSizeBytes)}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                        )
+                        Text(
+                            "Se instala solo al pulsar JUGAR.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ColMutedText,
+                        )
+                        Text(
+                            "Licencia (work.bin): ${if (status.pkgLicensePresent) "guardada ✓" else "falta ✗"}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (status.pkgLicensePresent) ColTurquoise else Color.White,
+                        )
+                        TextButton(onClick = { pickGame.launch("*/*") }, enabled = !importing) { Text("Reemplazar") }
+                    } else {
+                        Text(
+                            strings.absent,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SecondaryButton("Importar juego (.zip / .vpk / .pkg)", onClick = { pickGame.launch("*/*") }, enabled = !importing)
+                        TextButton(onClick = { pickGameFolder.launch(null) }, enabled = !importing) { Text("o importar carpeta") }
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    SecondaryButton("Importar juego (.zip / .vpk / .pkg)", onClick = { pickGame.launch("*/*") }, enabled = !importing)
-                    NoteText("Elige el paquete COMPLETO del juego: .zip/.vpk con eboot.bin dentro, o .pkg. El nombre del archivo da igual: el juego se valida por su contenido. Un eboot.bin suelto no basta.")
-                    Spacer(modifier = Modifier.height(8.dp))
-                    SecondaryButton("Importar carpeta del juego", onClick = { pickGameFolder.launch(null) }, enabled = !importing)
-                    NoteText("Elige la carpeta PCSE00480 o PCSB00598 que contiene eboot.bin dentro.")
+                    // Copia a la app externa: solo opción avanzada y
+                    // solo si el núcleo NO está presente. Con núcleo,
+                    // el .pkg se instala solo al pulsar JUGAR.
+                    if (status.pkgInstalled && embeddedCore != true) {
+                        if (s?.pkgDeliveredToVita3k == true) {
+                            Text("✓ Copiado a Descargas/ChildOfLight/", style = MaterialTheme.typography.bodyMedium, color = ColTurquoise)
+                        }
+                        if (s?.pkgInstalledInVita3k == true) {
+                            Text("✓ Instalado en la app externa", style = MaterialTheme.typography.bodyMedium, color = ColTurquoise)
+                        }
+                        TextButton(onClick = { vm.deliverPkgToVita3k() }, enabled = !importing && status.pkgLicensePresent) { Text("Copiar a la app externa") }
+                        if (s?.pkgDeliveredToVita3k == true && s?.pkgInstalledInVita3k != true) {
+                            TextButton(onClick = { vm.confirmPkgInstalledInVita3k() }) { Text("Ya lo instalé en la app externa") }
+                        }
+                    }
                 }
             }
             // --- DLC ---
@@ -181,81 +212,112 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 PremiumCard {
                     if (status.dlcs.isEmpty()) {
                         Text(
-                            strings.noDlcsYet,
+                            strings.absent,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = ColMutedText,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
                         )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SecondaryButton("Importar DLC (.zip / .pkg)", onClick = { pickDlc.launch("*/*") }, enabled = !importing)
+                        TextButton(onClick = { pickDlcFolder.launch(null) }, enabled = !importing) { Text("o importar carpeta") }
                     } else {
                         status.dlcs.forEach { dlc ->
                             Text(
-                                "• ${dlc.dlcId} — ${DownloadsCleanup.formatBytes(dlc.sizeBytes)}" + if (dlc.isPkg) " (.pkg)" else "",
+                                "✓ ${dlc.dlcId} · ${DownloadsCleanup.formatBytes(dlc.sizeBytes)}" + if (dlc.isPkg) " (.pkg)" else "",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.White,
                             )
                         }
+                        TextButton(onClick = { pickDlc.launch("*/*") }, enabled = !importing) { Text("Añadir otro DLC") }
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    SecondaryButton("Importar DLC (.zip / .pkg)", onClick = { pickDlc.launch("*/*") }, enabled = !importing)
-                    NoteText("Elige el .zip del DLC (con la ruta addcont/ dentro) o el .pkg del DLC.")
-                    Spacer(modifier = Modifier.height(8.dp))
-                    SecondaryButton("Importar carpeta de DLC", onClick = { pickDlcFolder.launch(null) }, enabled = !importing)
-                    NoteText("Elige la carpeta del juego que contiene addcont/ dentro.")
                 }
             }
             // --- Actualizaciones ---
             item {
                 SectionTitle(strings.updatesSection)
                 PremiumCard {
-                    Text(
-                        "${strings.update}: ${if (status.updateInstalled) strings.installed else strings.noUpdateYet}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White,
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    SecondaryButton("Importar update (.zip / .vpk / .pkg)", onClick = { pickUpdate.launch("*/*") }, enabled = !importing)
-                    NoteText("Elige el .zip, .vpk o .pkg del update.")
+                    if (status.updateInstalled) {
+                        Text(
+                            "✓ ${strings.installed}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                        )
+                    } else {
+                        Text(
+                            strings.absent,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SecondaryButton("Importar update (.zip / .vpk / .pkg)", onClick = { pickUpdate.launch("*/*") }, enabled = !importing)
+                    }
                 }
             }
-            // --- Firmware (mudado desde Ajustes: va con el juego y los DLCs) ---
+            // --- Firmware ---
             item {
                 SectionTitle("Firmware")
                 PremiumCard {
-                    Text(
-                        "Firmware: ${FirmwareResolver.label(firmwareStatus)}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White,
-                    )
-                    if (firmwareStatus is FirmwareStatus.Missing) {
-                        NoteText(FirmwareResolver.NO_FIRMWARE_MESSAGE)
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    SecondaryButton("Importar firmware (.PUP, tu copia)", onClick = { pickFirmware.launch("*/*") }, enabled = !importing)
-                    if (firmwareInstalling) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                        NoteText("Instalando el firmware en el núcleo embebido… puede tardar unos minutos. No cierres la app.")
-                    } else if (firmwareStatus is FirmwareStatus.Saved) {
-                        if (embeddedCore == true) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            SecondaryButton("Instalar en el núcleo embebido", onClick = { vm.installSavedFirmwareInCore() }, enabled = !importing)
-                        } else {
-                            NoteText(
-                                "El PUP ya está guardado en el teléfono. El núcleo embebido aún no está en esta versión: " +
-                                    "se instalará solo cuando llegue (al importar, al pulsar JUGAR o desde aquí). " +
-                                    "Mientras tanto, la app externa usa su propio firmware.",
+                    when (firmwareStatus) {
+                        is FirmwareStatus.Ready -> {
+                            Text(
+                                "✓ ${FirmwareResolver.label(firmwareStatus)}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White,
                             )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = { pickFirmware.launch("*/*") }, enabled = !importing) { Text("Reemplazar") }
+                                TextButton(onClick = { showDeleteFirmwareConfirm = true }, enabled = !importing) { Text("Borrar firmware") }
+                            }
+                        }
+                        is FirmwareStatus.Saved -> {
+                            Text(
+                                "✓ ${FirmwareResolver.label(firmwareStatus)}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White,
+                            )
+                            if (firmwareInstalling) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                Text(
+                                    "Instalando firmware…",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = ColMutedText,
+                                )
+                            } else if (embeddedCore == true) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                SecondaryButton("Instalar en el núcleo embebido", onClick = { vm.installSavedFirmwareInCore() }, enabled = !importing)
+                                TextButton(onClick = { pickFirmware.launch("*/*") }, enabled = !importing) { Text("Reemplazar") }
+                            } else {
+                                Text(
+                                    "La app externa usa su propio firmware.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = ColMutedText,
+                                )
+                            }
+                        }
+                        FirmwareStatus.Missing -> {
+                            Text(
+                                strings.absent,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White,
+                            )
+                            Text(
+                                "Tu copia del firmware, solo en tu teléfono.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = ColMutedText,
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            SecondaryButton("Importar firmware (.PUP, tu copia)", onClick = { pickFirmware.launch("*/*") }, enabled = !importing)
                         }
                     }
-                    if (firmwareStatus is FirmwareStatus.Ready) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        SecondaryButton("Borrar firmware", onClick = { showDeleteFirmwareConfirm = true }, enabled = !importing)
-                    }
-                    NoteText("Tu PUP se queda solo en tu teléfono: el launcher lo lee de ahí y lo instala en el núcleo embebido. No tienes que enviarlo por chat ni subirlo a ningún sitio. El launcher no incluye firmware ni claves.")
                 }
             }
-            // --- .pkg: licencia pendiente y entrega a la app externa (mudado desde Ajustes, tal cual) ---
+            // --- Falta la licencia del .pkg ---
             item {
                 pendingLicense?.let { pending ->
                     SectionTitle("Falta la licencia")
@@ -266,42 +328,8 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White,
                         )
-                        NoteText("Sin la licencia no se puede instalar el .pkg. Es el archivo work.bin de 512 B que acompaña al .pkg (a veces se descarga como «work (5).bin»).")
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         SecondaryButton("Elegir work.bin", onClick = { pickWorkBin.launch("*/*") }, enabled = !importing)
-                    }
-                }
-                if (status.pkgInstalled) {
-                    SectionTitle("Juego en .pkg")
-                    PremiumCard {
-                        Text(
-                            "Juego (.pkg): ${status.pkgTitleId?.id ?: "—"}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
-                        )
-                        Text("Content ID: ${status.pkgContentId ?: "—"}", style = MaterialTheme.typography.bodySmall, color = ColMutedText)
-                        Text(
-                            "Licencia (work.bin): ${if (status.pkgLicensePresent) "guardada ✓" else "falta ✗"}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (status.pkgLicensePresent) ColTurquoise else Color.White,
-                        )
-                        if (s?.pkgDeliveredToVita3k == true) {
-                            Text("✓ Copiado a Descargas/ChildOfLight/", style = MaterialTheme.typography.bodyMedium, color = ColTurquoise)
-                        }
-                        if (s?.pkgInstalledInVita3k == true) {
-                            Text("✓ Instalado en la app externa (confirmado por ti)", style = MaterialTheme.typography.bodyMedium, color = ColTurquoise)
-                        }
-                        Spacer(modifier = Modifier.height(12.dp))
-                        SecondaryButton("Instalar en la app externa", onClick = { vm.deliverPkgToVita3k() }, enabled = !importing && status.pkgLicensePresent)
-                        if (!status.pkgLicensePresent) {
-                            NoteText("Falta el work.bin: elige la licencia arriba para poder instalarlo.")
-                        }
-                        if (s?.pkgDeliveredToVita3k == true && s?.pkgInstalledInVita3k != true) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            SecondaryButton("Ya lo instalé en la app externa", onClick = { vm.confirmPkgInstalledInVita3k() })
-                        }
-                        NoteText("El launcher no puede instalar un .pkg por sí mismo: lo instala la app externa. «Instalar en la app externa» te pide confirmar antes de copiar el .pkg y su licencia a Descargas/ChildOfLight/ (la app externa no puede leer el almacenamiento interno del launcher) y abre la app externa con la guía. Cuando el núcleo embebido esté listo, no hará falta copiar nada.")
                     }
                 }
             }
