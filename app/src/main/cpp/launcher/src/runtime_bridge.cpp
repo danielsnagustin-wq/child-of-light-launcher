@@ -46,6 +46,7 @@ static constexpr jint kTitleNotInstalled = -4;
 #include <emuenv/state.h>
 
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h> // SDL_SetMainReady (no viene en SDL.h)
 
 #include <optional>
 #include <string>
