@@ -417,9 +417,43 @@ fun applySafeMode(settings: LauncherSettings): LauncherSettings = settings.copy(
     frameSkipping = 0,
 )
 
-/** Ajustes efectivos para generar config.yml: el modo seguro manda sobre el resto. */
+/**
+ * Ajustes efectivos para generar config.yml: el modo seguro manda sobre
+ * todo; si no, el modo 60 FPS (fpsHack) aplica su paquete completo.
+ * El perfil guardado del usuario no se toca: solo los valores efectivos.
+ */
 fun effectiveSettings(settings: LauncherSettings): LauncherSettings =
-    if (settings.safeMode) applySafeMode(settings) else settings
+    when {
+        settings.safeMode -> applySafeMode(settings)
+        settings.fpsHack -> apply60FpsMode(settings)
+        else -> settings
+    }
+
+/**
+ * Modo 60 FPS (opcional, OFF por defecto): paquete completo para intentar
+ * 30 → 60 fps con fps-hack. Verificado contra upstream (pin 3e43bc80):
+ * fps-hack hace que el juego espere 1 vblank en vez de 2 (SceDisplay).
+ * Puede no hacer nada o correr al doble de velocidad: solo el teléfono
+ * lo decide; se revierte con un toque (fpsHack = false). Se aplica al
+ * reiniciar el juego (el hack se fija al crear el renderer).
+ * No toca frameLimiter ni frameSkipping: son ajustes solo del launcher,
+ * sin clave en el núcleo, así que no mueven el FPS.
+ */
+fun apply60FpsMode(settings: LauncherSettings): LauncherSettings = settings.copy(
+    resolutionMultiplier = 1f,
+    screenFilter = ScreenFilter.BILINEAR,
+    anisotropicFiltering = 1,
+    vSync = true,
+    asyncPipelineCompilation = true,
+    highAccuracy = false,
+    surfaceSyncEnabled = false,
+    memoryMapping = MemoryMapping.DOUBLE_BUFFER,
+    textureCache = true,
+    shaderCache = true,
+    cpuOpt = true,
+    ngsEnable = true,
+    fpsHack = true,
+)
 
 /**
  * Perfil conservador para teléfonos con ≤ 4 GB de RAM (ver DeviceMemory).

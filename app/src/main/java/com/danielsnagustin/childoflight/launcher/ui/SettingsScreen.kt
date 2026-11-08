@@ -322,7 +322,7 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
         // --- CPU ---
         SectionTitle("CPU")
         SettingSwitch("Optimización CPU (JIT Dynarmic)", "cpu-opt en config.yml. Dynarmic es el backend por defecto del núcleo.", s.cpuOpt) { vm.saveSettings(s.copy(cpuOpt = it)) }
-        SettingSwitch("FPS Hack (30 → 60)", "fps-hack en config.yml. En Child of Light déjalo OFF salvo que sepas que el juego lo soporta.", s.fpsHack) { vm.saveSettings(s.copy(fpsHack = it)) }
+        SettingSwitch("Modo 60 FPS (opcional)", "Intenta 30 → 60 fps con fps-hack y los ajustes rápidos del modo. Puede no hacer nada o hacer que el juego corra al doble de velocidad: compruébalo con el contador de FPS y la música como referencia. Se aplica al reiniciar el juego; apágalo para volver a 30. OFF por defecto.", s.fpsHack) { vm.saveSettings(s.copy(fpsHack = it)) }
         SettingSlider("Retraso de carga de archivos", s.fileLoadingDelay, 0..100, { vm.saveSettings(s.copy(fileLoadingDelay = it)) })
 
         // --- Audio ---

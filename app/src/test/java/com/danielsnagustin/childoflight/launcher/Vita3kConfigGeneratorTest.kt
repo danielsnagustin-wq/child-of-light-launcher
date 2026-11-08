@@ -9,6 +9,7 @@ import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.MemoryMapping
+import com.danielsnagustin.childoflight.launcher.model.ScreenFilter
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -40,6 +41,35 @@ class Vita3kConfigGeneratorTest {
         assertTrue(yaml.contains("cpu-opt: true"))
         assertTrue(yaml.contains("fps-hack: false"))
         assertTrue(yaml.contains("performance-overlay: false"))
+    }
+
+    @Test
+    fun fpsHackForces60FpsPackage() {
+        // Base adversa: 2x, FSR, sin VSync, page-table, cachés OFF (como el
+        // perfil de gama baja): el modo 60 debe imponer su paquete completo.
+        val yaml = Vita3kConfigGenerator.generate(
+            LauncherSettings(
+                resolutionMultiplier = 2f,
+                screenFilter = ScreenFilter.FSR,
+                vSync = false,
+                memoryMapping = MemoryMapping.PAGE_TABLE,
+                textureCache = false,
+                shaderCache = false,
+                fpsHack = true,
+            ), "/data/vita3k",
+        )
+        assertTrue(yaml.contains("fps-hack: true"))
+        assertTrue(yaml.contains("v-sync: true"))
+        assertTrue(yaml.contains("resolution-multiplier: 1.0"))
+        assertTrue(yaml.contains("screen-filter: \"Bilinear\""))
+        assertTrue(yaml.contains("memory-mapping: \"double-buffer\""))
+        assertTrue(yaml.contains("texture-cache: true"))
+        assertTrue(yaml.contains("shader-cache: true"))
+        assertTrue(yaml.contains("async-pipeline-compilation: true"))
+        assertTrue(yaml.contains("high-accuracy: false"))
+        assertTrue(yaml.contains("disable-surface-sync: true"))
+        assertTrue(yaml.contains("cpu-opt: true"))
+        assertTrue(yaml.contains("ngs-enable: true"))
     }
 
     @Test

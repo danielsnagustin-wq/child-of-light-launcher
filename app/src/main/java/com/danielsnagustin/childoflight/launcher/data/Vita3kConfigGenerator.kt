@@ -68,6 +68,9 @@ object Vita3kConfigGenerator {
         if (settings.safeMode) {
             sb.appendLine("# MODO SEGURO activo: 1x, SDL, buffer grande, Thread Scheduling ON, High Accuracy OFF.")
         }
+        if (s.fpsHack) {
+            sb.appendLine("# Modo 60 FPS activo: fps-hack + paquete rápido (1x, VSync ON, Double Buffer, cachés ON). Se revierte apagando el interruptor en Ajustes.")
+        }
         sb.appendLine("# Fuente de claves: config.h del núcleo (pin 3e43bc80, 2026-11-07).")
         sb.appendLine("# Las líneas TODO-VERIFY son ajustes del launcher SIN clave verificada en config.h.")
         sb.appendLine("# No se inventan claves: esos ajustes no se escriben como claves reales.")
