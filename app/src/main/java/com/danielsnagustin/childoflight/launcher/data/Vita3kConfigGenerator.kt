@@ -35,7 +35,15 @@ import java.io.File
  *   texture-cache, shader-cache, audio-backend ("SDL" / "Cubeb"),
  *   audio-volume (int), ngs-enable (bool), cpu-opt (bool),
  *   fps-hack (bool), file-loading-delay (int),
- *   performance-overlay (bool),
+ *   performance-overlay (bool), performance-overlay-detail (int,
+ *   default MINIMUM = 0; enum MINIMUM/LOW/MEDIUM/MAXIMUM verificado
+ *   en config.h:52-62,362), performance-overlay-position (int,
+ *   default TOP_LEFT = 0; enum verificado en config.h:65-79,364),
+ *   hashless-texture-cache (bool, default false; consumo verificado
+ *   en renderer/src/texture/cache.cpp: use_protect + protección de
+ *   páginas para texturas grandes), show-compile-shaders (bool,
+ *   default true en upstream; el launcher emite false por defecto =
+ *   mensajes ocultos, pantalla limpia),
  *   custom-driver-name (string: nombre del driver instalado = stem
  *   del zip, sin .zip; el driver debe estar instalado en el núcleo
  *   con installCustomDriver, ver driver_bridge.cpp),
@@ -140,7 +148,20 @@ object Vita3kConfigGenerator {
         sb.appendLine("ngs-enable: ${s.ngsEnable}")
         sb.appendLine("# TODO-VERIFY: audio-buffer-size (${s.audioBufferSize}) es ajuste del launcher; no hay clave de buffer en config.h ni en config.cpp (pin 3e43bc80), así que NO se emite como clave real.")
         // --- Overlay ---
+        // performance-overlay-detail/position VERIFICADOS (pin 3e43bc80,
+        // config.h:362,364): ints con default MINIMUM = 0 y TOP_LEFT = 0.
+        // hashless-texture-cache VERIFICADO (pin 3e43bc80,
+        // renderer/src/texture/cache.cpp): true = use_protect, las
+        // texturas grandes se vigilan por protección de páginas en vez
+        // de re-hashear en cada frame; las pequeñas siguen con hash.
+        // show-compile-shaders VERIFICADO (config.h:306): bool, default
+        // true en upstream; el launcher emite false por defecto
+        // (mensajes ocultos, pantalla limpia).
         sb.appendLine("performance-overlay: ${s.showFpsOverlay}")
+        sb.appendLine("performance-overlay-detail: ${s.performanceOverlayDetail.value}")
+        sb.appendLine("performance-overlay-position: ${s.performanceOverlayPosition.value}")
+        sb.appendLine("hashless-texture-cache: ${s.hashlessTextureCache}")
+        sb.appendLine("show-compile-shaders: ${s.showCompileShaders}")
         // --- Ajustes solo-launcher ---
         sb.appendLine("# TODO-VERIFY: frame-limiter (${s.frameLimiter.label}) no tiene clave en config.h ni en config.cpp (pin 3e43bc80); lo aplica el launcher al lanzar (límite objetivo), no el núcleo vía YAML.")
         sb.appendLine("# TODO-VERIFY: frame-skipping (${s.frameSkipping}) no tiene clave en config.h ni en config.cpp (pin 3e43bc80); ajuste del launcher.")

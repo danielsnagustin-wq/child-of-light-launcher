@@ -9,6 +9,8 @@ import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.MemoryMapping
+import com.danielsnagustin.childoflight.launcher.model.PerformanceOverlayDetail
+import com.danielsnagustin.childoflight.launcher.model.PerformanceOverlayPosition
 import com.danielsnagustin.childoflight.launcher.model.ScreenFilter
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import org.junit.Assert.assertFalse
@@ -70,6 +72,52 @@ class Vita3kConfigGeneratorTest {
         assertTrue(yaml.contains("disable-surface-sync: true"))
         assertTrue(yaml.contains("cpu-opt: true"))
         assertTrue(yaml.contains("ngs-enable: true"))
+    }
+
+    @Test
+    fun hashlessTextureCacheDefaultsOffAndEmitsWhenEnabled() {
+        // Default (preset G99): OFF, como en upstream (default false,
+        // config.h:308). El consumo está verificado en el renderer
+        // (texture/cache.cpp): true = use_protect, las texturas grandes
+        // se vigilan por protección de páginas en vez de re-hashear.
+        val yamlDefault = Vita3kConfigGenerator.generate(presetSettings(GpuProfileId.G99_RECOMMENDED), "/data/vita3k")
+        assertTrue(yamlDefault.contains("hashless-texture-cache: false"))
+        val yamlOn = Vita3kConfigGenerator.generate(
+            LauncherSettings(hashlessTextureCache = true), "/data/vita3k",
+        )
+        assertTrue(yamlOn.contains("hashless-texture-cache: true"))
+    }
+
+    @Test
+    fun performanceOverlayDetailAndPositionEmitted() {
+        // Defaults de upstream (config.h:362,364): MINIMUM = 0,
+        // TOP_LEFT = 0.
+        val yamlDefault = Vita3kConfigGenerator.generate(presetSettings(GpuProfileId.G99_RECOMMENDED), "/data/vita3k")
+        assertTrue(yamlDefault.contains("performance-overlay-detail: 0"))
+        assertTrue(yamlDefault.contains("performance-overlay-position: 0"))
+        // Base adversa: máximo detalle, esquina opuesta.
+        val yamlMax = Vita3kConfigGenerator.generate(
+            LauncherSettings(
+                showFpsOverlay = true,
+                performanceOverlayDetail = PerformanceOverlayDetail.MAXIMUM,
+                performanceOverlayPosition = PerformanceOverlayPosition.BOTTOM_RIGHT,
+            ), "/data/vita3k",
+        )
+        assertTrue(yamlMax.contains("performance-overlay: true"))
+        assertTrue(yamlMax.contains("performance-overlay-detail: 3"))
+        assertTrue(yamlMax.contains("performance-overlay-position: 5"))
+    }
+
+    @Test
+    fun compileShadersHiddenByDefault() {
+        // El launcher oculta los mensajes por defecto (pantalla limpia),
+        // aunque upstream los muestre por defecto (config.h:306, true).
+        val yamlDefault = Vita3kConfigGenerator.generate(presetSettings(GpuProfileId.G99_RECOMMENDED), "/data/vita3k")
+        assertTrue(yamlDefault.contains("show-compile-shaders: false"))
+        val yamlShown = Vita3kConfigGenerator.generate(
+            LauncherSettings(showCompileShaders = true), "/data/vita3k",
+        )
+        assertTrue(yamlShown.contains("show-compile-shaders: true"))
     }
 
     @Test

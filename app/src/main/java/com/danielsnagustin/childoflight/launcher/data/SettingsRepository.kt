@@ -20,6 +20,8 @@ import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.MemoryMapping
+import com.danielsnagustin.childoflight.launcher.model.PerformanceOverlayDetail
+import com.danielsnagustin.childoflight.launcher.model.PerformanceOverlayPosition
 import com.danielsnagustin.childoflight.launcher.model.ScreenFilter
 import com.danielsnagustin.childoflight.launcher.model.applyLowRamDefaults
 import com.danielsnagustin.childoflight.launcher.model.defaultProfileFor
@@ -59,6 +61,10 @@ class SettingsRepository(private val context: Context) {
         val FRAME_SKIPPING = intPreferencesKey("frame_skipping")
         val ACCURATE_THREAD = booleanPreferencesKey("accurate_thread_scheduling")
         val SHOW_FPS = booleanPreferencesKey("show_fps_overlay")
+        val OVERLAY_DETAIL = stringPreferencesKey("performance_overlay_detail")
+        val OVERLAY_POSITION = stringPreferencesKey("performance_overlay_position")
+        val HASHLESS_TEXTURE_CACHE = booleanPreferencesKey("hashless_texture_cache")
+        val SHOW_COMPILE_SHADERS = booleanPreferencesKey("show_compile_shaders")
         val GPU_DRIVER = stringPreferencesKey("gpu_driver")
         val CUSTOM_DRIVER_NAME = stringPreferencesKey("custom_driver_name")
         val TURNIP_VERSION = stringPreferencesKey("turnip_version")
@@ -118,6 +124,10 @@ class SettingsRepository(private val context: Context) {
             frameSkipping = (p[Keys.FRAME_SKIPPING] ?: 0).coerceIn(0, 2),
             accurateThreadScheduling = p[Keys.ACCURATE_THREAD] ?: true,
             showFpsOverlay = p[Keys.SHOW_FPS] ?: false,
+            performanceOverlayDetail = runCatching { PerformanceOverlayDetail.valueOf(p[Keys.OVERLAY_DETAIL] ?: "MINIMUM") }.getOrDefault(PerformanceOverlayDetail.MINIMUM),
+            performanceOverlayPosition = runCatching { PerformanceOverlayPosition.valueOf(p[Keys.OVERLAY_POSITION] ?: "TOP_LEFT") }.getOrDefault(PerformanceOverlayPosition.TOP_LEFT),
+            hashlessTextureCache = p[Keys.HASHLESS_TEXTURE_CACHE] ?: false,
+            showCompileShaders = p[Keys.SHOW_COMPILE_SHADERS] ?: false,
             gpuDriver = runCatching { GpuDriver.valueOf(p[Keys.GPU_DRIVER] ?: "SYSTEM") }.getOrDefault(GpuDriver.SYSTEM),
             customDriverName = p[Keys.CUSTOM_DRIVER_NAME] ?: "",
             turnipVersion = p[Keys.TURNIP_VERSION] ?: "",
@@ -181,6 +191,10 @@ class SettingsRepository(private val context: Context) {
             p[Keys.FRAME_SKIPPING] = settings.frameSkipping
             p[Keys.ACCURATE_THREAD] = settings.accurateThreadScheduling
             p[Keys.SHOW_FPS] = settings.showFpsOverlay
+            p[Keys.OVERLAY_DETAIL] = settings.performanceOverlayDetail.name
+            p[Keys.OVERLAY_POSITION] = settings.performanceOverlayPosition.name
+            p[Keys.HASHLESS_TEXTURE_CACHE] = settings.hashlessTextureCache
+            p[Keys.SHOW_COMPILE_SHADERS] = settings.showCompileShaders
             p[Keys.GPU_DRIVER] = settings.gpuDriver.name
             p[Keys.CUSTOM_DRIVER_NAME] = settings.customDriverName
             p[Keys.TURNIP_VERSION] = settings.turnipVersion

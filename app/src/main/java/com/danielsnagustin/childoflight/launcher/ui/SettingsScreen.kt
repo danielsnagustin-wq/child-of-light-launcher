@@ -39,6 +39,8 @@ import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.MemoryMapping
+import com.danielsnagustin.childoflight.launcher.model.PerformanceOverlayDetail
+import com.danielsnagustin.childoflight.launcher.model.PerformanceOverlayPosition
 import com.danielsnagustin.childoflight.launcher.model.ScreenFilter
 
 /**
@@ -342,6 +344,11 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
         EnumChips("Frame Skipping", listOf(0, 1, 2), s.frameSkipping, { "$it" }) { vm.saveSettings(s.copy(frameSkipping = it)) }
         NoteText("En el G99 Recomendado el Frame Skip es 0: el juego ya va bien, no hace falta saltar frames.")
         SettingSwitch("Mostrar overlay de FPS", "performance-overlay en config.yml. Actívalo para la prueba de 30 s.", s.showFpsOverlay) { vm.saveSettings(s.copy(showFpsOverlay = it)) }
+        EnumChips("Detalle del overlay de FPS", PerformanceOverlayDetail.entries, s.performanceOverlayDetail, { it.label }) { vm.saveSettings(s.copy(performanceOverlayDetail = it)) }
+        EnumChips("Posición del overlay de FPS", PerformanceOverlayPosition.entries, s.performanceOverlayPosition, { it.label }) { vm.saveSettings(s.copy(performanceOverlayPosition = it)) }
+        NoteText("El detalle y la posición solo se notan con el overlay de FPS activado.")
+        SettingSwitch("Caché de texturas sin hash (experimental)", "Solo texturas grandes: el núcleo vigila su memoria en vez de recalcular el hash en cada frame. Puede dar más FPS en escenas con muchas texturas. Si alguna textura se ve incorrecta, apágalo. OFF por defecto; mide con la prueba de 30 s.", s.hashlessTextureCache) { vm.saveSettings(s.copy(hashlessTextureCache = it)) }
+        SettingSwitch("Mostrar mensajes de compilación de shaders", "OFF por defecto: pantalla limpia, sin avisos de shaders al arrancar o cambiar de escena. Actívalo si quieres verlos.", s.showCompileShaders) { vm.saveSettings(s.copy(showCompileShaders = it)) }
         SettingSwitch("Volver a 1x si baja de 28 fps", "Solo con el preset G99 Calidad (2x). Automático al registrar el FPS de la prueba.", s.autoRevertTo1xIfBelow28Fps) { vm.saveSettings(s.copy(autoRevertTo1xIfBelow28Fps = it)) }
         SettingSwitch("Modo rendimiento del launcher", "Mantiene la pantalla encendida mientras juegas.", s.performanceMode) { vm.saveSettings(s.copy(performanceMode = it)) }
 

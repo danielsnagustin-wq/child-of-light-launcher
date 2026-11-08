@@ -134,6 +134,37 @@ enum class AudioBackend(val vita3kValue: String, val label: String) {
     CUBEB("Cubeb", "Cubeb (alternativa)"),
 }
 
+/**
+ * Detalle del HUD de rendimiento (performance-overlay-detail en
+ * config.yml). VERIFICADO en upstream (pin 3e43bc80, config.h:52-62
+ * enum PerformanceOverlayDetail y config.h:362): int con default
+ * MINIMUM (0). Más detalle = más métricas en el overlay. El contenido
+ * exacto de cada nivel no se verificó en el código del renderer: las
+ * etiquetas son neutras (Mínimo/Bajo/Medio/Máximo), sin prometer qué
+ * métrica trae cada nivel.
+ */
+enum class PerformanceOverlayDetail(val value: Int, val label: String) {
+    MINIMUM(0, "Mínimo"),
+    LOW(1, "Bajo"),
+    MEDIUM(2, "Medio"),
+    MAXIMUM(3, "Máximo"),
+}
+
+/**
+ * Posición del HUD de rendimiento (performance-overlay-position en
+ * config.yml). VERIFICADO (pin 3e43bc80, config.h:65-79 enum
+ * PerformanceOverlayPosition y config.h:364): int con default
+ * TOP_LEFT (0).
+ */
+enum class PerformanceOverlayPosition(val value: Int, val label: String) {
+    TOP_LEFT(0, "Arriba a la izquierda"),
+    TOP_CENTER(1, "Arriba al centro"),
+    TOP_RIGHT(2, "Arriba a la derecha"),
+    BOTTOM_LEFT(3, "Abajo a la izquierda"),
+    BOTTOM_CENTER(4, "Abajo al centro"),
+    BOTTOM_RIGHT(5, "Abajo a la derecha"),
+}
+
 // ---------------------------------------------------------------------------
 // Ajustes
 // ---------------------------------------------------------------------------
@@ -177,6 +208,37 @@ data class LauncherSettings(
     val accurateThreadScheduling: Boolean = true,
     // --- Overlay / rendimiento ---
     val showFpsOverlay: Boolean = false, // performance-overlay, verificado
+    /**
+     * Detalle del HUD (performance-overlay-detail, int, default
+     * MINIMUM = 0 en upstream). Solo se nota si el overlay está ON.
+     */
+    val performanceOverlayDetail: PerformanceOverlayDetail = PerformanceOverlayDetail.MINIMUM,
+    /** Posición del HUD (performance-overlay-position, int, default TOP_LEFT = 0 en upstream). */
+    val performanceOverlayPosition: PerformanceOverlayPosition = PerformanceOverlayPosition.TOP_LEFT,
+    /**
+     * Caché de texturas sin hash (hashless-texture-cache, bool,
+     * default false en upstream). Punto de consumo VERIFICADO
+     * (pin 3e43bc80, renderer/src/texture/cache.cpp):
+     * hashless=true pone use_protect=true; al cargar una textura
+     * GRANDE (>= 4 páginas del host) el núcleo NO recalcula el hash
+     * XXH3 de sus datos en cada frame: protege sus páginas en
+     * solo-lectura y solo la vuelve a subir si el juego la modifica
+     * (el page fault marca dirty). Las texturas pequeñas siguen con
+     * hash siempre. Por eso es seguro probarlo (OFF por defecto): no
+     * se confía a ciegas en dirección/tamaño, la detección de cambios
+     * sigue existiendo, solo cambia el mecanismo. Si alguna textura
+     * se ve incorrecta, se apaga y vuelve al hash de siempre. Medir
+     * con la prueba de 30 s (ON/OFF).
+     */
+    val hashlessTextureCache: Boolean = false,
+    /**
+     * Mostrar mensajes de compilación de shaders
+     * (show-compile-shaders, bool, default true en upstream).
+     * En el launcher es false por defecto: pantalla limpia, sin
+     * avisos de shaders al arrancar o cambiar de escena. El
+     * interruptor en Ajustes lo vuelve a mostrar.
+     */
+    val showCompileShaders: Boolean = false,
     // --- Driver GPU ---
     val gpuDriver: GpuDriver = GpuDriver.SYSTEM,
     val customDriverName: String = "",
