@@ -5,7 +5,7 @@
 # 1) CON árbol Vita3K (app/src/main/cpp/vita3k/CMakeLists.txt existe):
 #    el árbol lo aporta CI: el workflow lo clona (commit fijado) antes
 #    de compilar (ver docs/etapa2/workflow-android-native.yml). Se
-#    compila el núcleo real como libvita3k.so (target `vita3k` de
+#    compila el núcleo real como libVita3K.so (target `vita3k` de
 #    upstream) + la capa adaptadora propia (launcher/), que añade a
 #    ese target los puentes JNI de ESTE paquete. Es el modelo EmuCoreV.
 #

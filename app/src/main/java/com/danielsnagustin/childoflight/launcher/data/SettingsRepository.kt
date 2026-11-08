@@ -72,6 +72,10 @@ class SettingsRepository(private val context: Context) {
         val PKG_DELIVERED = booleanPreferencesKey("pkg_delivered_to_vita3k")
         val PKG_INSTALLED_IN_VITA3K = booleanPreferencesKey("pkg_installed_in_vita3k")
         val HIDE_TOUCH_GAMEPAD = booleanPreferencesKey("hide_touch_when_gamepad")
+        val OVERLAY_SHOW_IN_GAME = booleanPreferencesKey("show_touch_overlay_in_game")
+        val OVERLAY_OPACITY = floatPreferencesKey("touch_overlay_opacity")
+        val OVERLAY_NEON = booleanPreferencesKey("touch_overlay_neon")
+        val OVERLAY_HIDDEN_PROFILES = stringPreferencesKey("touch_overlay_hidden_profiles")
         // M34: true cuando ya se guardó alguna configuración (preset o ajuste).
         val PRESET_APPLIED = booleanPreferencesKey("preset_applied")
         // GPU detectada
@@ -127,6 +131,10 @@ class SettingsRepository(private val context: Context) {
             pkgDeliveredToVita3k = p[Keys.PKG_DELIVERED] ?: false,
             pkgInstalledInVita3k = p[Keys.PKG_INSTALLED_IN_VITA3K] ?: false,
             hideTouchWhenGamepadConnected = p[Keys.HIDE_TOUCH_GAMEPAD] ?: true,
+            showTouchOverlayInGame = p[Keys.OVERLAY_SHOW_IN_GAME] ?: true,
+            touchOverlayOpacity = clampOverlayOpacity(p[Keys.OVERLAY_OPACITY] ?: 1f),
+            touchOverlayNeonGlow = p[Keys.OVERLAY_NEON] ?: false,
+            touchOverlayHiddenProfileIds = decodeHiddenProfiles(p[Keys.OVERLAY_HIDDEN_PROFILES] ?: ""),
         )
     }
 
@@ -186,6 +194,11 @@ class SettingsRepository(private val context: Context) {
             p[Keys.PKG_DELIVERED] = settings.pkgDeliveredToVita3k
             p[Keys.PKG_INSTALLED_IN_VITA3K] = settings.pkgInstalledInVita3k
             p[Keys.HIDE_TOUCH_GAMEPAD] = settings.hideTouchWhenGamepadConnected
+            p[Keys.OVERLAY_SHOW_IN_GAME] = settings.showTouchOverlayInGame
+            p[Keys.OVERLAY_OPACITY] = clampOverlayOpacity(settings.touchOverlayOpacity)
+            p[Keys.OVERLAY_NEON] = settings.touchOverlayNeonGlow
+            p[Keys.OVERLAY_HIDDEN_PROFILES] = settings.touchOverlayHiddenProfileIds
+                .filter { it.isNotBlank() && !it.contains(',') }.joinToString(",")
             // M34: hay ajustes guardados (aunque sean los del primer preset).
             // detectGpu() solo aplica un preset automáticamente si esto es false.
             p[Keys.PRESET_APPLIED] = true
@@ -236,6 +249,10 @@ class SettingsRepository(private val context: Context) {
             pkgDeliveredToVita3k = current?.pkgDeliveredToVita3k ?: false,
             pkgInstalledInVita3k = current?.pkgInstalledInVita3k ?: false,
             hideTouchWhenGamepadConnected = current?.hideTouchWhenGamepadConnected ?: true,
+            showTouchOverlayInGame = current?.showTouchOverlayInGame ?: true,
+            touchOverlayOpacity = current?.touchOverlayOpacity ?: 1f,
+            touchOverlayNeonGlow = current?.touchOverlayNeonGlow ?: false,
+            touchOverlayHiddenProfileIds = current?.touchOverlayHiddenProfileIds ?: emptySet(),
         )
         save(merged)
     }
@@ -286,6 +303,14 @@ class SettingsRepository(private val context: Context) {
 
         fun clampAniso(value: Int): Int =
             if (value in setOf(1, 2, 4, 8, 16)) value else 1
+
+        // Opacidad general del overlay: 0.1..1 y finita.
+        fun clampOverlayOpacity(value: Float): Float =
+            if (!value.isFinite()) 1f else value.coerceIn(0.1f, 1f)
+
+        /** Ids de perfiles con el overlay oculto, guardados como "id1,id2" (los ids nunca llevan coma). */
+        fun decodeHiddenProfiles(raw: String): Set<String> =
+            if (raw.isBlank()) emptySet() else raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
 
         fun encodeBenchmark(run: BenchmarkRun): String = listOf(
             run.profile.name,

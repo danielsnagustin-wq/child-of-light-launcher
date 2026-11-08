@@ -1,16 +1,22 @@
 // launcher_bridge.h — reenvíos a las funciones JNI de Vita3K upstream.
 //
 // La capa adaptadora NO reimplementa el núcleo: llama a las funciones
-// JNI que upstream ya compila dentro de libvita3k.so
+// JNI que upstream ya compila dentro de libVita3K.so
 // (vita3k/android/jni/native_bootstrap.cpp, native_install.cpp,
-// native_session.cpp). Esas funciones están ligadas a la clase
+// native_session.cpp, native_drivers.cpp). Esas funciones están ligadas a la clase
 // org.vita3k.emulator.NativeLib y nuestro paquete no puede llamarlas
 // desde Kotlin tal cual; pero desde C++ son funciones `extern "C"`
 // normales dentro del mismo .so, así que el adaptador las declara
 // aquí y las llama directamente.
 //
 // Verificado contra Vita3K master 3e43bc803a04c775737a3474e0d54f3e10ca61bf
-// (2026-11-07). Si upstream cambia una firma, hay que fijar el commit
+// (2026-11-07): las 21 funciones de bootstrap/install/session existen
+// con estas firmas exactas y el jclass es un parámetro sin nombre
+// (ignorado) en todas; el adaptador pasa nullptr. Además, las 3 de
+// native_drivers.cpp (installCustomDriver y compañía) existen con
+// estas firmas: sin ellas el driver Turnip nunca se instalaba en el
+// núcleo (el config.yml solo nombra el driver; ver driver_bridge.cpp).
+// Si upstream cambia una firma, hay que fijar el commit
 // (docs/etapa2/ETAPA2-ESTADO.md) o actualizar estas declaraciones.
 //
 // NOTA: upstream IGNORA el parámetro jclass en todas estas funciones
@@ -87,5 +93,39 @@ JNIEXPORT jboolean JNICALL
 Java_org_vita3k_emulator_NativeLib_submitIme(JNIEnv *env, jclass clazz);
 JNIEXPORT jboolean JNICALL
 Java_org_vita3k_emulator_NativeLib_dismissIme(JNIEnv *env, jclass clazz);
+
+// --- native_drivers.cpp ---
+// Instala un driver GPU personalizado (zip Turnip): upstream extrae el
+// zip en <filesDir>/driver/<stem-del-zip>/ y devuelve ese stem como
+// nombre del driver ("" si falló o si ya existe). Ese nombre es el
+// valor exacto que espera `custom-driver-name` en config.yml.
+JNIEXPORT jstring JNICALL
+Java_org_vita3k_emulator_NativeLib_installCustomDriver(JNIEnv *env, jclass clazz, jstring path);
+JNIEXPORT jobjectArray JNICALL
+Java_org_vita3k_emulator_NativeLib_getInstalledCustomDrivers(JNIEnv *env, jclass clazz);
+JNIEXPORT jboolean JNICALL
+Java_org_vita3k_emulator_NativeLib_removeCustomDriver(JNIEnv *env, jclass clazz, jstring driver_name);
+
+// --- input_overlay.cpp (overlay táctil: mando virtual SDL) ---
+// Verificado contra Vita3K pin 3e43bc80 (vita3k/android/jni/
+// input_overlay.cpp): el overlay de upstream es un joystick virtual
+// SDL ("Vita3K Virtual Controller", SDL_JOYSTICK_TYPE_GAMEPAD) que el
+// núcleo lee como un mando más. attach/detach crean/destruyen ese
+// joystick (attach es idempotente: primero lo suelta); setButton con
+// button < 0 manda L2/R2 como eje (SDL_SetJoystickVirtualAxis con
+// -button); setTouchState cambia táctil frontal/trasero de Vita.
+// La UI del overlay en el launcher es propia (GamepadOverlayView):
+// estas funciones solo inyectan botones/ejes. Se llaman con thiz
+// nullptr, igual que las demás (upstream ignora el objeto).
+JNIEXPORT void JNICALL
+Java_org_vita3k_emulator_overlay_InputOverlay_attachController(JNIEnv *env, jobject thiz);
+JNIEXPORT void JNICALL
+Java_org_vita3k_emulator_overlay_InputOverlay_detachController(JNIEnv *env, jobject thiz);
+JNIEXPORT void JNICALL
+Java_org_vita3k_emulator_overlay_InputOverlay_setAxis(JNIEnv *env, jobject thiz, jint axis, jshort value);
+JNIEXPORT void JNICALL
+Java_org_vita3k_emulator_overlay_InputOverlay_setButton(JNIEnv *env, jobject thiz, jint button, jboolean value);
+JNIEXPORT void JNICALL
+Java_org_vita3k_emulator_overlay_InputOverlay_setTouchState(JNIEnv *env, jobject thiz, jboolean is_back);
 
 } // extern "C"

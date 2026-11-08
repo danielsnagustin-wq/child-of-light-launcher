@@ -23,7 +23,9 @@ import com.danielsnagustin.childoflight.launcher.data.LARGE_FILE_COPY_BUFFER_BYT
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.data.SessionManager
+import com.danielsnagustin.childoflight.launcher.data.TurnipDriverRepository
 import com.danielsnagustin.childoflight.launcher.data.Vita3kConfigGenerator
+import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.TitleId
@@ -85,7 +87,7 @@ class Vita3KLauncher(private val context: Context) {
 
     companion object {
         const val VITA3K_PACKAGE = "org.vita3k.emulator"
-        const val EMBEDDED_LIB_NAME = "vita3k"
+        const val EMBEDDED_LIB_NAME = "Vita3K" // OUTPUT_NAME de upstream (target CMake "vita3k", archivo libVita3K.so)
 
         /**
          * Una frase, sin pedir que se busque nada por internet.
@@ -249,6 +251,40 @@ class Vita3KLauncher(private val context: Context) {
         }
     }
 
+    /**
+     * Instala el driver Turnip en el núcleo embebido si los ajustes lo
+     * piden y aún no está instalado. Verificado contra upstream (pin
+     * 3e43bc80, native_drivers.cpp): `custom-driver-name` es el stem
+     * del zip y el núcleo lo busca ya extraído en
+     * <filesDir>/driver/<nombre>/; el zip guardado por el launcher en
+     * <filesDir>/vita3k/drivers/turnip/ no basta por sí solo.
+     * Best-effort y silencioso: sin núcleo, sin Turnip pedido o sin
+     * zip guardado no hace nada; si la instalación falla, solo queda
+     * en el log y el núcleo usará el driver del sistema. Nunca lanza
+     * ni bloquea el lanzamiento del juego.
+     */
+    private fun ensureTurnipDriverInstalled(settings: LauncherSettings) {
+        if (!Vita3kCoreBridge.available) return
+        if (settings.gpuDriver != GpuDriver.TURNIP || !settings.turnipInstalled) return
+        if (settings.customDriverName.isBlank()) return
+        try {
+            if (Vita3kCoreBridge.getInstalledCustomDrivers().contains(settings.customDriverName)) return
+            val zip = TurnipDriverRepository(context).installedDriverFile()
+            if (zip == null) {
+                LauncherLog.append(context, "driver", "Turnip pedido (${settings.customDriverName}) pero no hay zip guardado; el núcleo usará el driver del sistema.")
+                return
+            }
+            val name = Vita3kCoreBridge.installCustomDriver(zip.absolutePath)
+            if (name.isEmpty()) {
+                LauncherLog.append(context, "driver", "No se pudo instalar Turnip en el núcleo (${settings.customDriverName}); el núcleo usará el driver del sistema.")
+            } else {
+                LauncherLog.append(context, "driver", "Turnip instalado en el núcleo al lanzar: $name")
+            }
+        } catch (e: Exception) {
+            LauncherLog.append(context, "driver", "No se pudo revisar Turnip en el núcleo: ${e.message}")
+        }
+    }
+
     private suspend fun launchImpl(
         library: GameLibraryRepository,
         settings: LauncherSettings,
@@ -277,6 +313,14 @@ class Vita3KLauncher(private val context: Context) {
             LauncherLog.append(context, "launch", "Apps en segundo plano cerradas (best-effort): $killed procesos")
         }
         val configFile = Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu)
+        // Turnip: el config.yml ya dice custom-driver-name, pero el
+        // nombre solo vale si el driver está instalado en el núcleo
+        // (<filesDir>/driver/<nombre>/). Si el zip se instaló cuando
+        // aún no había núcleo (Etapa 1) o el registro se perdió, se
+        // instala ahora, antes de arrancar el juego. Best-effort: si
+        // falla, el núcleo usa el driver del sistema y el juego se
+        // lanza igual (nunca bloquea el lanzamiento).
+        ensureTurnipDriverInstalled(settings)
         val titleId = pre.titleId ?: return LaunchOutcome.Blocked("No se pudo determinar el Title ID instalado.")
 
         // 5. Núcleo embebido (Etapa 2): JUGAR DENTRO del launcher.
@@ -372,6 +416,13 @@ class Vita3KLauncher(private val context: Context) {
                 LauncherLog.append(context, "launch", "Puente embebido: init devolvió $initRc; fallback a externo")
                 return null
             }
+            // La lista de apps del núcleo es la del momento de init: si
+            // el .pkg se instaló en este mismo lanzamiento (o en otro
+            // anterior del mismo proceso, con init ya hecho), loadGame
+            // diría -3 (no instalado) aunque el juego ya esté dentro.
+            // Re-escanear antes de validar es lo que hace la UI de
+            // upstream tras instalar; sin núcleo es no-op.
+            Vita3kCoreBridge.refreshAppsList()
             val loadRc = Vita3kCoreBridge.loadGame(titleId)
             if (loadRc != Vita3kCoreBridge.OK) {
                 LauncherLog.append(context, "launch", "Puente embebido: loadGame devolvió $loadRc; fallback a externo")

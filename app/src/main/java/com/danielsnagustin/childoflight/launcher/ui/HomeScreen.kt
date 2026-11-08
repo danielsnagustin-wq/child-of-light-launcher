@@ -89,6 +89,9 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
     val achievements by vm.achievementsFlow.collectAsState(initial = emptyList())
     val uiPrefs by vm.uiFlow.collectAsState(initial = null)
     val benchmarks by vm.benchmarksFlow.collectAsState(initial = emptyList())
+    // Deshabilitar JUGAR mientras hay un lanzamiento en curso (doble
+    // toque = dos launch() a la vez); la guarda vive en el ViewModel.
+    val launching by vm.launchingFlow.collectAsState()
 
     val strings = stringsFor(uiPrefs?.language ?: com.danielsnagustin.childoflight.launcher.model.AppLanguage.SPANISH)
     val lastFps = benchmarks.firstOrNull()?.fpsAvg
@@ -167,7 +170,7 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
             }
             Spacer(modifier = Modifier.height(16.dp))
             if (gameOk) {
-                GoldButton(strings.play, onClick = { vm.play() })
+                GoldButton(strings.play, onClick = { vm.play() }, enabled = !launching)
             } else {
                 GoldButton("⬇  ${strings.importGame.uppercase()}", onClick = { onNavigate(Screen.SETTINGS) })
             }

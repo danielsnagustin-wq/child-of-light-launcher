@@ -288,7 +288,7 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
             when (gpu?.vendor) {
                 GpuVendor.ADRENO -> "Recomendado en Adreno: Page Table."
                 GpuVendor.MALI -> "Recomendado en Mali: Double Buffer (forzado en los presets Mali). Mali suele hacer fallback a Double Buffer aunque se elija otro."
-                else -> "Recomendado: Double Buffer. Solo el string \"double-buffer\" está verificado en config.h; los demás se marcan TODO-VERIFY en el YAML."
+                else -> "Recomendado: Double Buffer. Los 5 métodos están verificados contra el núcleo (pin 3e43bc80); \"off\" equivale a desactivado."
             },
         )
 
@@ -344,6 +344,52 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
         SettingSwitch("Mostrar overlay de FPS", "performance-overlay en config.yml. Actívalo para la prueba de 30 s.", s.showFpsOverlay) { vm.saveSettings(s.copy(showFpsOverlay = it)) }
         SettingSwitch("Volver a 1x si baja de 28 fps", "Solo con el preset G99 Calidad (2x). Automático al registrar el FPS de la prueba.", s.autoRevertTo1xIfBelow28Fps) { vm.saveSettings(s.copy(autoRevertTo1xIfBelow28Fps = it)) }
         SettingSwitch("Modo rendimiento del launcher", "Mantiene la pantalla encendida mientras juegas.", s.performanceMode) { vm.saveSettings(s.copy(performanceMode = it)) }
+
+        // --- Controles en el juego (overlay táctil embebido) ---
+        // Los botones, posiciones, tamaños y opacidad POR BOTÓN se
+        // editan en "Controles táctiles" (Secciones, arriba): lo que
+        // se ve en su vista previa es lo que aparece sobre el juego.
+        // Aquí van los ajustes GENERALES del overlay en el juego.
+        SectionTitle("Controles en el juego")
+        val controlProfiles by vm.profilesFlow.collectAsState(initial = emptyList())
+        val activeControlProfileId by vm.activeProfileIdFlow.collectAsState(initial = "default-g99")
+        SettingSwitch(
+            "Mostrar controles táctiles en el juego",
+            "El overlay con tus botones aparece sobre el juego embebido. OFF = juegas solo con mando físico.",
+            s.showTouchOverlayInGame,
+        ) { vm.saveSettings(s.copy(showTouchOverlayInGame = it)) }
+        SettingSlider(
+            "Opacidad general del overlay",
+            (s.touchOverlayOpacity * 100).toInt(),
+            10..100,
+            { vm.saveSettings(s.copy(touchOverlayOpacity = it / 100f)) },
+        ) { "$it%" }
+        SettingSwitch(
+            "Brillo neón",
+            "Halo dorado alrededor de los botones. En negro AMOLED puro se ve premium; OFF = botones planos.",
+            s.touchOverlayNeonGlow,
+        ) { vm.saveSettings(s.copy(touchOverlayNeonGlow = it)) }
+        SettingSwitch(
+            "Ocultar controles táctiles si hay mando conectado",
+            "Con un mando físico conectado, el overlay no estorba en el juego. En el editor se sigue viendo para poder editarlo.",
+            s.hideTouchWhenGamepadConnected,
+        ) { vm.saveSettings(s.copy(hideTouchWhenGamepadConnected = it)) }
+        NoteText("Ocultar el overlay en un perfil concreto (p. ej. jugar solo con mando en \"Mando externo + táctil mínimo\" y con táctil en el resto):")
+        controlProfiles.forEach { profile ->
+            val hidden = profile.id in s.touchOverlayHiddenProfileIds
+            SettingSwitch(
+                "Sin overlay en \"${profile.name}\"",
+                if (profile.id == activeControlProfileId) "Este es el perfil activo." else "El overlay no aparece en el juego con este perfil.",
+                hidden,
+            ) { checked ->
+                val updated = if (checked) {
+                    s.touchOverlayHiddenProfileIds + profile.id
+                } else {
+                    s.touchOverlayHiddenProfileIds - profile.id
+                }
+                vm.saveSettings(s.copy(touchOverlayHiddenProfileIds = updated))
+            }
+        }
 
         // --- Corrección de errores ---
         SectionTitle("Corrección de errores")

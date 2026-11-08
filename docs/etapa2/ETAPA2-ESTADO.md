@@ -188,11 +188,10 @@ existe una vía que funciona es peor.
    esta fundación. Leer el log de la primera build nativa.
 2. **Arreglar lo que diga la primera build** (lo esperable: algún
    submódulo que falte, vcpkg, la toolchain, o el enlace de SDL3).
-   TODO-VERIFY: si `libvita3k.so` enlaza SDL3 como .so aparte
-   (`libSDL3.so`), debe empaquetarse en el APK (llega solo por
-   DT_NEEDED si está en jniLibs; si la carga falla con
-   `UnsatisfiedLinkError`, añadir `"SDL3"` a `getLibraries()`).
-3. **Medir** el tamaño de `libvita3k.so` y del APK (decenas de MB
+   Verificado (run #54): SDL3 va ESTÁTICO dentro de libVita3K.so
+   (libSDL3.a); no hay libSDL3.so aparte ni DT_NEEDED, y el cargador
+   usa "Vita3K" (OUTPUT_NAME de upstream, K mayúscula).
+3. **Medir** el tamaño de `libVita3K.so` y del APK (decenas de MB
    esperados; solo arm64-v8a).
 4. **Probar en el teléfono (Helio G99):** importar el .pkg EU +
    work.bin -> instalar con el núcleo -> JUGAR embebido -> el juego
@@ -202,12 +201,29 @@ existe una vía que funciona es peor.
    `shaders-builtin` (el workflow los copia a `assets/` como
    upstream; `initialize_session` pone `static_assets_path` vacío
    y hay que confirmar en dispositivo cómo los resuelve).
-6. **Overlay táctil:** el layout táctil del launcher (Compose) y la
-   vista SDL son dos mundos. El overlay nativo de Vita3K
-   (`input_overlay.cpp`) se configura por `config.yml`; integrar
-   el layout del launcher con él es el mayor trabajo restante.
-   Mientras tanto: mando físico (SDL lo detecta solo) u overlay
-   nativo.
+6. **Overlay táctil: IMPLEMENTADO en local (2026-11-07), sin probar
+   en dispositivo real.** CORRECCIÓN a lo que decía este documento:
+   el overlay nativo NO se configura por `config.yml` (verificado en
+   el pin 3e43bc80: `config.h` no tiene ninguna clave de overlay; solo
+   `performance-overlay`, el HUD de FPS). La vía real es
+   `vita3k/android/jni/input_overlay.cpp`: un joystick virtual SDL
+   que el núcleo lee como un mando más. Implementado:
+   `core/GamepadOverlayView.kt` (vista por control sobre la SDL, con
+   la misma matemática que la vista previa del editor),
+   `core/TouchOverlayMapping.kt` (botón Vita -> botón SDL, ejes del
+   stick, zona muerta, decisión de mostrar/ocultar),
+   `core/Vita3kCoreBridge.kt` (overlayAttach/Detach/IsAttached/
+   SetButton/SetAxis/SetTouchState),
+   `cpp/launcher/src/input_overlay_bridge.cpp` (reenvía a las JNI de
+   upstream) + stubs en `cpp/Vita3kBridge.cpp`, ajustes generales en
+   `LauncherSettings`/`SettingsRepository` (mostrar, opacidad general,
+   neón, ocultar por perfil) y sección "Controles en el juego" en
+   Ajustes. El perfil activo manda: posiciones, tamaños, opacidad,
+   color, forma y visibilidad por botón; lo borrado no aparece; con
+   mando físico conectado se oculta (ajuste existente). PENDIENTE:
+   probar en el teléfono (Helio G99): que los botones muevan a Aurora
+   y que el táctil fuera de los botones mueva a Igniculus.
+   Mientras tanto: mando físico (SDL lo detecta solo).
 7. **Menú de pausa con UI** (reanudar / salir / ajustes) y
    relanzamiento en proceso (`requestAppRelaunch`) para cambiar de
    Title ID sin recrear la Activity.

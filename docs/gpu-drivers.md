@@ -58,24 +58,32 @@ por revisión de código + búsqueda web de fuentes oficiales
   sistema (`/vendor/lib64/hw/vulkan.adreno.so`). Cada app tiene que
   implementar la carga explícitamente; no es un ajuste del sistema.
 - En este launcher la ruta es: zip en
-  `<filesDir>/vita3k/drivers/turnip/` + clave `custom-driver-name`
+  `<filesDir>/vita3k/drivers/turnip/` (copia del launcher) +
+  instalación en el núcleo con `installCustomDriver` (puente
+  `app/src/main/cpp/launcher/src/driver_bridge.cpp`, que reenvía a
+  `native_drivers.cpp` de upstream) + clave `custom-driver-name`
   en config.yml (escrito de nuevo en cada lanzamiento por
-  `Vita3KLauncher`). No hay código adaptador nativo de drivers
-  (`app/src/main/cpp/launcher/src/` solo tiene install/runtime/
-  session_bridge; no existe `native_drivers.cpp`).
+  `Vita3KLauncher`).
 
-### Lo NO verificado (pendiente nº 1, importante)
+### Lo verificado 2026-11-07 (pin `3e43bc80`)
 
-- **El valor exacto de `custom-driver-name` sigue TODO-VERIFY.**
-  El generador ya lo marca así (`Vita3kConfigGenerator.kt:83`):
-  la clave existe en `config.h` del núcleo, pero no está verificado
-  contra el árbol fijado (pin `3e43bc80`, solo lo clona CI) si el
-  núcleo espera el nombre con o sin `.zip`, el nombre de la
-  carpeta extraída, o si el núcleo embebido (master, no el fork
-  Android con su gestor de drivers Java) implementa siquiera la
-  carga de drivers personalizados por esta vía. Hasta verificarlo
-  en el árbol fijado o en teléfono, "Turnip instalado" significa
-  "zip guardado + clave escrita", no "driver activo confirmado".
+- **El valor exacto de `custom-driver-name` es el stem del zip**
+  (sin `.zip`, p. ej. `Turnip_v26.0.0_R8_Gmem`). Verificado en el
+  árbol fijado: `native_drivers.cpp: installCustomDriver` deriva el
+  nombre con `archive_path.filename().stem()` y extrae el zip en
+  `<filesDir>/driver/<nombre>/`; `android_driver.cpp:
+  resolve_custom_driver_library_path` busca ahí la carpeta con
+  `meta.json` (clave `libraryName`) o `driver_name.txt`. El núcleo
+  embebido (master) SÍ implementa la carga de drivers
+  personalizados por esta vía (`renderer.cpp:
+  resolve_vk_get_instance_proc_addr`); si el nombre no está
+  instalado, avisa en el log y usa el driver del sistema. Por eso
+  el launcher instala el driver en el núcleo al instalar el zip y
+  al lanzar el juego (si no hay núcleo aún, el zip queda guardado
+  y se instala al lanzar). "Turnip instalado" ahora significa "zip
+  guardado + driver instalado en el núcleo + clave escrita"; la
+  confirmación de que el driver cargó de verdad sigue siendo solo
+  en teléfono (log del núcleo / diagnóstico GPU).
 - Tampoco está verificado el layout exacto del zip R8 de K11MCH1
   (meta.json frente a metadata.json, subcarpeta, nombre del .so).
   La validación nueva es estricta a propósito y puede necesitar

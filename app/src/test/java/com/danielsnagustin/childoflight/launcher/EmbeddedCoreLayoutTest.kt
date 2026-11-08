@@ -95,6 +95,59 @@ class EmbeddedCoreLayoutTest {
     }
 
     @Test
+    fun `destino embebido vacio no bloquea la migracion`() {
+        val root = tempRoot()
+        try {
+            val legacy = File(root, "ux0/app/PCSB00598/eboot.bin")
+            legacy.parentFile.mkdirs()
+            legacy.writeText("antiguo")
+            // El núcleo creó vita/ux0 vacío al inicializarse antes de migrar.
+            File(root, "vita/ux0/app").mkdirs()
+            File(root, "vita/ux0/user/00/savedata").mkdirs()
+
+            val result = EmbeddedCoreLayout.migrateToEmbeddedLayout(root)
+            assertEquals(EmbeddedCoreLayout.MigrationResult.Migrated(1), result)
+            assertTrue(File(root, "vita/ux0/app/PCSB00598/eboot.bin").isFile)
+            assertFalse(File(root, "ux0").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `resolveUx0Dir prefiere el antiguo con contenido si el embebido esta vacio`() {
+        val root = tempRoot()
+        try {
+            val legacy = File(root, "ux0/app/PCSB00598/eboot.bin")
+            legacy.parentFile.mkdirs()
+            legacy.writeText("antiguo")
+            File(root, "vita/ux0/app").mkdirs()
+
+            // Sin este arreglo, el juego "desaparecía": resolve devolvía
+            // el vita/ux0 vacío y scanStatus no veía el juego.
+            assertEquals(File(root, "ux0"), EmbeddedCoreLayout.resolveUx0Dir(root))
+            assertTrue(EmbeddedCoreLayout.needsMigration(root))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `resolveUx0Dir usa el embebido aunque el antiguo exista vacio`() {
+        val root = tempRoot()
+        try {
+            val migrated = File(root, "vita/ux0/app/PCSB00598/eboot.bin")
+            migrated.parentFile.mkdirs()
+            migrated.writeText("migrado")
+            File(root, "ux0/app").mkdirs()
+
+            assertEquals(File(root, "vita/ux0"), EmbeddedCoreLayout.resolveUx0Dir(root))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `config yml en la raiz no se mueve`() {
         val root = tempRoot()
         try {

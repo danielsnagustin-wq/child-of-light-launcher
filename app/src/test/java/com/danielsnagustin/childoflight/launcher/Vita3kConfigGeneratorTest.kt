@@ -1,12 +1,14 @@
 package com.danielsnagustin.childoflight.launcher
 
 import com.danielsnagustin.childoflight.launcher.data.Vita3kConfigGenerator
+import com.danielsnagustin.childoflight.launcher.model.AudioBackend
 import com.danielsnagustin.childoflight.launcher.model.GpuBackend
 import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
+import com.danielsnagustin.childoflight.launcher.model.MemoryMapping
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -97,6 +99,42 @@ class Vita3kConfigGeneratorTest {
         val active = installed.copy(gpuDriver = GpuDriver.TURNIP)
         val yamlTurnip = Vita3kConfigGenerator.generate(active, "/data/vita3k")
         assertTrue(yamlTurnip.contains("custom-driver-name: \"turnip-24.1.0\""))
+    }
+
+    @Test
+    fun memoryMappingStringsAreVerifiedUpstream() {
+        // Verificado contra el núcleo (pin 3e43bc80, renderer.cpp
+        // VKState::late_init): los 4 strings se comparan exactos;
+        // "off" cae en Disabled por fall-through. Ninguno debe salir
+        // como TODO-VERIFY.
+        val pageTable = Vita3kConfigGenerator.generate(
+            LauncherSettings(memoryMapping = MemoryMapping.PAGE_TABLE), "/data/vita3k",
+        )
+        assertTrue(pageTable.contains("memory-mapping: \"page-table\""))
+        val nativeBuffer = Vita3kConfigGenerator.generate(
+            LauncherSettings(memoryMapping = MemoryMapping.NATIVE_BUFFER), "/data/vita3k",
+        )
+        assertTrue(nativeBuffer.contains("memory-mapping: \"native-buffer\""))
+        val externalHost = Vita3kConfigGenerator.generate(
+            LauncherSettings(memoryMapping = MemoryMapping.EXTERNAL_HOST), "/data/vita3k",
+        )
+        assertTrue(externalHost.contains("memory-mapping: \"external-host\""))
+        val off = Vita3kConfigGenerator.generate(
+            LauncherSettings(memoryMapping = MemoryMapping.OFF), "/data/vita3k",
+        )
+        assertTrue(off.contains("memory-mapping: \"off\""))
+        assertFalse(pageTable.contains("TODO-VERIFY: string exacto de memory-mapping"))
+    }
+
+    @Test
+    fun cubebAudioBackendIsVerifiedUpstream() {
+        // Verificado contra el núcleo (pin 3e43bc80, audio.cpp
+        // AudioState::set_backend): acepta exactamente "SDL" y "Cubeb".
+        val yaml = Vita3kConfigGenerator.generate(
+            LauncherSettings(audioBackend = AudioBackend.CUBEB), "/data/vita3k",
+        )
+        assertTrue(yaml.contains("audio-backend: \"Cubeb\""))
+        assertFalse(yaml.contains("TODO-VERIFY: string exacto de Cubeb"))
     }
 
     @Test

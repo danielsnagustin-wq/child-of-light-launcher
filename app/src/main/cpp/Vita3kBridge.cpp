@@ -179,3 +179,69 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeSetIn
     LOGW("nativeSetInputIntercepted STUB (TODO-ETAPA2): núcleo no embebido");
     return JNI_FALSE;
 }
+
+// --- Overlay táctil: stubs sin núcleo (mismo contrato que el
+// adaptador real en app/src/main/cpp/launcher/src/
+// input_overlay_bridge.cpp). Sin núcleo no hay mando virtual SDL:
+// todo devuelve false y el overlay no se monta.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeOverlayAttach(
+    JNIEnv * /* env */, jobject /* thiz */) {
+    LOGW("nativeOverlayAttach STUB (TODO-ETAPA2): núcleo no embebido");
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeOverlayDetach(
+    JNIEnv * /* env */, jobject /* thiz */) {
+    LOGW("nativeOverlayDetach STUB (TODO-ETAPA2): núcleo no embebido");
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeOverlayIsAttached(
+    JNIEnv * /* env */, jobject /* thiz */) {
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeOverlaySetButton(
+    JNIEnv * /* env */, jobject /* thiz */, jint /* sdlButton */, jboolean /* pressed */) {
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeOverlaySetAxis(
+    JNIEnv * /* env */, jobject /* thiz */, jint /* sdlAxis */, jshort /* value */) {
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeOverlaySetTouchState(
+    JNIEnv * /* env */, jobject /* thiz */, jboolean /* isBack */) {
+    return JNI_FALSE;
+}
+
+// --- Etapa 2 (fundación): drivers GPU personalizados ---
+// Mismo contrato que driver_bridge.cpp: sin núcleo, "" / vacío / false.
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInstallCustomDriver(
+    JNIEnv *env, jobject /* thiz */, jstring /* zipPath */) {
+    LOGW("nativeInstallCustomDriver STUB (TODO-ETAPA2): núcleo no embebido");
+    return env->NewStringUTF("");
+}
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetInstalledCustomDrivers(
+    JNIEnv *env, jobject /* thiz */) {
+    jclass string_class = env->FindClass("java/lang/String");
+    return env->NewObjectArray(0, string_class, nullptr);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeRemoveCustomDriver(
+    JNIEnv * /* env */, jobject /* thiz */, jstring /* driverName */) {
+    LOGW("nativeRemoveCustomDriver STUB (TODO-ETAPA2): núcleo no embebido");
+    return JNI_FALSE;
+}

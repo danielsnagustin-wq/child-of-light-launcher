@@ -4,7 +4,7 @@
 # Qué es: el workflow actual de Etapa 1 (job `build`, sin tocar) MÁS
 # un job `build-native` que clona Vita3K (commit fijado), instala NDK 29
 # + vcpkg, copia los assets del núcleo y compila el APK con el núcleo
-# embebido (libvita3k.so, solo arm64-v8a).
+# embebido (libVita3K.so, solo arm64-v8a).
 #
 # Por qué un job aparte y no modificar `build`: el build de Etapa 1
 # debe seguir funcionando aunque el nativo falle (el usuario sigue
@@ -184,16 +184,20 @@ jobs:
         run: |
           # Los .so compilados por CMake viven en app/.cxx/<config>/<hash>/arm64-v8a
           # (Debug y RelWithDebInfo), NO en app/build: buscar ahí no medía nada (run #50).
-          find app/.cxx -name "libvita3k.so" -exec ls -lh {} \;
-          find app/.cxx -name "libSDL3.so" -exec ls -lh {} \;
+          # OJO: el .so se llama libVita3K.so (mayúscula K, OUTPUT_NAME de
+          # upstream) y find -name distingue mayúsculas: libvita3k.so no existe
+          # (run #54). SDL3 va ESTÁTICO dentro de libVita3K.so (libSDL3.a), no
+          # hay libSDL3.so: se lista el .a para confirmar que se enlazó.
+          find app/.cxx -name "libVita3K.so" -exec ls -lh {} \;
+          find app/.cxx -name "libSDL3.a" -exec ls -lh {} \;
           ls -lh app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/release/app-release-unsigned.apk
           # Páginas de 16 KiB (Play Store): solo diagnóstico, no falla
           # el build. p_align debe ser 16384 en los LOAD de cada .so.
-          for so in $(find app/.cxx -name "libvita3k.so" -o -name "libSDL3.so"); do
+          for so in $(find app/.cxx -name "libVita3K.so"); do
             echo "== $so =="
             readelf -W -l "$so" | grep -A1 LOAD | grep -i align || true
           done
-          [ -n "$(find app/.cxx -name 'libvita3k.so' -o -name 'libSDL3.so' -print -quit)" ] || echo "AVISO: no se encontró ningún .so en app/.cxx"
+          [ -n "$(find app/.cxx -name 'libVita3K.so' -print -quit)" ] || echo "AVISO: no se encontró libVita3K.so en app/.cxx"
 
       - name: Upload APKs (núcleo embebido)
         uses: actions/upload-artifact@v4

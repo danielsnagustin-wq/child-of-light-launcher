@@ -42,7 +42,12 @@ object EmbeddedCoreLayout {
 
     /** true si hay layout antiguo que migrar (y aún no está migrado). */
     fun needsMigration(storageRoot: File): Boolean =
-        legacyUx0Dir(storageRoot).isDirectory && !isMigrated(storageRoot)
+        legacyUx0Dir(storageRoot).isDirectory &&
+            (!isMigrated(storageRoot) || isEmptyDir(embeddedUx0Dir(storageRoot)))
+
+    /** true si el directorio no existe o no contiene ningún archivo (carpetas vacías no cuentan). */
+    private fun isEmptyDir(dir: File): Boolean =
+        !dir.isDirectory || countFiles(dir) == 0
 
     /**
      * ux0 efectivo para TODO el launcher (juego, DLCs, updates, saves,
@@ -50,9 +55,26 @@ object EmbeddedCoreLayout {
      * si no el `ux0` antiguo de Etapa 1. Los repositorios deben usar
      * este dir, no construir `File(vitaRoot, "ux0/...")` a mano, o
      * "perderían" el juego tras la primera migración.
+     *
+     * Excepción (2026-11-07): si `vita/ux0` existe pero está VACÍO y
+     * el `ux0` antiguo tiene contenido, el juego vive en el antiguo:
+     * el núcleo puede haber creado `vita/ux0` vacío al inicializarse
+     * antes de migrar. Devolver el embebido vacío haría que el juego
+     * "desapareciera" (scanStatus no lo vería) y la migración se
+     * quedaría en Conflicto para siempre. En ese caso se usa el
+     * antiguo y la migración (que limpia el destino vacío) lo
+     * recoloca al lanzar.
      */
-    fun resolveUx0Dir(storageRoot: File): File =
-        if (isMigrated(storageRoot)) embeddedUx0Dir(storageRoot) else legacyUx0Dir(storageRoot)
+    fun resolveUx0Dir(storageRoot: File): File {
+        val embedded = embeddedUx0Dir(storageRoot)
+        val legacy = legacyUx0Dir(storageRoot)
+        if (embedded.isDirectory && legacy.isDirectory &&
+            isEmptyDir(embedded) && !isEmptyDir(legacy)
+        ) {
+            return legacy
+        }
+        return if (isMigrated(storageRoot)) embedded else legacy
+    }
 
     sealed class MigrationResult {
         /** Se movió ux0 -> vita/ux0. filesMoved = nº de archivos movidos. */
@@ -76,11 +98,20 @@ object EmbeddedCoreLayout {
         // Conflicto PRIMERO: si existen los dos, no se sabe cuál es el
         // bueno y tratarlo como "ya migrado" escondería datos. No se
         // toca nada y se reporta para resolverlo a mano.
+        // Excepción (2026-11-07): destino VACÍO (sin archivos, solo
+        // carpetas vacías): lo creó el núcleo al inicializarse antes de
+        // migrar. No hay nada que perder: se quita y se procede con el
+        // rename. Sin esto, el juego del layout antiguo quedaba huérfano
+        // para siempre (Conflicto en cada lanzamiento).
         if (legacy.isDirectory && dest.exists()) {
-            return MigrationResult.Conflict(
-                "Ya existe ${dest.name} en ${dest.parent} y también el ux0 antiguo; " +
-                    "no se mueve nada para no mezclar dos instalaciones.",
-            )
+            if (dest.isDirectory && countFiles(dest) == 0) {
+                dest.deleteRecursively()
+            } else {
+                return MigrationResult.Conflict(
+                    "Ya existe ${dest.name} en ${dest.parent} y también el ux0 antiguo; " +
+                        "no se mueve nada para no mezclar dos instalaciones.",
+                )
+            }
         }
         if (isMigrated(storageRoot)) return MigrationResult.AlreadyMigrated
         if (!legacy.isDirectory) return MigrationResult.NothingToMigrate

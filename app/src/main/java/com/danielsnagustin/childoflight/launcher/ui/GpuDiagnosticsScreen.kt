@@ -51,6 +51,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     // B3: firmware y batería se leen como flujo, no con llamada plana.
     val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
     val batteryOptDisabled by vm.batteryOptDisabledFlow.collectAsState()
+    val launching by vm.launchingFlow.collectAsState()
     var fpsInput by rememberSaveable { mutableStateOf("") }
     var showFpsDialog by rememberSaveable { mutableStateOf(false) }
     var fpsError by rememberSaveable { mutableStateOf(false) }
@@ -133,7 +134,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
 
         SectionTitle("Prueba de 30 segundos")
         NoteText("Lanza el juego con el preset actual. Juega 30 segundos mirando el FPS del overlay y al volver regístralo. Si es G99 Calidad (2x) y baja de 28 fps, vuelve a 1x automáticamente.")
-        GoldButton("Probar 30 segundos", onClick = { vm.startBenchmark() })
+        GoldButton("Probar 30 segundos", onClick = { vm.startBenchmark() }, enabled = !launching)
         if (pending != null) {
             Text("Prueba en marcha: ${pending?.profile?.label}. Al volver, registra el FPS.", fontWeight = FontWeight.Bold)
             OutlinedButton(onClick = { showFpsDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("Registrar FPS visto en el overlay") }

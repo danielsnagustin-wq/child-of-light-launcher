@@ -7,7 +7,7 @@ import android.os.Build
  *
  * Por qué existe: el núcleo embebido solo se compila para arm64-v8a
  * (ver app/build.gradle.kts: abiFilters). En un teléfono de 32 bits
- * System.loadLibrary("vita3k") falla y el launcher ya cae al fallback
+ * System.loadLibrary("Vita3K") falla y el launcher ya cae al fallback
  * externo sin crashear (Vita3kCoreBridge captura UnsatisfiedLinkError),
  * pero el usuario no sabía POR QUÉ nunca se activaba el núcleo. Ahora
  * la pantalla de diagnóstico lo dice claro, en español.

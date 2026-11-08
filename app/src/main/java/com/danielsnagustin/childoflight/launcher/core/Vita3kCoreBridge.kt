@@ -18,7 +18,7 @@ package com.danielsnagustin.childoflight.launcher.core
  *   a la clase org.vita3k.emulator.NativeLib: nuestro paquete NO puede
  *   llamarlas tal cual.
  * - Por eso el puente real de Etapa 2 será código NUEVO (capa adaptadora
- *   estilo EmuCoreV) compilado DENTRO de libvita3k.so junto al árbol
+ *   estilo EmuCoreV) compilado DENTRO de libVita3K.so junto al árbol
  *   Vita3K vendorizado, con funciones JNI en ESTE paquete. Estas
  *   firmas (init/loadGame/getFps/shutdown) son el contrato que ese
  *   adaptador deberá cumplir; los stubs de Vita3kBridge.cpp ya las
@@ -28,8 +28,8 @@ package com.danielsnagustin.childoflight.launcher.core
  * cualquier otro negativo = error del núcleo (se documentará al
  * implementar el adaptador real).
  *
- * Carga: se intenta "vita3k" primero (el .so real de Etapa 2, cuyo
- * target CMake se llama así) y luego "vita3k-bridge" (el stub local de
+ * Carga: se intenta "Vita3K" primero (el .so real de Etapa 2: target CMake
+ * "vita3k", OUTPUT_NAME "Vita3K", archivo libVita3K.so) y luego "vita3k-bridge" (el stub local de
  * app/src/main/cpp, solo para desarrollo). Cargar dos veces es seguro:
  * System.loadLibrary cachea por classloader.
  */
@@ -58,7 +58,7 @@ object Vita3kCoreBridge {
 
     /** ¿Hay algún .so del núcleo cargable? En Etapa 1, no. */
     val available: Boolean by lazy {
-        loadLibrary("vita3k") || loadLibrary("vita3k-bridge")
+        loadLibrary("Vita3K") || loadLibrary("vita3k-bridge")
     }
 
     private fun loadLibrary(name: String): Boolean {
@@ -295,6 +295,123 @@ object Vita3kCoreBridge {
         }
     }
 
+    // --- Overlay táctil (Etapa 2): mando virtual SDL de upstream ---
+    // Reenvían a vita3k/android/jni/input_overlay.cpp del pin
+    // 3e43bc80, que crea un joystick virtual SDL ("Vita3K Virtual
+    // Controller") y traduce botones/ejes a entrada del juego
+    // (ctrl.cpp). La UI del overlay es nuestra (GamepadOverlayView,
+    // perfil activo del launcher): el núcleo solo recibe eventos.
+    // Sin .so, todo devuelve false sin llamar a nativo; con .so, el
+    // adaptador (launcher/src/input_overlay_bridge.cpp) llama a las
+    // funciones JNI de upstream con el mismo nombre.
+    // attach solo funciona con la partida en curso (SDL gamepad
+    // iniciado + sesión activa): llamarlo antes no crea nada, por eso
+    // EmbeddedGameActivity lo llama al arrancar el juego
+    // (setCurrentGameId) y confirma con overlayIsAttached().
+
+    /** Crea el mando virtual SDL del overlay (idempotente en upstream: primero lo suelta). */
+    fun overlayAttach(): Boolean {
+        if (!available) return false
+        return try {
+            nativeOverlayAttach()
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Destruye el mando virtual SDL del overlay. */
+    fun overlayDetach(): Boolean {
+        if (!available) return false
+        return try {
+            nativeOverlayDetach()
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** true si el mando virtual "Vita3K Virtual Controller" existe en SDL. */
+    fun overlayIsAttached(): Boolean {
+        if (!available) return false
+        return try {
+            nativeOverlayIsAttached()
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Pulsa/suelta un botón SDL del mando virtual (ver TouchOverlayMapping). */
+    fun overlaySetButton(sdlButton: Int, pressed: Boolean): Boolean {
+        if (!available) return false
+        return try {
+            nativeOverlaySetButton(sdlButton, pressed)
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Mueve un eje SDL del mando virtual (-32767..32767). */
+    fun overlaySetAxis(sdlAxis: Int, value: Short): Boolean {
+        if (!available) return false
+        return try {
+            nativeOverlaySetAxis(sdlAxis, value)
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Táctil frontal (false, defecto) o trasero (true) de Vita. */
+    fun overlaySetTouchState(isBack: Boolean): Boolean {
+        if (!available) return false
+        return try {
+            nativeOverlaySetTouchState(isBack)
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    // --- Drivers GPU personalizados (Turnip, solo Adreno) ---
+    // Verificado contra upstream (pin 3e43bc80, native_drivers.cpp):
+    // installCustomDriver extrae el zip en <filesDir>/driver/<stem>/
+    // y devuelve ese stem como nombre del driver ("" si falló o si ya
+    // existe). Ese nombre es el valor exacto de `custom-driver-name`
+    // en config.yml. Sin esta llamada, el config.yml nombraba un
+    // driver que el núcleo no tenía instalado y caía al driver del
+    // sistema en silencio.
+
+    /**
+     * Instala un zip Turnip en el núcleo. Devuelve el nombre del
+     * driver instalado (stem del zip, p. ej. "Turnip_v26.0.0_R8_Gmem")
+     * o "" si no hay núcleo o falló la instalación.
+     */
+    fun installCustomDriver(zipPath: String): String {
+        if (!available) return ""
+        return try {
+            nativeInstallCustomDriver(zipPath)
+        } catch (_: UnsatisfiedLinkError) {
+            ""
+        }
+    }
+
+    /** Nombres de los drivers personalizados instalados en el núcleo. */
+    fun getInstalledCustomDrivers(): Array<String> {
+        if (!available) return emptyArray()
+        return try {
+            nativeGetInstalledCustomDrivers()
+        } catch (_: UnsatisfiedLinkError) {
+            emptyArray()
+        }
+    }
+
+    /** Borra un driver personalizado del núcleo. true si se borró. */
+    fun removeCustomDriver(driverName: String): Boolean {
+        if (!available) return false
+        return try {
+            nativeRemoveCustomDriver(driverName)
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
     private external fun nativeInit(storagePath: String): Int
     private external fun nativeLoadGame(titleId: String): Int
     private external fun nativeGetFps(): Float
@@ -315,4 +432,13 @@ object Vita3kCoreBridge {
     private external fun nativeRefreshAppsList()
     private external fun nativeSetPauseReasonEnabled(reasonMask: Int, enabled: Boolean): Boolean
     private external fun nativeSetInputIntercepted(intercepted: Boolean): Boolean
+    private external fun nativeInstallCustomDriver(zipPath: String): String
+    private external fun nativeGetInstalledCustomDrivers(): Array<String>
+    private external fun nativeRemoveCustomDriver(driverName: String): Boolean
+    private external fun nativeOverlayAttach(): Boolean
+    private external fun nativeOverlayDetach(): Boolean
+    private external fun nativeOverlayIsAttached(): Boolean
+    private external fun nativeOverlaySetButton(sdlButton: Int, pressed: Boolean): Boolean
+    private external fun nativeOverlaySetAxis(sdlAxis: Int, value: Short): Boolean
+    private external fun nativeOverlaySetTouchState(isBack: Boolean): Boolean
 }

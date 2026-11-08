@@ -2,10 +2,23 @@ package com.danielsnagustin.childoflight.launcher.core
 
 import android.content.Context
 import android.content.Intent
+import android.hardware.input.InputManager
 import android.os.Build
 import android.os.Bundle
 import android.view.Surface
+import android.view.View
+import android.view.ViewGroup
 import android.widget.Toast
+import com.danielsnagustin.childoflight.launcher.data.LauncherLog
+import com.danielsnagustin.childoflight.launcher.data.SettingsRepository
+import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
+import com.danielsnagustin.childoflight.launcher.launcher.Vita3KLauncher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import org.libsdl.app.SDLActivity
 
 /**
@@ -18,10 +31,11 @@ import org.libsdl.app.SDLActivity
  * - Extiende org.libsdl.app.SDLActivity (pegamento Java de SDL3
  *   vendorizado en app/src/main/java/org/libsdl/app/, commit
  *   fa2c02b = SDL 3.4.16, el fijado por Vita3K).
- * - getLibraries() -> {"vita3k"}: SDL carga libvita3k.so (el .so
- *   del núcleo, compilado desde el árbol Vita3K en CI). SDL3 llega
- *   por DT_NEEDED de libvita3k.so. TODO-VERIFY en la primera build:
- *   si la carga falla con UnsatisfiedLinkError, añadir "SDL3".
+ * - getLibraries() -> {"Vita3K"}: SDL carga libVita3K.so (el .so
+ *   del núcleo, compilado desde el árbol Vita3K en CI; target CMake
+ *   "vita3k", OUTPUT_NAME "Vita3K"). SDL3 va ESTÁTICO dentro de
+ *   libVita3K.so (libSDL3.a, sin .so aparte ni DT_NEEDED): NO añadir
+ *   "SDL3" a getLibraries().
  * - getArguments() -> {"-r", titleId}: es EXACTAMENTE lo que
  *   SDL_main (vita3k/android/jni/main_android.cpp) espera para
  *   arrancar el juego con AppLaunchRequest{.app_path = titleId}.
@@ -51,12 +65,17 @@ import org.libsdl.app.SDLActivity
  * el usuario vuelve al launcher (no se finge que el juego arrancó).
  *
  * TODO (Etapa 2, tras la primera build que arranque el juego):
- * - Overlay táctil: el layout táctil del launcher (Compose) y la
- *   vista SDL son dos mundos. El overlay nativo de Vita3K
- *   (input_overlay.cpp) se configura por config.yml; integrar el
- *   layout del launcher con él es el mayor trabajo restante de
- *   integración. Mientras tanto, el juego se juega con mando
- *   físico (SDL lo detecta solo) o con el overlay nativo.
+ * - Overlay táctil: IMPLEMENTADO (GamepadOverlayView + puente JNI
+ *   al mando virtual SDL de upstream, input_overlay.cpp). El perfil
+ *   táctil activo del launcher (TouchLayoutRepository: posiciones,
+ *   tamaños, opacidad, color, forma, visibilidad por botón) se dibuja
+ *   sobre el juego con la misma matemática que la vista previa del
+ *   editor, y cada botón/stick inyecta su botón/eje SDL en el núcleo.
+ *   La vía por config.yml NO existe (verificado en el pin 3e43bc80:
+ *   config.h no tiene ninguna clave de overlay). El táctil fuera de
+ *   los botones baja a la superficie SDL como táctil frontal del
+ *   juego (Igniculus). Con mando físico conectado y el ajuste activo,
+ *   el overlay se oculta y el mando virtual se suelta.
  * - Menú de pausa con UI (reanudar / salir / ajustes).
  * - Relanzamiento en proceso (requestAppRelaunch) para cambiar de
  *   Title ID sin recrear la Activity.
@@ -79,9 +98,25 @@ class EmbeddedGameActivity : SDLActivity() {
     private var currentTitleId: String = ""
     private var pausedByGuideButton: Boolean = false
 
-    /** SDL carga solo libvita3k.so; SDL3 llega por DT_NEEDED. */
+    // --- Overlay táctil (GamepadOverlayView + mando virtual SDL) ---
+    private var overlayView: GamepadOverlayView? = null
+    private var overlayAttached: Boolean = false
+    private var overlayShouldShow: Boolean = false
+    private val overlayScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var inputManager: InputManager? = null
+    private val gamepadListener = object : InputManager.InputDeviceListener {
+        override fun onInputDeviceAdded(deviceId: Int) = refreshOverlay()
+        override fun onInputDeviceRemoved(deviceId: Int) = refreshOverlay()
+        override fun onInputDeviceChanged(deviceId: Int) = refreshOverlay()
+    }
+
+    private fun refreshOverlay() {
+        overlayScope.launch { refreshOverlayState() }
+    }
+
+    /** SDL carga solo libVita3K.so; SDL3 va estático dentro (libSDL3.a), sin DT_NEEDED. */
     override fun getLibraries(): Array<String> {
-        return arrayOf("vita3k")
+        return arrayOf("Vita3K")
     }
 
     /** argv de SDL_main: {"-r", titleId}. Sin Title ID, SDL_main devuelve -1. */
@@ -116,6 +151,160 @@ class EmbeddedGameActivity : SDLActivity() {
             finish()
             return
         }
+        setupTouchOverlay()
+    }
+
+    /**
+     * Monta el overlay táctil sobre la vista SDL.
+     *
+     * SDLActivity pone su superficie en un RelativeLayout (mLayout) con
+     * setContentView; addContentView añade nuestra vista ENCIMA, en el
+     * mismo contenedor. GamepadOverlayView no consume los toques que
+     * no son de ningún botón, así que el táctil frontal del juego
+     * (Igniculus) sigue llegando a la superficie SDL de debajo.
+     * No se usa Compose aquí: SDLActivity es una Activity plana (no
+     * ComponentActivity) y el overlay es una vista clásica, sin
+     * LifecycleOwner que inventar dentro del juego.
+     */
+    private fun setupTouchOverlay() {
+        val view = GamepadOverlayView(this).apply {
+            visibility = View.GONE
+            listener = object : GamepadOverlayView.Listener {
+                override fun onButton(sdlButton: Int, pressed: Boolean) {
+                    Vita3kCoreBridge.overlaySetButton(sdlButton, pressed)
+                }
+
+                override fun onAxis(sdlAxis: Int, value: Short) {
+                    Vita3kCoreBridge.overlaySetAxis(sdlAxis, value)
+                }
+            }
+        }
+        overlayView = view
+        addContentView(
+            view,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        inputManager = getSystemService(Context.INPUT_SERVICE) as? InputManager
+        inputManager?.registerInputDeviceListener(gamepadListener, null)
+        refreshOverlay()
+    }
+
+    /**
+     * Lee el perfil táctil activo + ajustes del overlay y decide si se
+     * muestra. Se llama al arrancar, al volver a primer plano y cuando
+     * se conecta/desconecta un mando. Sin perfil o sin ajustes leídos,
+     * el overlay queda oculto (no se inventa un layout).
+     */
+    private suspend fun refreshOverlayState() {
+        val view = overlayView ?: return
+        val settings = runCatching { SettingsRepository(this).settingsFlow.first() }.getOrNull()
+        val touchRepo = TouchLayoutRepository(this)
+        val controls = runCatching { touchRepo.layoutFlow.first() }.getOrNull() ?: emptyList()
+        val activeProfileId = runCatching { touchRepo.activeProfileIdFlow.first() }.getOrNull()
+            ?: "default-g99"
+        if (settings == null) {
+            applyOverlayVisibility(view, show = false, controls, settingsOpacity = 1f, neon = false)
+            return
+        }
+        val gamepadConnected = Vita3KLauncher(this).isGamepadConnected()
+        val show = TouchOverlayVisibility.shouldShow(
+            showInGame = settings.showTouchOverlayInGame,
+            activeProfileId = activeProfileId,
+            hiddenProfileIds = settings.touchOverlayHiddenProfileIds,
+            hideWithGamepad = settings.hideTouchWhenGamepadConnected,
+            gamepadConnected = gamepadConnected,
+            controls = controls,
+        )
+        applyOverlayVisibility(
+            view,
+            show = show,
+            controls = controls,
+            settingsOpacity = settings.touchOverlayOpacity,
+            neon = settings.touchOverlayNeonGlow,
+        )
+    }
+
+    private fun applyOverlayVisibility(
+        view: GamepadOverlayView,
+        show: Boolean,
+        controls: List<com.danielsnagustin.childoflight.launcher.data.TouchControl>,
+        settingsOpacity: Float,
+        neon: Boolean,
+    ) {
+        overlayShouldShow = show
+        if (!show) {
+            view.releaseAll()
+            view.visibility = View.GONE
+            detachOverlayController()
+            return
+        }
+        view.generalOpacity = settingsOpacity
+        view.neonGlow = neon
+        view.setControls(controls)
+        view.visibility = View.VISIBLE
+        maybeAttachOverlayController()
+    }
+
+    /**
+     * Crea el mando virtual SDL del overlay, solo con la partida en
+     * curso. attach es idempotente en upstream; si SDL aún no está
+     * listo, no crea nada y overlayIsAttached() lo dice: se reintenta
+     * en setCurrentGameId / onResume. El táctil se deja en frontal
+     * (false): es lo que usa Child of Light para Igniculus.
+     */
+    private fun maybeAttachOverlayController() {
+        if (!overlayShouldShow || overlayAttached) return
+        if (!Vita3kCoreBridge.isAppRunning()) return
+        if (!Vita3kCoreBridge.overlayAttach()) {
+            LauncherLog.append(this, "overlay", "attach del mando virtual falló (sin núcleo o sin SDL)")
+            return
+        }
+        if (!Vita3kCoreBridge.overlayIsAttached()) {
+            LauncherLog.append(this, "overlay", "attach llamado pero el mando virtual no existe en SDL; se reintentará al arrancar el juego")
+            return
+        }
+        overlayAttached = true
+        Vita3kCoreBridge.overlaySetTouchState(false)
+        LauncherLog.append(this, "overlay", "mando virtual del overlay activo")
+    }
+
+    private fun detachOverlayController() {
+        if (!overlayAttached) return
+        overlayAttached = false
+        Vita3kCoreBridge.overlayDetach()
+    }
+
+    // Al irse a segundo plano (Inicio, Recientes, llamada), pausar el
+    // NÚCLEO, no solo SDL: PAUSE_REASON_BACKGROUND existe para esto.
+    // Sin esto, el juego seguiría corriendo (CPU + audio) con la
+    // pantalla apagada. Al volver se quita SOLO el motivo de fondo:
+    // si el usuario pausó con el botón guía (PAUSE_REASON_USER), el
+    // juego sigue en pausa al volver. Best-effort y sin núcleo es
+    // no-op (el puente devuelve false).
+    override fun onResume() {
+        super.onResume()
+        runCatching {
+            Vita3kCoreBridge.setPauseReasonEnabled(
+                Vita3kCoreBridge.PAUSE_REASON_BACKGROUND,
+                false,
+            )
+        }
+        refreshOverlay()
+    }
+
+    override fun onPause() {
+        // Soltar todo lo pulsado al pausar: sin botones atascados al volver.
+        overlayView?.releaseAll()
+        super.onPause()
+        runCatching {
+            Vita3kCoreBridge.setPauseReasonEnabled(
+                Vita3kCoreBridge.PAUSE_REASON_BACKGROUND,
+                true,
+            )
+        }
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -140,6 +329,11 @@ class EmbeddedGameActivity : SDLActivity() {
     fun setCurrentGameId(gameId: String?) {
         runOnUiThread {
             currentTitleId = gameId.orEmpty()
+            // El juego arrancó: SDL está arriba y la sesión activa, así
+            // que es el momento de crear el mando virtual del overlay
+            // (antes, attach no crea nada). También re-carga el perfil
+            // por si cambió desde el último lanzamiento.
+            refreshOverlay()
         }
     }
 
@@ -180,6 +374,11 @@ class EmbeddedGameActivity : SDLActivity() {
     }
 
     override fun onDestroy() {
+        // Soltar el overlay y el mando virtual antes de pedir el cierre.
+        runCatching { inputManager?.unregisterInputDeviceListener(gamepadListener) }
+        overlayView?.releaseAll()
+        detachOverlayController()
+        overlayScope.cancel()
         // Si la partida sigue en curso al salir, pedir cierre limpio.
         runCatching {
             if (Vita3kCoreBridge.isAppRunning()) {

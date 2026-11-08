@@ -40,10 +40,16 @@ import java.util.zip.ZipFile
  *
  * LÍMITES HONESTOS (ver docs/gpu-drivers.md):
  * - La carga real del driver la hace el núcleo al arrancar, leyendo
- *   `custom-driver-name` de config.yml y el zip de
- *   `<filesDir>/vita3k/drivers/turnip/`. El valor exacto que espera
- *   esa clave (nombre con/sin .zip) sigue TODO-VERIFY contra el
- *   árbol del núcleo fijado (ver Vita3kConfigGenerator). Este archivo
+ *   `custom-driver-name` de config.yml. El valor exacto de esa clave
+ *   es el STEM del zip (sin .zip, p. ej. "Turnip_v26.0.0_R8_Gmem"),
+ *   verificado contra el núcleo (pin 3e43bc80, native_drivers.cpp:
+ *   installCustomDriver usa archive_path.filename().stem()). El
+ *   núcleo busca el driver ya EXTRAÍDO en
+ *   `<filesDir>/driver/<nombre>/` (meta.json o driver_name.txt);
+ *   el zip guardado en `<filesDir>/vita3k/drivers/turnip/` es solo
+ *   la copia del launcher. El launcher instala el driver en el
+ *   núcleo con installCustomDriver al instalar el zip y al lanzar
+ *   el juego (ver Vita3kCoreBridge + Vita3KLauncher). Este archivo
  *   NO carga ningún .so: solo selecciona, valida e instala el zip.
  * - La R8 es de enero de 2026 y ya no es la Turnip más reciente en
  *   general (otros constructores publican revisiones más nuevas).

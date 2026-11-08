@@ -19,6 +19,6 @@
   Por qué se vendoriza en vez de usar el submódulo: el launcher no
   puede traer submódulos con su pipeline de push por API (ver
   docs/etapa2/ETAPA2-ESTADO.md). El .so nativo de SDL3 lo aporta el
-  build del núcleo Vita3K en CI (libvita3k.so lo enlaza); estos
+  build del núcleo Vita3K en CI (libVita3K.so lo enlaza); estos
   archivos son solo el lado Java.
 -->

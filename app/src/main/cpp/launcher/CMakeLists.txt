@@ -3,7 +3,7 @@
 # Se añade SOLO cuando el árbol Vita3K está presente (lo decide el
 # CMakeLists superior). Sigue el modelo EmuCoreV: no se crea una
 # librería propia; las fuentes del adaptador se añaden al target
-# `vita3k` de upstream (libvita3k.so), así que ven los mismos
+# `vita3k` de upstream (libVita3K.so), así que ven los mismos
 # símbolos e includes que interface.cpp y android/jni/*.cpp.
 #
 # Qué hace cada fuente (todas reenvían a funciones JNI de upstream,
@@ -15,6 +15,14 @@
 # - session_bridge.cpp: isAppRunning/requestAppQuit/isAppPaused/
 #   getRunningAppTitle/getFirmwareInstallStateMask/refreshAppsList/
 #   setPauseReasonEnabled/setInputIntercepted
+# - driver_bridge.cpp: installCustomDriver/getInstalledCustomDrivers/
+#   removeCustomDriver (Turnip, solo Adreno)
+# - input_overlay_bridge.cpp: overlay táctil -> mando virtual SDL de
+#   upstream (attach/detach/setButton/setAxis/setTouchState)
+# - driver_bridge.cpp: installCustomDriver/getInstalledCustomDrivers/
+#   removeCustomDriver (drivers Turnip; sin este puente el
+#   custom-driver-name del config.yml no apuntaba a ningún driver
+#   instalado en el núcleo)
 #
 # LAUNCHER_HAS_VITA3K=1 marca que el árbol existe. Sin él, los
 # puentes compilan como stubs NOT_IMPLEMENTED (por si alguna vez se
@@ -27,6 +35,8 @@ target_sources(vita3k PRIVATE
     src/runtime_bridge.cpp
     src/install_bridge.cpp
     src/session_bridge.cpp
+    src/driver_bridge.cpp
+    src/input_overlay_bridge.cpp
 )
 
 target_include_directories(vita3k PRIVATE

@@ -1,0 +1,94 @@
+// driver_bridge.cpp — puente JNI de drivers GPU personalizados (Etapa 2).
+//
+// Funciones JNI de com.danielsnagustin.childoflight.launcher.core.Vita3kCoreBridge
+// para instalar/listar/borrar drivers Turnip DENTRO del núcleo embebido.
+// Reenvían a native_drivers.cpp de upstream; sin árbol Vita3K compilan
+// como stubs ("" / vacío / false), y el llamador sigue con el driver
+// del sistema.
+//
+// POR QUÉ EXISTE ESTE PUENTE (verificado contra upstream, pin 3e43bc80):
+// `custom-driver-name` en config.yml NO es el zip ni una ruta: es el
+// NOMBRE DEL DRIVER instalado, que upstream define como el stem del
+// zip (native_drivers.cpp: installCustomDriver usa
+// archive_path.filename().stem()). Y el núcleo NO lee el zip del
+// launcher: busca una CARPETA ya extraída en
+// <filesDir>/driver/<nombre>/ con meta.json o driver_name.txt
+// (util/android_driver.cpp: resolve_custom_driver_library_path).
+// Sin llamar a installCustomDriver, el config.yml nombraba un driver
+// que no existía en <filesDir>/driver/ y el núcleo caía en silencio
+// al driver del sistema (renderer.cpp: resolve_vk_get_instance_proc_addr
+// avisa "Failed to load custom driver ... falling back to the system
+// Vulkan loader"). El launcher guardaba el zip en
+// <filesDir>/vita3k/drivers/turnip/ como copia propia; ESTE puente es
+// el que lo instala de verdad en el núcleo.
+//
+// Robustez JNI: igual que install_bridge.cpp — si upstream deja una
+// excepción pendiente se limpia y se devuelve el valor de "no hay
+// driver" ("" / array vacío / false); las funciones que devuelven
+// String/array nunca devuelven null (Kotlin los trata como no nulos).
+
+#include <jni.h>
+#include <android/log.h>
+
+#define LOG_TAG "LauncherBridge"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
+
+#ifdef LAUNCHER_HAS_VITA3K
+#include "launcher_bridge.h"
+#endif
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInstallCustomDriver(
+    JNIEnv *env, jobject /* thiz */, jstring zipPath) {
+#ifdef LAUNCHER_HAS_VITA3K
+    if (zipPath == nullptr) {
+        LOGW("nativeInstallCustomDriver: ruta nula");
+        return env->NewStringUTF("");
+    }
+    // Upstream devuelve el nombre del driver (= stem del zip) o "".
+    jstring name = Java_org_vita3k_emulator_NativeLib_installCustomDriver(env, nullptr, zipPath);
+    if (name == nullptr || launcher_clear_pending_exception(env)) {
+        return env->NewStringUTF("");
+    }
+    LOGI("nativeInstallCustomDriver: instalado en el núcleo");
+    return name;
+#else
+    LOGW("nativeInstallCustomDriver STUB: núcleo no embebido");
+    return env->NewStringUTF("");
+#endif
+}
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetInstalledCustomDrivers(
+    JNIEnv *env, jobject /* thiz */) {
+#ifdef LAUNCHER_HAS_VITA3K
+    jobjectArray drivers = Java_org_vita3k_emulator_NativeLib_getInstalledCustomDrivers(env, nullptr);
+    if (drivers == nullptr || launcher_clear_pending_exception(env)) {
+        jclass string_class = env->FindClass("java/lang/String");
+        return env->NewObjectArray(0, string_class, nullptr);
+    }
+    return drivers;
+#else
+    jclass string_class = env->FindClass("java/lang/String");
+    return env->NewObjectArray(0, string_class, nullptr);
+#endif
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeRemoveCustomDriver(
+    JNIEnv *env, jobject /* thiz */, jstring driverName) {
+#ifdef LAUNCHER_HAS_VITA3K
+    if (driverName == nullptr) {
+        return JNI_FALSE;
+    }
+    const jboolean ok = Java_org_vita3k_emulator_NativeLib_removeCustomDriver(env, nullptr, driverName);
+    if (launcher_clear_pending_exception(env)) {
+        return JNI_FALSE;
+    }
+    return ok;
+#else
+    LOGW("nativeRemoveCustomDriver STUB: núcleo no embebido");
+    return JNI_FALSE;
+#endif
+}

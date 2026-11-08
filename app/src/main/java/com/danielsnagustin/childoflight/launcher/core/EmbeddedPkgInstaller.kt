@@ -46,6 +46,22 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
     private var progressListener: ProgressListener? = null
 
     /**
+     * Sesión del núcleo lista para instalar (2026-11-07): las funciones
+     * de instalación de upstream necesitan la sesión inicializada
+     * (nativeLoadGame lo exige explícito: get_emuenv() null -> -2, y la
+     * UI de upstream inicializa la sesión antes de instalar). Instalar
+     * sin init previo es la sospecha principal si el primer .pkg o el
+     * primer firmware fallan en un proceso nuevo. init es idempotente
+     * en upstream (si ya está inicializado devuelve true), así que
+     * llamarlo aquí no cuesta un segundo arranque: el lanzamiento
+     * embebido vuelve a llamar a init y sigue igual.
+     */
+    private fun ensureCoreInitialized(): Boolean {
+        if (!Vita3kCoreBridge.available) return false
+        return Vita3kCoreBridge.init(library.vitaRoot.absolutePath) == Vita3kCoreBridge.OK
+    }
+
+    /**
      * Instala el .pkg del JUEGO (PCSE00480 / PCSB00598) con su work.bin.
      * Orden upstream: zRIF del work.bin -> installPkg -> si no había
      * zRIF, copyLicense(work.bin) como respaldo. Devuelve success solo
@@ -84,6 +100,9 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
         if (!pkgFile.isFile) {
             return Result.failure(IllegalStateException("No está el archivo ${pkgFile.name}."))
         }
+        if (!ensureCoreInitialized()) {
+            return Result.failure(IllegalStateException("El núcleo embebido no se pudo iniciar: no se puede instalar ${pkgFile.name}."))
+        }
         return withContext(Dispatchers.IO) {
             progressListener = onProgress
             try {
@@ -100,9 +119,19 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
                     )
                 }
                 // Respaldo: si no hubo zRIF pero sí work.bin, copiar la
-                // licencia a su sitio dentro del núcleo.
+                // licencia a su sitio dentro del núcleo. Antes el
+                // resultado se ignoraba: un .pkg "instalado" sin
+                // licencia no arranca en el núcleo y el launcher lo daba
+                // por bueno. Si la copia falla, es fallo de instalación.
                 if (zrif.isEmpty() && workBinFile.isFile) {
-                    Vita3kCoreBridge.copyLicense(workBinFile.absolutePath)
+                    val licenseOk = Vita3kCoreBridge.copyLicense(workBinFile.absolutePath)
+                    if (!licenseOk) {
+                        return@withContext Result.failure(
+                            IllegalStateException(
+                                "El núcleo instaló ${pkgFile.name} pero no pudo copiar su licencia (work.bin): sin ella el juego no arrancaría.",
+                            ),
+                        )
+                    }
                 }
                 Result.success(Unit)
             } catch (e: Exception) {
@@ -120,6 +149,9 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
         }
         if (!archiveFile.isFile) {
             return Result.failure(IllegalStateException("No está el archivo ${archiveFile.name}."))
+        }
+        if (!ensureCoreInitialized()) {
+            return Result.failure(IllegalStateException("El núcleo embebido no se pudo iniciar: no se puede instalar ${archiveFile.name}."))
         }
         return withContext(Dispatchers.IO) {
             progressListener = onProgress
@@ -149,6 +181,9 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
         }
         if (!pupFile.isFile) {
             return Result.failure(IllegalStateException("No está el archivo ${pupFile.name}."))
+        }
+        if (!ensureCoreInitialized()) {
+            return Result.failure(IllegalStateException("El núcleo embebido no se pudo iniciar: no se puede instalar el firmware."))
         }
         return withContext(Dispatchers.IO) {
             progressListener = onProgress

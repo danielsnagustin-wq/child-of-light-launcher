@@ -30,7 +30,13 @@ enum class ScreenFilter(val vita3kValue: String) {
 }
 
 enum class MemoryMapping(val vita3kValue: String, val label: String) {
-    /** Único valor cuyo string YAML está verificado: es el default de config.h. */
+    /**
+     * Strings YAML verificados contra el núcleo (pin 3e43bc80,
+     * renderer.cpp VKState::late_init): "double-buffer" -> DoubleBuffer,
+     * "external-host" -> ExernalHost, "page-table" -> PageTable,
+     * "native-buffer" -> NativeBuffer (solo Android). "off" no tiene
+     * literal propio: cae en Disabled por fall-through, mismo efecto.
+     */
     DOUBLE_BUFFER("double-buffer", "Double Buffer"),
     PAGE_TABLE("page-table", "Page Table"),
     NATIVE_BUFFER("native-buffer", "Native Buffer"),
@@ -119,9 +125,9 @@ enum class FrameLimiter(val label: String, val fps: Int?) {
 /**
  * Backend de audio de Vita3K.
  * SDL es el default verificado (config.h: audio-backend "SDL").
- * Cubeb es la alternativa documentada en Vita3K+ v1.3 (según sus notas,
- * cubeb y SDL ya no deberían crepitar/cortar); su string exacto en el
- * YAML se marca TODO-VERIFY en el generador.
+ * Cubeb es la alternativa con string exacto VERIFICADO en upstream
+ * (pin 3e43bc80, audio.cpp AudioState::set_backend: acepta
+ * exactamente "SDL" y "Cubeb").
  */
 enum class AudioBackend(val vita3kValue: String, val label: String) {
     SDL("SDL", "SDL (recomendado)"),
@@ -210,6 +216,24 @@ data class LauncherSettings(
      * el overlay táctil siempre que detecte un mando conectado.
      */
     val hideTouchWhenGamepadConnected: Boolean = true,
+    // --- Overlay táctil dentro del juego embebido (Etapa 2) ---
+    // SOLO LAUNCHER: no hay ninguna clave de overlay en el config.h
+    // del núcleo (verificado en el pin 3e43bc80: config.yml solo tiene
+    // "performance-overlay", el HUD de FPS). La personalización vive
+    // en el launcher y llega al núcleo como botones/ejes de un mando
+    // virtual SDL (input_overlay.cpp de upstream); por eso NO se emite
+    // nada de esto en config.yml. Las posiciones, tamaños, opacidad y
+    // color POR BOTÓN no están aquí: están en el perfil activo de
+    // TouchLayoutRepository (el editor), que el overlay del juego lee
+    // tal cual.
+    /** Interruptor general: el overlay aparece sobre el juego embebido. */
+    val showTouchOverlayInGame: Boolean = true,
+    /** Opacidad general del overlay (0.1..1): multiplica la opacidad de cada botón. */
+    val touchOverlayOpacity: Float = 1f,
+    /** Halo dorado (neón) alrededor de los botones del overlay. */
+    val touchOverlayNeonGlow: Boolean = false,
+    /** Ids de perfiles de control en los que el overlay queda oculto en el juego. */
+    val touchOverlayHiddenProfileIds: Set<String> = emptySet(),
 ) {
     val resolutionLabel: String
         get() = when (resolutionMultiplier) {

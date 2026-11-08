@@ -51,7 +51,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Acción que puede ofrecer el diálogo de aviso importante. */
 enum class AlertAction { INSTALL_VITA3K, GO_IMPORT, DELIVER_PKG_TO_VITA3K, CONFIRM_PKG_INSTALLED, REPLACE_DUPLICATE, CONFIRM_DOWNLOADS_COPY }
@@ -120,6 +123,43 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     /** true mientras se instala el PUP guardado en el núcleo embebido (puede tardar minutos). */
     private val _firmwareInstalling = MutableStateFlow(false)
     val firmwareInstallingFlow: StateFlow<Boolean> = _firmwareInstalling.asStateFlow()
+
+    /**
+     * Serie de instalaciones de firmware (2026-11-07): instalar el PUP
+     * dos veces a la vez (JUGAR + botón de Ajustes, o dos toques al
+     * botón) lanzaba dos installFirmware nativos concurrentes sobre el
+     * mismo vs0. _firmwareInstalling solo era un indicador, nunca se
+     * consultaba como guarda. El Mutex es la guarda real.
+     */
+    private val firmwareInstallMutex = Mutex()
+
+    /** true mientras hay un lanzamiento en curso (JUGAR o prueba de 30 s). La Home deshabilita JUGAR mientras tanto. */
+    private val _launching = MutableStateFlow(false)
+    val launchingFlow: StateFlow<Boolean> = _launching.asStateFlow()
+
+    /**
+     * Guarda anti-doble-JUGAR (2026-11-07): dos toques rápidos a JUGAR
+     * lanzaban dos launch() a la vez (dos instalaciones de firmware,
+     * dos instalaciones de .pkg con el núcleo, dos intents). El botón
+     * no se deshabilitaba y play() no tenía guarda (la importación sí
+     * la tiene con _importing). AtomicBoolean porque dos corrutinas IO
+     * pueden llegar a la vez; el StateFlow solo refleja el estado en UI.
+     */
+    private val launchingGuard = AtomicBoolean(false)
+
+    private fun tryBeginLaunch(): Boolean {
+        if (!launchingGuard.compareAndSet(false, true)) {
+            _message.value = "Ya hay un lanzamiento en curso."
+            return false
+        }
+        _launching.value = true
+        return true
+    }
+
+    private fun endLaunch() {
+        _launching.value = false
+        launchingGuard.set(false)
+    }
 
     /** ¿Está presente el núcleo embebido (Etapa 2)? null = aún no comprobado. */
     private val _embeddedCore = MutableStateFlow<Boolean?>(null)
@@ -486,8 +526,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * embebido (vía EmbeddedPkgInstaller.installFirmware) y registra
      * la versión instalada. No lanza excepciones. Si no hay núcleo,
      * el PUP simplemente queda guardado para cuando llegue.
+     * Seriada con firmwareInstallMutex: dos instalaciones a la vez
+     * pisarían el mismo vs0.
      */
     private suspend fun tryInstallSavedFirmwareInCore(): FirmwareCoreResult {
+        return firmwareInstallMutex.withLock { tryInstallSavedFirmwareInCoreLocked() }
+    }
+
+    private suspend fun tryInstallSavedFirmwareInCoreLocked(): FirmwareCoreResult {
         if (!Vita3kCoreBridge.available) {
             return FirmwareCoreResult.NotInstalled(
                 "Firmware guardado. El núcleo embebido aún no está en esta versión: " +
@@ -496,8 +542,22 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             )
         }
         when (val status = FirmwareResolver.resolve(library.vitaRoot)) {
-            is FirmwareStatus.Ready ->
-                return FirmwareCoreResult.Done("Firmware ya instalado en el núcleo (${status.source}).")
+            is FirmwareStatus.Ready -> {
+                // Listo POR MARCADOR (con versión) = el PUP guardado es
+                // el que ya se instaló: no hay nada que hacer.
+                // Listo SOLO por vs0 (sin marcador) + PUP válido = PUP
+                // NUEVO importado después de instalar otro: importar un
+                // PUP borra el marcador, así que "ya instalado" sería
+                // mentira y el PUP nuevo no se instalaría nunca (el
+                // núcleo seguiría con el firmware viejo). En ese caso
+                // se cae a la instalación del PUP guardado.
+                val markerVersion = FirmwareResolver.installedVersion(library.vitaRoot)
+                val pup = FirmwareResolver.pupFile(library.vitaRoot)
+                if (markerVersion != null || !FirmwareResolver.isValidPupFile(pup)) {
+                    return FirmwareCoreResult.Done("Firmware ya instalado en el núcleo (${status.source}).")
+                }
+                // Si no: PUP nuevo pendiente; seguir e instalarlo.
+            }
             FirmwareStatus.Missing ->
                 return FirmwareCoreResult.NotInstalled(FirmwareResolver.NO_FIRMWARE_MESSAGE)
             is FirmwareStatus.Saved -> { /* seguir: hay PUP guardado por instalar */ }
@@ -915,6 +975,47 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     // --- Turnip ---
 
+    /**
+     * Instala en el núcleo embebido el zip Turnip ya guardado por el
+     * launcher (<filesDir>/vita3k/drivers/turnip/*.zip). Devuelve el
+     * nombre del driver instalado (stem del zip) o "" si no hay núcleo
+     * o la instalación falló.
+     *
+     * Verificado contra upstream (pin 3e43bc80, native_drivers.cpp):
+     * installCustomDriver extrae el zip en <filesDir>/driver/<stem>/
+     * y devuelve el stem; si ese driver ya está instalado, rechaza
+     * reinstalar ("already exists") y devuelve "". En ese caso el
+     * nombre ya instalado es el correcto y se devuelve tal cual.
+     * Best-effort y silencioso si no hay núcleo (Etapa 1): el zip
+     * queda guardado y se instalará al lanzar el juego con el núcleo
+     * (Vita3KLauncher.ensureTurnipDriverInstalled).
+     */
+    private fun installDriverIntoCore(): String {
+        if (!Vita3kCoreBridge.available) return ""
+        val zip = turnipRepo.installedDriverFile() ?: return ""
+        val expectedName = zip.name.substringBeforeLast(".")
+        val installed = Vita3kCoreBridge.installCustomDriver(zip.absolutePath)
+        if (installed.isNotEmpty()) {
+            LauncherLog.append(context, "driver", "Turnip instalado en el núcleo: $installed")
+            return installed
+        }
+        if (expectedName.isNotEmpty() && Vita3kCoreBridge.getInstalledCustomDrivers().contains(expectedName)) {
+            LauncherLog.append(context, "driver", "Turnip ya estaba instalado en el núcleo: $expectedName")
+            return expectedName
+        }
+        // Otro fallo (zip corrupto, sin meta/.so válido...): un intento
+        // tras borrar el registro viejo, por si quedó a medias.
+        if (expectedName.isNotEmpty() && Vita3kCoreBridge.removeCustomDriver(expectedName)) {
+            val retried = Vita3kCoreBridge.installCustomDriver(zip.absolutePath)
+            if (retried.isNotEmpty()) {
+                LauncherLog.append(context, "driver", "Turnip reinstalado en el núcleo: $retried")
+                return retried
+            }
+        }
+        LauncherLog.append(context, "driver", "No se pudo instalar Turnip en el núcleo (zip ${zip.name}); el núcleo usará el driver del sistema.")
+        return ""
+    }
+
     fun installTurnip(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
             val name = fileNameOf(uri)
@@ -925,24 +1026,33 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 // (G99) instalar el zip no activa nada: el driver del
                 // sistema sigue siendo el que manda.
                 val gpu = settingsRepo.gpuInfoFlow.first()
+                // El nombre que va a custom-driver-name es el del driver
+                // instalado en el núcleo; si no hay núcleo aún, el stem
+                // del zip (mismo valor que devuelve installCustomDriver).
+                val coreName = installDriverIntoCore()
+                val driverName = coreName.ifEmpty { savedName.substringBeforeLast(".") }
                 if (gpu?.vendor == GpuVendor.ADRENO) {
                     settingsRepo.save(
                         current.copy(
                             turnipInstalled = true,
                             turnipVersion = savedName,
-                            customDriverName = savedName.substringBeforeLast("."),
+                            customDriverName = driverName,
                             gpuDriver = com.danielsnagustin.childoflight.launcher.model.GpuDriver.TURNIP,
                         ),
                     )
                     withContext(Dispatchers.Main) {
-                        _message.value = "Turnip instalado: $savedName. El núcleo limpiará la caché de shaders al arrancar con el nuevo driver."
+                        _message.value = if (Vita3kCoreBridge.available && coreName.isEmpty()) {
+                            "Turnip guardado ($savedName), pero el núcleo no pudo instalarlo: se usará el driver del sistema hasta reinstalarlo o relanzar el juego."
+                        } else {
+                            "Turnip instalado: $savedName. El núcleo limpiará la caché de shaders al arrancar con el nuevo driver."
+                        }
                     }
                 } else {
                     settingsRepo.save(
                         current.copy(
                             turnipInstalled = true,
                             turnipVersion = savedName,
-                            customDriverName = savedName.substringBeforeLast("."),
+                            customDriverName = driverName,
                         ),
                     )
                     withContext(Dispatchers.Main) {
@@ -981,11 +1091,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 if (BundledTurnipDriver.selectVariant(gpu.renderer) == null) return@runCatching
                 val result = turnipRepo.installBundledAsset()
                 result.onSuccess { installed ->
+                    val coreName = installDriverIntoCore()
                     settingsRepo.save(
                         current.copy(
                             turnipInstalled = true,
                             turnipVersion = installed.savedName,
-                            customDriverName = installed.savedName.substringBeforeLast("."),
+                            customDriverName = coreName.ifEmpty { installed.savedName.substringBeforeLast(".") },
                             gpuDriver = com.danielsnagustin.childoflight.launcher.model.GpuDriver.TURNIP,
                         ),
                     )
@@ -1013,6 +1124,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun play() {
         viewModelScope.launch(Dispatchers.IO) {
+            if (!tryBeginLaunch()) return@launch
+            try {
             val settings = settingsRepo.settingsFlow.first()
             val gpu = settingsRepo.gpuInfoFlow.first()
             // 32 bits: el núcleo embebido necesita 64 bits (arm64). No se
@@ -1024,6 +1137,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 withContext(Dispatchers.Main) {
                     _message.value = "Este teléfono es de 32 bits: el núcleo embebido necesita 64 bits, así que el juego se abrirá con la app externa."
                 }
+            }
+            // config.yml ANTES del firmware: instalar el firmware
+            // inicializa el núcleo (EmbeddedPkgInstaller) y el núcleo
+            // lee config.yml al iniciar; si se escribiera después, el
+            // juego arrancaría con los ajustes del lanzamiento anterior.
+            // Best-effort: launch() lo vuelve a escribir igual.
+            runCatching {
+                Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu)
+            }.onFailure {
+                LauncherLog.append(context, "config", "No se pudo escribir config.yml antes del firmware: ${it.message}")
             }
             // Firmware: si hay PUP guardado y núcleo presente, instalarlo
             // ahora (best-effort, nunca bloquea el lanzamiento).
@@ -1111,6 +1234,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 }
             }
             refreshStatus()
+            } finally {
+                endLaunch()
+            }
         }
     }
 
@@ -1223,6 +1349,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     /** Prueba de 30 s: lanza el juego con el preset actual y deja pendiente registrar el FPS visto en el overlay. */
     fun startBenchmark() {
         viewModelScope.launch(Dispatchers.IO) {
+            if (!tryBeginLaunch()) return@launch
+            try {
             val settings = settingsRepo.settingsFlow.first()
             val gpu = settingsRepo.gpuInfoFlow.first()
             val pre = launcher.checkPrerequisites(library)
@@ -1239,6 +1367,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 note = "Prueba de 30 s con preset ${settings.activeProfile.label}. FPS sin medir: anota el FPS del overlay al volver.",
             )
             _pendingBenchmark.value = run
+            // config.yml antes del firmware, igual que en play(): la
+            // instalación del firmware inicializa el núcleo.
+            runCatching {
+                Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu)
+            }
             // Firmware: igual que en play(), instalar el PUP guardado
             // en el núcleo si está presente (best-effort, no bloquea).
             ensureFirmwareForEmbedded()
@@ -1270,6 +1403,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         "Núcleo embebido detectado, falta el punto de entrada JNI (Etapa 2)."
                     }
                 }
+            }
+            } finally {
+                endLaunch()
             }
         }
     }
@@ -1557,6 +1693,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             val hadFile = turnipRepo.deleteDriver()
             val current = settingsRepo.settingsFlow.first()
+            // Borra también el driver instalado dentro del núcleo, si lo
+            // había: si no, custom-driver-name quedaría apuntando a un
+            // driver que ya no existe (el núcleo caería al driver del
+            // sistema, pero el registro huérfano quedaría en el núcleo).
+            if (current.customDriverName.isNotBlank() && Vita3kCoreBridge.available) {
+                val removed = Vita3kCoreBridge.removeCustomDriver(current.customDriverName)
+                LauncherLog.append(context, "driver", "Driver Turnip borrado del núcleo (${current.customDriverName}): $removed")
+            }
             settingsRepo.save(
                 current.copy(
                     turnipInstalled = false,

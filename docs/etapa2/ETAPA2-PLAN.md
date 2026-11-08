@@ -178,7 +178,7 @@ Lo no verificado se marca `TODO-VERIFY`.
 
 ### 2.3 Lo que NO funciona (descartado)
 
-- **Cargar el `libvita3k.so` del APK oficial tal cual:** sus símbolos
+- **Cargar el `libVita3K.so` del APK oficial tal cual:** sus símbolos
   JNI están ligados a `org.vita3k.emulator.NativeLib` y a la
   `SDLActivity` de `external/sdl`; en nuestro paquete fallarían con
   `UnsatisfiedLinkError` / clases ausentes. Además el `.so` no se
@@ -395,7 +395,7 @@ child-of-light-launcher/
    push por API no puede modificar `.github/workflows/`) y hacer
    push de los archivos de la fundación.
 2. Leer el log de Actions: si compila, medir el tamaño de
-   `libvita3k.so` y del APK. Si falla, el error dirá qué falta
+   `libVita3K.so` y del APK. Si falla, el error dirá qué falta
    (normalmente un submódulo del clon, vcpkg o la toolchain).
 3. Solo cuando el `.so` compile, probar en un dispositivo con
    Helio G99 el arranque `-r PCSB00598` (instalar el .pkg con el
