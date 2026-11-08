@@ -188,4 +188,77 @@ class EmbeddedCoreLayoutTest {
             root.deleteRecursively()
         }
     }
+
+    @Test
+    fun `resolveUx0Dir prefiere el antiguo si el pkg vive ahi y el embebido no lo tiene`() {
+        val root = tempRoot()
+        try {
+            // Caso del bug JUGAR (2026-11-08): el .pkg importado vive en
+            // el ux0 antiguo y el embebido tiene otro contenido, pero no
+            // ese juego. Devolver el embebido lo haría "desaparecer".
+            val pkg = File(root, "ux0/pkg/PCSB00598.pkg")
+            pkg.parentFile.mkdirs()
+            pkg.writeText("falso pkg")
+            val other = File(root, "vita/ux0/app/PCSE00480/eboot.bin")
+            other.parentFile.mkdirs()
+            other.writeText("otro juego")
+
+            assertEquals(File(root, "ux0"), EmbeddedCoreLayout.resolveUx0Dir(root))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `resolveUx0Dir prefiere el antiguo si el juego extraido vive ahi y el embebido no lo tiene`() {
+        val root = tempRoot()
+        try {
+            val eboot = File(root, "ux0/app/PCSB00598/eboot.bin")
+            eboot.parentFile.mkdirs()
+            eboot.writeText("antiguo")
+            val otherPkg = File(root, "vita/ux0/pkg/PCSE00480.pkg")
+            otherPkg.parentFile.mkdirs()
+            otherPkg.writeText("otro juego")
+
+            assertEquals(File(root, "ux0"), EmbeddedCoreLayout.resolveUx0Dir(root))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `resolveUx0Dir usa el embebido si el juego ya esta ahi`() {
+        val root = tempRoot()
+        try {
+            val pkg = File(root, "ux0/pkg/PCSB00598.pkg")
+            pkg.parentFile.mkdirs()
+            pkg.writeText("antiguo")
+            val eboot = File(root, "vita/ux0/app/PCSB00598/eboot.bin")
+            eboot.parentFile.mkdirs()
+            eboot.writeText("migrado")
+
+            assertEquals(File(root, "vita/ux0"), EmbeddedCoreLayout.resolveUx0Dir(root))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `resolveUx0Dir sin juego en ninguno mantiene el comportamiento actual`() {
+        val root = tempRoot()
+        try {
+            // Solo partidas guardadas en ambos lados, ningún juego: no
+            // hay nada que "perder", así que manda el layout migrado.
+            val legacySave = File(root, "ux0/user/00/savedata/PCSB00598/slot0")
+            legacySave.parentFile.mkdirs()
+            legacySave.writeText("partida")
+            val embeddedSave = File(root, "vita/ux0/user/00/savedata/PCSB00598/slot0")
+            embeddedSave.parentFile.mkdirs()
+            embeddedSave.writeText("partida")
+
+            assertEquals(File(root, "vita/ux0"), EmbeddedCoreLayout.resolveUx0Dir(root))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 }

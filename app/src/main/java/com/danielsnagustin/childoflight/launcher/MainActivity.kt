@@ -54,6 +54,7 @@ import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.SavesScreen
 import com.danielsnagustin.childoflight.launcher.ui.Screen
 import com.danielsnagustin.childoflight.launcher.ui.SettingsScreen
+import com.danielsnagustin.childoflight.launcher.ui.TouchLayoutScreen
 import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsAudioScreen
 import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsControlsScreen
 import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsCpuScreen

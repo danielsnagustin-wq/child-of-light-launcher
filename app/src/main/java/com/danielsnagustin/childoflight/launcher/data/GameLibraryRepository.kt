@@ -158,10 +158,12 @@ object DownloadsCleanup {
  * ID en el nombre: exigirlo era el error que rechazaba la copia del
  * usuario. El .pkg se guarda en ux0/pkg/ con su work.bin (licencia
  * zRIF de 512 B, buscada junto al .pkg o pedida al usuario). El
- * launcher NO puede desencriptar ni extraer un .pkg: instalarlo es
- * trabajo de la app externa ("Instalar en la app externa" pide
+ * launcher NO puede desencriptar ni extraer un .pkg por sí mismo: lo
+ * instala el motor integrado al pulsar JUGAR (UseEmbeddedPkg). La
+ * entrega a la app externa ("Instalar en la app externa", en la
+ * pantalla Importar) sigue existiendo como alternativa: pide
  * confirmación y solo entonces copia ambos a Descargas/ChildOfLight/
- * y abre la app externa con la guía). El .pkg y su licencia viven
+ * y abre la app externa con la guía. El .pkg y su licencia viven
  * siempre en el almacenamiento interno del launcher; la copia a
  * Descargas es solo la entrega explícita al externo y se puede borrar
  * desde Ajustes → Almacenamiento.
@@ -609,6 +611,13 @@ class GameLibraryRepository(private val context: Context) {
         // Los saves solo existen con el juego extraído: con un .pkg los
         // saves viven dentro de Vita3K, no en el launcher.
         val saves = if (extractedTitle != null) listSaves(extractedTitle.id) else emptyList()
+        // Diagnóstico (2026-11-08): la ruta ux0 resuelta puede voltear
+        // entre legacy y embebido; si JUGAR dice que el juego no está
+        // instalado, esta línea dice dónde se buscó y qué se encontró.
+        LauncherLog.append(
+            context, "status",
+            "scanStatus ux0=${ux0Dir.absolutePath} extraído=${extractedTitle?.id} pkg=${pkgTitle?.id} instalado=${extractedTitle != null || pkgTitle != null}",
+        )
         return GameStatus(
             titleId = title,
             extractedTitleId = extractedTitle,

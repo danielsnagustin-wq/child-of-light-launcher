@@ -809,7 +809,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 if (result.kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME) {
                     resetPkgDeliveryFlags()
                 }
-                _alert.value = AlertInfo(importResultMessage(result), AlertAction.DELIVER_PKG_TO_VITA3K)
+                // Sin acción de entrega: el motor integrado instala el
+                // .pkg al pulsar JUGAR. La entrega a la app externa
+                // sigue disponible en la pantalla Importar (fallback).
+                _alert.value = AlertInfo(importResultMessage(result), null)
             }
             is ImportResult.PkgNeedsLicense -> {
                 if (result.kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME) {
@@ -859,10 +862,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC -> "El DLC"
                 com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE -> "El update"
             }
+            // El motor integrado instala el .pkg al pulsar JUGAR
+            // (UseEmbeddedPkg): ya no hace falta la app externa.
+            val installNote = when (result.kind) {
+                com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME ->
+                    "Pulsa JUGAR: el motor integrado instalará el .pkg y arrancará el juego."
+                else -> "El motor integrado lo instalará al pulsar JUGAR, junto con el juego."
+            }
             "$what se guardó como .pkg (${result.titleId.id} · ${formatBytes(result.sizeBytes)}) en el almacenamiento interno del launcher.\n\n" +
-                "El launcher no puede instalar un .pkg por sí mismo: lo instala la app externa. " +
-                "Pulsa «Instalar en la app externa»: te pedirá confirmar la copia del .pkg y su licencia a Descargas/ChildOfLight/ " +
-                "y se abre la app externa para instalarlo ahí una sola vez."
+                installNote
         }
         is ImportResult.PkgNeedsLicense -> {
             val what = when (result.kind) {
@@ -917,11 +925,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             withContext(Dispatchers.Main) {
                 result.onSuccess {
                     _pendingPkgLicense.value = null
+                    // La licencia ya está: el motor integrado instala el
+                    // .pkg al pulsar JUGAR (UseEmbeddedPkg).
+                    val installNote = if (pending.kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME) {
+                        "Pulsa JUGAR: el motor integrado instalará el .pkg y arrancará el juego."
+                    } else {
+                        "El motor integrado lo instalará al pulsar JUGAR, junto con el juego."
+                    }
                     _alert.value = AlertInfo(
-                        "Licencia guardada: el .pkg ya tiene su work.bin.\n\n" +
-                            "Pulsa «Instalar en la app externa»: te pedirá confirmar la copia del .pkg y su licencia a " +
-                            "Descargas/ChildOfLight/ para instalarlo en la app externa.",
-                        AlertAction.DELIVER_PKG_TO_VITA3K,
+                        "Licencia guardada: el .pkg ya tiene su work.bin.\n\n" + installNote,
+                        null,
                     )
                 }.onFailure { e ->
                     _alert.value = AlertInfo("Ese archivo no es un work.bin válido: ${e.message}")

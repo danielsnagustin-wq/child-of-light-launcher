@@ -64,6 +64,15 @@ object EmbeddedCoreLayout {
      * quedaría en Conflicto para siempre. En ese caso se usa el
      * antiguo y la migración (que limpia el destino vacío) lo
      * recoloca al lanzar.
+     *
+     * Ampliación (2026-11-08): el embebido existe y NO está vacío,
+     * pero el juego importado vive en el antiguo y el embebido no lo
+     * tiene (el núcleo creó `vita/ux0` con otro contenido antes de
+     * migrar). En ese caso también se usa el antiguo: la resolución
+     * nunca debe "perder" un juego ya importado, o JUGAR diría que
+     * no está instalado aunque la Home lo muestre guardado. La
+     * migración recoloca el juego al lanzar, cuando decide() sí se
+     * alcanza.
      */
     fun resolveUx0Dir(storageRoot: File): File {
         val embedded = embeddedUx0Dir(storageRoot)
@@ -73,7 +82,38 @@ object EmbeddedCoreLayout {
         ) {
             return legacy
         }
+        // El embebido no está vacío pero no tiene el juego que sí vive
+        // en el antiguo: devolver el embebido lo haría "desaparecer"
+        // (scanStatus no lo vería y JUGAR diría que no está instalado).
+        if (embedded.isDirectory && legacy.isDirectory) {
+            val legacyGames = gameTitles(legacy)
+            if (legacyGames.isNotEmpty() && !gameTitles(embedded).containsAll(legacyGames)) {
+                return legacy
+            }
+        }
         return if (isMigrated(storageRoot)) embedded else legacy
+    }
+
+    /**
+     * Title IDs con juego en un ux0: .pkg de juego en pkg/ (por nombre
+     * de archivo, `<TITLE>.pkg`) y juego extraído en app/<TITLE>/ con
+     * eboot.bin (el nombre se compara sin distinguir mayúsculas, como
+     * los dumps que lo traen como EBOOT.BIN). Los .pkg de DLC
+     * (pkg/dlc/) y de update (pkg/patch/) no cuentan: no son el juego.
+     */
+    private fun gameTitles(ux0Dir: File): Set<String> {
+        val titles = mutableSetOf<String>()
+        File(ux0Dir, "pkg").listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".pkg", ignoreCase = true) }
+            ?.forEach { titles.add(it.nameWithoutExtension) }
+        File(ux0Dir, "app").listFiles()
+            ?.filter { it.isDirectory }
+            ?.forEach { appDir ->
+                val hasEboot = appDir.listFiles()
+                    ?.any { it.isFile && it.name.equals("eboot.bin", ignoreCase = true) } == true
+                if (hasEboot) titles.add(appDir.name)
+            }
+        return titles
     }
 
     sealed class MigrationResult {

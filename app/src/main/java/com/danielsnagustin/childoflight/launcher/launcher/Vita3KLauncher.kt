@@ -162,6 +162,12 @@ class Vita3KLauncher(private val context: Context) {
         if (!status.gameInstalled) {
             missing.add("El juego no está instalado. Importa tu copia de Child of Light (PCSE00480 o PCSB00598).")
         }
+        // Diagnóstico (2026-11-08): sin esta línea, un bloqueo aquí era
+        // indiagnosable (el diálogo solo muestra el motivo, no dónde se
+        // buscó el juego). Se registra el motivo y la ruta ux0 resuelta.
+        if (missing.isNotEmpty()) {
+            LauncherLog.append(context, "launch", "Prerrequisitos no cumplidos: ${missing.joinToString(" ")} (ux0=${library.ux0Dir.absolutePath})")
+        }
         return Prerequisites(
             status.gameInstalled,
             status.titleId?.id,
