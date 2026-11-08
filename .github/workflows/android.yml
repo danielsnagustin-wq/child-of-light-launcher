@@ -75,8 +75,11 @@ jobs:
           gradle-version: "8.7"
       - name: Set VCPKG_ROOT (lo exige vita3k/cmake/vcpkg_android.cmake)
         run: |
-          VCPKG_ROOT="$(dirname "$(readlink -f "$(command -v vcpkg)")")"
-          [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ] || VCPKG_ROOT=/usr/local/share/vcpkg
+          VCPKG_ROOT=/usr/local/share/vcpkg
+          if command -v vcpkg >/dev/null 2>&1; then
+            CANDIDATE="$(dirname "$(readlink -f "$(command -v vcpkg)")")"
+            [ -f "$CANDIDATE/scripts/buildsystems/vcpkg.cmake" ] && VCPKG_ROOT="$CANDIDATE"
+          fi
           [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ] || { echo "ERROR: vcpkg.cmake no existe en $VCPKG_ROOT"; exit 1; }
           echo "VCPKG_ROOT=$VCPKG_ROOT" >> "$GITHUB_ENV"
           echo "VCPKG_ROOT=$VCPKG_ROOT"
@@ -94,6 +97,11 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/Vita3K/Vita3K.git app/src/main/cpp/vita3k
           cd app/src/main/cpp/vita3k
+          # --depth 1 clona la punta de master, no el pin: si upstream
+          # avanzó desde el pin, el chequeo de abajo fallaría siempre.
+          # Se trae el commit fijado y se deja el árbol en él.
+          git fetch --depth 1 origin "${VITA3K_PIN}"
+          git checkout "${VITA3K_PIN}"
           HEAD_SHA=$(git rev-parse HEAD)
           if [ "$HEAD_SHA" != "${VITA3K_PIN}" ]; then
             echo "ERROR: el clon de Vita3K está en $HEAD_SHA, se esperaba ${VITA3K_PIN}. Actualiza VITA3K_PIN (y el Java de SDL vendorizado) o fija el clon."
@@ -108,7 +116,7 @@ jobs:
           ln -s vita3k/i18n ../i18n
           ln -s vita3k/external ../external
           ln -s vita3k/data ../data
-          ls -l ../tools ../i18n ../external ../data         
+          ls -l ../tools ../i18n ../external ../data
           echo "Vita3K en ${VITA3K_PIN} con submódulos."
 
       - name: Cache vcpkg (binaria, como upstream)
@@ -116,7 +124,7 @@ jobs:
         with:
           path: |
             ~/.cache/vcpkg
-            ${{ env.VCPKG_ROOT }}/installed
+            app/src/main/cpp/vita3k/vcpkg_installed
           key: vcpkg-arm64-${{ hashFiles('app/src/main/cpp/vita3k/vcpkg.json', 'app/src/main/cpp/vita3k/CMakeLists.txt') }}
           restore-keys: |
             vcpkg-arm64-
@@ -133,9 +141,10 @@ jobs:
           cp -r app/src/main/cpp/vita3k/data app/src/main/assets/data
           cp -r app/src/main/cpp/vita3k/vita3k/shaders-builtin app/src/main/assets/shaders-builtin
 
-      - name: Run unit tests
-        run: gradle :app:testDebugUnitTest --stacktrace
-
+      # Sin "Run unit tests" aquí: los mismos tests ya corren en el job
+      # `build` (no tocan código nativo: en JVM no hay .so y
+      # Vita3kCoreBridge.available es false). Repetirlos solo alarga
+      # el job nativo una invocación de Gradle.
       - name: Build debug APK (con núcleo)
         run: gradle :app:assembleDebug --stacktrace
 
@@ -147,6 +156,12 @@ jobs:
           find app/build -name "libvita3k.so" -exec ls -lh {} \;
           find app/build -name "libSDL3.so" -exec ls -lh {} \;
           ls -lh app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/release/app-release-unsigned.apk
+          # Páginas de 16 KiB (Play Store): solo diagnóstico, no falla
+          # el build. p_align debe ser 16384 en los LOAD de cada .so.
+          for so in $(find app/build -name "libvita3k.so" -o -name "libSDL3.so"); do
+            echo "== $so =="
+            readelf -W -l "$so" | grep -A1 LOAD | grep -i align || true
+          done
 
       - name: Upload APKs (núcleo embebido)
         uses: actions/upload-artifact@v4
