@@ -102,6 +102,17 @@ class Vita3KLauncher(private val context: Context) {
         const val FIRMWARE_WARNING_EXTERNAL =
             "Falta el firmware de Vita en el launcher: la app externa lo gestiona al arrancar, " +
                 "o puedes importarlo en Ajustes → Avanzado → Firmware (opción avanzada)."
+
+        /**
+         * Para el lanzamiento embebido bloqueado por falta de firmware:
+         * el motor integrado no puede arrancar sin firmware. La usa
+         * EmbeddedGameLauncher.decide() como motivo del Blocked, y el
+         * ViewModel la reconoce por "Falta el firmware" para ofrecer
+         * ir a importar (AlertAction.GO_IMPORT).
+         */
+        const val FIRMWARE_BLOCKED_EMBEDDED =
+            "Falta el firmware de Vita: el motor integrado no puede arrancar el juego sin él " +
+                "(Ajustes → Avanzado → Firmware, opción avanzada)."
     }
 
     sealed class LaunchOutcome {

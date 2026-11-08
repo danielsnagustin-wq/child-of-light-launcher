@@ -1,5 +1,6 @@
 package com.danielsnagustin.childoflight.launcher.core
 
+import com.danielsnagustin.childoflight.launcher.launcher.Vita3KLauncher
 import com.danielsnagustin.childoflight.launcher.model.GameStatus
 
 /**
@@ -61,10 +62,7 @@ object EmbeddedGameLauncher {
         }
         if (coreAvailable) {
             if (!firmwareReady) {
-                return Decision.Blocked(
-                    "Falta el firmware de Vita: el motor integrado no puede arrancar el juego sin él " +
-                        "(Ajustes → Avanzado → Firmware, opción avanzada).",
-                )
+                return Decision.Blocked(Vita3KLauncher.FIRMWARE_BLOCKED_EMBEDDED)
             }
             return when {
                 status.gameExtracted -> Decision.UseEmbedded(titleId)
