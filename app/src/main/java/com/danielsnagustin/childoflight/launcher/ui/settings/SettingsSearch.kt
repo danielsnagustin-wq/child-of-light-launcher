@@ -76,6 +76,7 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     entry("Logros", "logros trofeos 27 achievements", SettingsCategory.GENERAL),
     entry("Controles táctiles", "controles tactiles editor botones mando", SettingsCategory.GENERAL),
     entry("Permitir app externa", "motor app externa casos especiales", SettingsCategory.GENERAL),
+    entry("Sesión PSN (simulada)", "psn sesion simulada dlc activacion", SettingsCategory.GENERAL),
     entry("Aviso legal", "legal ubisoft sony licencia", SettingsCategory.GENERAL),
     entry("Ver config.yml generado", "config yml ver generado yaml", SettingsCategory.GENERAL),
     entry("Restablecer ajustes", "restablecer reset preset gpu defecto", SettingsCategory.GENERAL),

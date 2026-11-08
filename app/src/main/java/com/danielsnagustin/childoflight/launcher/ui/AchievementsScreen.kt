@@ -195,14 +195,8 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 Column {
                     Text(item.displayDescription)
                     if (item.trophy.onlineRequired) Text("Puede no desbloquearse sin la función online de Vita.")
-                    if (item.unlocked) Text("Ya desbloqueado. Puedes volver a bloquearlo si fue un error.")
+                    if (item.unlocked) Text("Ya desbloqueado.")
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (item.unlocked) vm.lockTrophy(item.trophy.number) else vm.unlockTrophy(item.trophy.number)
-                    selected = null
-                }) { Text(if (item.unlocked) "Bloquear de nuevo" else "Marcar como desbloqueado") }
             },
             dismissButton = { TextButton(onClick = { selected = null }) { Text("Cerrar") } },
         )

@@ -59,6 +59,16 @@ class SessionManager(
     /** Tiempo de juego en curso (ms desde JUGAR), en memoria. */
     private var playStartMillis: Long? = null
 
+    /**
+     * Vía del juego en curso (P2-A7): la embebida termina cuando su
+     * Activity se cierra, así que al volver al launcher la medición se
+     * puede cerrar; la externa sigue viva cuando el usuario vuelve al
+     * launcher (Recientes) sin salir del juego. La fija quien llama a
+     * notePlayStarted(); por defecto es la vía embebida (comportamiento
+     * actual) hasta que el ViewModel pase la vía real (oleada 2).
+     */
+    private var playExternal: Boolean = false
+
     /** Recarga índice + activa desde disco; recalcula stats de savedata. */
     suspend fun refresh() {
         // savedataStats y setActiveSessionId hacen I/O que puede lanzar;
@@ -342,9 +352,10 @@ class SessionManager(
     /**
      * Activa la sesión correcta ANTES de lanzar el juego.
      * La llama Vita3KLauncher.launch: garantiza sesión por defecto,
-     * snapshot de la viva y restore de la activa. Si falla, el
-     * lanzamiento se bloquea con el motivo (mejor no lanzar con la
-     * savedata equivocada que pisar una partida).
+     * snapshot de la viva y restore de la activa. Si falla la savedata,
+     * el lanzamiento se bloquea con el motivo (mejor no lanzar con la
+     * savedata equivocada que pisar una partida); el fallo de logros
+     * o de perfil de control no bloquea (P2-A3: restoreSession).
      */
     suspend fun activateForLaunch(): Result<Unit> {
         return try {
@@ -360,20 +371,46 @@ class SessionManager(
         }
     }
 
-    fun notePlayStarted() {
+    fun notePlayStarted(external: Boolean = false) {
         playStartMillis = System.currentTimeMillis()
+        playExternal = external
     }
 
     /**
      * Al volver del juego: suma el tiempo jugado a la sesión activa,
      * actualiza "última vez" y hace snapshot (auto-backup de lo jugado).
      * No hace nada si no hay una partida en curso registrada.
+     *
+     * P2-A7: en la vía EXTERNA el usuario puede volver al launcher sin
+     * salir del juego; cerrar aquí cortaría el tiempo de lo que siga
+     * jugando fuera. En ese caso se registra lo jugado hasta ahora
+     * (checkpoint: tiempo + snapshot) y la medición SIGUE desde este
+     * momento, así que el próximo notePlayEnded sumará solo lo jugado
+     * desde aquí. Límite conocido (best-effort): el tiempo pasado en
+     * el launcher entre dos checkpoints también se suma, y la medición
+     * solo se cierra al lanzar de nuevo o al morir el proceso, porque
+     * Android no permite saber si la app externa sigue en primer
+     * plano sin el permiso especial de estadísticas de uso. En la vía
+     * embebida el comportamiento no cambia: la partida terminó y la
+     * medición se cierra.
      */
     suspend fun notePlayEnded() {
         val start = playStartMillis ?: return
-        playStartMillis = null
         val elapsed = (System.currentTimeMillis() - start).coerceIn(0L, 12 * 60 * 60 * 1000L)
-        val active = activeSession ?: return
+        val active = activeSession
+        if (active == null) {
+            // Sin sesión activa no hay dónde registrar el tiempo. En la
+            // vía embebida la partida terminó y se cierra la medición;
+            // en la externa se reinicia el reloj para no acumular
+            // tiempo sin sesión mientras el juego pueda seguir.
+            if (playExternal) {
+                playStartMillis = System.currentTimeMillis()
+            } else {
+                playStartMillis = null
+                playExternal = false
+            }
+            return
+        }
         // BUG (auditoría): updateSession/snapshot hacen I/O que puede lanzar
         // y se llama sin try/catch desde el ViewModel. El tiempo jugado es
         // best-effort: si falla, se pierde el registro, no la app.
@@ -389,10 +426,20 @@ class SessionManager(
         } catch (_: Exception) {
             // Best-effort: no bloquear el regreso del juego por un fallo de disco.
         }
-        LauncherLog.append(
-            context, "session",
-            "Partida terminada: +${elapsed / 60_000} min en \"${active.name}\" (snapshot guardado)",
-        )
+        if (playExternal) {
+            playStartMillis = System.currentTimeMillis()
+            LauncherLog.append(
+                context, "session",
+                "Partida en curso (app externa): +${elapsed / 60_000} min en \"${active.name}\" (checkpoint; la medición sigue)",
+            )
+        } else {
+            playStartMillis = null
+            playExternal = false
+            LauncherLog.append(
+                context, "session",
+                "Partida terminada: +${elapsed / 60_000} min en \"${active.name}\" (snapshot guardado)",
+            )
+        }
     }
 
     /** Borra la savedata viva Y la copia guardada de la sesión activa (para "Borrar saves"). */
@@ -412,6 +459,7 @@ class SessionManager(
     /** Borra TODAS las sesiones (para "Borrar datos del juego"). */
     suspend fun deleteAllSessions() {
         playStartMillis = null
+        playExternal = false
         runCatching { repo.deleteAll() }
         _sessions.value = emptyList()
         _activeSessionId.value = null
@@ -459,6 +507,12 @@ class SessionManager(
      * si el respaldo falló: el llamador debe abortar en vez de seguir.
      */
     suspend fun backupActiveSession(): Boolean {
+        // P1-2: sin sesión activa no hay nada que respaldar: devolver
+        // false para que el botón nunca afirme un guardado que no
+        // ocurrió. Antes snapshotActive() no hacía nada con
+        // activeSession == null y aun así se devolvía true
+        // ("Sesión guardada.").
+        if (activeSession == null) return false
         return runCatching { snapshotActive(); true }.getOrDefault(false)
     }
 
@@ -488,17 +542,39 @@ class SessionManager(
         }
     }
 
-    /** Restore: carpeta de la sesión -> viva + logros + perfil de control. */
+    /**
+     * Restore: carpeta de la sesión -> viva + logros + perfil de control.
+     *
+     * P2-A3: la savedata es lo crítico y su fallo sigue bloqueando el
+     * lanzamiento (o revierte el cambio de sesión); los logros y el
+     * perfil de control son best-effort: un DataStore corrupto o un
+     * fallo de I/O al leerlos no debe impedir jugar con la savedata
+     * intacta. Esos fallos solo se registran en LauncherLog y el
+     * lanzamiento continúa.
+     */
     private suspend fun restoreSession(session: GameSession) {
         val titleId = installedTitleId() ?: session.titleId
         if (titleId.isBlank()) return
         repo.restoreSavedata(titleId, session.id)
-        val text = repo.readAchievementsText(session.id)
-        achievements.replaceAll(text)
-        val profileId = repo.readControlProfileId(session.id)
-        if (profileId != null) {
-            val exists = touch.profilesFlow.first().any { it.id == profileId }
-            if (exists) touch.setActiveProfile(profileId)
+        restoreSessionExtras(session)
+    }
+
+    /** Logros + perfil de control de la sesión: best-effort, nunca bloquea. */
+    private suspend fun restoreSessionExtras(session: GameSession) {
+        runCatching {
+            val text = repo.readAchievementsText(session.id)
+            achievements.replaceAll(text)
+        }.onFailure {
+            LauncherLog.append(context, "session", "No se pudieron restaurar los logros de la sesión \"${session.name}\": ${it.message}")
+        }
+        runCatching {
+            val profileId = repo.readControlProfileId(session.id)
+            if (profileId != null) {
+                val exists = touch.profilesFlow.first().any { it.id == profileId }
+                if (exists) touch.setActiveProfile(profileId)
+            }
+        }.onFailure {
+            LauncherLog.append(context, "session", "No se pudo restaurar el perfil de control de la sesión \"${session.name}\": ${it.message}")
         }
     }
 

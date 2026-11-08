@@ -38,11 +38,13 @@ class PkgHeaderParserTest {
         return bytes
     }
 
-    private fun workBinBytes(zrif: String = "KO5ifR1dQ+e7BsB"): ByteArray {
-        val bytes = ByteArray(512)
-        zrif.toByteArray(Charsets.US_ASCII).copyInto(bytes)
-        return bytes
-    }
+    /**
+     * work.bin con un zRIF VÁLIDO (antes era "KO" + 16 caracteres sin
+     * más, que la validación antigua aceptaba sin comprobar nada).
+     * Generado por [buildZrifWorkBinBytes]: .rif realista comprimido
+     * con deflate crudo y en base64 con prefijo "KO".
+     */
+    private fun workBinBytes(): ByteArray = buildZrifWorkBinBytes()
 
     /**
      * work.bin REAL de NPS: licencia .rif binaria de 512 B (cabecera

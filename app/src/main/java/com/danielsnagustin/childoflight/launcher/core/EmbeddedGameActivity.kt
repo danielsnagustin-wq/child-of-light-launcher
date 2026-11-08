@@ -89,8 +89,11 @@ import org.libsdl.app.SDLActivity
  *   IMPLEMENTADO (PauseMenuActivity + PauseMenuScreen, Compose):
  *   se abre con atrás o con el botón guía; Continuar reanuda, Salir
  *   guarda la sesión y cierra el motor de forma limpia.
- * - PENDIENTE: relanzamiento en proceso (requestAppRelaunch) para
- *   cambiar de Title ID sin recrear la Activity.
+ * - Relanzamiento en proceso (requestAppRelaunch) para cambiar de
+ *   Title ID: NO IMPLEMENTADO a propósito (P2-A5, oleada 2): upstream
+ *   lo tiene (native_session.cpp:108) pero no está expuesto en el
+ *   puente, y el launcher es de un solo juego, así que onNewIntent
+ *   con otro Title ID se ignora y sigue la partida actual.
  */
 class EmbeddedGameActivity : SDLActivity() {
 
@@ -121,6 +124,13 @@ class EmbeddedGameActivity : SDLActivity() {
     private var benchmarkMode: Boolean = false
     private var benchmarkJob: Job? = null
     private val benchmarkSamples = mutableListOf<Float>()
+    /**
+     * P1-3: una prueba completa ya guardada no se vuelve a muestrear
+     * ni a guardar en este lanzamiento (sin esto, al limpiar
+     * benchmarkSamples tras guardar, un onResume posterior
+     * reiniciaría el muestreo y guardaría una segunda prueba).
+     */
+    private var benchmarkSaved: Boolean = false
 
     // --- Overlay táctil (GamepadOverlayView + mando virtual SDL) ---
     private var overlayView: GamepadOverlayView? = null
@@ -159,6 +169,10 @@ class EmbeddedGameActivity : SDLActivity() {
 
         val titleId = intent.getStringExtra(EXTRA_TITLE_ID).orEmpty()
         if (titleId.isEmpty()) {
+            // P2-A4a: el ViewModel ya dijo "juego lanzado" al devolver
+            // launch() LaunchedEmbedded; anotar el fallo para que
+            // MainActivity.onResume corrija el mensaje al volver.
+            Vita3KLauncher.noteEmbeddedLaunchFailed("Sin Title ID: no se puede arrancar el juego.")
             Toast.makeText(this, "Sin Title ID: no se puede arrancar el juego.", Toast.LENGTH_LONG).show()
             finish()
             return
@@ -166,15 +180,30 @@ class EmbeddedGameActivity : SDLActivity() {
         currentTitleId = titleId
         benchmarkMode = intent.getBooleanExtra(EXTRA_BENCHMARK, false)
         val storageRoot = EmbeddedCoreLayout.storageRoot(this)
-        val rc = Vita3kCoreBridge.init(storageRoot.absolutePath)
-        if (rc != Vita3kCoreBridge.OK) {
-            Toast.makeText(
-                this,
-                "El motor integrado no se pudo iniciar (código $rc). Vuelve al inicio e inténtalo de nuevo.",
-                Toast.LENGTH_LONG,
-            ).show()
-            finish()
-            return
+        // P2-B12: el flujo normal (JUGAR) ya inicializó el núcleo en IO
+        // en tryLaunchEmbedded, así que aquí solo se VERIFICA que la
+        // sesión existe (isInitialized) y se omite el init en el hilo
+        // UI: el segundo init era idempotente en upstream y no aporta
+        // nada. Solo en proceso frío (recreación tras muerte del
+        // proceso, o lanzamiento directo) se hace el init aquí, en UI
+        // como antes: NO se puede pasar a IO con pantalla de carga,
+        // porque SDL_main exige emuenv antes de arrancar
+        // (main_android.cpp: "Emulator not initialized" -> -1) y el
+        // hilo SDL puede arrancar desde surfaceChanged en cuanto
+        // onResume corre; si arranca sin sesión, SDLMain.run() termina
+        // la Activity con finish(). No hay punto seguro para un init
+        // asíncrono sin tocar el ciclo de superficie de SDLActivity.
+        if (!Vita3kCoreBridge.isInitialized()) {
+            val rc = Vita3kCoreBridge.init(storageRoot.absolutePath)
+            if (rc != Vita3kCoreBridge.OK) {
+                val failureMessage = Vita3KLauncher.initFailureMessage(rc, Vita3kCoreBridge.lastLoadError)
+                Vita3KLauncher.noteEmbeddedLaunchFailed(failureMessage)
+                Toast.makeText(this, failureMessage, Toast.LENGTH_LONG).show()
+                finish()
+                return
+            }
+        } else {
+            LauncherLog.append(this, "launch", "Sesión del núcleo ya inicializada (init previo en JUGAR); se omite el init en onCreate")
         }
         // P3: deja constancia de que la Activity SDL se creó y el hilo
         // del juego está a punto de arrancar (el último paso antes de
@@ -353,7 +382,7 @@ class EmbeddedGameActivity : SDLActivity() {
      * segundo, sin escribir nada en el núcleo.
      */
     private fun maybeStartBenchmarkSampling() {
-        if (!benchmarkMode || !Vita3kCoreBridge.available) return
+        if (!benchmarkMode || benchmarkSaved || !Vita3kCoreBridge.available) return
         if (benchmarkJob?.isActive == true) return
         // Prueba completa: 30 muestras válidas. Sin el tope, el muestreo
         // medía toda la sesión en vez de 30 s.
@@ -370,8 +399,17 @@ class EmbeddedGameActivity : SDLActivity() {
     private fun stopBenchmarkSamplingAndSave() {
         benchmarkJob?.cancel()
         benchmarkJob = null
-        if (!benchmarkMode || benchmarkSamples.isEmpty()) return
+        if (!benchmarkMode || benchmarkSaved || benchmarkSamples.isEmpty()) return
+        // P1-3: una media PARCIAL (p. ej. 6 s por abrir el menú de
+        // pausa) NO es la prueba completa de 30 s: no se guarda nada
+        // en DataStore y el muestreo sigue al volver (las muestras se
+        // conservan). Solo con 30 muestras se guarda, y al guardar se
+        // limpian las muestras y se marca la prueba como guardada para
+        // que una segunda pausa no re-guarde el mismo valor.
+        if (benchmarkSamples.size < BENCHMARK_MAX_SAMPLES) return
         val mean = averageBenchmarkFps(benchmarkSamples) ?: return
+        benchmarkSamples.clear()
+        benchmarkSaved = true
         overlayScope.launch(Dispatchers.IO) {
             runCatching { SettingsRepository(this@EmbeddedGameActivity).saveAutoBenchmarkFps(mean) }
         }
@@ -404,10 +442,17 @@ class EmbeddedGameActivity : SDLActivity() {
             // Mismo juego (o sin Title ID) y partida en curso: ignorar.
             return
         }
-        // Otro Title ID: la forma segura sin relanzamiento en proceso
-        // es cerrar y volver a abrir con el nuevo intent.
-        finish()
-        startActivity(createLaunchIntent(this, newTitleId, intent.getStringExtra(EXTRA_GAME_TITLE).orEmpty()))
+        // Otro Title ID: P2-A5. La variante anterior (finish() +
+        // startActivity inmediato) dejaba convivir dos instancias SDL
+        // en el mismo proceso sobre la misma sesión nativa. El
+        // relanzamiento en proceso de upstream (requestAppRelaunch,
+        // native_session.cpp:108) NO está expuesto en el puente
+        // (ni en Vita3kCoreBridge ni en launcher_bridge.h), así que no
+        // se puede usar sin añadir JNI. En la práctica es inalcanzable
+        // (launcher de un solo juego: nada envía otro Title ID): se
+        // ignora el intent nuevo y sigue la partida actual, con registro
+        // en el log. No se cierra nada.
+        LauncherLog.append(this, "launch", "onNewIntent con otro Title ID ($newTitleId) ignorado: sigue la partida actual ($currentTitleId); no hay relanzamiento en proceso expuesto en el puente.")
     }
 
     /**
@@ -514,5 +559,39 @@ class EmbeddedGameActivity : SDLActivity() {
             }
         }
         super.onDestroy()
+        // P1-1: apagar la sesión nativa DESPUÉS de super.onDestroy():
+        // SDLActivity.onDestroy ya envió QUIT al hilo SDL y esperó
+        // hasta 1 s a que terminara (join), así que la partida ya no
+        // está en curso. El próximo init() re-leerá config.yml y los
+        // ajustes cambiados entre partidas sí se aplicarán. Solo si la
+        // Activity se cierra de verdad (isFinishing): si onDestroy
+        // corre por un cambio de configuración (rotación), la Activity
+        // se recrea enseguida y la sesión debe sobrevivir (su onCreate
+        // la verá con isInitialized() y omitirá el init).
+        if (isFinishing) {
+            destroyNativeSessionAfterSdlShutdown()
+        }
+    }
+
+    /**
+     * P1-1 (lado Activity): destroySession() en el hilo principal
+     * (onDestroy corre en UI, por contrato JNI) y solo sin partida en
+     * curso (el hilo SDL ya terminó tras super.onDestroy()). Si
+     * devuelve SESSION_ACTIVE (-4), no se forzó nada: se registra y
+     * hace falta matar el proceso para que los ajustes entren.
+     */
+    private fun destroyNativeSessionAfterSdlShutdown() {
+        if (!Vita3kCoreBridge.available) return
+        val rc = runCatching { Vita3kCoreBridge.destroySession() }.getOrDefault(Vita3kCoreBridge.NOT_IMPLEMENTED)
+        when (rc) {
+            Vita3kCoreBridge.OK ->
+                LauncherLog.append(this, "launch", "Sesión del núcleo destruida al salir del juego; el próximo JUGAR re-lee config.yml")
+            -2 ->
+                LauncherLog.append(this, "launch", "Sin sesión que destruir al salir del juego")
+            Vita3kCoreBridge.SESSION_ACTIVE ->
+                LauncherLog.append(this, "launch", "destroySession devolvió SESSION_ACTIVE (-4) al salir: la partida seguía activa; no se destruyó nada. Si los ajustes no se aplican en el próximo JUGAR, cierra la app por completo (matar el proceso).")
+            else ->
+                LauncherLog.append(this, "launch", "destroySession al salir devolvió $rc")
+        }
     }
 }

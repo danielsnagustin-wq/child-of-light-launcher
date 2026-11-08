@@ -21,8 +21,11 @@
 // una excepción pendiente, se limpia y se devuelve el error: el
 // llamador Kotlin solo captura UnsatisfiedLinkError y trata ""/false
 // como fallo, así que una excepción pendiente sería un crash en vez
-// de un fallo controlado. Las funciones que devuelven String nunca
-// devuelven null (Kotlin haría .isEmpty() sobre el resultado).
+// de un fallo controlado. Las funciones que devuelven String casi
+// nunca devuelven null (Kotlin haría .isEmpty() sobre el resultado):
+// solo si la JVM no puede crear ni la cadena vacía (OOM), caso en el
+// que el helper limpia la excepción y devuelve null en vez de
+// devolver con una excepción pendiente (P2-B5).
 
 #include <jni.h>
 #include <android/log.h>
@@ -34,13 +37,20 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
-#ifdef LAUNCHER_HAS_VITA3K
+// launcher_bridge.h se incluye siempre (no solo con núcleo): los
+// helpers de cadena vacía (P2-B5) se usan también en las ramas stub.
 #include "launcher_bridge.h"
 
+#ifdef LAUNCHER_HAS_VITA3K
 // Upstream devolvió null o lanzó: error limpio ("") en vez de null.
+// P2-B1: el clear se evalúa ANTES del null (el || cortocircuitaba y
+// el NewStringUTF("") corría con la excepción pendiente, devolviendo
+// null a un String no nulo de Kotlin). P2-B5: la cadena vacía se crea
+// con el helper, que limpia si NewStringUTF falla por OOM.
 static jstring launcher_empty_string_or_null(JNIEnv *env, jstring result) {
-    if (result == nullptr || launcher_clear_pending_exception(env)) {
-        return env->NewStringUTF("");
+    const bool hadException = launcher_clear_pending_exception(env);
+    if (result == nullptr || hadException) {
+        return launcher_new_empty_string(env);
     }
     return result;
 }
@@ -122,7 +132,7 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInsta
 #ifdef LAUNCHER_HAS_VITA3K
     if (pupPath == nullptr) {
         LOGW("nativeInstallFirmware: ruta nula");
-        return env->NewStringUTF("");
+        return launcher_new_empty_string(env);
     }
     // P4: igual que installPkg (install_pup + scan_apps, pin
     // 3e43bc80): una excepción C++ sin capturar cruzando JNI aborta
@@ -133,16 +143,16 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInsta
     } catch (const std::exception &e) {
         LOGE("nativeInstallFirmware: excepción C++ capturada: %s", e.what());
         launcher_clear_pending_exception(env);
-        return env->NewStringUTF("");
+        return launcher_new_empty_string(env);
     } catch (...) {
         LOGE("nativeInstallFirmware: excepción C++ desconocida capturada");
         launcher_clear_pending_exception(env);
-        return env->NewStringUTF("");
+        return launcher_new_empty_string(env);
     }
     return launcher_empty_string_or_null(env, result);
 #else
     LOGW("nativeInstallFirmware STUB: núcleo no embebido");
-    return env->NewStringUTF("");
+    return launcher_new_empty_string(env);
 #endif
 }
 
@@ -187,13 +197,13 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeFindP
     JNIEnv *env, jobject /* thiz */, jstring pkgPath) {
 #ifdef LAUNCHER_HAS_VITA3K
     if (pkgPath == nullptr) {
-        return env->NewStringUTF("");
+        return launcher_new_empty_string(env);
     }
     return launcher_empty_string_or_null(
         env, Java_org_vita3k_emulator_NativeLib_findPkgZrif(env, nullptr, pkgPath));
 #else
     LOGW("nativeFindPkgZrif STUB: núcleo no embebido");
-    return env->NewStringUTF("");
+    return launcher_new_empty_string(env);
 #endif
 }
 
@@ -202,12 +212,12 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeConve
     JNIEnv *env, jobject /* thiz */, jstring licensePath) {
 #ifdef LAUNCHER_HAS_VITA3K
     if (licensePath == nullptr) {
-        return env->NewStringUTF("");
+        return launcher_new_empty_string(env);
     }
     return launcher_empty_string_or_null(
         env, Java_org_vita3k_emulator_NativeLib_convertRifToZrif(env, nullptr, licensePath));
 #else
     LOGW("nativeConvertRifToZrif STUB: núcleo no embebido");
-    return env->NewStringUTF("");
+    return launcher_new_empty_string(env);
 #endif
 }

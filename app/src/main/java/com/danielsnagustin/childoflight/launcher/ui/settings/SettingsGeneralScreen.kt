@@ -164,6 +164,11 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                     "Apagado: JUGAR siempre abre el juego dentro de este launcher. Encendido: si el motor integrado no está disponible, el juego se abre en otra app instalada.",
                     s.allowExternalVita3k,
                 ) { vm.saveSettings(s.copy(allowExternalVita3k = it)) }
+                SettingSwitch(
+                    "Sesión PSN (simulada)",
+                    "Encendido: el juego cree que hay sesión iniciada y los DLC se activan. No es una conexión real a PSN: no hay cuenta, ni red, ni sincronización. Apagado: el juego ve la sesión cerrada y los DLC pueden no activarse. Aplica en el siguiente lanzamiento.",
+                    s.psnSignedIn,
+                ) { vm.saveSettings(s.copy(psnSignedIn = it)) }
                 Text(
                     if (externalVita3k != null) "✓ App externa instalada ($externalVita3k)" else "✗ App externa no instalada",
                     style = MaterialTheme.typography.bodyMedium,

@@ -35,6 +35,7 @@ class CategoryResetTest {
         safeMode = true,
         closeBackgroundApps = false,
         allowExternalVita3k = true,
+        psnSignedIn = false,
         hideTouchWhenGamepadConnected = false,
     )
     private val changedUi = UiPreferences(
@@ -55,6 +56,8 @@ class CategoryResetTest {
         assertTrue(reset.fpsHack)
         assertTrue(reset.safeMode)
         assertTrue(reset.allowExternalVita3k)
+        // General no se toca: la sesión PSN se conserva apagada.
+        assertFalse(reset.psnSignedIn)
     }
 
     @Test
@@ -89,6 +92,7 @@ class CategoryResetTest {
     fun generalResetRestoresOnlyMotorSwitch() {
         val reset = resetCategorySettings(changed, SettingsCategory.GENERAL)
         assertFalse(reset.allowExternalVita3k)
+        assertTrue(reset.psnSignedIn)
         assertEquals(GpuProfileId.G99_RECOMMENDED, reset.activeProfile)
         assertEquals(4f, reset.resolutionMultiplier, 0.001f)
     }

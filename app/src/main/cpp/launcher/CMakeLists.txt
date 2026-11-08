@@ -9,7 +9,7 @@
 # Qué hace cada fuente (todas reenvían a funciones JNI de upstream,
 # declaradas en include/launcher_bridge.h; upstream las ignora el
 # parámetro jclass, así que el adaptador pasa nullptr):
-# - runtime_bridge.cpp: prepareFrontend/init/loadGame/getFps/shutdown
+# - runtime_bridge.cpp: prepareFrontend/init/loadGame/getFps/isInitialized/destroySession
 # - install_bridge.cpp: installPkg/installArchive/installFirmware/
 #   copyLicense/createLicense/findPkgZrif/convertRifToZrif
 # - session_bridge.cpp: isAppRunning/requestAppQuit/isAppPaused/

@@ -27,14 +27,59 @@
 // -1 = NOT_IMPLEMENTED (mismo valor que Vita3kCoreBridge.NOT_IMPLEMENTED).
 static constexpr jint kNotImplemented = -1;
 
+// El stub no incluye launcher_bridge.h (su target no tiene ese
+// include dir): helpers locales con la misma semántica (P2-B5).
+// Limpian la excepción pendiente para no devolver nunca con una
+// excepción activa; nullptr solo si la JVM no puede crear ni el
+// valor vacío (OOM).
+static inline void stub_clear_pending_exception(JNIEnv *env) {
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
+}
+
+static inline jstring stub_empty_string(JNIEnv *env) {
+    jstring result = env->NewStringUTF("");
+    if (result == nullptr) {
+        stub_clear_pending_exception(env);
+    }
+    return result;
+}
+
+static inline jobjectArray stub_empty_string_array(JNIEnv *env) {
+    jclass string_class = env->FindClass("java/lang/String");
+    if (string_class == nullptr) {
+        stub_clear_pending_exception(env);
+        return nullptr;
+    }
+    jobjectArray result = env->NewObjectArray(0, string_class, nullptr);
+    if (result == nullptr) {
+        stub_clear_pending_exception(env);
+    }
+    env->DeleteLocalRef(string_class);
+    return result;
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInit(
     JNIEnv *env, jobject /* thiz */, jstring storagePath) {
     // TODO-ETAPA2: llamar a initialize_session() con storagePath y crear AppSessionController.
+    // P2-B3: GetStringUTFChars(nullptr) es UB y un null por OOM deja
+    // una excepción pendiente; se comprueba antes y se limpia.
+    // El stub no puede validar nada: el error es NOT_IMPLEMENTED
+    // (-1), no -3 (kTitleNotInstalled es del puente real).
+    if (storagePath == nullptr) {
+        LOGW("nativeInit STUB (TODO-ETAPA2): storagePath nulo");
+        return kNotImplemented;
+    }
     const char *path = env->GetStringUTFChars(storagePath, nullptr);
-    LOGW("nativeInit STUB (TODO-ETAPA2): núcleo no embebido, storagePath=%s",
-         path != nullptr ? path : "(null)");
-    if (path != nullptr) env->ReleaseStringUTFChars(storagePath, path);
+    if (path == nullptr) {
+        stub_clear_pending_exception(env);
+        LOGW("nativeInit STUB (TODO-ETAPA2): no se pudo leer storagePath");
+        return kNotImplemented;
+    }
+    LOGW("nativeInit STUB (TODO-ETAPA2): núcleo no embebido, storagePath=%s", path);
+    env->ReleaseStringUTFChars(storagePath, path);
     return kNotImplemented;
 }
 
@@ -43,10 +88,20 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeLoadG
     JNIEnv *env, jobject /* thiz */, jstring titleId) {
     // TODO-ETAPA2: arrancar el juego como SDL_main con argv {"-r", titleId}
     // y AppLaunchRequest{.app_path = titleId} vía sdl_frontend::run().
+    // P2-B3: igual que nativeInit (null-check + limpiar OOM); el
+    // error del stub es NOT_IMPLEMENTED (-1), no -3.
+    if (titleId == nullptr) {
+        LOGW("nativeLoadGame STUB (TODO-ETAPA2): titleId nulo");
+        return kNotImplemented;
+    }
     const char *id = env->GetStringUTFChars(titleId, nullptr);
-    LOGW("nativeLoadGame STUB (TODO-ETAPA2): núcleo no embebido, titleId=%s",
-         id != nullptr ? id : "(null)");
-    if (id != nullptr) env->ReleaseStringUTFChars(titleId, id);
+    if (id == nullptr) {
+        stub_clear_pending_exception(env);
+        LOGW("nativeLoadGame STUB (TODO-ETAPA2): no se pudo leer el titleId");
+        return kNotImplemented;
+    }
+    LOGW("nativeLoadGame STUB (TODO-ETAPA2): núcleo no embebido, titleId=%s", id);
+    env->ReleaseStringUTFChars(titleId, id);
     return kNotImplemented;
 }
 
@@ -59,11 +114,21 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetFp
     return -1.0f;
 }
 
-extern "C" JNIEXPORT jint JNICALL
-Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeShutdown(
+// P2-B12 (stub): sin núcleo no hay sesión inicializada.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeIsInitialized(
     JNIEnv * /* env */, jobject /* thiz */) {
-    // TODO-ETAPA2: pedir SDL_EVENT_QUIT y destruir la sesión (requestAppQuit).
-    LOGW("nativeShutdown STUB (TODO-ETAPA2): núcleo no embebido");
+    return JNI_FALSE;
+}
+
+// P1-1 / P2-B6 (stub): sin núcleo no hay sesión que destruir.
+// La antigua nativeShutdown (solo pedía SDL_EVENT_QUIT sin liberar
+// nada) se eliminó del contrato: pedir el cierre limpio es
+// requestAppQuit y el apagado real es destroySession.
+extern "C" JNIEXPORT jint JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeDestroySession(
+    JNIEnv * /* env */, jobject /* thiz */) {
+    LOGW("nativeDestroySession STUB (TODO-ETAPA2): núcleo no embebido");
     return kNotImplemented;
 }
 
@@ -98,7 +163,7 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInstallFirmware(
     JNIEnv *env, jobject /* thiz */, jstring /* pupPath */, jobject /* callback */) {
     LOGW("nativeInstallFirmware STUB (TODO-ETAPA2): núcleo no embebido");
-    return env->NewStringUTF("");
+    return stub_empty_string(env);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -119,14 +184,14 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeFindPkgZrif(
     JNIEnv *env, jobject /* thiz */, jstring /* pkgPath */) {
     LOGW("nativeFindPkgZrif STUB (TODO-ETAPA2): núcleo no embebido");
-    return env->NewStringUTF("");
+    return stub_empty_string(env);
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeConvertRifToZrif(
     JNIEnv *env, jobject /* thiz */, jstring /* licensePath */) {
     LOGW("nativeConvertRifToZrif STUB (TODO-ETAPA2): núcleo no embebido");
-    return env->NewStringUTF("");
+    return stub_empty_string(env);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -151,7 +216,7 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeIsApp
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetRunningAppTitle(
     JNIEnv *env, jobject /* thiz */) {
-    return env->NewStringUTF("");
+    return stub_empty_string(env);
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -229,14 +294,13 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInstallCustomDriver(
     JNIEnv *env, jobject /* thiz */, jstring /* zipPath */) {
     LOGW("nativeInstallCustomDriver STUB (TODO-ETAPA2): núcleo no embebido");
-    return env->NewStringUTF("");
+    return stub_empty_string(env);
 }
 
 extern "C" JNIEXPORT jobjectArray JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetInstalledCustomDrivers(
     JNIEnv *env, jobject /* thiz */) {
-    jclass string_class = env->FindClass("java/lang/String");
-    return env->NewObjectArray(0, string_class, nullptr);
+    return stub_empty_string_array(env);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

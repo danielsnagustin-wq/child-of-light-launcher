@@ -2,6 +2,7 @@ package com.danielsnagustin.childoflight.launcher
 
 import android.os.Bundle
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -44,6 +45,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.sp
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
+import com.danielsnagustin.childoflight.launcher.launcher.Vita3KLauncher
 import com.danielsnagustin.childoflight.launcher.model.ThemeMode
 import com.danielsnagustin.childoflight.launcher.ui.AchievementsScreen
 import com.danielsnagustin.childoflight.launcher.ui.AlertAction
@@ -123,9 +125,30 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // Al volver del juego, refrescar estado y log, y cerrar la
         // medición de tiempo de la sesión activa (snapshot guardado).
+        // P2-A7: en la vía externa el juego puede seguir en curso al
+        // volver al launcher, y cerrar aquí cortaba el tiempo de lo
+        // que se siguiera jugando fuera. Comprobar si
+        // org.vita3k.emulator sigue en primer plano NO es viable:
+        // ActivityManager.getRunningAppProcesses() solo devuelve el
+        // propio proceso desde Android 5.0, y la única alternativa
+        // (UsageStatsManager) exige el permiso especial de
+        // estadísticas de uso. La distinción por vía vive en
+        // SessionManager.notePlayStarted(external): la vía externa
+        // hace checkpoint y la medición sigue; la embebida se cierra
+        // aquí como siempre. El ViewModel aún no pasa la vía (oleada
+        // 2: play() debe pasar external=true al lanzar fuera).
         vm.refreshStatus()
         vm.refreshLog()
         vm.noteReturnedFromGame()
+        // P2-A4a: si EmbeddedGameActivity falló su init DESPUÉS de que
+        // launch() devolviera LaunchedEmbedded, el ViewModel ya puso
+        // "Núcleo embebido: juego lanzado". La Activity anota el fallo
+        // en Vita3KLauncher (bandera consumible) y aquí se corrige al
+        // volver, con el motivo exacto. Sin tocar LauncherViewModel.
+        Vita3KLauncher.takeEmbeddedLaunchFailure()?.let { reason ->
+            LauncherLog.append(this, "launch", "El juego no llegó a arrancar: $reason")
+            Toast.makeText(this, "El juego no llegó a arrancar. $reason", Toast.LENGTH_LONG).show()
+        }
     }
 }
 
@@ -258,6 +281,7 @@ private fun LauncherApp(vm: LauncherViewModel) {
                     AlertAction.CONFIRM_PKG_INSTALLED -> TextButton(onClick = { vm.clearAlert(); vm.confirmPkgInstalledInVita3k() }) { Text("Ya lo instalé en la app externa") }
                     AlertAction.REPLACE_DUPLICATE -> TextButton(onClick = { vm.confirmReplaceDuplicate() }) { Text("Reemplazar") }
                     AlertAction.RETRY_LAUNCH -> TextButton(onClick = { vm.clearAlert(); vm.play() }) { Text("Reintentar") }
+                    AlertAction.RESOLVE_LEGACY_CONFLICT -> TextButton(onClick = { vm.clearAlert(); vm.resolveLegacyConflictKeepEmbedded() }) { Text("Borrar la antigua y jugar") }
                     null -> TextButton(onClick = { vm.clearAlert() }) { Text("Entendido") }
                 }
             },

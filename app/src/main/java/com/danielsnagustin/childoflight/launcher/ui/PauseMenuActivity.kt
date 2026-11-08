@@ -12,9 +12,11 @@ import androidx.compose.runtime.getValue
 import androidx.lifecycle.lifecycleScope
 import com.danielsnagustin.childoflight.launcher.data.AchievementRepository
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
+import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.data.SessionManager
 import com.danielsnagustin.childoflight.launcher.data.SettingsRepository
 import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 /**
@@ -71,6 +73,18 @@ class PauseMenuActivity : ComponentActivity() {
             TouchLayoutRepository(this),
         )
         settingsRepo = SettingsRepository(this)
+        // P1-2: este SessionManager es una instancia propia, distinta
+        // de la del ViewModel de MainActivity. Sin refresh() sus
+        // sesiones están vacías y "Guardar sesión" no guardaba nada
+        // aunque dijera que sí. Se carga al abrir el menú (I/O, por
+        // eso va en Dispatchers.IO); si falla, el botón dirá
+        // honestamente que no se pudo guardar.
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { sessionManager.refresh() }
+                .onFailure {
+                    LauncherLog.append(this@PauseMenuActivity, "session", "No se pudieron cargar las sesiones en el menú de pausa: ${it.message}")
+                }
+        }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = ColAccent, secondary = ColAccent)) {
                 val settings by settingsRepo.settingsFlow.collectAsState(initial = null)

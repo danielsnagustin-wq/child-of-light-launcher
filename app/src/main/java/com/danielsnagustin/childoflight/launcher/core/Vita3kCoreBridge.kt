@@ -20,7 +20,7 @@ package com.danielsnagustin.childoflight.launcher.core
  * - Por eso el puente real de Etapa 2 será código NUEVO (capa adaptadora
  *   estilo EmuCoreV) compilado DENTRO de libVita3K.so junto al árbol
  *   Vita3K vendorizado, con funciones JNI en ESTE paquete. Estas
- *   firmas (init/loadGame/getFps/shutdown) son el contrato que ese
+ *   firmas (init/loadGame/getFps/destroySession/isInitialized) son el contrato que ese
  *   adaptador deberá cumplir; los stubs de Vita3kBridge.cpp ya las
  *   implementan devolviendo NOT_IMPLEMENTED.
  *
@@ -37,6 +37,13 @@ object Vita3kCoreBridge {
 
     const val OK = 0
     const val NOT_IMPLEMENTED = -1
+
+    /**
+     * destroySession() con partida en curso, lanzándose o parándose:
+     * no se destruyó nada. El llamador debe esperar a que el juego
+     * termine de verdad y reintentar, o reiniciar el proceso.
+     */
+    const val SESSION_ACTIVE = -4
 
     /**
      * Bits de motivo de pausa (iguales que NativeLib de upstream).
@@ -123,11 +130,52 @@ object Vita3kCoreBridge {
         }
     }
 
-    /** Apaga el núcleo y libera la sesión. */
-    fun shutdown(): Int {
+    /**
+     * true si la sesión del núcleo existe (NativeLib.isInitialized
+     * de upstream: hay emuenv). NO dice si hay partida en curso
+     * (eso es isAppRunning). La oleada 2 lo usa en
+     * EmbeddedGameActivity.onCreate para verificar el init en vez de
+     * inicializar en el hilo UI (P2-B12).
+     */
+    fun isInitialized(): Boolean {
+        if (!available) return false
+        return try {
+            nativeIsInitialized()
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /**
+     * Apagado REAL de la sesión del núcleo (P1-1): destruye el
+     * controlador de sesión y el emuenv. El próximo init() vuelve a
+     * leer config.yml de disco, así que los ajustes cambiados entre
+     * dos partidas SÍ se aplican. Sin esto, el segundo init() era
+     * no-op en upstream y el juego arrancaba con los ajustes de la
+     * primera sesión.
+     *
+     * CONTRATO (oleada 2):
+     * - Devuelve OK (0) si la sesión se destruyó; NOT_IMPLEMENTED
+     *   (-1) sin núcleo; NOT_INITIALIZED (-2) si no había sesión
+     *   que destruir; SESSION_ACTIVE (-4) si hay una partida en
+     *   curso, lanzándose o parándose: NO se destruyó nada.
+     * - Llamar solo desde el hilo principal (UI) y solo cuando no
+     *   hay partida en curso: desde EmbeddedGameActivity.onDestroy()
+     *   DESPUÉS de super.onDestroy() (la SDLActivity ya envió QUIT
+     *   al hilo SDL y esperó hasta 1 s a que termine) o al inicio
+     *   de tryLaunchEmbedded() cuando isAppRunning() es false.
+     *   Nunca llamar mientras el juego está en curso o lanzándose.
+     * - Si devuelve SESSION_ACTIVE repetidamente, la vía segura es
+     *   reiniciar el proceso del launcher entre sesiones, no forzar
+     *   la destrucción.
+     * - NO es "pedir el cierre limpio": eso es requestAppQuit().
+     *   La antigua shutdown() solo hacía eso mismo (duplicaba
+     *   requestAppQuit, con 0 llamadores) y se eliminó (P2-B6).
+     */
+    fun destroySession(): Int {
         if (!available) return NOT_IMPLEMENTED
         return try {
-            nativeShutdown()
+            nativeDestroySession()
         } catch (_: UnsatisfiedLinkError) {
             NOT_IMPLEMENTED
         }
@@ -349,7 +397,12 @@ object Vita3kCoreBridge {
         }
     }
 
-    /** Pulsa/suelta un botón SDL del mando virtual (ver TouchOverlayMapping). */
+    /**
+     * Pulsa/suelta un botón SDL del mando virtual (ver TouchOverlayMapping).
+     * Devuelve false si el mando virtual no existe en SDL (P2-B11):
+     * en ese caso el botón no llegó al juego y hay que reintentar el
+     * attach (overlayAttach + overlayIsAttached) antes de seguir.
+     */
     fun overlaySetButton(sdlButton: Int, pressed: Boolean): Boolean {
         if (!available) return false
         return try {
@@ -359,7 +412,12 @@ object Vita3kCoreBridge {
         }
     }
 
-    /** Mueve un eje SDL del mando virtual (-32767..32767). */
+    /**
+     * Mueve un eje SDL del mando virtual (-32767..32767).
+     * Devuelve false si el mando virtual no existe en SDL (P2-B11):
+     * en ese caso el eje no llegó al juego y hay que reintentar el
+     * attach (overlayAttach + overlayIsAttached) antes de seguir.
+     */
     fun overlaySetAxis(sdlAxis: Int, value: Short): Boolean {
         if (!available) return false
         return try {
@@ -425,7 +483,8 @@ object Vita3kCoreBridge {
     private external fun nativeInit(storagePath: String): Int
     private external fun nativeLoadGame(titleId: String): Int
     private external fun nativeGetFps(): Float
-    private external fun nativeShutdown(): Int
+    private external fun nativeIsInitialized(): Boolean
+    private external fun nativeDestroySession(): Int
     private external fun nativePrepareFrontend(): Boolean
     private external fun nativeInstallPkg(pkgPath: String, zrif: String, callback: EmbeddedInstallCallback): Boolean
     private external fun nativeInstallArchive(archivePath: String, callback: EmbeddedInstallCallback, forceReinstall: Boolean): Boolean

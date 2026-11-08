@@ -1,3 +1,7 @@
+#pragma once
+
+#include <jni.h>
+
 // launcher_bridge.h — reenvíos a las funciones JNI de Vita3K upstream.
 //
 // La capa adaptadora NO reimplementa el núcleo: llama a las funciones
@@ -32,6 +36,9 @@
 // EmbeddedGameActivity / EmbeddedPkgInstaller en vez de como
 // código de error. Upstream normalmente devuelve false/"" sin
 // lanzar, pero si lanza, el puente lo convierte en error.
+// (P2-B2: #pragma once e #include <jni.h> van ANTES del helper: el
+// header es autocontenido y ya no depende de que cada .cpp incluya
+// <jni.h> primero.)
 static inline bool launcher_clear_pending_exception(JNIEnv *env) {
     if (env->ExceptionCheck()) {
         env->ExceptionClear();
@@ -40,9 +47,38 @@ static inline bool launcher_clear_pending_exception(JNIEnv *env) {
     return false;
 }
 
-#pragma once
+// Cadena Java vacía nueva, o nullptr SOLO si la JVM no pudo crearla
+// (OOM): en ese caso limpia la excepción pendiente para no devolver
+// con una excepción activa (P2-B5: un NewStringUTF("") sin comprobar
+// devolvía null con la excepción pendiente, y Kotlin recibía null en
+// un String no nulo). El llamador Kotlin trata "" como fallo;
+// nullptr solo ocurre sin memoria, donde el proceso está a punto de
+// morir igualmente. NUNCA se devuelve con una excepción pendiente.
+static inline jstring launcher_new_empty_string(JNIEnv *env) {
+    jstring result = env->NewStringUTF("");
+    if (result == nullptr) {
+        launcher_clear_pending_exception(env);
+    }
+    return result;
+}
 
-#include <jni.h>
+// Array vacío de String, o nullptr si no se pudo crear (OOM o clase
+// java/lang/String no encontrada, que en la práctica solo ocurre sin
+// memoria). Misma regla que launcher_new_empty_string: sin excepción
+// pendiente al devolver.
+static inline jobjectArray launcher_new_empty_string_array(JNIEnv *env) {
+    jclass string_class = env->FindClass("java/lang/String");
+    if (string_class == nullptr) {
+        launcher_clear_pending_exception(env);
+        return nullptr;
+    }
+    jobjectArray result = env->NewObjectArray(0, string_class, nullptr);
+    if (result == nullptr) {
+        launcher_clear_pending_exception(env);
+    }
+    env->DeleteLocalRef(string_class);
+    return result;
+}
 
 extern "C" {
 

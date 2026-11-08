@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 
 /**
@@ -108,7 +109,7 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             OutlinedButton(
                 onClick = { deleteDlcTarget = dlc.dlcId },
                 modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-            ) { Text("🗑 Borrar DLC: ${dlc.dlcId} (${dlc.sizeBytes} bytes)") }
+            ) { Text("🗑 Borrar DLC: ${dlc.dlcId} (${DownloadsCleanup.formatBytes(dlc.sizeBytes)})") }
         }
 
         SectionTitle("Saves (${status.saves.size} archivos)")
@@ -160,9 +161,9 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             text = {
                 Text(
                     if (isPkgDlc) {
-                        "Se borra el .pkg guardado (ux0/pkg/dlc/$dlcId.pkg) y su licencia. Solo vuelve si importas de nuevo tu copia del DLC."
+                        "Se borra el .pkg guardado y su licencia. Solo vuelve si importas de nuevo tu copia del DLC."
                     } else {
-                        "Se borra de ux0/addcont/${status.titleId?.id ?: "—"}/$dlcId/. Solo vuelve si importas de nuevo tu copia del DLC."
+                        "Se borra el DLC instalado. Solo vuelve si importas de nuevo tu copia del DLC."
                     },
                 )
             },

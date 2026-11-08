@@ -11,6 +11,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import com.danielsnagustin.childoflight.launcher.R
+import com.danielsnagustin.childoflight.launcher.core.EmbeddedCoreLayout
 import com.danielsnagustin.childoflight.launcher.core.EmbeddedPkgInstaller
 import com.danielsnagustin.childoflight.launcher.core.Vita3kCoreBridge
 import com.danielsnagustin.childoflight.launcher.data.AchievementRepository
@@ -25,6 +26,7 @@ import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
 import com.danielsnagustin.childoflight.launcher.data.GpuDetector
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
+import com.danielsnagustin.childoflight.launcher.data.PkgHeaderParser
 import com.danielsnagustin.childoflight.launcher.data.formatLaunchAttempt
 import com.danielsnagustin.childoflight.launcher.data.SessionManager
 import com.danielsnagustin.childoflight.launcher.data.SettingsRepository
@@ -45,7 +47,6 @@ import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.ImportResult
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
-import com.danielsnagustin.childoflight.launcher.model.TROPHIES_27
 import com.danielsnagustin.childoflight.launcher.model.TrophyProgress
 import com.danielsnagustin.childoflight.launcher.model.TrophyUnlockAnnouncer
 import com.danielsnagustin.childoflight.launcher.model.UiPreferences
@@ -67,11 +68,23 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /** Acción que puede ofrecer el diálogo de aviso importante. */
-enum class AlertAction { INSTALL_VITA3K, GO_IMPORT, DELIVER_PKG_TO_VITA3K, CONFIRM_PKG_INSTALLED, REPLACE_DUPLICATE, CONFIRM_DOWNLOADS_COPY, RETRY_LAUNCH }
+enum class AlertAction { INSTALL_VITA3K, GO_IMPORT, DELIVER_PKG_TO_VITA3K, CONFIRM_PKG_INSTALLED, REPLACE_DUPLICATE, CONFIRM_DOWNLOADS_COPY, RETRY_LAUNCH, RESOLVE_LEGACY_CONFLICT }
+
+/** Caducidad de una prueba de 30 s pendiente (P2-A2): pasado este tiempo sin registrarse, se descarta. */
+internal const val BENCHMARK_PENDING_MAX_AGE_MILLIS = 15L * 60 * 1000
+
+/**
+ * Pura (JVM): true si una prueba empezada en [startedAtMillis] ya caducó
+ * a las [nowMillis]. Una prueba vieja no debe registrar un FPS medido
+ * días después contra aquel perfil/run (P2-A2).
+ */
+internal fun isBenchmarkPendingStale(startedAtMillis: Long, nowMillis: Long = System.currentTimeMillis()): Boolean =
+    nowMillis - startedAtMillis > BENCHMARK_PENDING_MAX_AGE_MILLIS
 
 /**
  * Un .pkg guardado al que le falta su work.bin (licencia). La tarjeta
@@ -80,7 +93,13 @@ enum class AlertAction { INSTALL_VITA3K, GO_IMPORT, DELIVER_PKG_TO_VITA3K, CONFI
 data class PendingPkgLicense(
     val titleId: String,
     val kind: com.danielsnagustin.childoflight.launcher.model.PkgKind,
-    val contentId: String,
+    /**
+     * Content ID esperado del .pkg (del header). null = sin expectativa:
+     * el work.bin se valida sin comparar Content ID. Nunca "" (P1-7:
+     * con "" un work.bin binario válido se rechazaba siempre como
+     * "de otro juego" porque su Content ID != "").
+     */
+    val contentId: String?,
     /** Para DLC: id del .pkg guardado (nombre del contenido saneado). */
     val dlcId: String?,
     val storedPath: String,
@@ -291,12 +310,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     /** Trofeo recién desbloqueado: la UI muestra popup + sonido.
      * BUG 2026-11-08: el popup nombraba el trofeo equivocado (15 en
-     * vez de 17) porque dos unlockTrophy en vuelo escribían este
+     * vez de 17) porque dos desbloqueos en vuelo escribían este
      * StateFlow sin orden ni identidad de evento. El anuncio pasa por
      * [TrophyUnlockAnnouncer] (secuencia por pulsación + construcción
      * directa desde TROPHIES_27) y los desbloqueos se serializan con
      * [unlockTrophyMutex]: el popup siempre nombra el trofeo del
-     * desbloqueo más reciente. */
+     * desbloqueo más reciente.
+     * El marcado manual se eliminó (2026-11-08): los trofeos solo se
+     * ganan jugando. El anunciador, la secuencia, el mutex y el sonido
+     * quedan para la sincronización automática con el TROPHY.TRP del
+     * núcleo. */
     private val _justUnlocked = MutableStateFlow<TrophyProgress?>(null)
     val justUnlocked: StateFlow<TrophyProgress?> = _justUnlocked.asStateFlow()
     private val unlockAnnouncer = TrophyUnlockAnnouncer()
@@ -374,6 +397,140 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             _trophyScan.value = if (title != null) {
                 runCatching { TrophyStoreReader.scan(library.vitaRoot, title) }.getOrNull()
             } else null
+            // P1-11: el pendiente de licencia es solo en memoria y se
+            // pierde al reiniciar; se reconstruye desde disco (lo que
+            // falta de verdad, según storedPkgsMissingLicense) para que
+            // la tarjeta "Falta la licencia" de Importar aparezca
+            // también tras reiniciar, sin reimportar el .pkg.
+            rebuildPendingLicenseFromDisk()
+        }
+    }
+
+    /**
+     * Content ID real del header de un .pkg guardado, o null si no se
+     * puede leer. Solo lee el header (no el .pkg entero). Nunca ""
+     * (P1-7): con "" la validación del work.bin binario falla siempre.
+     */
+    private fun readStoredPkgContentId(pkgFile: java.io.File?): String? {
+        if (pkgFile == null || !pkgFile.isFile) return null
+        return runCatching {
+            pkgFile.inputStream().use { PkgHeaderParser.parse(it) }
+        }.getOrNull()?.getOrNull()?.contentId
+    }
+
+    /** .pkg guardado real (ux0 efectivo o antiguo) para un pendiente de licencia. */
+    private fun storedPkgFileFor(
+        kind: com.danielsnagustin.childoflight.launcher.model.PkgKind,
+        titleId: String,
+        dlcId: String?,
+    ): java.io.File? = when (kind) {
+        com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME ->
+            library.findPkgGameFile(titleId)
+        com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC ->
+            dlcId?.let { library.findPkgDlcFile(it) }
+        com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE ->
+            library.findPkgPatchFile(titleId)
+    }
+
+    /**
+     * Pendiente de licencia para un .pkg sin work.bin, con su Content
+     * ID real (P1-7: del header del .pkg; para el juego, del estado
+     * escaneado si lo trae, si no del header). null si el .pkg ya no
+     * está en disco. Se llama en IO (lee el header del .pkg).
+     */
+    private fun pendingLicenseFor(
+        missing: GameLibraryRepository.MissingPkgLicense,
+    ): PendingPkgLicense? {
+        val pkgFile = storedPkgFileFor(missing.kind, missing.titleId.id, missing.dlcId)
+            ?: return null
+        val contentId = when (missing.kind) {
+            com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME ->
+                _status.value.pkgContentId?.takeIf { it.isNotBlank() }
+                    ?: readStoredPkgContentId(pkgFile)
+            else -> readStoredPkgContentId(pkgFile)
+        }
+        return PendingPkgLicense(
+            titleId = missing.titleId.id,
+            kind = missing.kind,
+            contentId = contentId,
+            dlcId = missing.dlcId,
+            storedPath = pkgFile.absolutePath,
+        )
+    }
+
+    /**
+     * Pendiente de licencia para REEMPLAZAR el work.bin del .pkg del
+     * juego ya instalado en el núcleo (P1-12: InstalledWithoutLicense:
+     * el juego quedó instalado pero su licencia no se registró; el
+     * work.bin en disco existe, así que NO sale de
+     * storedPkgsMissingLicense y hay que construirlo desde el estado).
+     * null si no hay .pkg de juego guardado.
+     */
+    private fun pendingLicenseForInstalledGame(): PendingPkgLicense? {
+        val titleId = _status.value.pkgTitleId?.id ?: _status.value.titleId?.id
+            ?: return null
+        val pkgFile = library.findPkgGameFile(titleId) ?: return null
+        val contentId = _status.value.pkgContentId?.takeIf { it.isNotBlank() }
+            ?: readStoredPkgContentId(pkgFile)
+        return PendingPkgLicense(
+            titleId = titleId,
+            kind = com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME,
+            contentId = contentId,
+            dlcId = null,
+            storedPath = pkgFile.absolutePath,
+        )
+    }
+
+    /**
+     * Sincroniza _pendingPkgLicense con el disco (P1-11). Reglas:
+     * - Si no falta ninguna licencia y el pendiente apunta a un .pkg
+     *   que ya no existe, se limpia. Si el .pkg sigue existiendo, el
+     *   pendiente se CONSERVA: puede ser un reemplazo (P1-12, el
+     *   work.bin existe en disco pero el núcleo no registró la
+     *   licencia) y borrarlo dejaría sin acción al diálogo.
+     * - Si falta alguna licencia y el pendiente actual ya es ese
+     *   mismo .pkg, se conserva (su Content ID ya es el bueno); si
+     *   no, se reconstruye desde el primero que falta.
+     * Se llama en IO (lee disco y headers de .pkg).
+     */
+    private fun rebuildPendingLicenseFromDisk() {
+        val missing = runCatching { library.storedPkgsMissingLicense() }
+            .getOrDefault(emptyList())
+        val current = _pendingPkgLicense.value
+        if (missing.isEmpty()) {
+            if (current != null &&
+                storedPkgFileFor(current.kind, current.titleId, current.dlcId) == null
+            ) {
+                _pendingPkgLicense.value = null
+            }
+            return
+        }
+        val first = missing.first()
+        val matchesCurrent = current != null &&
+            current.kind == first.kind &&
+            current.titleId == first.titleId.id &&
+            current.dlcId == first.dlcId
+        if (matchesCurrent) return
+        pendingLicenseFor(first)?.let { _pendingPkgLicense.value = it }
+    }
+
+    /**
+     * Tras un launch(): si el resultado es un bloqueo o fallo por
+     * licencia, deja _pendingPkgLicense listo para que Importar
+     * ofrezca "Elegir work.bin". Se llama en IO, antes de mostrar
+     * el diálogo (P0-1 lado ViewModel, P1-12).
+     */
+    private fun prepareLicensePendingForOutcome(outcome: Vita3KLauncher.LaunchOutcome) {
+        when (outcome) {
+            is Vita3KLauncher.LaunchOutcome.Blocked ->
+                if (outcome.reason.contains("Falta la licencia (work.bin)")) {
+                    rebuildPendingLicenseFromDisk()
+                }
+            is Vita3KLauncher.LaunchOutcome.EmbeddedFailed ->
+                if (outcome.reason.contains("no pudo copiar su licencia")) {
+                    pendingLicenseForInstalledGame()?.let { _pendingPkgLicense.value = it }
+                }
+            else -> Unit
         }
     }
 
@@ -400,7 +557,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         // lee la GPU detectada antes de generar.
         viewModelScope.launch {
             val gpu = settingsRepo.gpuInfoFlow.first()
-            _generatedConfig.value = Vita3kConfigGenerator.generate(settings, library.vitaRoot.absolutePath, gpu)
+            // P1-14: generate() espera vitaFsPath, no vitaRoot: con la
+            // raíz, la vista previa mostraba el pref-path ANTIGUO (el
+            // del bug -3) mientras writeConfig escribía el bueno.
+            _generatedConfig.value = Vita3kConfigGenerator.generate(
+                settings,
+                Vita3kConfigGenerator.vitaFsPathFor(library.vitaRoot).absolutePath,
+                gpu,
+            )
         }
     }
 
@@ -679,6 +843,19 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     private suspend fun tryInstallSavedFirmwareInCoreLocked(): FirmwareCoreResult {
+        // P1-15: escribir config.yml ANTES de instalar el firmware
+        // (igual que play()): installFirmware inicializa el núcleo y
+        // el núcleo lee config.yml al iniciar; con un config.yml viejo
+        // (pref-path pre-arreglo -3) la sesión quedaría envenenada
+        // hasta matar el proceso. Best-effort: si no se puede escribir,
+        // se sigue (el fallo queda en el log, como en play()).
+        runCatching {
+            val settings = settingsRepo.settingsFlow.first()
+            val gpu = settingsRepo.gpuInfoFlow.first()
+            Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu)
+        }.onFailure {
+            LauncherLog.append(context, "config", "No se pudo escribir config.yml antes del firmware: ${it.message}")
+        }
         if (!Vita3kCoreBridge.available) {
             return FirmwareCoreResult.NotInstalled(
                 "Firmware guardado. El núcleo embebido aún no está en esta versión: " +
@@ -924,9 +1101,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    // P2-C5: locale fijo (Locale.US): sin él, en locale español el
+    // formato daba "1,14 GB" con coma.
     private fun formatBytes(bytes: Long): String = when {
-        bytes >= 1_000_000_000L -> "%.2f GB".format(bytes / 1_000_000_000.0)
-        bytes >= 1_000_000L -> "%.1f MB".format(bytes / 1_000_000.0)
+        bytes >= 1_000_000_000L -> String.format(Locale.US, "%.2f GB", bytes / 1_000_000_000.0)
+        bytes >= 1_000_000L -> String.format(Locale.US, "%.1f MB", bytes / 1_000_000.0)
         bytes >= 1_000L -> "${bytes / 1_000} KB"
         else -> "$bytes bytes"
     }
@@ -989,38 +1168,57 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     // --- .pkg + Vita3K externo ---
 
-    /** Guarda el work.bin elegido por el usuario para el .pkg pendiente de licencia. */
+    /**
+     * Guarda el work.bin elegido por el usuario para el .pkg pendiente
+     * de licencia. Con guarda beginImport (P2-C4: antes corría sin
+     * ella y podía pisarse con otra importación sobre el mismo
+     * destino). La licencia se escribe JUNTO AL .pkg REAL (P1-5c:
+     * findPkg* dual legacy+embebido + findPkgWorkBinFile): escribirla
+     * en el ux0 efectivo mientras el .pkg estaba en legacy la dejaba
+     * huérfana y el .pkg se reinstalaba sin licencia.
+     */
     fun importWorkBin(uri: Uri) {
         val pending = _pendingPkgLicense.value ?: return
+        if (!beginImport()) return
         viewModelScope.launch(Dispatchers.IO) {
-            val licenseDest = when (pending.kind) {
-                com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME ->
-                    library.pkgWorkBinFile(pending.titleId)
-                com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC ->
-                    library.pkgDlcWorkBinFile(pending.dlcId ?: return@launch)
-                com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE ->
-                    library.pkgPatchWorkBinFile(pending.titleId)
-            }
-            val result = library.importWorkBin(uri, licenseDest, pending.contentId)
-            withContext(Dispatchers.Main) {
-                result.onSuccess {
-                    _pendingPkgLicense.value = null
-                    // La licencia ya está: el motor integrado instala el
-                    // .pkg al pulsar JUGAR (UseEmbeddedPkg).
-                    val installNote = if (pending.kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME) {
-                        "Pulsa JUGAR: el motor integrado instalará el .pkg y arrancará el juego."
-                    } else {
-                        "El motor integrado lo instalará al pulsar JUGAR, junto con el juego."
+            try {
+                _installProgress.value = InstallProgress(null, "Guardando work.bin…")
+                // .pkg real (puede vivir en el ux0 antiguo): sin él no
+                // hay dónde escribir la licencia.
+                val pkgReal = storedPkgFileFor(pending.kind, pending.titleId, pending.dlcId)
+                if (pkgReal == null) {
+                    withContext(Dispatchers.Main) {
+                        _alert.value = AlertInfo(
+                            "No se encontró el .pkg guardado (${pending.titleId}): vuelve a importar el .pkg y luego su work.bin.",
+                        )
                     }
-                    _alert.value = AlertInfo(
-                        "Licencia guardada: el .pkg ya tiene su work.bin.\n\n" + installNote,
-                        null,
-                    )
-                }.onFailure { e ->
-                    _alert.value = AlertInfo("Ese archivo no es un work.bin válido: ${e.message}")
+                    return@launch
                 }
+                val licenseDest = library.findPkgWorkBinFile(pkgReal)
+                val result = library.importWorkBin(uri, licenseDest, pending.contentId)
+                withContext(Dispatchers.Main) {
+                    result.onSuccess {
+                        _pendingPkgLicense.value = null
+                        // La licencia ya está: el motor integrado instala el
+                        // .pkg al pulsar JUGAR (UseEmbeddedPkg).
+                        val installNote = if (pending.kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME) {
+                            "Pulsa JUGAR: el motor integrado instalará el .pkg y arrancará el juego."
+                        } else {
+                            "El motor integrado lo instalará al pulsar JUGAR, junto con el juego."
+                        }
+                        _alert.value = AlertInfo(
+                            "Licencia guardada: el .pkg ya tiene su work.bin.\n\n" + installNote,
+                            null,
+                        )
+                    }.onFailure { e ->
+                        _alert.value = AlertInfo("Ese archivo no es un work.bin válido: ${e.message}")
+                    }
+                }
+            } finally {
+                // endImport() ya refresca el estado (y reconstruye el
+                // pendiente desde disco si sigue faltando otra licencia).
+                endImport()
             }
-            refreshStatus()
         }
     }
 
@@ -1044,24 +1242,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val missing = library.storedPkgsMissingLicense()
             if (missing.isNotEmpty()) {
                 val first = missing.first()
-                val status = runCatching { library.scanStatus() }.getOrNull()
+                // P1-7: el pendiente lleva el Content ID REAL del .pkg
+                // (del header, vía pendingLicenseFor) y la ruta real del
+                // .pkg (efectivo o antiguo). Antes, DLC/update llevaban
+                // contentId = "": un work.bin binario válido se
+                // rechazaba siempre como "de otro juego". Si el header
+                // no se puede leer, el Content ID es null (sin
+                // expectativa), nunca "".
+                val pending = pendingLicenseFor(first)
                 withContext(Dispatchers.Main) {
-                    _pendingPkgLicense.value = PendingPkgLicense(
-                        titleId = first.titleId.id,
-                        kind = first.kind,
-                        contentId = if (first.kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME) {
-                            status?.pkgContentId ?: ""
-                        } else "",
-                        dlcId = first.dlcId,
-                        storedPath = when (first.kind) {
-                            com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME ->
-                                library.pkgGameFile(first.titleId.id).absolutePath
-                            com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC ->
-                                library.pkgDlcFile(first.dlcId ?: "").absolutePath
-                            com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE ->
-                                library.pkgPatchFile(first.titleId.id).absolutePath
-                        },
-                    )
+                    if (pending != null) _pendingPkgLicense.value = pending
                     _alert.value = AlertInfo(
                         "Falta la licencia (work.bin) del ${first.kind.label} ${first.titleId.id}: sin ella no se puede instalar.\n\n" +
                             "Elige el work.bin en Ajustes (tarjeta «Falta la licencia»).",
@@ -1340,11 +1530,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             )
             _installProgress.value = null
             LauncherLog.append(context, "launch", "JUGAR resultado: ${outcome::class.simpleName}")
-            if (outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternal ||
-                outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ||
-                outcome is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded
-            ) {
-                sessionManager.notePlayStarted()
+            // P0-1 / P1-12: si el resultado es un bloqueo o fallo por
+            // licencia, el pendiente queda listo ANTES del diálogo para
+            // que Importar ofrezca "Elegir work.bin".
+            prepareLicensePendingForOutcome(outcome)
+            // P2-A7: la vía externa marca external=true: al volver al
+            // launcher sin salir del juego, notePlayEnded solo hace
+            // checkpoint en vez de cerrar la medición.
+            val launchedExternal = outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternal ||
+                outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning
+            if (launchedExternal || outcome is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded) {
+                sessionManager.notePlayStarted(external = launchedExternal)
             }
             withContext(Dispatchers.Main) {
                 // Con el juego solo en .pkg, JUGAR abre la app externa y
@@ -1409,17 +1605,38 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                             if (gpu?.vulkanSupported == false) " Sin Vulkan en este teléfono: se usa OpenGL, puede ir más lento o con fallos gráficos." else ""
                     is Vita3KLauncher.LaunchOutcome.EmbeddedCorePresent ->
                         _message.value = "Núcleo embebido detectado, pero falta el punto de entrada JNI (Etapa 2)."
-                    is Vita3KLauncher.LaunchOutcome.EmbeddedFailed ->
+                    is Vita3KLauncher.LaunchOutcome.EmbeddedFailed -> {
                         // El motor integrado falló al cargar o al arrancar:
-                        // diálogo con el motivo exacto, Reintentar y
-                        // Reportar (nunca salto automático a la app externa).
-                        _alert.value = AlertInfo(outcome.reason, AlertAction.RETRY_LAUNCH)
+                        // diálogo con el motivo exacto y la acción que lo
+                        // resuelve (nunca salto automático a la app externa).
+                        // P1-12: "instalado pero sin licencia" -> ir a
+                        // importar a REEMPLAZAR el work.bin, no reinstalar.
+                        // P1-5(e): conflicto de dos instalaciones ->
+                        // resolverlo borrando la antigua, no reintentar
+                        // (reintentar repite el mismo Conflict siempre).
+                        val action = when {
+                            outcome.reason.contains("no pudo copiar su licencia") -> AlertAction.GO_IMPORT
+                            outcome.reason.contains("no se mueve nada para no mezclar dos instalaciones") -> AlertAction.RESOLVE_LEGACY_CONFLICT
+                            else -> AlertAction.RETRY_LAUNCH
+                        }
+                        val text = if (action == AlertAction.RESOLVE_LEGACY_CONFLICT) {
+                            outcome.reason + "\n\n«Borrar la antigua y jugar» borra la instalación antigua (su juego se pierde; los DLCs, updates y saves que falten en el motor integrado se mueven antes a él) y se queda solo con la del motor integrado."
+                        } else {
+                            outcome.reason
+                        }
+                        _alert.value = AlertInfo(text, action)
+                    }
                     is Vita3KLauncher.LaunchOutcome.Blocked -> {
                         // El diálogo ofrece la acción que resuelve el bloqueo:
                         // ir a importar el firmware, reintentar el motor,
                         // instalar la app externa, o ir a importar el juego.
+                        // P0-1: el bloqueo por falta de licencia lleva a
+                        // Importar, donde la tarjeta «Falta la licencia»
+                        // ofrece elegir el work.bin (el pendiente ya se
+                        // reconstruyó antes del diálogo).
                         val action = when {
                             outcome.reason.contains("Falta el firmware") -> AlertAction.GO_IMPORT
+                            outcome.reason.contains("Falta la licencia (work.bin)") -> AlertAction.GO_IMPORT
                             outcome.reason.contains("motor integrado") -> AlertAction.RETRY_LAUNCH
                             outcome.reason.contains("app externa no está instalada") -> AlertAction.INSTALL_VITA3K
                             outcome.reason.contains("El juego no está instalado") -> AlertAction.GO_IMPORT
@@ -1433,6 +1650,57 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             } finally {
                 endLaunch()
             }
+        }
+    }
+
+    /**
+     * P1-5(e): resuelve el conflicto de dos instalaciones (ux0 antiguo
+     * + vita/ux0 con juegos distintos): conserva la del motor integrado
+     * y borra la antigua. Antes se fusiona el contenido NO-juego del
+     * antiguo que falte en el destino (DLCs, updates, saves, .pkg de
+     * DLC/update y licencias, vía la fusión ya implementada en
+     * EmbeddedCoreLayout), para no perderlo. El juego antiguo en sí
+     * se pierde: el diálogo de JUGAR lo dice antes de pulsar el botón.
+     * Guardas: si no hay instalación del motor integrado, NO se borra
+     * nada (la antigua sería la única copia); si la fusión o el
+     * borrado fallan, tampoco se borra nada y se avisa. Tras resolver,
+     * se reintenta JUGAR solo. No toca EmbeddedCoreLayout: usa solo lo
+     * que ya existe (legacyUx0Dir, embeddedUx0Dir,
+     * mergeMissingNonGameContent).
+     */
+    fun resolveLegacyConflictKeepEmbedded() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val legacy = EmbeddedCoreLayout.legacyUx0Dir(library.vitaRoot)
+            val dest = EmbeddedCoreLayout.embeddedUx0Dir(library.vitaRoot)
+            if (!legacy.isDirectory) {
+                withContext(Dispatchers.Main) { _message.value = "No hay instalación antigua que borrar." }
+                return@launch
+            }
+            if (!dest.isDirectory) {
+                withContext(Dispatchers.Main) {
+                    _message.value = "No hay instalación del motor integrado: no se borra la antigua, es la única copia del juego."
+                }
+                return@launch
+            }
+            if (!EmbeddedCoreLayout.mergeMissingNonGameContent(legacy, dest)) {
+                withContext(Dispatchers.Main) {
+                    _message.value = "No se pudo mover el contenido antiguo (DLCs, saves) al motor integrado: no se borró nada."
+                }
+                return@launch
+            }
+            val deleted = runCatching { legacy.deleteRecursively() }.getOrDefault(false) && !legacy.exists()
+            if (!deleted) {
+                withContext(Dispatchers.Main) {
+                    _message.value = "No se pudo borrar la instalación antigua: no se borró nada. Repórtalo."
+                }
+                return@launch
+            }
+            LauncherLog.append(context, "launch", "Conflicto de instalaciones resuelto: ux0 antiguo borrado, se conserva vita/ux0.")
+            refreshStatus()
+            withContext(Dispatchers.Main) {
+                _message.value = "Instalación antigua borrada (DLCs, updates y saves se movieron antes al motor integrado). Se reintenta JUGAR."
+            }
+            play()
         }
     }
 
@@ -1452,6 +1720,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // guarda al salir), se registra solo; si no hay medición,
             // queda el registro manual desde Diagnóstico.
             val pending = _pendingBenchmark.value ?: return@launch
+            // P2-A2: un pendiente de hace más de 15 min está caducado:
+            // se descarta sin registrar nada (el FPS automático que
+            // hubiera se consume y se tira, para que no lo herede una
+            // prueba posterior).
+            if (isBenchmarkPendingStale(pending.startedAtMillis)) {
+                _pendingBenchmark.compareAndSet(pending, null)
+                settingsRepo.takeAutoBenchmarkFps()
+                LauncherLog.append(context, "benchmark", "Prueba pendiente caducada (>15 min): descartada sin registrar.")
+                return@launch
+            }
             val autoFps = settingsRepo.takeAutoBenchmarkFps() ?: return@launch
             if (!autoFps.isFinite() || autoFps < 1f || autoFps > 240f) return@launch
             completeBenchmark(autoFps, BenchmarkSource.AUTO_MEASURED, pending)
@@ -1582,11 +1860,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // en el núcleo si está presente (best-effort, no bloquea).
             ensureFirmwareForEmbedded()
             val outcome = launcher.launch(library, settings, sessionManager, gpu, benchmark = true)
-            if (outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternal ||
-                outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ||
-                outcome is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded
-            ) {
-                sessionManager.notePlayStarted()
+            // P0-1 / P1-12: igual que en play(): si el resultado es un
+            // bloqueo o fallo por licencia, el pendiente queda listo
+            // para que Importar ofrezca "Elegir work.bin".
+            prepareLicensePendingForOutcome(outcome)
+            // P2-A7: igual que en play(): la vía externa marca
+            // external=true (checkpoint en vez de cerrar la medición).
+            val launchedExternal = outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternal ||
+                outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning
+            if (launchedExternal || outcome is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded) {
+                sessionManager.notePlayStarted(external = launchedExternal)
             }
             withContext(Dispatchers.Main) {
                 _message.value = when (outcome) {
@@ -1630,6 +1913,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      */
     fun recordBenchmarkFps(fps: Float) {
         val pending = _pendingBenchmark.value ?: return
+        // P2-A2: un pendiente de hace más de 15 min está caducado: se
+        // descarta y se avisa, en vez de registrar el FPS contra aquel
+        // perfil/run viejo.
+        if (isBenchmarkPendingStale(pending.startedAtMillis)) {
+            _pendingBenchmark.compareAndSet(pending, null)
+            _message.value = "La prueba de 30 s caducó (más de 15 min sin registrarse): vuelve a lanzarla para medir de nuevo."
+            return
+        }
         // M25: un FPS inválido (negativo, NaN, absurdo) no se guarda ni se
         // usa para decidir el auto-revert; el pendiente se conserva para
         // poder reintentarlo.
@@ -1644,15 +1935,31 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * Cierra una prueba de 30 s (manual o medida por el núcleo):
      * guarda el historial, limpia el pendiente y aplica el
      * auto-revert a 1x si toca. `source` distingue cómo se midió.
+     *
+     * P2-A2: el consumo del pendiente es ATÓMICO con compareAndSet
+     * sobre el StateFlow: la vía automática (noteReturnedFromGame, al
+     * volver) y la manual (recordBenchmarkFps) pueden correr a la
+     * vez, y solo la primera registra la prueba; la segunda ve que el
+     * pendiente ya no es el suyo y no hace nada. Sin Mutex: el
+     * StateFlow ya es concurrente y el compareAndSet es la primitiva
+     * adecuada para "reclamar" un valor de un solo uso; el resto del
+     * trabajo (guardar historial, auto-revert) ya no depende del
+     * pendiente, que viaja capturado en el parámetro.
      */
     private suspend fun completeBenchmark(fps: Float, source: BenchmarkSource, pending: BenchmarkRun) {
+        if (!_pendingBenchmark.compareAndSet(pending, null)) return
+        // Defensa: si el pendiente caducó entre la lectura y el
+        // reclamo, no se registra nada (ya está consumido/limpiado).
+        if (isBenchmarkPendingStale(pending.startedAtMillis)) {
+            LauncherLog.append(context, "benchmark", "Prueba caducada (>15 min) al completarla: descartada sin registrar.")
+            return
+        }
         val settings = settingsRepo.settingsFlow.first()
         // M25: el auto-revert se decide con el perfil ACTUAL, no con el
         // de cuando empezó la prueba (el usuario pudo cambiarlo).
         val revert = shouldAutoRevertTo1x(fps, settings.activeProfile, settings.autoRevertTo1xIfBelow28Fps)
         val completed = pending.copy(fpsAvg = fps, source = source, autoReverted = revert)
         settingsRepo.recordBenchmark(completed)
-        _pendingBenchmark.value = null
         val how = if (source == BenchmarkSource.AUTO_MEASURED) "medido automáticamente por el juego" else "registrado a mano"
         if (revert) {
             settingsRepo.applyPreset(GpuProfileId.G99_RECOMMENDED, current = settings)
@@ -1666,41 +1973,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun dismissBenchmark() { _pendingBenchmark.value = null }
 
     // --- Logros ---
-
-    fun unlockTrophy(number: Int) {
-        // La secuencia se asigna AQUÍ, en el momento de la pulsación
-        // (orden de llamada): si dos desbloqueos van seguidos, el
-        // anunciador ignora el que termine tarde (ver
-        // TrophyUnlockAnnouncer). Sin esto, el popup podía nombrar el
-        // trofeo anterior (BUG 2026-11-08: 15 en vez de 17).
-        val seq = unlockSeq.incrementAndGet()
-        viewModelScope.launch {
-            // Serializa desbloqueo + anuncio: dos pulsaciones seguidas
-            // se ejecutan en orden de llamada, no en orden de llegada.
-            unlockTrophyMutex.withLock {
-                val atMillis = System.currentTimeMillis()
-                val isNew = achievementsRepo.unlock(number, atMillis)
-                if (isNew) {
-                    // El trofeo anunciado se construye directamente
-                    // desde TROPHIES_27 con el número y el instante del
-                    // desbloqueo: antes se releía de progressFlow.first()
-                    // tras el edit, una relectura que podía ir por
-                    // detrás de la escritura y anunciar otro trofeo.
-                    val announced = unlockAnnouncer.announce(number, atMillis, seq)
-                    if (announced != null) _justUnlocked.value = announced
-                    playUnlockSound()
-                    val name = TROPHIES_27.firstOrNull { it.number == number }?.name ?: "Trofeo $number"
-                    LauncherLog.append(context, "trophy", "Logro desbloqueado: $name")
-                } else {
-                    _message.value = "Ese logro ya estaba desbloqueado."
-                }
-            }
-        }
-    }
-
-    fun lockTrophy(number: Int) {
-        viewModelScope.launch { achievementsRepo.lock(number) }
-    }
 
     fun resetTrophies() {
         viewModelScope.launch {
@@ -2239,7 +2511,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             appendLine("Driver: ${settings.gpuDriver} | Turnip: ${settings.turnipVersion} (instalado: ${settings.turnipInstalled})")
             appendLine()
             appendLine("--- config.yml generado ---")
-            appendLine(Vita3kConfigGenerator.generate(settings, library.vitaRoot.absolutePath, gpu))
+            // P1-14: igual que en refreshConfigPreview: generate()
+            // espera vitaFsPath, no vitaRoot (el pref-path del reporte
+            // mostraba el valor ANTIGUO del bug -3).
+            appendLine(
+                Vita3kConfigGenerator.generate(
+                    settings,
+                    Vita3kConfigGenerator.vitaFsPathFor(library.vitaRoot).absolutePath,
+                    gpu,
+                ),
+            )
             appendLine("--- Errores recientes del log ---")
             val recentErrors = extractRecentErrorLines(recentLog)
             if (recentErrors.isEmpty()) {

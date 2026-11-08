@@ -16,13 +16,19 @@ import java.io.File
  *    vita_fs = storage/"vita" (android/jni/native_bootstrap.cpp) y
  *    el firmware instalado es vita_fs/"vs0" no vacío
  *    (app/src/app.cpp: `has_installed_firmware_content`).
- *    OJO: la ruta antigua `vitaRoot/vs0/` (sin `vita/`) es
- *    incorrecta para el núcleo: el núcleo nunca escribe ahí.
+ *    La ruta antigua `vitaRoot/vs0/` (sin `vita/`) ya no se ignora:
+ *    `resolve()` la MIGRA a `vita/vs0` (P2-A1) cuando el núcleo aún
+ *    no tiene firmware ahí; si la migración falla, no se da por
+ *    instalado. `deleteFirmware()` ya borraba la ruta antigua.
  * 2. `firmware/installed.json` con VERSIÓN (`{"version":"3.74",...}`):
  *    marcador que se escribe SOLO tras un `installFirmware` con
  *    éxito en el núcleo. Un marcador antiguo con solo el nombre del
  *    archivo ("PSVUPDAT.PUP") NO es firmware instalado: solo dice
- *    que el PUP se guardó (ver [FirmwareStatus.Saved]).
+ *    que el PUP se guardó (ver [FirmwareStatus.Saved]). Y un marcador
+ *    con versión tampoco basta solo: si `vita/vs0` desapareció
+ *    (borrado a mano, extracción parcial), el marcador miente y
+ *    `resolve()` NO devuelve Ready (P2-C11): se revalida contra vs0
+ *    en cada llamada.
  * 3. `firmware/PSVUPDAT.PUP` guardado: el PUP que el usuario aportó
  *    con el selector de archivos (Ajustes → Avanzado → Firmware).
  *    Está GUARDADO, no instalado: hay que instalarlo en el núcleo
@@ -93,12 +99,25 @@ object FirmwareResolver {
         if (vs0.isDirectory && (vs0.listFiles()?.isNotEmpty() == true)) {
             return FirmwareStatus.Ready("extraído en el núcleo (vita/vs0)")
         }
+        // 1b. Ruta antigua (vitaRoot/vs0, sin "vita/"): el núcleo nunca
+        // escribe ahí, pero alguien pudo dejar firmware a mano. Se
+        // migra a vita/vs0 (P2-A1); si la migración tiene éxito, el
+        // firmware ya es el del núcleo. Si falla, no se da por
+        // instalado y se sigue con el marcador/PUP.
+        val legacyVs0 = File(vitaRoot, "vs0")
+        if (legacyVs0.isDirectory && (legacyVs0.listFiles()?.isNotEmpty() == true)) {
+            if (migrateLegacyVs0(vitaRoot)) {
+                return FirmwareStatus.Ready("extraído en el núcleo (vita/vs0, migrado desde la ruta antigua)")
+            }
+        }
         // 2. Marcador con versión: solo lo escribe una instalación en
         //    el núcleo con éxito (ver markInstalled). Un marcador
         //    antiguo con solo el nombre del archivo no vale: cae al
         //    caso 3 (PUP guardado, pendiente de instalar).
+        //    P2-C11: el marcador SOLO vale si vita/vs0 sigue no vacío;
+        //    si vs0 desapareció, el marcador miente y no es Ready.
         val version = installedVersion(vitaRoot)
-        if (version != null) {
+        if (version != null && vs0.isDirectory && (vs0.listFiles()?.isNotEmpty() == true)) {
             return FirmwareStatus.Ready("instalado (versión $version)")
         }
         // 3. PUP guardado, pendiente de instalar en el núcleo.
@@ -107,6 +126,36 @@ object FirmwareResolver {
             return FirmwareStatus.Saved("PSVUPDAT.PUP guardado")
         }
         return FirmwareStatus.Missing
+    }
+
+    /**
+     * Mueve el firmware de la ruta antigua (`vitaRoot/vs0`) a la del
+     * núcleo (`vita/vs0`). Mismo disco: rename barato; si falla, copia
+     * y borra el origen solo si la copia quedó completa. No toca nada
+     * si el destino ya tiene firmware (el llamador lo comprueba antes).
+     * Devuelve true si el firmware quedó en `vita/vs0` no vacío.
+     */
+    fun migrateLegacyVs0(vitaRoot: File): Boolean {
+        val legacy = File(vitaRoot, "vs0")
+        val dest = coreVs0Dir(vitaRoot)
+        if (!legacy.isDirectory || (legacy.listFiles()?.isNotEmpty() != true)) return false
+        if (dest.isDirectory && (dest.listFiles()?.isNotEmpty() == true)) return false
+        return try {
+            dest.parentFile?.mkdirs()
+            if (dest.exists()) dest.deleteRecursively()
+            if (legacy.renameTo(dest)) {
+                dest.isDirectory && (dest.listFiles()?.isNotEmpty() == true)
+            } else {
+                val count = legacy.walkTopDown().count { it.isFile }
+                legacy.copyRecursively(dest, overwrite = false)
+                val ok = dest.isDirectory && dest.walkTopDown().count { it.isFile } == count
+                if (ok) legacy.deleteRecursively()
+                ok
+            }
+        } catch (_: Exception) {
+            runCatching { dest.deleteRecursively() }
+            false
+        }
     }
 
     /**

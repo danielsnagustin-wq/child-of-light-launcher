@@ -260,21 +260,28 @@ class Vita3kConfigGeneratorTest {
     }
 
     @Test
-    fun psnSignedInAlwaysEmitted() {
+    fun psnSignedInFollowsSetting() {
         // Verificado en el pin (config.h:398): psn-signed-in existe,
         // es INT, default false. Lo consumen sceNpCheckCallback y
         // sceNpGetServiceState (SceNpManager.cpp:131 y :149): con 0
         // el núcleo responde siempre SIGNED_OUT y los juegos que
         // preguntan el estado de sesión antes de activar sus DLC
-        // nunca los aplican. El launcher emite 1 siempre: inicio de
-        // sesión EMULADO, sin cuenta real ni red. Es int, no bool:
-        // se emite "1", nunca "true" ni "0".
-        val yaml = Vita3kConfigGenerator.generate(
+        // nunca los aplican. El launcher emite 1 con el ajuste ON
+        // (por defecto) y 0 con el ajuste OFF (Ajustes → General →
+        // Motor → "Sesión PSN (simulada)"): inicio de sesión
+        // EMULADO, sin cuenta real ni red. Es int, no bool: se
+        // emite "1" o "0", nunca "true".
+        val on = Vita3kConfigGenerator.generate(
             LauncherSettings(), "/data/vita3k",
         )
-        assertTrue(yaml.contains("psn-signed-in: 1"))
-        assertFalse(yaml.contains("psn-signed-in: 0"))
-        assertFalse(yaml.contains("psn-signed-in: true"))
+        assertTrue(on.contains("psn-signed-in: 1"))
+        assertFalse(on.contains("psn-signed-in: 0"))
+        assertFalse(on.contains("psn-signed-in: true"))
+        val off = Vita3kConfigGenerator.generate(
+            LauncherSettings(psnSignedIn = false), "/data/vita3k",
+        )
+        assertTrue(off.contains("psn-signed-in: 0"))
+        assertFalse(off.contains("psn-signed-in: 1"))
     }
 
     @Test

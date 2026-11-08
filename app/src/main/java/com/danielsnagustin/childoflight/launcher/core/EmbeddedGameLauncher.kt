@@ -20,6 +20,16 @@ import com.danielsnagustin.childoflight.launcher.model.GameStatus
  * - Núcleo disponible + juego solo en .pkg + firmware local
  *   -> UseEmbeddedPkg: primero se instala el .pkg con el propio
  *   núcleo (EmbeddedPkgInstaller) y luego se arranca embebido.
+ *   SOLO si el .pkg tiene su licencia (work.bin): sin ella el
+ *   núcleo instalaría un juego que no arranca y nadie avisaría
+ *   (P0-1). Sin licencia -> Blocked con "Falta la licencia
+ *   (work.bin)…" para que la UI ofrezca el selector de work.bin
+ *   (PendingPkgLicense, oleada 2). decide() es pura y no ve el
+ *   directorio de licencias del núcleo: si la licencia ya está
+ *   instalada dentro del núcleo pero el work.bin guardado se
+ *   perdió, decide() bloquea igual y el usuario vuelve a elegir
+ *   el work.bin; la reinstalación del eboot (que no pasa por
+ *   decide()) sí puede reutilizar esa licencia vía findPkgZrif.
  * - Núcleo disponible pero SIN firmware local -> Blocked: el núcleo
  *   no puede arrancar sin firmware y ya no se salta a la app externa
  *   por detrás. El motivo dice dónde importarlo (Ajustes ->
@@ -31,6 +41,17 @@ import com.danielsnagustin.childoflight.launcher.model.GameStatus
  *   motor integrado (o bloquea con el motivo exacto si algo falta).
  */
 object EmbeddedGameLauncher {
+
+    /**
+     * Motivo del Blocked cuando el juego solo está en .pkg y falta su
+     * licencia (work.bin) (P0-1). El ViewModel lo reconoce por
+     * "Falta la licencia (work.bin)" para ofrecer el selector de
+     * work.bin (PendingPkgLicense, oleada 2), igual que reconoce
+     * "Falta el firmware" para ir a importar.
+     */
+    const val LICENSE_BLOCKED_EMBEDDED =
+        "Falta la licencia (work.bin) del juego: sin ella el motor integrado no puede instalar el .pkg. " +
+            "Elige el work.bin en Importar (tarjeta «Falta la licencia»)."
 
     sealed class Decision {
         /** Arrancar el juego extraído con el núcleo embebido. */
@@ -66,8 +87,24 @@ object EmbeddedGameLauncher {
             }
             return when {
                 status.gameExtracted -> Decision.UseEmbedded(titleId)
+                // P0-1: el .pkg sin licencia no se instala: el núcleo
+                // dejaría un juego que no arranca sin avisar a nadie.
+                // Solo el camino .pkg se bloquea: un juego extraído ya
+                // tiene su licencia registrada en el núcleo y no la
+                // necesita (por eso va primero).
+                status.pkgInstalled && !status.pkgLicensePresent ->
+                    Decision.Blocked(LICENSE_BLOCKED_EMBEDDED)
                 status.pkgInstalled -> Decision.UseEmbeddedPkg(titleId)
-                else -> Decision.Blocked("El juego no está instalado. Importa tu copia de Child of Light (PCSE00480 o PCSB00598).")
+                // P2-A6: hoy inalcanzable por el invariante de
+                // scanStatus (gameInstalled = extractedTitle != null
+                // || pkgTitle != null, GameLibraryRepository.kt:677),
+                // salvo un GameStatus construido a mano. El mensaje ya
+                // no dice "no está instalado" (contradictorio: el
+                // estado dice que sí lo está): describe el estado real.
+                else -> Decision.Blocked(
+                    "El juego está marcado como instalado pero no hay copia extraída ni .pkg guardado: " +
+                        "vuelve a importar tu copia de Child of Light.",
+                )
             }
         }
         // Sin núcleo embebido: la app externa solo se usa si el usuario

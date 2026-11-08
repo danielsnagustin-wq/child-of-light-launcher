@@ -60,10 +60,17 @@ object TrophyStoreReader {
     /** ¿El juego importado traía su TROPHY.TRP dentro de ux0/app/<TITLE>/ ? */
     fun gameBundledTrp(appDir: File): File? {
         // TROPHY.TRP vive en sce_sys/trophy/ dentro del juego en Vita.
-        val candidates = listOf(
-            File(appDir, "sce_sys/trophy/TROPHY.TRP"),
-            File(appDir, "TROPHY.TRP"),
-        )
-        return candidates.firstOrNull { it.exists() }
+        // Búsqueda sin distinguir mayúsculas en cada nivel (P2-C12):
+        // un juego con SCE_SYS/TROPHY/ no reportaba su TRP.
+        val sceSys = ImportTreeSearch.findChildIgnoreCase(appDir, "sce_sys")
+            ?.takeIf { it.isDirectory }
+        val trophyDir = sceSys?.let {
+            ImportTreeSearch.findChildIgnoreCase(it, "trophy")?.takeIf { d -> d.isDirectory }
+        }
+        val nested = trophyDir?.let {
+            ImportTreeSearch.findChildIgnoreCase(it, "TROPHY.TRP")?.takeIf { f -> f.isFile }
+        }
+        if (nested != null) return nested
+        return ImportTreeSearch.findChildIgnoreCase(appDir, "TROPHY.TRP")?.takeIf { it.isFile }
     }
 }

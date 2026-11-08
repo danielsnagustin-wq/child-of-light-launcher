@@ -70,6 +70,7 @@ class SettingsRepository(private val context: Context) {
         val SAFE_MODE = booleanPreferencesKey("safe_mode")
         val CLOSE_BACKGROUND = booleanPreferencesKey("close_background_apps")
         val ALLOW_EXTERNAL_VITA3K = booleanPreferencesKey("allow_external_vita3k")
+        val PSN_SIGNED_IN = booleanPreferencesKey("psn_signed_in")
         val PKG_DELIVERED = booleanPreferencesKey("pkg_delivered_to_vita3k")
         val PKG_INSTALLED_IN_VITA3K = booleanPreferencesKey("pkg_installed_in_vita3k")
         val HIDE_TOUCH_GAMEPAD = booleanPreferencesKey("hide_touch_when_gamepad")
@@ -136,6 +137,7 @@ class SettingsRepository(private val context: Context) {
             safeMode = p[Keys.SAFE_MODE] ?: false,
             closeBackgroundApps = p[Keys.CLOSE_BACKGROUND] ?: true,
             allowExternalVita3k = p[Keys.ALLOW_EXTERNAL_VITA3K] ?: false,
+            psnSignedIn = p[Keys.PSN_SIGNED_IN] ?: true,
             pkgDeliveredToVita3k = p[Keys.PKG_DELIVERED] ?: false,
             pkgInstalledInVita3k = p[Keys.PKG_INSTALLED_IN_VITA3K] ?: false,
             hideTouchWhenGamepadConnected = p[Keys.HIDE_TOUCH_GAMEPAD] ?: true,
@@ -199,6 +201,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.SAFE_MODE] = settings.safeMode
             p[Keys.CLOSE_BACKGROUND] = settings.closeBackgroundApps
             p[Keys.ALLOW_EXTERNAL_VITA3K] = settings.allowExternalVita3k
+            p[Keys.PSN_SIGNED_IN] = settings.psnSignedIn
             p[Keys.PKG_DELIVERED] = settings.pkgDeliveredToVita3k
             p[Keys.PKG_INSTALLED_IN_VITA3K] = settings.pkgInstalledInVita3k
             p[Keys.HIDE_TOUCH_GAMEPAD] = settings.hideTouchWhenGamepadConnected
@@ -253,6 +256,7 @@ class SettingsRepository(private val context: Context) {
             ngsEnable = current?.ngsEnable ?: true,
             safeMode = current?.safeMode ?: false,
             closeBackgroundApps = current?.closeBackgroundApps ?: true,
+            psnSignedIn = current?.psnSignedIn ?: true,
             pkgDeliveredToVita3k = current?.pkgDeliveredToVita3k ?: false,
             pkgInstalledInVita3k = current?.pkgInstalledInVita3k ?: false,
             hideTouchWhenGamepadConnected = current?.hideTouchWhenGamepadConnected ?: true,

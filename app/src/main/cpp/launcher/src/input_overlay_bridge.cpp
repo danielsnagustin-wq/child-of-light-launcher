@@ -19,13 +19,12 @@
 // se comprueba por API pública SDL si existe un gamepad con el nombre
 // exacto que upstream le pone al virtual ("Vita3K Virtual Controller",
 // input_overlay.cpp). Solo así EmbeddedGameActivity sabe si reintentarlo.
+// P2-B11: nativeOverlaySetButton/Axis también devuelven ese estado
+// (antes devolvían true aunque upstream no hiciera nada): si
+// devuelven false, el llamador debe reintentar el attach.
 
 #include <jni.h>
 #include <android/log.h>
-
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_gamepad.h>
-#include <SDL3/SDL_joystick.h>
 
 #include <cstring>
 
@@ -35,8 +34,40 @@
 #ifdef LAUNCHER_HAS_VITA3K
 #include "launcher_bridge.h"
 
+// P2-B10: los headers SDL van DENTRO del #ifdef (como en
+// runtime_bridge.cpp): sin núcleo el puente compila standalone y
+// nada fuera del #ifdef usa símbolos SDL (todo SDL está en
+// overlay_is_attached(), dentro del #ifdef).
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_gamepad.h>
+#include <SDL3/SDL_joystick.h>
+
 // Nombre exacto del joystick virtual de upstream (input_overlay.cpp).
 static constexpr const char *kVirtualControllerName = "Vita3K Virtual Controller";
+
+// ¿Existe el mando virtual "Vita3K Virtual Controller" en SDL?
+// (Extraído de nativeOverlayIsAttached para reutilizarlo en
+// SetButton/SetAxis, P2-B11.)
+static bool overlay_is_attached() {
+    if (!SDL_WasInit(SDL_INIT_GAMEPAD)) {
+        return false;
+    }
+    int count = 0;
+    SDL_JoystickID *ids = SDL_GetGamepads(&count);
+    if (ids == nullptr) {
+        return false;
+    }
+    bool found = false;
+    for (int i = 0; i < count; i++) {
+        const char *name = SDL_GetGamepadNameForID(ids[i]);
+        if (name != nullptr && std::strcmp(name, kVirtualControllerName) == 0) {
+            found = true;
+            break;
+        }
+    }
+    SDL_free(ids);
+    return found;
+}
 #endif
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -73,24 +104,7 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeOverlayIsAttached(
     JNIEnv * /* env */, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
-    if (!SDL_WasInit(SDL_INIT_GAMEPAD)) {
-        return JNI_FALSE;
-    }
-    int count = 0;
-    SDL_JoystickID *ids = SDL_GetGamepads(&count);
-    if (ids == nullptr) {
-        return JNI_FALSE;
-    }
-    bool found = false;
-    for (int i = 0; i < count; i++) {
-        const char *name = SDL_GetGamepadNameForID(ids[i]);
-        if (name != nullptr && std::strcmp(name, kVirtualControllerName) == 0) {
-            found = true;
-            break;
-        }
-    }
-    SDL_free(ids);
-    return found ? JNI_TRUE : JNI_FALSE;
+    return overlay_is_attached() ? JNI_TRUE : JNI_FALSE;
 #else
     return JNI_FALSE;
 #endif
@@ -104,7 +118,13 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeOverl
     if (launcher_clear_pending_exception(env)) {
         return JNI_FALSE;
     }
-    return JNI_TRUE;
+    // P2-B11: upstream es void y no hace nada si no hay joystick
+    // virtual (!virtual_joystick, input_overlay.cpp:104-108); antes
+    // se devolvía true incondicional y el llamador creía que el
+    // botón llegó al juego. Ahora se devuelve si el mando virtual
+    // existe de verdad: si es false, hay que reintentar el attach
+    // (ver Vita3kCoreBridge.overlaySetButton).
+    return overlay_is_attached() ? JNI_TRUE : JNI_FALSE;
 #else
     return JNI_FALSE;
 #endif
@@ -118,7 +138,11 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeOverl
     if (launcher_clear_pending_exception(env)) {
         return JNI_FALSE;
     }
-    return JNI_TRUE;
+    // P2-B11: igual que SetButton (upstream void, no hace nada sin
+    // joystick virtual, input_overlay.cpp:98-102): se devuelve si el
+    // mando virtual existe de verdad; si es false, reintentar el
+    // attach (ver Vita3kCoreBridge.overlaySetAxis).
+    return overlay_is_attached() ? JNI_TRUE : JNI_FALSE;
 #else
     return JNI_FALSE;
 #endif

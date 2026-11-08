@@ -14,8 +14,10 @@
 // y se devuelve el valor de "no hay partida" (false / "" / 0): el
 // llamador Kotlin solo captura UnsatisfiedLinkError, así que una
 // excepción pendiente sería un crash en vez de un estado controlado.
-// getRunningAppTitle nunca devuelve null (Kotlin lo trata como
-// String no nulo).
+// getRunningAppTitle casi nunca devuelve null (Kotlin lo trata como
+// String no nulo): solo si la JVM no puede crear ni la cadena vacía
+// (OOM), caso en el que el helper limpia la excepción y devuelve
+// null en vez de devolver con una excepción pendiente (P2-B5).
 
 #include <jni.h>
 #include <android/log.h>
@@ -26,9 +28,9 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
-#ifdef LAUNCHER_HAS_VITA3K
+// launcher_bridge.h se incluye siempre (no solo con núcleo): los
+// helpers de cadena vacía (P2-B5) se usan también en las ramas stub.
 #include "launcher_bridge.h"
-#endif
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeIsAppRunning(
@@ -78,12 +80,16 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetRu
     JNIEnv *env, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
     jstring title = Java_org_vita3k_emulator_NativeLib_getRunningAppTitle(env, nullptr);
-    if (title == nullptr || launcher_clear_pending_exception(env)) {
-        return env->NewStringUTF("");
+    // P2-B1: evaluar el clear ANTES del null (el || cortocircuitaba
+    // y el NewStringUTF("") corría con la excepción pendiente,
+    // devolviendo null a un String no nulo de Kotlin).
+    const bool hadException = launcher_clear_pending_exception(env);
+    if (title == nullptr || hadException) {
+        return launcher_new_empty_string(env);
     }
     return title;
 #else
-    return env->NewStringUTF("");
+    return launcher_new_empty_string(env);
 #endif
 }
 

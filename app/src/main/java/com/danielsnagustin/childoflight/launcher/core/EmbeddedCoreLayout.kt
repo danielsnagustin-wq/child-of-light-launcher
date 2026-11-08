@@ -144,6 +144,13 @@ object EmbeddedCoreLayout {
      * aunque el juego ya estuviera instalado en vita/ux0 (el escaneo
      * lo veía, instalado=true). El ux0 antiguo se deja intacto: lo
      * ignora resolveUx0Dir porque el embebido tiene los juegos.
+     *
+     * Fusión (P1-5d, 2026-11-08): antes de devolver AlreadyMigrated se
+     * fusiona el contenido NO-juego del antiguo que falte en el
+     * destino (addcont/, patch/, user/, pkg/dlc/, pkg/patch/ y las
+     * licencias work.bin de pkg/): si el antiguo solo tenía DLCs, updates
+     * o saves, ese contenido quedaba invisible para siempre. Si la
+     * fusión falla, se devuelve Conflict sin borrar nada.
      */
     fun migrateToEmbeddedLayout(storageRoot: File): MigrationResult {
         val legacy = legacyUx0Dir(storageRoot)
@@ -162,6 +169,17 @@ object EmbeddedCoreLayout {
             } else if (dest.isDirectory && gameTitles(legacy).all { it in gameTitles(dest) }) {
                 // El embebido ya tiene el juego (o el antiguo no tiene
                 // ningún juego): nada que mover, el lanzamiento sigue.
+                // P1-5(d): antes, fusionar el contenido no-juego del
+                // antiguo que falte en el destino (DLCs, updates,
+                // saves, .pkg de DLC/update y licencias), o Conflict
+                // si la fusión falla. Sin esto, ese contenido quedaba
+                // invisible para siempre (nada lo leía del antiguo).
+                if (!mergeMissingNonGameContent(legacy, dest)) {
+                    return MigrationResult.Conflict(
+                        "No se pudo mover el contenido del ux0 antiguo (DLCs, updates o saves) " +
+                            "al motor integrado; no se movió ni se borró nada.",
+                    )
+                }
                 return MigrationResult.AlreadyMigrated
             } else {
                 return MigrationResult.Conflict(
@@ -190,6 +208,63 @@ object EmbeddedCoreLayout {
         } catch (e: Exception) {
             dest.deleteRecursively()
             MigrationResult.Conflict("No se pudo copiar la instalación antigua al motor integrado.")
+        }
+    }
+
+    /**
+     * Fusiona el contenido NO-juego del ux0 antiguo en el destino:
+     * mueve cada hijo de addcont/, patch/, user/, pkg/dlc/ y pkg/patch/
+     * que NO exista ya en el destino, y las licencias work.bin de pkg/
+     * que falten. Solo mueve por nombre completo: si el destino ya
+     * tiene un hijo con ese nombre, se deja el antiguo intacto (no se
+     * mezclan dos copias del mismo DLC/save). Un movimiento es rename
+     * (mismo disco) o copia verificada + borrado del origen; si un
+     * movimiento falla, lo ya movido queda en el destino (no se
+     * pierde: cambió de sitio, no se borró) y se devuelve false para
+     * que el llamador lo reporte como Conflict.
+     */
+    fun mergeMissingNonGameContent(legacyUx0: File, destUx0: File): Boolean {
+        var ok = true
+        for (sub in listOf("addcont", "patch", "user", "pkg/dlc", "pkg/patch")) {
+            val srcDir = File(legacyUx0, sub)
+            val destDir = File(destUx0, sub)
+            if (!srcDir.isDirectory) continue
+            for (child in srcDir.listFiles().orEmpty()) {
+                if (File(destDir, child.name).exists()) continue
+                if (!moveFileOrDir(child, File(destDir, child.name))) ok = false
+            }
+        }
+        // Licencias del .pkg de juego (pkg/<TITLE>.work.bin): el .pkg
+        // en sí lo cubre gameTitles/Conflict, pero su licencia puede
+        // faltar en el destino aunque el .pkg ya esté en ambos.
+        val srcPkg = File(legacyUx0, "pkg")
+        val destPkg = File(destUx0, "pkg")
+        if (srcPkg.isDirectory) {
+            for (child in srcPkg.listFiles().orEmpty()) {
+                if (!child.isFile || !child.name.endsWith(".work.bin")) continue
+                if (File(destPkg, child.name).exists()) continue
+                if (!moveFileOrDir(child, File(destPkg, child.name))) ok = false
+            }
+        }
+        return ok
+    }
+
+    /** Mueve un archivo o directorio: rename, o copia verificada + borrado del origen. */
+    private fun moveFileOrDir(src: File, dest: File): Boolean {
+        return try {
+            dest.parentFile?.mkdirs()
+            if (src.renameTo(dest)) return true
+            val count = if (src.isFile) 1 else src.walkTopDown().count { it.isFile }
+            src.copyRecursively(dest, overwrite = false)
+            val copied = if (dest.isFile) 1 else dest.walkTopDown().count { it.isFile }
+            if (copied != count) {
+                dest.deleteRecursively()
+                return false
+            }
+            src.deleteRecursively()
+            true
+        } catch (_: Exception) {
+            false
         }
     }
 

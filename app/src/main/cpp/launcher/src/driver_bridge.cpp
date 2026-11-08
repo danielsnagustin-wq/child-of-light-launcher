@@ -25,7 +25,10 @@
 // Robustez JNI: igual que install_bridge.cpp — si upstream deja una
 // excepción pendiente se limpia y se devuelve el valor de "no hay
 // driver" ("" / array vacío / false); las funciones que devuelven
-// String/array nunca devuelven null (Kotlin los trata como no nulos).
+// String/array casi nunca devuelven null (Kotlin los trata como no
+// nulos): solo si la JVM no puede crear ni el valor vacío (OOM),
+// caso en el que el helper limpia la excepción y devuelve null en
+// vez de devolver con una excepción pendiente (P2-B5).
 
 #include <jni.h>
 #include <android/log.h>
@@ -37,9 +40,10 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
-#ifdef LAUNCHER_HAS_VITA3K
+// launcher_bridge.h se incluye siempre (no solo con núcleo): los
+// helpers de cadena vacía y array vacío (P2-B5) se usan también en
+// las ramas stub.
 #include "launcher_bridge.h"
-#endif
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInstallCustomDriver(
@@ -47,7 +51,7 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInsta
 #ifdef LAUNCHER_HAS_VITA3K
     if (zipPath == nullptr) {
         LOGW("nativeInstallCustomDriver: ruta nula");
-        return env->NewStringUTF("");
+        return launcher_new_empty_string(env);
     }
     // Upstream devuelve el nombre del driver (= stem del zip) o "".
     // P4: installCustomDriver extrae un zip y toca el sistema de
@@ -60,20 +64,26 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInsta
     } catch (const std::exception &e) {
         LOGE("nativeInstallCustomDriver: excepción C++ capturada: %s", e.what());
         launcher_clear_pending_exception(env);
-        return env->NewStringUTF("");
+        return launcher_new_empty_string(env);
     } catch (...) {
         LOGE("nativeInstallCustomDriver: excepción C++ desconocida capturada");
         launcher_clear_pending_exception(env);
-        return env->NewStringUTF("");
+        return launcher_new_empty_string(env);
     }
-    if (name == nullptr || launcher_clear_pending_exception(env)) {
-        return env->NewStringUTF("");
+    // P2-B1: evaluar el clear ANTES del null (el || cortocircuitaba
+    // y el NewStringUTF("") corría con la excepción pendiente,
+    // devolviendo null a un String no nulo de Kotlin). P2-B5: la
+    // cadena vacía se crea con el helper, que limpia si NewStringUTF
+    // falla por OOM.
+    const bool hadException = launcher_clear_pending_exception(env);
+    if (name == nullptr || hadException) {
+        return launcher_new_empty_string(env);
     }
     LOGI("nativeInstallCustomDriver: instalado en el núcleo");
     return name;
 #else
     LOGW("nativeInstallCustomDriver STUB: núcleo no embebido");
-    return env->NewStringUTF("");
+    return launcher_new_empty_string(env);
 #endif
 }
 
@@ -82,14 +92,16 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetIn
     JNIEnv *env, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
     jobjectArray drivers = Java_org_vita3k_emulator_NativeLib_getInstalledCustomDrivers(env, nullptr);
-    if (drivers == nullptr || launcher_clear_pending_exception(env)) {
-        jclass string_class = env->FindClass("java/lang/String");
-        return env->NewObjectArray(0, string_class, nullptr);
+    // P2-B1: evaluar el clear ANTES del null (el || cortocircuitaba).
+    // P2-B5: el array vacío se crea con el helper (FindClass y
+    // NewObjectArray comprobados; nullptr solo si no se pudo crear).
+    const bool hadException = launcher_clear_pending_exception(env);
+    if (drivers == nullptr || hadException) {
+        return launcher_new_empty_string_array(env);
     }
     return drivers;
 #else
-    jclass string_class = env->FindClass("java/lang/String");
-    return env->NewObjectArray(0, string_class, nullptr);
+    return launcher_new_empty_string_array(env);
 #endif
 }
 

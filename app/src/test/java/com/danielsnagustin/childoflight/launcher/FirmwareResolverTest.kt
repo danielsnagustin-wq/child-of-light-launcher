@@ -51,13 +51,17 @@ class FirmwareResolverTest {
     }
 
     @Test
-    fun `vs0 en la ruta antigua no es Ready`() {
-        // La ruta vieja (vitaRoot/vs0) nunca la escribe el núcleo:
-        // darla por instalada haría que decide() eligiera el núcleo
-        // embebido con un firmware que el núcleo no ve.
+    fun `vs0 en la ruta antigua se migra a vita vs0 y es Ready`() {
+        // P2-A1 (2026-11-08): la ruta vieja (vitaRoot/vs0) ya no se
+        // ignora: resolve() la migra a vita/vs0 y entonces sí es el
+        // firmware que el núcleo ve. Antes este test exigía Missing.
         val root = tmp.newFolder("vitaRoot")
         File(File(root, "vs0"), "sys").mkdirs()
-        assertEquals(FirmwareStatus.Missing, FirmwareResolver.resolve(root))
+        val status = FirmwareResolver.resolve(root)
+        assertTrue(status is FirmwareStatus.Ready)
+        assertTrue(status.ready)
+        assertFalse(File(root, "vs0").exists())
+        assertTrue(File(File(root, "vita"), "vs0/sys").isDirectory)
     }
 
     @Test
@@ -87,10 +91,13 @@ class FirmwareResolverTest {
     }
 
     @Test
-    fun `markInstalled deja Ready con version`() {
+    fun `markInstalled deja Ready con version y vs0`() {
         val root = tmp.newFolder("vitaRoot")
         assertTrue(FirmwareResolver.markInstalled(root, "3.74"))
         assertEquals("3.74", FirmwareResolver.installedVersion(root))
+        // P2-C11 (2026-11-08): el marcador solo vale si vita/vs0
+        // sigue no vacío; sin vs0 el marcador miente y no es Ready.
+        File(File(root, "vita"), "vs0/sys").mkdirs()
         val status = FirmwareResolver.resolve(root)
         assertTrue(status is FirmwareStatus.Ready)
         assertTrue(FirmwareResolver.label(status).contains("3.74"))

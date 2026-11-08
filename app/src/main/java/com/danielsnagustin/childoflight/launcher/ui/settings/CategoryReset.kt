@@ -27,6 +27,7 @@ fun resetCategorySettings(current: LauncherSettings, category: SettingsCategory)
     return when (category) {
         SettingsCategory.GENERAL -> current.copy(
             allowExternalVita3k = preset.allowExternalVita3k,
+            psnSignedIn = preset.psnSignedIn,
         )
         SettingsCategory.PERSONALIZATION -> current
         SettingsCategory.GPU -> current.copy(

@@ -143,7 +143,10 @@ class EmbeddedCoreLayoutTest {
 
             val result = EmbeddedCoreLayout.migrateToEmbeddedLayout(root)
             assertEquals(EmbeddedCoreLayout.MigrationResult.AlreadyMigrated, result)
-            assertTrue(legacySave.isFile)
+            // P1-5(d) (2026-11-08): el save del antiguo se FUSIONA al
+            // destino (antes se dejaba intacto y quedaba invisible).
+            assertFalse(legacySave.isFile)
+            assertTrue(File(root, "vita/ux0/user/00/savedata/PCSB00598/slot0").isFile)
             assertTrue(migrated.isFile)
         } finally {
             root.deleteRecursively()

@@ -16,6 +16,7 @@ import com.danielsnagustin.childoflight.launcher.core.EmbeddedCoreLayout
 import com.danielsnagustin.childoflight.launcher.core.EmbeddedGameActivity
 import com.danielsnagustin.childoflight.launcher.core.EmbeddedGameLauncher
 import com.danielsnagustin.childoflight.launcher.core.EmbeddedPkgInstaller
+import com.danielsnagustin.childoflight.launcher.core.InstalledWithoutLicenseException
 import com.danielsnagustin.childoflight.launcher.core.Vita3kCoreBridge
 import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
 import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
@@ -30,6 +31,8 @@ import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.TitleId
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -114,6 +117,52 @@ class Vita3KLauncher(private val context: Context) {
         const val FIRMWARE_BLOCKED_EMBEDDED =
             "Falta el firmware de Vita: el motor integrado no puede arrancar el juego sin él " +
                 "(Ajustes → Avanzado → Firmware, opción avanzada)."
+
+        /**
+         * P2-A4a: el último arranque embebido que falló DENTRO de
+         * EmbeddedGameActivity.onCreate (después de que launch() ya
+         * devolvió LaunchedEmbedded y el ViewModel dijera "juego
+         * lanzado"). La Activity lo anota con noteEmbeddedLaunchFailed
+         * y MainActivity.onResume lo consume con
+         * takeEmbeddedLaunchFailure para corregir el mensaje al volver.
+         * Es una bandera en memoria (un solo lanzamiento a la vez):
+         * tryLaunchEmbedded la limpia antes de abrir la Activity.
+         */
+        @Volatile
+        private var lastEmbeddedLaunchFailure: String? = null
+
+        /** Anota que el juego no llegó a arrancar dentro de la Activity (P2-A4a). */
+        fun noteEmbeddedLaunchFailed(reason: String) {
+            lastEmbeddedLaunchFailure = reason
+        }
+
+        /**
+         * Devuelve y consume el fallo anotado por
+         * noteEmbeddedLaunchFailed (null si el juego arrancó bien o si
+         * ya se consumió). MainActivity.onResume lo llama al volver.
+         */
+        fun takeEmbeddedLaunchFailure(): String? {
+            val reason = lastEmbeddedLaunchFailure
+            lastEmbeddedLaunchFailure = null
+            return reason
+        }
+
+        /**
+         * P2-A4b: texto del fallo de init() según el código. El -1
+         * (NOT_IMPLEMENTED) no es "un error más": significa que no hay
+         * núcleo en esta APK (cargó el stub o nada) y mostrar solo
+         * "código -1" no dice nada. Se registra qué biblioteca falló
+         * al cargar (lastLoadError) en el mensaje y en el log.
+         */
+        internal fun initFailureMessage(rc: Int, lastLoadError: String?): String {
+            return if (rc == Vita3kCoreBridge.NOT_IMPLEMENTED) {
+                "El motor integrado no está presente en esta APK: el núcleo no se pudo cargar" +
+                    (lastLoadError?.let { " ($it)" } ?: "") +
+                    ". Instala el artefacto con núcleo (native) o repórtalo."
+            } else {
+                "El motor integrado no se pudo iniciar (código $rc). Vuelve a intentarlo; si sigue igual, repórtalo."
+            }
+        }
     }
 
     sealed class LaunchOutcome {
@@ -139,6 +188,24 @@ class Vita3KLauncher(private val context: Context) {
     sealed class EmbeddedAttempt {
         data class Ok(val outcome: LaunchOutcome) : EmbeddedAttempt()
         data class Failed(val reason: String) : EmbeddedAttempt()
+    }
+
+    /**
+     * P1-12: si la excepción es InstalledWithoutLicenseException, el
+     * .pkg YA está instalado en el núcleo y solo falló el registro de
+     * la licencia. El fallo NO es "no se pudo instalar": se informa
+     * "instalado pero sin licencia" y se ofrece reemplazar el
+     * work.bin (el mensaje de la excepción ya lo dice). El llamador
+     * NO debe reintentar la instalación completa: un reintento de
+     * JUGAR ya no reinstala (decide() pasa a UseEmbedded, el juego
+     * está extraído) y el motivo llega al diálogo con Reintentar /
+     * Reportar. Null si no es este caso (fallo genérico).
+     */
+    private fun installedWithoutLicenseFailure(exception: Throwable?): LaunchOutcome.EmbeddedFailed? {
+        val withoutLicense = exception as? InstalledWithoutLicenseException ?: return null
+        return LaunchOutcome.EmbeddedFailed(
+            "El juego quedó instalado en el motor integrado pero sin licencia: ${withoutLicense.message}",
+        )
     }
 
     data class Prerequisites(
@@ -393,6 +460,9 @@ class Vita3KLauncher(private val context: Context) {
                         LauncherLog.append(context, "pkg", "Eboot sin descifrar en $titleId: reinstalando el .pkg guardado.")
                         val reinstalled = reinstallGamePkg(library, titleId, pkgFile, onInstallProgress)
                         if (reinstalled.isFailure) {
+                            // P1-12: instalado pero sin licencia (no es
+                            // un fallo de instalación; no reinstalar).
+                            installedWithoutLicenseFailure(reinstalled.exceptionOrNull())?.let { return it }
                             val reason = reinstalled.exceptionOrNull()?.message ?: "No se pudo reinstalar el .pkg."
                             LauncherLog.append(context, "launch", "Reinstalación del .pkg falló: $reason")
                             return LaunchOutcome.EmbeddedFailed("No se pudo preparar el juego en el motor integrado: $reason")
@@ -417,10 +487,29 @@ class Vita3KLauncher(private val context: Context) {
                 val installed = embeddedTitle?.let { installPkgWithEmbeddedCore(library, it, onInstallProgress) }
                     ?: Result.failure(IllegalStateException("Title ID no válido: ${decision.titleId}"))
                 if (installed.isFailure) {
+                    // P1-12: instalado pero sin licencia (no es un fallo
+                    // de instalación; no reinstalar, ofrecer work.bin).
+                    installedWithoutLicenseFailure(installed.exceptionOrNull())?.let { return it }
                     val reason = installed.exceptionOrNull()?.message
                         ?: "No se pudo instalar el .pkg en el núcleo embebido."
                     LauncherLog.append(context, "launch", "Instalación .pkg embebida falló: $reason")
                     return LaunchOutcome.EmbeddedFailed("No se pudo instalar el juego en el motor integrado: $reason")
+                }
+                // P1-4: primera partida tras instalar el .pkg. Al inicio
+                // de launchImpl la activación se saltó (pkgOnly: no había
+                // savedata que respaldar), pero ahora el juego ya está
+                // extraído y installedTitleId() ya lo ve: activar la
+                // sesión aquí, antes de arrancar, para que esta primera
+                // partida cuente el tiempo y haga snapshot. Si falla, se
+                // bloquea con el motivo, igual que en la rama de juego
+                // extraído.
+                if (sessionManager != null) {
+                    val activated = sessionManager.activateForLaunch()
+                    if (activated.isFailure) {
+                        return LaunchOutcome.Blocked(
+                            activated.exceptionOrNull()?.message ?: "No se pudo activar la sesión.",
+                        )
+                    }
                 }
                 return when (val attempt = tryLaunchEmbedded(library, titleId, configFile.absolutePath, benchmark)) {
                     is EmbeddedAttempt.Ok -> attempt.outcome
@@ -462,6 +551,34 @@ class Vita3KLauncher(private val context: Context) {
     }
 
     /**
+     * P1-1: apaga la sesión nativa anterior si ya no hay partida en
+     * curso, para que el init() siguiente re-lea config.yml de disco
+     * con los ajustes cambiados entre partidas. Contrato JNI: solo
+     * desde el hilo principal (por eso el withContext(Main)) y solo
+     * sin partida en curso (isAppRunning false). Si devuelve
+     * SESSION_ACTIVE (-4), no se forzó nada: se registra y se sigue
+     * con el lanzamiento (el init será no-op y los ajustes viejos
+     * seguirán; hace falta matar el proceso para que entren). Sin
+     * sesión (-2) o sin núcleo (-1) no hay nada que apagar.
+     */
+    private suspend fun destroyStaleSessionIfIdle() {
+        if (!Vita3kCoreBridge.available || Vita3kCoreBridge.isAppRunning()) return
+        val rc = withContext(Dispatchers.Main) {
+            runCatching { Vita3kCoreBridge.destroySession() }.getOrDefault(Vita3kCoreBridge.NOT_IMPLEMENTED)
+        }
+        when (rc) {
+            Vita3kCoreBridge.OK ->
+                LauncherLog.append(context, "launch", "Sesión anterior del núcleo destruida; el próximo init re-lee config.yml")
+            -2 ->
+                LauncherLog.append(context, "launch", "Sin sesión anterior que destruir antes de init")
+            Vita3kCoreBridge.SESSION_ACTIVE ->
+                LauncherLog.append(context, "launch", "destroySession devolvió SESSION_ACTIVE (-4): la partida seguía activa o parándose; no se destruyó nada. Si los ajustes no se aplican, cierra la app por completo (matar el proceso) y vuelve a intentarlo.")
+            else ->
+                LauncherLog.append(context, "launch", "destroySession devolvió $rc antes de init; se sigue con el lanzamiento (si la sesión vieja sigue, los ajustes nuevos pueden no aplicarse hasta matar el proceso).")
+        }
+    }
+
+    /**
      * Intenta el lanzamiento embebido: migra el layout una vez
      * (ux0 -> vita/ux0), inicializa el núcleo, valida el Title ID y
      * abre EmbeddedGameActivity (el hilo SDL arranca el juego).
@@ -470,7 +587,7 @@ class Vita3KLauncher(private val context: Context) {
      * ni salta a la app externa: el motivo llega al diálogo
      * (Reintentar / Reportar).
      */
-    private fun tryLaunchEmbedded(
+    private suspend fun tryLaunchEmbedded(
         library: GameLibraryRepository,
         titleId: String,
         configPath: String,
@@ -488,11 +605,24 @@ class Vita3KLauncher(private val context: Context) {
                 }
                 else -> { /* AlreadyMigrated / NothingToMigrate: nada que hacer */ }
             }
+            // P1-1: si quedó una sesión vieja (p. ej. un init sin Activity
+            // detrás, o una Activity que no llegó a destruirla), se apaga
+            // aquí antes de init para que el nuevo init re-lea
+            // config.yml con los ajustes actuales. Solo sin partida en
+            // curso (isAppRunning false); destroySession corre en el hilo
+            // principal, por contrato JNI.
+            destroyStaleSessionIfIdle()
             val initRc = Vita3kCoreBridge.init(library.vitaRoot.absolutePath)
             if (initRc != Vita3kCoreBridge.OK) {
-                LauncherLog.append(context, "launch", "init del núcleo falló (código $initRc)")
+                // P2-A4b: el -1 no es "código -1" a secas: es "sin núcleo
+                // en esta APK". Se registra qué biblioteca falló.
+                if (initRc == Vita3kCoreBridge.NOT_IMPLEMENTED) {
+                    LauncherLog.append(context, "launch", "init del núcleo devolvió -1 (sin núcleo en esta APK); última carga: ${Vita3kCoreBridge.lastLoadError}")
+                } else {
+                    LauncherLog.append(context, "launch", "init del núcleo falló (código $initRc)")
+                }
                 return EmbeddedAttempt.Failed(
-                    "El motor integrado no se pudo iniciar (código $initRc). Vuelve a intentarlo; si sigue igual, repórtalo.",
+                    initFailureMessage(initRc, Vita3kCoreBridge.lastLoadError),
                 )
             }
             // Log de instrumentación (crash ~15:06 sin stack trace):
@@ -511,6 +641,7 @@ class Vita3KLauncher(private val context: Context) {
             LauncherLog.append(context, "launch", formatLoadGameResult(titleId, loadRc))
             if (loadRc != Vita3kCoreBridge.OK) {
                 val detail = when (loadRc) {
+                    -1 -> "el núcleo no está presente en esta APK (código -1)"
                     -2 -> "el motor integrado no encontró la sesión activa"
                     -3 -> "el motor integrado no encontró el juego instalado ($titleId)"
                     else -> "el motor integrado devolvió el código $loadRc al validar el juego"
@@ -521,6 +652,10 @@ class Vita3KLauncher(private val context: Context) {
             }
             val intent = EmbeddedGameActivity.createLaunchIntent(context, titleId, "Child of Light", benchmark)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // P2-A4a: un fallo anterior ya consumido o no no debe
+            // sobrevivir a este lanzamiento: si esta Activity falla su
+            // init, ella misma anota el fallo nuevo.
+            lastEmbeddedLaunchFailure = null
             context.startActivity(intent)
             LauncherLog.append(context, "launch", "Núcleo embebido lanzó $titleId (EmbeddedGameActivity)")
             EmbeddedAttempt.Ok(LaunchOutcome.LaunchedEmbedded(configPath))
@@ -576,24 +711,38 @@ class Vita3KLauncher(private val context: Context) {
         val installer = EmbeddedPkgInstaller(library)
         val progress: EmbeddedPkgInstaller.ProgressListener =
             onInstallProgress ?: EmbeddedPkgInstaller.ProgressListener { _, _ -> }
-        val result = installer.installGamePkg(titleId, progress)
+        // P1-5: los .pkg pueden vivir en el ux0 ANTIGUO (la migración
+        // AlreadyMigrated no mueve pkg/): se resuelven con los finders
+        // duales (legacy + embebido) y se instala el archivo encontrado,
+        // con su work.bin junto a él (findPkgWorkBinFile(pkgFile)). Las
+        // rutas efectivas (pkgGameFile/pkgPatchFile/pkgDlcDir) solo ven
+        // el ux0 efectivo y dejaban fuera el contenido del legacy.
+        val gamePkg = library.findPkgGameFile(titleId.id)
+            ?: return Result.failure(IllegalStateException("No está el archivo ${titleId.id}.pkg."))
+        val result = installer.installPkgFile(gamePkg, library.findPkgWorkBinFile(gamePkg), progress)
         result.onFailure {
             LauncherLog.append(context, "pkg", "Instalación .pkg embebida falló: ${it.message}")
             return Result.failure(it)
         }
-        if (library.pkgPatchFile(titleId.id).isFile) {
-            installer.installUpdatePkg(titleId, progress)
+        val patchPkg = library.findPkgPatchFile(titleId.id)
+        if (patchPkg != null) {
+            installer.installPkgFile(patchPkg, library.findPkgWorkBinFile(patchPkg), progress)
                 .onSuccess { LauncherLog.append(context, "pkg", "Update embebido instalado: ${titleId.id}") }
                 .onFailure { LauncherLog.append(context, "pkg", "Instalación del update embebido falló: ${it.message}") }
         }
-        library.pkgDlcDir().listFiles()
-            ?.filter { it.isFile && it.name.lowercase().endsWith(".pkg") }
-            ?.forEach { pkg ->
-                val dlcId = pkg.nameWithoutExtension
-                installer.installDlcPkg(dlcId, progress)
-                    .onSuccess { LauncherLog.append(context, "pkg", "DLC embebido instalado: $dlcId") }
-                    .onFailure { LauncherLog.append(context, "pkg", "Instalación del DLC $dlcId embebido falló: ${it.message}") }
-            }
+        // DLCs en .pkg en AMBOS ux0 (efectivo y antiguo), sin duplicar
+        // el mismo DLC: el efectivo manda si está en los dos.
+        val dlcPkgs = linkedMapOf<String, File>()
+        for (ux0 in listOf(library.ux0Dir, EmbeddedCoreLayout.legacyUx0Dir(library.vitaRoot))) {
+            File(File(ux0, "pkg"), "dlc").listFiles()
+                ?.filter { it.isFile && it.name.lowercase().endsWith(".pkg") }
+                ?.forEach { pkg -> dlcPkgs.putIfAbsent(pkg.nameWithoutExtension, pkg) }
+        }
+        dlcPkgs.forEach { (dlcId, pkg) ->
+            installer.installPkgFile(pkg, library.findPkgWorkBinFile(pkg), progress)
+                .onSuccess { LauncherLog.append(context, "pkg", "DLC embebido instalado: $dlcId") }
+                .onFailure { LauncherLog.append(context, "pkg", "Instalación del DLC $dlcId embebido falló: ${it.message}") }
+        }
         return Result.success(Unit)
     }
 

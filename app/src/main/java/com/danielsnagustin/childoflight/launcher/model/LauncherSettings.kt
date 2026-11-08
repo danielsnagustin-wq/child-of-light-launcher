@@ -247,6 +247,18 @@ data class LauncherSettings(
      */
     val allowExternalVita3k: Boolean = false,
     /**
+     * Sesión PSN (simulada): si está ON, config.yml emite
+     * psn-signed-in: 1 y el núcleo responde "sesión iniciada" a los
+     * juegos que preguntan antes de activar sus DLC (clave
+     * verificada en config.h:398; consumo en SceNpManager.cpp:131
+     * y :149). NO es una conexión real a PSN: no hay cuenta, ni
+     * red, ni sincronización de trofeos. Solo le indica al juego
+     * que hay sesión iniciada. ON por defecto: con OFF, los DLC
+     * pueden no activarse. Se lee en el init del núcleo: el cambio
+     * aplica en el siguiente lanzamiento en proceso fresco.
+     */
+    val psnSignedIn: Boolean = true,
+    /**
      * .pkg entregado a Vita3K: el launcher copió el .pkg + work.bin a
      * Descargas/ChildOfLight/ y abrió Vita3K con la guía. Se resetea
      * al importar un .pkg nuevo o borrar los datos del juego.

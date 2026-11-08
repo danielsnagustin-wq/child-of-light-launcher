@@ -80,6 +80,7 @@ fun encodeSettingsBackup(settings: LauncherSettings, ui: UiPreferences): String 
     bool("safeMode", settings.safeMode)
     bool("closeBackgroundApps", settings.closeBackgroundApps)
     bool("allowExternalVita3k", settings.allowExternalVita3k)
+    bool("psnSignedIn", settings.psnSignedIn)
     bool("hideTouchWhenGamepadConnected", settings.hideTouchWhenGamepadConnected)
     bool("showTouchOverlayInGame", settings.showTouchOverlayInGame)
     num("touchOverlayOpacity", settings.touchOverlayOpacity)
@@ -153,6 +154,7 @@ fun decodeSettingsBackup(
         safeMode = boolValue(map["safeMode"], current.safeMode),
         closeBackgroundApps = boolValue(map["closeBackgroundApps"], current.closeBackgroundApps),
         allowExternalVita3k = boolValue(map["allowExternalVita3k"], current.allowExternalVita3k),
+        psnSignedIn = boolValue(map["psnSignedIn"], current.psnSignedIn),
         hideTouchWhenGamepadConnected = boolValue(map["hideTouchWhenGamepadConnected"], current.hideTouchWhenGamepadConnected),
         showTouchOverlayInGame = boolValue(map["showTouchOverlayInGame"], current.showTouchOverlayInGame),
         touchOverlayOpacity = SettingsRepository.clampOverlayOpacity(floatValue(map["touchOverlayOpacity"], current.touchOverlayOpacity)),

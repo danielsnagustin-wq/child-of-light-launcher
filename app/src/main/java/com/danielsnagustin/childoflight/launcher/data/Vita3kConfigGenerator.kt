@@ -104,11 +104,11 @@ object Vita3kConfigGenerator {
         if (backend == GpuBackend.OPENGL && s.backend == GpuBackend.VULKAN) {
             sb.appendLine("# Sin Vulkan en este teléfono: fallback automático a OpenGL (el ajuste pedía Vulkan).")
         }
-        sb.appendLine("backend-renderer: \"${backend.vita3kValue}\"")
+        sb.appendLine("backend-renderer: \"${escapeYamlDoubleQuoted(backend.vita3kValue)}\"")
         sb.appendLine("# GPU — resolution-multiplier es float en config.h: 1.0 = 960x544, 2.0 = 1920x1088, 3.0 = 2880x1632, 4.0 = 3840x2176.")
         sb.appendLine("resolution-multiplier: ${formatFloat(s.resolutionMultiplier)}")
         sb.appendLine("# GPU — screen-filter verificado (default \"Bilinear\").")
-        sb.appendLine("screen-filter: \"${s.screenFilter.vita3kValue}\"")
+        sb.appendLine("screen-filter: \"${escapeYamlDoubleQuoted(s.screenFilter.vita3kValue)}\"")
         sb.appendLine("v-sync: ${s.vSync}")
         sb.appendLine("anisotropic-filtering: ${s.anisotropicFiltering}")
         sb.appendLine("async-pipeline-compilation: ${s.asyncPipelineCompilation}")
@@ -123,7 +123,7 @@ object Vita3kConfigGenerator {
         // valor ("off" incluido) cae en Disabled por fall-through. Los 5
         // valores del enum MemoryMapping son, por tanto, válidos tal cual.
         sb.appendLine("# GPU — memory-mapping verificado (renderer.cpp late_init): \"double-buffer\" / \"external-host\" / \"page-table\" / \"native-buffer\" (solo Android); \"off\" = Disabled.")
-        sb.appendLine("memory-mapping: \"${s.memoryMapping.vita3kValue}\"")
+        sb.appendLine("memory-mapping: \"${escapeYamlDoubleQuoted(s.memoryMapping.vita3kValue)}\"")
         sb.appendLine("texture-cache: ${s.textureCache}")
         sb.appendLine("shader-cache: ${s.shaderCache}")
         // --- Driver ---
@@ -145,7 +145,7 @@ object Vita3kConfigGenerator {
         // sistema; el config.yml no puede "activar" un driver ausente.
         if (s.gpuDriver == GpuDriver.TURNIP && s.turnipInstalled && s.customDriverName.isNotBlank()) {
             sb.appendLine("# Driver personalizado Turnip (solo Adreno). custom-driver-name verificado: es el stem del zip instalado en el núcleo (<filesDir>/driver/<nombre>/).")
-            sb.appendLine("custom-driver-name: \"${s.customDriverName}\"")
+            sb.appendLine("custom-driver-name: \"${escapeYamlDoubleQuoted(s.customDriverName)}\"")
         } else {
             sb.appendLine("custom-driver-name: \"\"")
         }
@@ -159,7 +159,7 @@ object Vita3kConfigGenerator {
         // el núcleo acepta exactamente "SDL" y "Cubeb" (case-sensitive);
         // cualquier otro valor deja el adapter a null y el audio no arranca.
         sb.appendLine("# Audio — audio-backend verificado (audio.cpp set_backend): \"SDL\" o \"Cubeb\".")
-        sb.appendLine("audio-backend: \"${s.audioBackend.vita3kValue}\"")
+        sb.appendLine("audio-backend: \"${escapeYamlDoubleQuoted(s.audioBackend.vita3kValue)}\"")
         sb.appendLine("audio-volume: ${s.audioVolume}")
         sb.appendLine("ngs-enable: ${s.ngsEnable}")
         // --- Overlay ---
@@ -194,22 +194,64 @@ object Vita3kConfigGenerator {
         // el estado de sesión antes de activar sus DLC nunca los
         // aplican sin esta señal (reporte del usuario desde Vita3K:
         // "si pongo los DLC y no está activada la señal PSN emulada
-        // los DLC nunca se ponen"). El launcher emite 1 siempre: es
-        // inicio de sesión EMULADO, sin cuenta real ni red. La vía
-        // Android/SDL (main_android.cpp, 201 líneas) no toca este
-        // valor ni lo anula: basta con emitirlo en config.yml, no
-        // hace falta nada por JNI. La licencia de cada DLC (.rif /
-        // work.bin) ya se instala aparte con su .pkg (ver
+        // los DLC nunca se ponen"). El ajuste psnSignedIn del
+        // launcher (Ajustes → General → Motor, ON por defecto) decide
+        // el valor: 1 si está ON, 0 si está OFF. Es inicio de sesión
+        // EMULADO, sin cuenta real ni red. La vía Android/SDL
+        // (main_android.cpp, 201 líneas) no toca este valor ni lo
+        // anula: basta con emitirlo en config.yml, no hace falta nada
+        // por JNI. La licencia de cada DLC (.rif / work.bin) ya se
+        // instala aparte con su .pkg (ver
         // EmbeddedPkgInstaller.installDlcPkg): esto no la sustituye,
-        // la complementa.
-        sb.appendLine("psn-signed-in: 1")
+        // la complementa. Se lee en el init del núcleo: el cambio
+        // aplica en el siguiente lanzamiento en proceso fresco.
+        sb.appendLine("psn-signed-in: ${if (settings.psnSignedIn) 1 else 0}")
         // --- Rutas ---
-        sb.appendLine("pref-path: \"$vitaFsPath\"")
+        sb.appendLine("pref-path: \"${escapeYamlDoubleQuoted(vitaFsPath)}\"")
         return sb.toString()
     }
 
     private fun formatFloat(value: Float): String {
         return if (value == value.toInt().toFloat()) "${value.toInt()}.0" else value.toString()
+    }
+
+    /**
+     * Escapa un valor para interpolarlo entre comillas dobles en el
+     * YAML generado (P2-B8, 2026-11-08).
+     *
+     * El parser del núcleo es yaml-cpp (config.cpp:22 del pin
+     * 3e43bc80; config/CMakeLists.txt:18 lo enlaza) y parse() devuelve
+     * FileNotFound ante YAML::Exception (config.cpp:301-328): un valor
+     * sin escapar con una comilla o un salto de línea rompía todo el
+     * config.yml y el núcleo arrancaba con defaults en silencio.
+     * Los escapes emitidos son los estándar del estilo entrecomillado
+     * doble de YAML, que yaml-cpp acepta: barra invertida, comilla
+     * doble, salto de línea, retorno de carro y tabulador con su
+     * escape corto, y cualquier otro carácter de control como
+     * escape unicode de 4 dígitos. El resto de caracteres se deja
+     * tal cual: un nombre normal sale idéntico.
+     *
+     * Pura y sin estado, para poder probarla en la JVM.
+     */
+    fun escapeYamlDoubleQuoted(value: String): String {
+        val sb = StringBuilder(value.length)
+        for (c in value) {
+            when (c) {
+                '\\' -> sb.append("\\\\")
+                '"' -> sb.append("\\\"")
+                '\n' -> sb.append("\\n")
+                '\r' -> sb.append("\\r")
+                '\t' -> sb.append("\\t")
+                else -> {
+                    if (c.code < 0x20 || c.code == 0x7F) {
+                        sb.append("\\u%04X".format(c.code))
+                    } else {
+                        sb.append(c)
+                    }
+                }
+            }
+        }
+        return sb.toString()
     }
 
     /**

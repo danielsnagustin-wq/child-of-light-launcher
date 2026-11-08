@@ -2,6 +2,8 @@ package com.danielsnagustin.childoflight.launcher.data
 
 import com.danielsnagustin.childoflight.launcher.model.TitleId
 import java.io.InputStream
+import java.util.Base64
+import java.util.zip.Inflater
 
 /**
  * Parser del header de un .pkg de PS Vita (formato PKG de Sony).
@@ -16,7 +18,12 @@ import java.io.InputStream
  *   variantes y lo que valida el juego es el Content ID.
  * - 0x08: offset de metadatos (4 bytes BE, en Vita suele ser 0x280).
  * - 0x10: tamaño de metadatos (4 bytes BE, en Vita suele ser 0x160).
- * - 0x20: offset de datos (8 bytes BE), 0x28: tamaño de datos (8 bytes BE).
+ * - 0x18: tamaño TOTAL del .pkg (8 bytes BE, `total_size` en upstream:
+ *   `vita3k/packages/include/packages/pkg.h`, struct PkgHeader).
+ *   Upstream rechaza el .pkg si el archivo es más pequeño que este
+ *   valor (`pkg.cpp`: `if (pkg_size < byte_swap(pkg_header.total_size))`).
+ * - 0x20: offset de datos (8 bytes BE, `data_offset`), 0x28: tamaño de
+ *   datos (8 bytes BE, `data_size`).
  * - 0x30: Content ID, 48 bytes (36 caracteres + relleno), ASCII
  *   terminado en NUL, p. ej. "EP0001-PCSB00598_00-CHILDOFLIGHT0000".
  *
@@ -37,6 +44,11 @@ import java.io.InputStream
  *   "EP0001-PCSB00598_00-CHILDOFLIGHT0000" en 0x10, sin "KO").
  *   Se aceptan las dos formas: .rif binario (Content ID en 0x10) o
  *   texto zRIF (ASCII base64 que empieza por "KO", con NUL hasta 512).
+ *   La forma B se VERIFICA de verdad: el zRIF se decodifica (base64) y
+ *   se infla (deflate, como `validate_zrif` de upstream,
+ *   `packages/src/license.cpp`: base64 + inflate a 512 bytes) y el
+ *   Content ID del .rif resultante debe coincidir con el esperado.
+ *   Un zRIF corto o que no infle a 512 bytes no es una licencia válida.
  *   Si se conoce el Content ID del .pkg, el del .bin debe coincidir.
  */
 data class PkgHeader(
@@ -49,9 +61,26 @@ data class PkgHeader(
     val pkgType: Int,
     /** Tamaño del contenido según el header (offset 0x28). 0 = no informado. */
     val dataSizeBytes: Long,
+    /** Tamaño TOTAL del .pkg según el header (offset 0x18). 0 = no informado. */
+    val totalSizeBytes: Long = 0L,
+    /** Offset de los datos según el header (offset 0x20). 0 = no informado. */
+    val dataOffsetBytes: Long = 0L,
 ) {
     /** Nombre del contenido (tras "_00-"), p. ej. "CHILDOFLIGHT0000". */
     val contentName: String get() = contentId.substringAfter("_00-", "")
+
+    /**
+     * Tamaño total que el header declara para el archivo completo:
+     * `total_size` (0x18) si lo trae, si no `data_offset + data_size`.
+     * 0 si el header no informa ningún tamaño (entonces la importación
+     * no puede comprobar si el .pkg está truncado y no lo intenta).
+     */
+    val declaredTotalSizeBytes: Long
+        get() = when {
+            totalSizeBytes > 0 -> totalSizeBytes
+            dataOffsetBytes > 0 && dataSizeBytes > 0 -> dataOffsetBytes + dataSizeBytes
+            else -> 0L
+        }
 }
 
 object PkgHeaderParser {
@@ -60,6 +89,90 @@ object PkgHeaderParser {
     const val HEADER_MIN_BYTES = 0x54
     /** Bytes que se leen del .pkg para parsear (el header son 0x80). */
     const val HEADER_READ_BYTES = 0x80
+
+    /**
+     * Longitud mínima de un texto zRIF válido. Un zRIF real es un .rif
+     * de 512 bytes comprimido (deflate) y en base64: medido con un .rif
+     * realista (Content ID + clave + resto a cero) el texto resultante
+     * ronda los ~110 caracteres, nunca 2. El inflado a 512 bytes es la
+     * comprobación fuerte; este mínimo solo rechaza textos absurdos
+     * ("KO" + un par de caracteres) antes de intentar decodificar.
+     */
+    const val MIN_ZRIF_TEXT_LENGTH = 64
+
+    /**
+     * Decodifica un texto zRIF a su .rif binario de 512 bytes.
+     * Upstream (`validate_zrif`, `packages/src/license.cpp`) hace:
+     * base64 del texto e inflate hasta 512 bytes. El prefijo "KO" es
+     * literal, no parte del base64: verificado por simulación, el
+     * base64 de un deflate crudo de un .rif siempre empieza por
+     * "Y2Bk" sea cual sea su contenido, así que un zRIF real es
+     * "KO" + base64(deflate(.rif)). Se prueban las dos lecturas del
+     * prefijo (sin él primero, que es la real; el texto completo
+     * después, por tolerancia) y los dos inflados (deflate crudo y
+     * zlib): lo que decide es que el resultado sean exactamente 512
+     * bytes. Si ninguna variante llega a 512, el texto no es un zRIF
+     * válido.
+     */
+    fun decodeZrifToRif(text: String): Result<ByteArray> {
+        val clean = text.trim()
+        if (clean.length < MIN_ZRIF_TEXT_LENGTH) {
+            return Result.failure(
+                IllegalArgumentException(
+                    "La licencia zRIF es demasiado corta (${clean.length} caracteres; " +
+                        "una licencia real tiene más de $MIN_ZRIF_TEXT_LENGTH). " +
+                        "Elige el work.bin que acompaña a este .pkg.",
+                ),
+            )
+        }
+        val candidates = listOf(clean.removePrefix("KO"), clean)
+        for (candidate in candidates) {
+            val decoded = decodeBase64Lenient(candidate) ?: continue
+            for (nowrap in listOf(true, false)) {
+                val inflated = inflateTo512(decoded, nowrap)
+                if (inflated != null) return Result.success(inflated)
+            }
+        }
+        return Result.failure(
+            IllegalArgumentException(
+                "No se pudo decodificar la licencia zRIF (no es base64 válido " +
+                    "o no se descomprime a una licencia de 512 bytes). " +
+                    "Elige el work.bin que acompaña a este .pkg.",
+            ),
+        )
+    }
+
+    /** Content ID del .rif resultante de decodificar un zRIF, o null si no se puede extraer. */
+    fun extractZrifContentId(text: String): String? =
+        decodeZrifToRif(text).getOrNull()?.let { extractWorkBinContentId(it) }
+
+    private fun decodeBase64Lenient(text: String): ByteArray? {
+        val decoder = Base64.getDecoder()
+        runCatching { return decoder.decode(text) }
+        // Sin relleno '=' al final: se completa antes de rendirse.
+        val padded = text + "=".repeat((4 - text.length % 4) % 4)
+        return runCatching { decoder.decode(padded) }.getOrNull()
+    }
+
+    /** Infla a exactamente 512 bytes, o null si no llega / se pasa / falla. */
+    private fun inflateTo512(bytes: ByteArray, nowrap: Boolean): ByteArray? {
+        val inflater = Inflater(nowrap)
+        return try {
+            inflater.setInput(bytes)
+            val out = ByteArray(512)
+            var total = 0
+            while (total < out.size) {
+                val n = inflater.inflate(out, total, out.size - total)
+                if (n <= 0) break
+                total += n
+            }
+            if (total == 512 && inflater.finished()) out else null
+        } catch (_: Exception) {
+            null
+        } finally {
+            inflater.end()
+        }
+    }
 
     private val PKG_MAGIC = byteArrayOf(0x7F, 0x50, 0x4B, 0x47) // "\x7FPKG"
 
@@ -152,7 +265,9 @@ object PkgHeaderParser {
         }
         val pkgType = readU16BE(bytes, 0x06)
         val dataSize = readU64BE(bytes, 0x28)
-        return Result.success(PkgHeader(contentId, titleId, region, pkgType, dataSize))
+        val totalSize = readU64BE(bytes, 0x18)
+        val dataOffset = readU64BE(bytes, 0x20)
+        return Result.success(PkgHeader(contentId, titleId, region, pkgType, dataSize, totalSize, dataOffset))
     }
 
     /** Parsea el header leyendo solo los primeros bytes del stream (no lo consume entero). */
@@ -178,7 +293,9 @@ object PkgHeaderParser {
      *     Si se pasa expectedContentId, debe coincidir: el .bin tiene que
      *     ser la licencia DE ESTE .pkg, no de otro juego.
      *  B) texto zRIF: ASCII base64 que empieza por "KO", con relleno NUL
-     *     hasta 512 (por si alguien guarda el zRIF como archivo).
+     *     hasta 512 (por si alguien guarda el zRIF como archivo). Se
+     *     decodifica (base64 + inflate a 512 bytes) y su Content ID debe
+     *     coincidir con expectedContentId, igual que la forma A.
      * Un "work (5).bin" de NPS cumple A (el nombre con "(5)" no importa:
      * solo el contenido).
      */
@@ -194,8 +311,9 @@ object PkgHeaderParser {
         // Forma B: texto zRIF.
         if (bytes[0] == 'K'.code.toByte() && bytes[1] == 'O'.code.toByte()) {
             val end = bytes.indexOfFirst { it == 0.toByte() }.takeIf { it >= 0 } ?: bytes.size
-            val bad = (0 until end).firstOrNull { i ->
-                val c = bytes[i].toInt().toChar()
+            val text = bytes.copyOfRange(0, end).toString(Charsets.US_ASCII)
+            val bad = text.indices.firstOrNull { i ->
+                val c = text[i]
                 !(c.isLetterOrDigit() || c == '+' || c == '/' || c == '=')
             }
             if (bad != null) {
@@ -203,6 +321,28 @@ object PkgHeaderParser {
                     IllegalArgumentException(
                         "El work.bin trae caracteres no válidos en la licencia zRIF " +
                             "(posición $bad). Elige el work.bin que acompaña a este .pkg.",
+                    ),
+                )
+            }
+            // P1-6: antes cualquier texto "KO..." pasaba sin comprobar
+            // ni la longitud ni de qué juego era. Ahora el zRIF se
+            // decodifica (base64 + inflate a 512 bytes) y su Content ID
+            // debe coincidir con el del .pkg, igual que la forma A.
+            val rif = decodeZrifToRif(text).getOrElse { e ->
+                return Result.failure(e)
+            }
+            val contentId = extractWorkBinContentId(rif)
+                ?: return Result.failure(
+                    IllegalArgumentException(
+                        "La licencia zRIF no trae un Content ID válido. " +
+                            "Elige el work.bin que acompaña a este .pkg.",
+                    ),
+                )
+            if (expectedContentId != null && contentId != expectedContentId) {
+                return Result.failure(
+                    IllegalArgumentException(
+                        "Este work.bin es de otro juego (trae Content ID $contentId, " +
+                            "se esperaba $expectedContentId). Elige el work.bin que acompaña a este .pkg.",
                     ),
                 )
             }

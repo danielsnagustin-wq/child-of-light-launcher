@@ -2,6 +2,7 @@ package com.danielsnagustin.childoflight.launcher.core
 
 import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
+import com.danielsnagustin.childoflight.launcher.data.PkgHeaderParser
 import com.danielsnagustin.childoflight.launcher.model.PkgKind
 import com.danielsnagustin.childoflight.launcher.model.TitleId
 import kotlinx.coroutines.Dispatchers
@@ -17,9 +18,19 @@ import java.io.File
  * verificadas de upstream (Vita3K master 3e43bc80,
  * vita3k/android/jni/native_install.cpp):
  * - installPkg(pkg, zrif, callback): instala el .pkg (desencripta
- *   con el zRIF). zrif="" instala sin licencia.
+ *   con el zRIF). Un zRIF vacío NO es una instalación válida: el
+ *   descifrado F00D lo necesita y upstream devuelve false
+ *   (pkg.cpp:331-351, execute < 0 -> remove + return false).
+ *   Por eso installPkgFile NUNCA instala con zrif="" (P0-1): el
+ *   zRIF sale del work.bin guardado o, si no lo hay, de la licencia
+ *   ya instalada en el núcleo (findPkgZrif, pkg.cpp:381-405); si no
+ *   hay licencia en ningún sitio, falla ANTES de instalar.
  * - convertRifToZrif(work.bin): el work.bin de 512 B -> zRIF.
- * - copyLicense(work.bin): copia la licencia .bin/.rif a su sitio.
+ * - copyLicense(work.bin): copia la licencia .bin/.rif a su sitio
+ *   (ux0/license/<title>/<contentId>.rif, license.cpp). Solo
+ *   entiende .rif BINARIO: lee el Content ID del offset 16; un
+ *   work.bin en texto zRIF ("KO…") NO es un .rif y no debe pasarse
+ *   por copyLicense.
  * - installArchive(zip/vpk, callback, force): instala .zip/.vpk.
  * - installFirmware(pup, callback): instala el firmware PUP.
  *
@@ -31,6 +42,28 @@ import java.io.File
  * Las llamadas nativas bloquean (la instalación de 1 GB tarda):
  * se ejecutan en Dispatchers.IO. El progreso llega por onProgress.
  */
+/**
+ * Failure de [EmbeddedPkgInstaller.installPkgFile] (y de installGamePkg /
+ * installDlcPkg / installUpdatePkg) con un significado DISTINTO al failure
+ * genérico (P1-12): el .pkg YA quedó instalado en el núcleo, pero su
+ * licencia no se pudo registrar en disco (copyLicense falló tras un
+ * installPkg con éxito). El juego está dentro del núcleo; un reintento
+ * de JUGAR con el mismo work.bin fallaría igual.
+ *
+ * CONTRATO para el llamador (Vita3KLauncher.kt, oleada 2):
+ * - NO tratarlo como un failure genérico de instalación (no es
+ *   "no se pudo instalar": el juego SÍ está instalado).
+ * - Comprobarlo con `result.exceptionOrNull() is
+ *   InstalledWithoutLicenseException` y ofrecer REEMPLAZAR el work.bin
+ *   (selector de work.bin, PendingPkgLicense) en vez de un reintento
+ *   que reinstalaría 1,1 GB para fallar igual.
+ * - La firma sigue siendo Result<Unit> a propósito: cambiarla a un
+ *   sealed de resultado rompería Vita3KLauncher.kt (que usa isFailure /
+ *   onFailure y devuelve Result<Unit>), archivo de la oleada 2. El tipo
+ *   distinto viaja como la excepción del failure, comprobable con `is`.
+ */
+class InstalledWithoutLicenseException(message: String) : IllegalStateException(message)
+
 class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
 
     /** Progreso de instalación (0-100, mensaje en español). */
@@ -63,9 +96,16 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
 
     /**
      * Instala el .pkg del JUEGO (PCSE00480 / PCSB00598) con su work.bin.
-     * Orden upstream: zRIF del work.bin -> installPkg -> si no había
-     * zRIF, copyLicense(work.bin) como respaldo. Devuelve success solo
-     * si installPkg devolvió true.
+     * Orden (P0-1, P1-12): validar el work.bin contra el Content ID del
+     * .pkg -> obtener el zRIF (del work.bin o de la licencia ya instalada
+     * en el núcleo) -> installPkg -> registrar el .rif con copyLicense.
+     * Nunca se instala sin licencia: sin work.bin ni licencia instalada
+     * en el núcleo, falla ANTES de instalar. Si copyLicense falla tras
+     * instalar, el failure lleva [InstalledWithoutLicenseException]
+     * (el juego YA está instalado; hay que reemplazar el work.bin, no
+     * reinstalar). Devuelve success solo si installPkg devolvió true
+     * y la licencia quedó registrada (o no había work.bin que registrar
+     * porque la licencia ya estaba en el núcleo).
      */
     suspend fun installGamePkg(titleId: TitleId, onProgress: ProgressListener): Result<Unit> {
         return installPkgFile(
@@ -106,11 +146,64 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
         return withContext(Dispatchers.IO) {
             progressListener = onProgress
             try {
-                // zRIF desde el work.bin (512 B). Si no hay work.bin o no
-                // se puede convertir, se instala sin licencia (zrif="").
-                var zrif = ""
+                // (P1-12) 1. Validar el work.bin ANTES de instalar, contra
+                // el Content ID de ESTE .pkg: un work.bin de otro juego
+                // (o corrupto) se rechaza aquí, no tras 1,1 GB instalados.
+                // Si el header del .pkg no se puede leer, se valida sin
+                // expectativa de Content ID (la forma A sigue exigiendo
+                // un Content ID con formato válido); installPkg de
+                // upstream rechaza por su cuenta un .pkg no válido.
+                val expectedContentId = readPkgContentId(pkgFile)
                 if (workBinFile.isFile) {
-                    zrif = Vita3kCoreBridge.convertRifToZrif(workBinFile.absolutePath)
+                    val validation = runCatching {
+                        workBinFile.inputStream().use {
+                            PkgHeaderParser.validateWorkBin(it, expectedContentId)
+                        }
+                    }.getOrElse { Result.failure(it) }
+                    if (validation.isFailure) {
+                        return@withContext Result.failure(
+                            validation.exceptionOrNull()
+                                ?: IllegalStateException("El work.bin no es válido para ${pkgFile.name}."),
+                        )
+                    }
+                }
+                // (P0-1) 2. Obtener el zRIF. Nunca se instala con
+                // zrif="": upstream lo necesita para descifrar (pkg.cpp:
+                // execute < 0 -> install false) y un juego instalado sin
+                // licencia no arranca. Dos fuentes, en este orden:
+                //  a) el work.bin guardado junto al .pkg;
+                //  b) la licencia YA instalada en el núcleo (findPkgZrif
+                //     lee ux0/license/<title>/<contentId>.rif): es el
+                //     caso legítimo sin work.bin, p. ej. la reinstalación
+                //     del eboot cifrado (reinstallGamePkg) cuando el juego
+                //     ya se instaló una vez con licencia.
+                // Si convertRifToZrif devuelve "" con work.bin presente,
+                // se falla ANTES de instalar (P1-12): instalar sin
+                // licencia y descubrirlo después ya no ocurre.
+                val zrif: String
+                if (workBinFile.isFile) {
+                    val converted = Vita3kCoreBridge.convertRifToZrif(workBinFile.absolutePath)
+                    if (converted.isEmpty()) {
+                        return@withContext Result.failure(
+                            IllegalStateException(
+                                "El work.bin de ${pkgFile.name} no se pudo convertir a licencia (zRIF): " +
+                                    "el núcleo no puede instalar el .pkg sin ella. " +
+                                    "Elige el work.bin binario (.rif, 512 B) que acompaña a este .pkg.",
+                            ),
+                        )
+                    }
+                    zrif = converted
+                } else {
+                    val installed = Vita3kCoreBridge.findPkgZrif(pkgFile.absolutePath)
+                    if (installed.isEmpty()) {
+                        return@withContext Result.failure(
+                            IllegalStateException(
+                                "Falta la licencia (work.bin) de ${pkgFile.name}: sin ella el motor integrado " +
+                                    "no puede instalar el .pkg. Elige el work.bin en Importar (tarjeta «Falta la licencia»).",
+                            ),
+                        )
+                    }
+                    zrif = installed
                 }
                 val ok = Vita3kCoreBridge.installPkg(pkgFile.absolutePath, zrif, callback)
                 if (!ok) {
@@ -118,17 +211,25 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
                         IllegalStateException("El núcleo no pudo instalar ${pkgFile.name}."),
                     )
                 }
-                // Respaldo: si no hubo zRIF pero sí work.bin, copiar la
-                // licencia a su sitio dentro del núcleo. Antes el
-                // resultado se ignoraba: un .pkg "instalado" sin
-                // licencia no arranca en el núcleo y el launcher lo daba
-                // por bueno. Si la copia falla, es fallo de instalación.
-                if (zrif.isEmpty() && workBinFile.isFile) {
+                // (P1-12) 3. Registrar el .rif en el núcleo para que
+                // futuras reinstalaciones lo encuentren vía findPkgZrif.
+                // installPkg ya llama a create_license con el zRIF, así
+                // que esto es un respaldo; si falla, el juego YA está
+                // instalado: NO es un failure genérico, es
+                // InstalledWithoutLicense (ver su contrato): la oleada 2
+                // ofrece reemplazar el work.bin en vez de reinstalar.
+                // Solo con .rif BINARIO: copyLicense lee el Content ID
+                // del offset 16 (license.cpp) y un work.bin en texto
+                // zRIF ("KO…") no es un .rif; su licencia ya quedó
+                // registrada por create_license desde el zRIF convertido.
+                if (workBinFile.isFile && !isTextZrifFile(workBinFile)) {
                     val licenseOk = Vita3kCoreBridge.copyLicense(workBinFile.absolutePath)
                     if (!licenseOk) {
                         return@withContext Result.failure(
-                            IllegalStateException(
-                                "El núcleo instaló ${pkgFile.name} pero no pudo copiar su licencia (work.bin): sin ella el juego no arrancaría.",
+                            InstalledWithoutLicenseException(
+                                "El núcleo instaló ${pkgFile.name} pero no pudo copiar su licencia (work.bin): " +
+                                    "el juego está instalado pero puede no arrancar sin ella. " +
+                                    "Reemplaza el work.bin e inténtalo de nuevo.",
                             ),
                         )
                     }
@@ -140,6 +241,42 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
                 progressListener = null
             }
         }
+    }
+
+    /**
+     * Content ID del header del .pkg (p. ej.
+     * "EP0001-PCSB00598_00-CHILDOFLIGHT0000"), o null si el header no
+     * se puede leer. Solo se usa como expectativa al validar el
+     * work.bin; null = validar sin expectativa.
+     */
+    private fun readPkgContentId(pkgFile: File): String? {
+        return runCatching {
+            pkgFile.inputStream().use { PkgHeaderParser.parse(it) }
+        }.getOrNull()?.getOrNull()?.contentId
+    }
+
+    /**
+     * ¿Es este work.bin un texto zRIF ("KO…" en ASCII) en vez de un
+     * .rif binario? La distinción importa porque copyLicense de
+     * upstream solo entiende .rif binario (license.cpp: lee el
+     * Content ID del offset 16). Limitación conocida (sospecha S1 del
+     * reporte): rif2zrif NO está en el pin parcial de Vita3K (solo su
+     * #include y sus llamadas), así que no se puede verificar si el
+     * nativo convierte un texto zRIF; si convertRifToZrif devuelve ""
+     * con un work.bin en texto, installPkgFile falla antes de instalar
+     * con el mensaje de conversión, sin inventar comportamiento del
+     * nativo. La forma A (binaria) sí se valida con rigor: Content ID
+     * con formato válido y, si se conoce, igual al del .pkg.
+     */
+    private fun isTextZrifFile(file: File): Boolean {
+        if (!file.isFile) return false
+        return runCatching {
+            file.inputStream().use { input ->
+                val first = ByteArray(2)
+                input.read(first) == 2 &&
+                    first[0] == 'K'.code.toByte() && first[1] == 'O'.code.toByte()
+            }
+        }.getOrDefault(false)
     }
 
     /** Instala un .zip/.vpk con el núcleo (misma ruta que installArchive de upstream). */
