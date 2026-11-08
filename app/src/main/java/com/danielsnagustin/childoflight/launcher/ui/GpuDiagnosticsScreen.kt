@@ -88,8 +88,11 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             val ramGb = remember { DeviceMemory.totalRamBytes(context)?.let { it / 1_073_741_824.0 } }
             Text("Arquitectura: ${DeviceCompat.architectureLabel()}")
             Text("RAM total: ${ramGb?.let { "%.1f GB".format(it) } ?: "no detectada"}")
-            if (settings != null) {
-                Text("Backend efectivo: ${resolveBackend(settings, g).label}")
+            // `settings` es propiedad delegada (collectAsState): no admite
+            // smart cast tras el null-check; se captura en un val local.
+            val currentSettings = settings
+            if (currentSettings != null) {
+                Text("Backend efectivo: ${resolveBackend(currentSettings, g).label}")
             }
             if (!DeviceCompat.is64BitDevice()) {
                 Text(
