@@ -256,4 +256,22 @@ class Vita3kConfigGeneratorTest {
         assertFalse(yaml.contains("display-info-message: "))
         assertTrue(yaml.contains("TODO-VERIFY: display-info-message"))
     }
+
+    @Test
+    fun psnSignedInAlwaysEmitted() {
+        // Verificado en el pin (config.h:398): psn-signed-in existe,
+        // es INT, default false. Lo consumen sceNpCheckCallback y
+        // sceNpGetServiceState (SceNpManager.cpp:131 y :149): con 0
+        // el núcleo responde siempre SIGNED_OUT y los juegos que
+        // preguntan el estado de sesión antes de activar sus DLC
+        // nunca los aplican. El launcher emite 1 siempre: inicio de
+        // sesión EMULADO, sin cuenta real ni red. Es int, no bool:
+        // se emite "1", nunca "true" ni "0".
+        val yaml = Vita3kConfigGenerator.generate(
+            LauncherSettings(), "/data/vita3k",
+        )
+        assertTrue(yaml.contains("psn-signed-in: 1"))
+        assertFalse(yaml.contains("psn-signed-in: 0"))
+        assertFalse(yaml.contains("psn-signed-in: true"))
+    }
 }

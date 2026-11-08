@@ -49,6 +49,15 @@ import java.io.File
  *   bienvenida de la GUI Qt (gui-qt/src/main_window.cpp:1031-1037):
  *   en el camino Android/SDL ese diálogo ni siquiera se ejecuta,
  *   pero la clave es real y se emite false siempre),
+ *   psn-signed-in (int, default false en upstream; verificado en
+ *   config.h:398; lo consumen sceNpCheckCallback y
+ *   sceNpGetServiceState en modules/SceNpManager/SceNpManager.cpp
+ *   (:131 y :149): con 0 el núcleo responde siempre
+ *   SCE_NP_SERVICE_STATE_SIGNED_OUT y los juegos que piden el
+ *   estado de sesión antes de activar sus DLC nunca los aplican.
+ *   El launcher emite 1 siempre: es inicio de sesión EMULADO
+ *   (sin cuenta real ni red), lo que el usuario llama "señal PSN
+ *   emulada"; sin él, los DLC instalados no se activan),
  *   custom-driver-name (string: nombre del driver instalado = stem
  *   del zip, sin .zip; el driver debe estar instalado en el núcleo
  *   con installCustomDriver, ver driver_bridge.cpp),
@@ -186,6 +195,24 @@ object Vita3kConfigGenerator {
         // (config/state.h:136-224): NO se emite como clave real, solo
         // queda este TODO-VERIFY en el YAML para que se vea por qué.
         sb.appendLine("# TODO-VERIFY: display-info-message NO existe en config.h (pin 3e43bc80) ni en Config::CurrentConfig: no hay ningún mecanismo de mensajes informativos en config, así que NO se emite como clave real. Lo más cercano es warn-missing-firmware (config.h:382), que es un aviso de firmware, no de info.")
+        // --- PSN emulado (DLC) ---
+        // psn-signed-in VERIFICADO (config.h:398): int, default false
+        // en upstream. Lo consumen sceNpCheckCallback y
+        // sceNpGetServiceState (modules/SceNpManager/SceNpManager.cpp
+        // :131 y :149): con 0 el núcleo responde siempre
+        // SCE_NP_SERVICE_STATE_SIGNED_OUT. Los juegos que preguntan
+        // el estado de sesión antes de activar sus DLC nunca los
+        // aplican sin esta señal (reporte del usuario desde Vita3K:
+        // "si pongo los DLC y no está activada la señal PSN emulada
+        // los DLC nunca se ponen"). El launcher emite 1 siempre: es
+        // inicio de sesión EMULADO, sin cuenta real ni red. La vía
+        // Android/SDL (main_android.cpp, 201 líneas) no toca este
+        // valor ni lo anula: basta con emitirlo en config.yml, no
+        // hace falta nada por JNI. La licencia de cada DLC (.rif /
+        // work.bin) ya se instala aparte con su .pkg (ver
+        // EmbeddedPkgInstaller.installDlcPkg): esto no la sustituye,
+        // la complementa.
+        sb.appendLine("psn-signed-in: 1")
         // --- Ajustes solo-launcher ---
         sb.appendLine("# TODO-VERIFY: frame-limiter (${s.frameLimiter.label}) no tiene clave en config.h ni en config.cpp (pin 3e43bc80); lo aplica el launcher al lanzar (límite objetivo), no el núcleo vía YAML.")
         sb.appendLine("# TODO-VERIFY: frame-skipping (${s.frameSkipping}) no tiene clave en config.h ni en config.cpp (pin 3e43bc80); ajuste del launcher.")
