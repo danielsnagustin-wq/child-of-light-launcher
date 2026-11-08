@@ -977,7 +977,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     /**
      * Instala en el núcleo embebido el zip Turnip ya guardado por el
-     * launcher (<filesDir>/vita3k/drivers/turnip/*.zip). Devuelve el
+     * launcher (<filesDir>/vita3k/drivers/turnip/<stem>.zip). Devuelve el
      * nombre del driver instalado (stem del zip) o "" si no hay núcleo
      * o la instalación falló.
      *
