@@ -27,7 +27,10 @@
 #include <jni.h>
 #include <android/log.h>
 
+#include <exception>
+
 #define LOG_TAG "LauncherBridge"
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
@@ -51,7 +54,23 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInsta
         LOGW("nativeInstallPkg: ruta o zrif nulos");
         return JNI_FALSE;
     }
-    const jboolean ok = Java_org_vita3k_emulator_NativeLib_installPkg(env, nullptr, pkgPath, zrif, callback);
+    // P4: install_pkg llama a app::scan_apps al terminar y hace
+    // fs::remove_all/rename sin error_code (pin 3e43bc80,
+    // packages/src/pkg.cpp): un error de E/S lanza una excepción C++
+    // que cruzando JNI abortaría el proceso. Se captura y se devuelve
+    // false (el llamador muestra el error en vez de cerrarse).
+    jboolean ok = JNI_FALSE;
+    try {
+        ok = Java_org_vita3k_emulator_NativeLib_installPkg(env, nullptr, pkgPath, zrif, callback);
+    } catch (const std::exception &e) {
+        LOGE("nativeInstallPkg: excepción C++ capturada: %s", e.what());
+        launcher_clear_pending_exception(env);
+        return JNI_FALSE;
+    } catch (...) {
+        LOGE("nativeInstallPkg: excepción C++ desconocida capturada");
+        launcher_clear_pending_exception(env);
+        return JNI_FALSE;
+    }
     if (launcher_clear_pending_exception(env)) {
         return JNI_FALSE;
     }
@@ -71,7 +90,21 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInsta
         LOGW("nativeInstallArchive: ruta nula");
         return JNI_FALSE;
     }
-    const jboolean ok = Java_org_vita3k_emulator_NativeLib_installArchive(env, nullptr, archivePath, callback, forceReinstall);
+    // P4: igual que installPkg (install_archive + scan_apps, pin
+    // 3e43bc80): una excepción C++ sin capturar cruzando JNI aborta
+    // el proceso; se captura y se devuelve false.
+    jboolean ok = JNI_FALSE;
+    try {
+        ok = Java_org_vita3k_emulator_NativeLib_installArchive(env, nullptr, archivePath, callback, forceReinstall);
+    } catch (const std::exception &e) {
+        LOGE("nativeInstallArchive: excepción C++ capturada: %s", e.what());
+        launcher_clear_pending_exception(env);
+        return JNI_FALSE;
+    } catch (...) {
+        LOGE("nativeInstallArchive: excepción C++ desconocida capturada");
+        launcher_clear_pending_exception(env);
+        return JNI_FALSE;
+    }
     if (launcher_clear_pending_exception(env)) {
         return JNI_FALSE;
     }
@@ -91,8 +124,22 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInsta
         LOGW("nativeInstallFirmware: ruta nula");
         return env->NewStringUTF("");
     }
-    return launcher_empty_string_or_null(
-        env, Java_org_vita3k_emulator_NativeLib_installFirmware(env, nullptr, pupPath, callback));
+    // P4: igual que installPkg (install_pup + scan_apps, pin
+    // 3e43bc80): una excepción C++ sin capturar cruzando JNI aborta
+    // el proceso; se captura y se devuelve "" (fallo controlado).
+    jstring result = nullptr;
+    try {
+        result = Java_org_vita3k_emulator_NativeLib_installFirmware(env, nullptr, pupPath, callback);
+    } catch (const std::exception &e) {
+        LOGE("nativeInstallFirmware: excepción C++ capturada: %s", e.what());
+        launcher_clear_pending_exception(env);
+        return env->NewStringUTF("");
+    } catch (...) {
+        LOGE("nativeInstallFirmware: excepción C++ desconocida capturada");
+        launcher_clear_pending_exception(env);
+        return env->NewStringUTF("");
+    }
+    return launcher_empty_string_or_null(env, result);
 #else
     LOGW("nativeInstallFirmware STUB: núcleo no embebido");
     return env->NewStringUTF("");

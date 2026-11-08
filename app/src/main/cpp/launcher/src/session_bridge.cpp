@@ -20,7 +20,10 @@
 #include <jni.h>
 #include <android/log.h>
 
+#include <exception>
+
 #define LOG_TAG "LauncherBridge"
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
 #ifdef LAUNCHER_HAS_VITA3K
@@ -102,7 +105,19 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeRefreshAppsList(
     JNIEnv *env, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
-    Java_org_vita3k_emulator_NativeLib_refreshAppsList(env, nullptr);
+    // P4: scan_apps usa fs::directory_iterator sin error_code (pin
+    // 3e43bc80, apps_list.cpp collect_app_cache_sources): un error de
+    // E/S lanza std::filesystem::filesystem_error, y una excepción C++
+    // sin capturar cruzando JNI aborta el proceso (SIGABRT) sin
+    // diálogo ni stack trace. Se captura: el llamador valida con
+    // loadGame y muestra el error en vez de cerrarse.
+    try {
+        Java_org_vita3k_emulator_NativeLib_refreshAppsList(env, nullptr);
+    } catch (const std::exception &e) {
+        LOGE("nativeRefreshAppsList: excepción C++ capturada: %s", e.what());
+    } catch (...) {
+        LOGE("nativeRefreshAppsList: excepción C++ desconocida capturada");
+    }
     launcher_clear_pending_exception(env);
 #else
     LOGW("nativeRefreshAppsList STUB: núcleo no embebido");

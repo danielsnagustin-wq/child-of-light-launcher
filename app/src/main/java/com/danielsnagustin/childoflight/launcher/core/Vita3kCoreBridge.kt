@@ -61,13 +61,23 @@ object Vita3kCoreBridge {
         loadLibrary("Vita3K") || loadLibrary("vita3k-bridge")
     }
 
+    /**
+     * Último error al cargar la librería nativa (null si cargó bien o
+     * si aún no se intentó). Diagnóstico: antes se tragaba en silencio
+     * y un .so ausente o roto solo se veía como available=false.
+     */
+    var lastLoadError: String? = null
+        private set
+
     private fun loadLibrary(name: String): Boolean {
         return try {
             System.loadLibrary(name)
             true
-        } catch (_: UnsatisfiedLinkError) {
+        } catch (e: UnsatisfiedLinkError) {
+            lastLoadError = "System.loadLibrary($name): ${e.message}"
             false
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            lastLoadError = "System.loadLibrary($name): ${e.javaClass.simpleName}: ${e.message}"
             false
         }
     }

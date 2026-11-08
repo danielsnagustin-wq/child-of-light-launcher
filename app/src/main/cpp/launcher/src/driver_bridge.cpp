@@ -30,7 +30,10 @@
 #include <jni.h>
 #include <android/log.h>
 
+#include <exception>
+
 #define LOG_TAG "LauncherBridge"
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
@@ -47,7 +50,22 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInsta
         return env->NewStringUTF("");
     }
     // Upstream devuelve el nombre del driver (= stem del zip) o "".
-    jstring name = Java_org_vita3k_emulator_NativeLib_installCustomDriver(env, nullptr, zipPath);
+    // P4: installCustomDriver extrae un zip y toca el sistema de
+    // archivos (pin 3e43bc80, native_drivers.cpp): una excepción C++
+    // sin capturar cruzando JNI aborta el proceso; se captura y se
+    // devuelve "" (el llamador usa el driver del sistema).
+    jstring name = nullptr;
+    try {
+        name = Java_org_vita3k_emulator_NativeLib_installCustomDriver(env, nullptr, zipPath);
+    } catch (const std::exception &e) {
+        LOGE("nativeInstallCustomDriver: excepción C++ capturada: %s", e.what());
+        launcher_clear_pending_exception(env);
+        return env->NewStringUTF("");
+    } catch (...) {
+        LOGE("nativeInstallCustomDriver: excepción C++ desconocida capturada");
+        launcher_clear_pending_exception(env);
+        return env->NewStringUTF("");
+    }
     if (name == nullptr || launcher_clear_pending_exception(env)) {
         return env->NewStringUTF("");
     }

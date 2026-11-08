@@ -43,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.sp
+import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.model.ThemeMode
 import com.danielsnagustin.childoflight.launcher.ui.AchievementsScreen
 import com.danielsnagustin.childoflight.launcher.ui.AlertAction
@@ -81,6 +82,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // P3 (crash ~15:06 sin stack trace): el handler deja el stack
+        // trace en launcher.log antes de delegar; sin él, el próximo
+        // crash tampoco dejaría rastro. Se instala antes de crear el
+        // ViewModel (la primera vez que se toca `vm`).
+        LauncherLog.installCrashHandler(applicationContext)
         setContent {
             val uiPrefs by vm.uiFlow.collectAsState(initial = null)
             val dark = when (uiPrefs?.theme) {

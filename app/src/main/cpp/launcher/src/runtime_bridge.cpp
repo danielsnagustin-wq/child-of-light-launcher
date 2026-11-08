@@ -51,6 +51,7 @@ static constexpr jint kTitleNotInstalled = -3;
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h> // SDL_SetMainReady (no viene en SDL.h)
 
+#include <exception>
 #include <optional>
 #include <string>
 
@@ -100,8 +101,23 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInit(
         LOGE("nativeInit: prepareFrontend falló");
         return kInitFailed;
     }
-    const jboolean ok = Java_org_vita3k_emulator_NativeLib_init(env, nullptr, storagePath);
-    if (launcher_clear_pending_exception(env) || ok != JNI_TRUE) {
+    // P4: una excepción C++ sin capturar cruzando JNI aborta el
+    // proceso (SIGABRT); initialize_session ya captura std::exception
+    // por dentro (pin 3e43bc80), pero este try/catch cubre cualquier
+    // otra vía y convierte el fallo en código de error.
+    jboolean initOk = JNI_FALSE;
+    try {
+        initOk = Java_org_vita3k_emulator_NativeLib_init(env, nullptr, storagePath);
+    } catch (const std::exception &e) {
+        LOGE("nativeInit: excepción C++ capturada: %s", e.what());
+        launcher_clear_pending_exception(env);
+        return kInitFailed;
+    } catch (...) {
+        LOGE("nativeInit: excepción C++ desconocida capturada");
+        launcher_clear_pending_exception(env);
+        return kInitFailed;
+    }
+    if (launcher_clear_pending_exception(env) || initOk != JNI_TRUE) {
         LOGE("nativeInit: NativeLib.init devolvió false o lanzó excepción");
         return kInitFailed;
     }

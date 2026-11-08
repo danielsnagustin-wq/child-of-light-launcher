@@ -176,6 +176,10 @@ class EmbeddedGameActivity : SDLActivity() {
             finish()
             return
         }
+        // P3: deja constancia de que la Activity SDL se creó y el hilo
+        // del juego está a punto de arrancar (el último paso antes de
+        // SDL_main). Si el crash fuera aquí, esta sería la última línea.
+        LauncherLog.append(this, "launch", "EmbeddedGameActivity creada: $titleId (init OK)")
         setupTouchOverlay()
     }
 

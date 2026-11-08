@@ -25,6 +25,7 @@ import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
 import com.danielsnagustin.childoflight.launcher.data.GpuDetector
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
+import com.danielsnagustin.childoflight.launcher.data.formatLaunchAttempt
 import com.danielsnagustin.childoflight.launcher.data.SessionManager
 import com.danielsnagustin.childoflight.launcher.data.SettingsRepository
 import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
@@ -1293,6 +1294,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             if (!tryBeginLaunch()) return@launch
             try {
+            // P3 (crash ~15:06 sin stack trace): entrada de JUGAR en
+            // el log con el estado que decide el lanzamiento, para que
+            // el próximo reporte muestre hasta dónde llegó el intento.
+            val playStatus = _status.value
+            LauncherLog.append(context, "launch", formatLaunchAttempt(playStatus.titleId?.id, Vita3kCoreBridge.available, playStatus.firmwareInstalled))
+            if (!Vita3kCoreBridge.available) {
+                Vita3kCoreBridge.lastLoadError?.let {
+                    LauncherLog.append(context, "launch", "Núcleo ausente: $it")
+                }
+            }
             val settings = settingsRepo.settingsFlow.first()
             val gpu = settingsRepo.gpuInfoFlow.first()
             // 32 bits: el núcleo embebido necesita 64 bits (arm64). No se
@@ -1328,6 +1339,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 },
             )
             _installProgress.value = null
+            LauncherLog.append(context, "launch", "JUGAR resultado: ${outcome::class.simpleName}")
             if (outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternal ||
                 outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ||
                 outcome is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded

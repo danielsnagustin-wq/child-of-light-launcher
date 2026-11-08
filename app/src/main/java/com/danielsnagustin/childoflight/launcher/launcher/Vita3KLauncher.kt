@@ -23,6 +23,7 @@ import com.danielsnagustin.childoflight.launcher.data.LARGE_FILE_COPY_BUFFER_BYT
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.data.SessionManager
+import com.danielsnagustin.childoflight.launcher.data.formatLoadGameResult
 import com.danielsnagustin.childoflight.launcher.data.TurnipDriverRepository
 import com.danielsnagustin.childoflight.launcher.data.Vita3kConfigGenerator
 import com.danielsnagustin.childoflight.launcher.model.GpuDriver
@@ -285,7 +286,12 @@ class Vita3KLauncher(private val context: Context) {
         // play()/startBenchmark(). El lanzamiento nunca debe lanzar.
         return try {
             launchImpl(library, settings, sessionManager, gpu, onInstallProgress, benchmark)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // Throwable (no solo Exception): en un teléfono de 4 GB, un
+            // OutOfMemoryError durante la instalación del .pkg (1,14 GB)
+            // escapaba de este catch y cerraba la app en vez de mostrar
+            // el diálogo de bloqueo con el motivo.
+            LauncherLog.append(context, "launch", "launch falló con ${e.javaClass.simpleName}: ${e.message}")
             LaunchOutcome.Blocked("No se pudo lanzar: ${e.message}")
         }
     }
@@ -484,6 +490,7 @@ class Vita3KLauncher(private val context: Context) {
             }
             val initRc = Vita3kCoreBridge.init(library.vitaRoot.absolutePath)
             if (initRc != Vita3kCoreBridge.OK) {
+                LauncherLog.append(context, "launch", "init del núcleo falló (código $initRc)")
                 return EmbeddedAttempt.Failed(
                     "El motor integrado no se pudo iniciar (código $initRc). Vuelve a intentarlo; si sigue igual, repórtalo.",
                 )
@@ -501,6 +508,7 @@ class Vita3KLauncher(private val context: Context) {
             Vita3kCoreBridge.refreshAppsList()
             LauncherLog.append(context, "launch", "Lista de apps del núcleo re-escaneada; validando $titleId")
             val loadRc = Vita3kCoreBridge.loadGame(titleId)
+            LauncherLog.append(context, "launch", formatLoadGameResult(titleId, loadRc))
             if (loadRc != Vita3kCoreBridge.OK) {
                 val detail = when (loadRc) {
                     -2 -> "el motor integrado no encontró la sesión activa"
@@ -516,8 +524,10 @@ class Vita3KLauncher(private val context: Context) {
             context.startActivity(intent)
             LauncherLog.append(context, "launch", "Núcleo embebido lanzó $titleId (EmbeddedGameActivity)")
             EmbeddedAttempt.Ok(LaunchOutcome.LaunchedEmbedded(configPath))
-        } catch (e: Exception) {
-            LauncherLog.append(context, "launch", "No se pudo abrir EmbeddedGameActivity: ${e.message}")
+        } catch (e: Throwable) {
+            // Throwable (no solo Exception): un OutOfMemoryError aquí
+            // cerraba la app en vez de mostrar el diálogo con el motivo.
+            LauncherLog.append(context, "launch", "No se pudo abrir EmbeddedGameActivity (${e.javaClass.simpleName}): ${e.message}")
             EmbeddedAttempt.Failed("No se pudo abrir la pantalla del juego: ${e.message ?: "error desconocido"}")
         }
     }
