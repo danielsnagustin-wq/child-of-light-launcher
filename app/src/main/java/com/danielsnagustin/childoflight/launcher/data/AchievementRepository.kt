@@ -1,20 +1,31 @@
 package com.danielsnagustin.childoflight.launcher.data
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.danielsnagustin.childoflight.launcher.model.TROPHIES_27
 import com.danielsnagustin.childoflight.launcher.model.TrophyProgress
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-private val Context.achievementsDataStore: DataStore<Preferences> by preferencesDataStore(name = "col_achievements")
+// Crash al abrir (run #80): mismo arreglo que UiPreferencesRepository
+// (ver su comentario): archivo preferences_pb corrupto -> el
+// corruptionHandler lo reemplaza por vacío y el catch cubre otros
+// fallos de lectura con defaults (todos los trofeos bloqueados).
+private val Context.achievementsDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "col_achievements",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+)
 
 /**
  * Progreso de logros LOCAL, en DataStore.
@@ -41,6 +52,9 @@ class AchievementRepository(private val context: Context) {
         TROPHIES_27.map { trophy ->
             TrophyProgress(trophy, unlocked.containsKey(trophy.number), unlocked[trophy.number])
         }
+    }.catch { e ->
+        Log.w("ChildOfLight", "DataStore logros ilegible, usando bloqueados: ${e.message}")
+        emit(TROPHIES_27.map { TrophyProgress(it, false, null) })
     }
 
     /** Serializa TODAS las escrituras del progreso (unlock, resetAll,

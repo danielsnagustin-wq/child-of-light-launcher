@@ -1,10 +1,13 @@
 package com.danielsnagustin.childoflight.launcher.data
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.danielsnagustin.childoflight.launcher.model.AccentColor
@@ -19,9 +22,21 @@ import com.danielsnagustin.childoflight.launcher.model.TextSize
 import com.danielsnagustin.childoflight.launcher.model.ThemeMode
 import com.danielsnagustin.childoflight.launcher.model.UiPreferences
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 
-private val Context.uiDataStore: DataStore<Preferences> by preferencesDataStore(name = "col_ui_prefs")
+// Crash al abrir (run #80, 2026-11-08): si el archivo preferences_pb
+// está corrupto (muertes duras del proceso: crash 15:06, cierres
+// durante la instalación de 1,14 GB), `data` lanza y el primer
+// colector (MainActivity.setContent) muere sin mostrar UI. El
+// corruptionHandler reemplaza el archivo roto por preferencias
+// vacías (la app abre con defaults) y el catch cubre cualquier
+// otro fallo de lectura. El juego/firmware/saves son archivos, no
+// viven en DataStore: no se pierden.
+private val Context.uiDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "col_ui_prefs",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+)
 
 /** Personalización del launcher: tema, acento, fondo, texto, idioma, portada y presets ocultos. */
 class UiPreferencesRepository(private val context: Context) {
@@ -58,6 +73,9 @@ class UiPreferencesRepository(private val context: Context) {
             cardTransparency = runCatching { CardTransparency.valueOf(p[Keys.CARD_TRANSPARENCY] ?: "OPAQUE") }.getOrDefault(CardTransparency.OPAQUE),
             iconSize = runCatching { IconSize.valueOf(p[Keys.ICON_SIZE] ?: "MEDIUM") }.getOrDefault(IconSize.MEDIUM),
         )
+    }.catch { e ->
+        Log.w("ChildOfLight", "DataStore ui_prefs ilegible, usando defaults: ${e.message}")
+        emit(UiPreferences())
     }
 
     suspend fun save(prefs: UiPreferences) {

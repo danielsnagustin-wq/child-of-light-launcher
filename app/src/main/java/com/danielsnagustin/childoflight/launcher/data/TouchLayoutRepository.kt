@@ -1,18 +1,29 @@
 package com.danielsnagustin.childoflight.launcher.data
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-private val Context.touchDataStore: DataStore<Preferences> by preferencesDataStore(name = "col_touch_layout")
+// Crash al abrir (run #80): mismo arreglo que UiPreferencesRepository
+// (ver su comentario): archivo preferences_pb corrupto -> el
+// corruptionHandler lo reemplaza por vacío y el catch cubre otros
+// fallos de lectura con los perfiles de fábrica.
+private val Context.touchDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "col_touch_layout",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+)
 
 /** Botón de Vita al que se puede asignar un botón táctil. */
 enum class VitaButton(val label: String) {
@@ -138,10 +149,16 @@ class TouchLayoutRepository(private val context: Context) {
 
     val profilesFlow: Flow<List<ControlProfile>> = context.touchDataStore.data.map { prefs ->
         decodeProfiles(prefs[Keys.PROFILES] ?: "") ?: builtInProfiles()
+    }.catch { e ->
+        Log.w("ChildOfLight", "DataStore touch (perfiles) ilegible, usando fábrica: ${e.message}")
+        emit(builtInProfiles())
     }
 
     val activeProfileIdFlow: Flow<String> = context.touchDataStore.data.map { prefs ->
         prefs[Keys.ACTIVE_PROFILE] ?: "default-g99"
+    }.catch { e ->
+        Log.w("ChildOfLight", "DataStore touch (activo) ilegible, usando default-g99: ${e.message}")
+        emit("default-g99")
     }
 
     /** Layout del perfil activo (compatibilidad con la API anterior). */
@@ -149,6 +166,9 @@ class TouchLayoutRepository(private val context: Context) {
         val profiles = decodeProfiles(prefs[Keys.PROFILES] ?: "") ?: builtInProfiles()
         val activeId = prefs[Keys.ACTIVE_PROFILE] ?: "default-g99"
         profiles.firstOrNull { it.id == activeId }?.controls ?: defaultTouchLayout()
+    }.catch { e ->
+        Log.w("ChildOfLight", "DataStore touch (layout) ilegible, usando default: ${e.message}")
+        emit(defaultTouchLayout())
     }
 
     suspend fun save(layout: List<TouchControl>) {

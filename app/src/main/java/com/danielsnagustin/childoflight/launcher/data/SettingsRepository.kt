@@ -1,10 +1,13 @@
 package com.danielsnagustin.childoflight.launcher.data
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
@@ -26,10 +29,18 @@ import com.danielsnagustin.childoflight.launcher.model.applyLowRamDefaults
 import com.danielsnagustin.childoflight.launcher.model.defaultProfileFor
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
-private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "col_launcher_settings")
+// Crash al abrir (run #80): mismo arreglo que UiPreferencesRepository
+// (ver su comentario): archivo preferences_pb corrupto -> el
+// corruptionHandler lo reemplaza por vacío y el catch cubre otros
+// fallos de lectura con defaults.
+private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "col_launcher_settings",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+)
 
 /**
  * Persistencia de ajustes + GPU detectada + historial de pruebas, en DataStore.
@@ -146,6 +157,9 @@ class SettingsRepository(private val context: Context) {
             touchOverlayNeonGlow = p[Keys.OVERLAY_NEON] ?: false,
             touchOverlayHiddenProfileIds = decodeHiddenProfiles(p[Keys.OVERLAY_HIDDEN_PROFILES] ?: ""),
         )
+    }.catch { e ->
+        Log.w("ChildOfLight", "DataStore settings ilegible, usando defaults: ${e.message}")
+        emit(LauncherSettings())
     }
 
     val gpuInfoFlow: Flow<GpuInfo?> = context.settingsDataStore.data.map { p ->
@@ -159,10 +173,16 @@ class SettingsRepository(private val context: Context) {
             vulkanSupported = p[Keys.GPU_VULKAN_SUPPORTED] ?: false,
             detectedAtMillis = p[Keys.GPU_DETECTED_AT] ?: 0L,
         )
+    }.catch { e ->
+        Log.w("ChildOfLight", "DataStore settings (gpu) ilegible, usando null: ${e.message}")
+        emit(null)
     }
 
     val benchmarksFlow: Flow<List<BenchmarkRun>> = context.settingsDataStore.data.map { p ->
         decodeBenchmarks(p[Keys.BENCHMARKS] ?: "")
+    }.catch { e ->
+        Log.w("ChildOfLight", "DataStore settings (benchmarks) ilegible, usando vacío: ${e.message}")
+        emit(emptyList())
     }
 
     /** Guarda el estado completo. La UI siempre pasa el estado actual modificado. */
