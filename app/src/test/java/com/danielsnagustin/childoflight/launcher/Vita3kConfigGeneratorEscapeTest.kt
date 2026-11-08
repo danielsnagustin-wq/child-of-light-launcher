@@ -34,8 +34,9 @@ class Vita3kConfigGeneratorEscapeTest {
         assertEquals("a\\\"b", Vita3kConfigGenerator.escapeYamlDoubleQuoted("a\"b"))
         assertEquals("a\\\\b", Vita3kConfigGenerator.escapeYamlDoubleQuoted("a\\b"))
         // La barra va primero: una comilla precedida de barra no debe
-        // dejar una barra suelta sin escapar.
-        assertEquals("a\\\\\"b", Vita3kConfigGenerator.escapeYamlDoubleQuoted("a\\\"b"))
+        // dejar una barra suelta sin escapar. Entrada a, barra, comilla,
+        // b: la barra se escapa a dos y la comilla a barra+comilla.
+        assertEquals("a\\\\\\\"b", Vita3kConfigGenerator.escapeYamlDoubleQuoted("a\\\"b"))
     }
 
     @Test

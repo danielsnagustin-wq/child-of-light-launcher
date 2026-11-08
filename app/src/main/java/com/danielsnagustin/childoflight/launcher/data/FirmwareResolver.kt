@@ -96,7 +96,7 @@ object FirmwareResolver {
         //    existe, es directorio y no está vacío).
         val vs0 = coreVs0Dir(vitaRoot)
         if (vs0.isDirectory && (vs0.listFiles()?.isNotEmpty() == true)) {
-            return FirmwareStatus.Ready("extraído en el núcleo (vita/vs0)")
+            return FirmwareStatus.Ready("extraído en el núcleo (vita/vs0${versionSuffix(vitaRoot)})")
         }
         // 1b. Ruta antigua (vitaRoot/vs0, sin "vita/"): el núcleo nunca
         // escribe ahí, pero alguien pudo dejar firmware a mano. Se
@@ -106,7 +106,7 @@ object FirmwareResolver {
         val legacyVs0 = File(vitaRoot, "vs0")
         if (legacyVs0.isDirectory && (legacyVs0.listFiles()?.isNotEmpty() == true)) {
             if (migrateLegacyVs0(vitaRoot)) {
-                return FirmwareStatus.Ready("extraído en el núcleo (vita/vs0, migrado desde la ruta antigua)")
+                return FirmwareStatus.Ready("extraído en el núcleo (vita/vs0, migrado desde la ruta antigua${versionSuffix(vitaRoot)})")
             }
         }
         // 2. Marcador con versión: solo lo escribe una instalación en
@@ -156,6 +156,15 @@ object FirmwareResolver {
             false
         }
     }
+
+    /**
+     * Sufijo ", versión X" para el source de un Ready que viene de
+     * vs0 (no del marcador): si el marcador conoce la versión, la
+     * etiqueta la muestra ("Instalado · 3.74"); si no, vacío y la
+     * etiqueta es solo "Instalado".
+     */
+    private fun versionSuffix(vitaRoot: File): String =
+        installedVersion(vitaRoot)?.let { ", versión $it" } ?: ""
 
     /**
      * Versión del firmware instalado según el marcador, o null si no

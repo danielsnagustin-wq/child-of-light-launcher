@@ -17,11 +17,26 @@ package com.danielsnagustin.childoflight.launcher.ui.settings
  */
 private val ERROR_WORDS = listOf("fatal", "[e]", "error", "exception", "failed", "fallo", "falló", "crashed", "crash")
 
+// Marco de stack Java/Kotlin ("at com.foo.Bar.metodo(Archivo.kt:12)"):
+// un crash deja decenas seguidos y son una sola entrada de error, no N.
+private val STACK_FRAME = Regex("\\bat [\\w.$]+\\(")
+
 fun extractRecentErrorLines(logText: String, maxLines: Int = 8): List<String> {
     if (logText.isBlank()) return emptyList()
     val limit = maxLines.coerceAtLeast(1)
-    return logText.lines()
+    val filtered = logText.lines()
         .map { it.trim() }
         .filter { line -> line.isNotEmpty() && ERROR_WORDS.any { word -> line.lowercase().contains(word) } }
-        .takeLast(limit)
+    // Colapsa marcos de stack consecutivos a uno solo: si no, un crash
+    // con 30 marcos esconde su cabecera ("Uncaught exception (crash)")
+    // y "errores recientes" solo mostraría líneas "at ...".
+    val collapsed = mutableListOf<String>()
+    var lastWasFrame = false
+    for (line in filtered) {
+        val isFrame = STACK_FRAME.containsMatchIn(line)
+        if (isFrame && lastWasFrame) continue
+        collapsed.add(line)
+        lastWasFrame = isFrame
+    }
+    return collapsed.takeLast(limit)
 }

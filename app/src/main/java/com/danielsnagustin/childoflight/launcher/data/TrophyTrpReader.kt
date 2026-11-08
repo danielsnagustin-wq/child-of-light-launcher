@@ -310,7 +310,10 @@ object TrophyTrpReader {
     }
 
     private fun readAttr(attrs: String, name: String): String? {
-        val regex = Regex("$name\\s*=\\s*[\"']([^\"']*)[\"']")
+        // El nombre debe ir al inicio o tras un espacio: sin el límite,
+        // buscar "id" casaba con el "id" de pid="000" y un trofeo sin id
+        // se leía como id 0 (bug real, no solo de test).
+        val regex = Regex("(?:^|\\s)$name\\s*=\\s*[\"']([^\"']*)[\"']")
         return regex.find(attrs)?.groupValues?.get(1)
     }
 
