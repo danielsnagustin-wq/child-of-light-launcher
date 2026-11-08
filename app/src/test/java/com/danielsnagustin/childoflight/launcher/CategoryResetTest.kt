@@ -38,7 +38,7 @@ class CategoryResetTest {
         hideTouchWhenGamepadConnected = false,
     )
     private val changedUi = UiPreferences(
-        accent = AccentColor.RED,
+        accent = AccentColor.LAVENDER,
         cardSize = CardSize.LARGE,
     )
 

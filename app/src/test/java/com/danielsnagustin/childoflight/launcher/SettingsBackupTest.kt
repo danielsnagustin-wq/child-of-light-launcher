@@ -28,7 +28,7 @@ class SettingsBackupTest {
         touchOverlayOpacity = 0.5f,
     )
     private val ui = UiPreferences(
-        accent = AccentColor.BLUE,
+        accent = AccentColor.TURQUOISE,
         cardSize = CardSize.LARGE,
         cardTransparency = CardTransparency.TRANSLUCENT,
         iconSize = IconSize.SMALL,
