@@ -14,12 +14,12 @@ import androidx.compose.ui.unit.dp
 /**
  * Iconos vectoriales del launcher (Fase 2, Ola 1): dibujados con
  * Canvas, sin emojis y sin texto, para que todos los iconos tengan
- * el mismo trazo y el mismo dorado. Sustituyen a los glifos de texto
+ * el mismo trazo y el mismo azul hielo. Sustituyen a los glifos de texto
  * ("▣", "🏆", "▶", "⬇") que se usaban antes en la Home.
  */
 
 @Composable
-fun PlayIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
+fun PlayIcon(modifier: Modifier = Modifier, tint: Color = ColAccent) {
     Canvas(modifier = modifier.size(24.dp)) {
         val path = Path().apply {
             moveTo(size.width * 0.32f, size.height * 0.2f)
@@ -32,7 +32,7 @@ fun PlayIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
 }
 
 @Composable
-fun GamepadIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
+fun GamepadIcon(modifier: Modifier = Modifier, tint: Color = ColAccent) {
     Canvas(modifier = modifier.size(24.dp)) {
         val w = size.width
         val h = size.height
@@ -64,7 +64,7 @@ fun GamepadIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
 }
 
 @Composable
-fun DlcIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
+fun DlcIcon(modifier: Modifier = Modifier, tint: Color = ColAccent) {
     Canvas(modifier = modifier.size(24.dp)) {
         val w = size.width
         val h = size.height
@@ -94,7 +94,7 @@ fun DlcIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
 }
 
 @Composable
-fun UpdateIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
+fun UpdateIcon(modifier: Modifier = Modifier, tint: Color = ColAccent) {
     Canvas(modifier = modifier.size(24.dp)) {
         val w = size.width
         val h = size.height
@@ -123,7 +123,7 @@ fun UpdateIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
 }
 
 @Composable
-fun FirmwareIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
+fun FirmwareIcon(modifier: Modifier = Modifier, tint: Color = ColAccent) {
     Canvas(modifier = modifier.size(24.dp)) {
         val w = size.width
         val h = size.height
@@ -150,7 +150,7 @@ fun FirmwareIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
 }
 
 @Composable
-fun PerformanceIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
+fun PerformanceIcon(modifier: Modifier = Modifier, tint: Color = ColAccent) {
     Canvas(modifier = modifier.size(24.dp)) {
         val w = size.width
         val h = size.height
@@ -176,7 +176,7 @@ fun PerformanceIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
 }
 
 @Composable
-fun TrophyIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
+fun TrophyIcon(modifier: Modifier = Modifier, tint: Color = ColAccent) {
     Canvas(modifier = modifier.size(24.dp)) {
         val w = size.width
         val h = size.height
@@ -222,7 +222,7 @@ fun TrophyIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
 }
 
 @Composable
-fun FolderIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
+fun FolderIcon(modifier: Modifier = Modifier, tint: Color = ColAccent) {
     Canvas(modifier = modifier.size(24.dp)) {
         val w = size.width
         val h = size.height
@@ -241,7 +241,7 @@ fun FolderIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
 }
 
 @Composable
-fun FileIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
+fun FileIcon(modifier: Modifier = Modifier, tint: Color = ColAccent) {
     Canvas(modifier = modifier.size(24.dp)) {
         val w = size.width
         val h = size.height
@@ -272,7 +272,7 @@ fun FileIcon(modifier: Modifier = Modifier, tint: Color = ColGold) {
     }
 }
 
-/** Icono de "ajustes" (dos deslizadores): líneas grises, pomos dorados. Antes vivía en HomeScreen. */
+/** Icono de "ajustes" (dos deslizadores): líneas grises, pomos azul hielo. Antes vivía en HomeScreen. */
 @Composable
 fun SlidersIcon(modifier: Modifier = Modifier) {
     Canvas(modifier = modifier.size(24.dp)) {
@@ -294,7 +294,7 @@ fun SlidersIcon(modifier: Modifier = Modifier) {
             strokeWidth = stroke,
             cap = StrokeCap.Round,
         )
-        drawCircle(color = ColGold, radius = knob, center = Offset(w * 0.32f, h * 0.32f))
-        drawCircle(color = ColGold, radius = knob, center = Offset(w * 0.68f, h * 0.68f))
+        drawCircle(color = ColAccent, radius = knob, center = Offset(w * 0.32f, h * 0.32f))
+        drawCircle(color = ColAccent, radius = knob, center = Offset(w * 0.68f, h * 0.68f))
     }
 }

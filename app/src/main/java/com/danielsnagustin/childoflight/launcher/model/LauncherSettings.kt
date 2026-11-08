@@ -100,7 +100,7 @@ enum class GpuProfileId(val label: String, val description: String) {
     ),
     MALI_BALANCED(
         "Mali — Equilibrado",
-        "Mali genérico: 1x con FSR/Bilinear y Frame Skip 0 si el FPS es estable.",
+        "Mali genérico: 1x con FSR/Bilinear si el FPS es estable.",
     ),
     ADRENO_PERFORMANCE(
         "Snapdragon / Adreno — Rendimiento",
@@ -110,17 +110,8 @@ enum class GpuProfileId(val label: String, val description: String) {
         "Snapdragon / Adreno — Calidad / Turnip",
         "Vulkan + Turnip, 2x. Solo Adreno: Turnip no funciona en Mali.",
     ),
-    GENERIC_PERFORMANCE(
-        "Genérico — Rendimiento",
-        "GPU no detectada: 1x, valores seguros.",
-    ),
 }
 
-enum class FrameLimiter(val label: String, val fps: Int?) {
-    FPS_30("30 FPS", 30),
-    FPS_60("60 FPS", 60),
-    UNLIMITED("Sin límite", null),
-}
 
 /**
  * Backend de audio de Vita3K.
@@ -195,17 +186,6 @@ data class LauncherSettings(
     val audioBackend: AudioBackend = AudioBackend.SDL,
     /** NGS (audio del sistema Vita). Clave ngs-enable verificada en config.h. */
     val ngsEnable: Boolean = true,
-    /**
-     * Tamaño de buffer de audio en muestras (256/512/1024/2048).
-     * SOLO LAUNCHER: no hay clave de buffer en el config.h de Vita3K
-     * (master 2026-11-07). Se guarda, se muestra en diagnóstico y se
-     * aplica en "Corregir audio", pero NO se emite como clave inventada.
-     */
-    val audioBufferSize: Int = 512,
-    // --- Solo launcher (SIN clave verificada en config.yml: van como TODO en el YAML) ---
-    val frameLimiter: FrameLimiter = FrameLimiter.FPS_30,
-    val frameSkipping: Int = 0, // 0, 1, 2
-    val accurateThreadScheduling: Boolean = true,
     // --- Overlay / rendimiento ---
     val showFpsOverlay: Boolean = false, // performance-overlay, verificado
     /**
@@ -253,8 +233,8 @@ data class LauncherSettings(
     val batteryOptimizationDisabled: Boolean = false,
     /**
      * Modo seguro: cuando está ON, el generador de config.yml fuerza
-     * 1x, SDL, buffer grande, Thread Scheduling ON y High Accuracy OFF,
-     * por encima de los ajustes individuales. Para cuando algo falle.
+     * 1x, SDL y High Accuracy OFF, por encima de los ajustes
+     * individuales. Para cuando algo falle.
      */
     val safeMode: Boolean = false,
     /** Cerrar apps en segundo plano antes de jugar (best-effort, ver Vita3KLauncher). */
@@ -300,7 +280,7 @@ data class LauncherSettings(
     val showTouchOverlayInGame: Boolean = true,
     /** Opacidad general del overlay (0.1..1): multiplica la opacidad de cada botón. */
     val touchOverlayOpacity: Float = 1f,
-    /** Halo dorado (neón) alrededor de los botones del overlay. */
+    /** Halo azul hielo (neón) alrededor de los botones del overlay. */
     val touchOverlayNeonGlow: Boolean = false,
     /** Ids de perfiles de control en los que el overlay queda oculto en el juego. */
     val touchOverlayHiddenProfileIds: Set<String> = emptySet(),
@@ -321,9 +301,10 @@ fun defaultProfileFor(gpu: GpuInfo): GpuProfileId = when {
     gpu.isHelioG99 || gpu.isMaliG57 -> GpuProfileId.G99_RECOMMENDED
     gpu.vendor == GpuVendor.MALI -> GpuProfileId.MALI_PERFORMANCE
     gpu.vendor == GpuVendor.ADRENO -> GpuProfileId.ADRENO_PERFORMANCE
-    // PowerVR, OTHER y UNKNOWN: perfil Genérico seguro (1x, Double
-    // Buffer). NINGUNA GPU se queda sin perfil: el else es el suelo.
-    else -> GpuProfileId.GENERIC_PERFORMANCE
+    // PowerVR, OTHER y UNKNOWN: perfil Mali seguro (1x, Double
+    // Buffer, sin caché de texturas). NINGUNA GPU se queda sin perfil:
+    // el else es el suelo.
+    else -> GpuProfileId.MALI_PERFORMANCE
 }
 
 /**
@@ -344,8 +325,8 @@ fun resolveBackend(settings: LauncherSettings, gpu: GpuInfo?): GpuBackend =
 /**
  * Todos los presets. Valores pensados para Child of Light (2D, UbiArt):
  * es ligero comparado con un juego 3D, así que en el G99 no se recorta
- * de más: 1x + Frame Skip 0 es la base porque el usuario ya confirmó
- * que va muy bien, no un "ojalá funcione".
+ * de más: 1x es la base porque el usuario ya confirmó que va muy
+ * bien, no un "ojalá funcione".
  */
 fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
     GpuProfileId.G99_RECOMMENDED -> LauncherSettings(
@@ -360,8 +341,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         surfaceSyncEnabled = false,
         memoryMapping = MemoryMapping.DOUBLE_BUFFER,
         cpuOpt = true, fpsHack = false, fileLoadingDelay = 0,
-        frameLimiter = FrameLimiter.FPS_30, frameSkipping = 0,
-        accurateThreadScheduling = true, showFpsOverlay = false,
+        showFpsOverlay = false,
         gpuDriver = GpuDriver.SYSTEM, shaderCache = true, performanceMode = true,
     )
     GpuProfileId.G99_QUALITY -> LauncherSettings(
@@ -376,8 +356,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         surfaceSyncEnabled = false,
         memoryMapping = MemoryMapping.DOUBLE_BUFFER,
         cpuOpt = true, fpsHack = false, fileLoadingDelay = 0,
-        frameLimiter = FrameLimiter.FPS_30, frameSkipping = 0,
-        accurateThreadScheduling = true, showFpsOverlay = true,
+        showFpsOverlay = true,
         gpuDriver = GpuDriver.SYSTEM, shaderCache = true, performanceMode = true,
     )
     GpuProfileId.MALI_PERFORMANCE -> LauncherSettings(
@@ -392,8 +371,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         surfaceSyncEnabled = false,
         memoryMapping = MemoryMapping.DOUBLE_BUFFER, // forzado: Mali hace fallback a Double Buffer
         cpuOpt = true, fpsHack = false,
-        frameLimiter = FrameLimiter.FPS_30, frameSkipping = 1,
-        accurateThreadScheduling = true, shaderCache = true,
+        textureCache = false, shaderCache = true,
     )
     GpuProfileId.MALI_BALANCED -> LauncherSettings(
         activeProfile = profile,
@@ -407,8 +385,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         surfaceSyncEnabled = false,
         memoryMapping = MemoryMapping.DOUBLE_BUFFER,
         cpuOpt = true, fpsHack = false,
-        frameLimiter = FrameLimiter.FPS_30, frameSkipping = 0,
-        accurateThreadScheduling = true, shaderCache = true,
+        shaderCache = true,
     )
     GpuProfileId.ADRENO_PERFORMANCE -> LauncherSettings(
         activeProfile = profile,
@@ -422,8 +399,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         surfaceSyncEnabled = false,
         memoryMapping = MemoryMapping.PAGE_TABLE, // recomendado en Android para Adreno
         cpuOpt = true, fpsHack = false,
-        frameLimiter = FrameLimiter.FPS_30, frameSkipping = 0,
-        accurateThreadScheduling = true, gpuDriver = GpuDriver.SYSTEM,
+        gpuDriver = GpuDriver.SYSTEM,
     )
     GpuProfileId.ADRENO_QUALITY_TURNIP -> LauncherSettings(
         activeProfile = profile,
@@ -437,23 +413,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         surfaceSyncEnabled = false,
         memoryMapping = MemoryMapping.PAGE_TABLE,
         cpuOpt = true, fpsHack = false,
-        frameLimiter = FrameLimiter.FPS_60, frameSkipping = 0,
-        accurateThreadScheduling = true, gpuDriver = GpuDriver.TURNIP,
-    )
-    GpuProfileId.GENERIC_PERFORMANCE -> LauncherSettings(
-        activeProfile = profile,
-        backend = GpuBackend.VULKAN,
-        resolutionMultiplier = 1f,
-        screenFilter = ScreenFilter.BILINEAR,
-        anisotropicFiltering = 1,
-        vSync = false,
-        asyncPipelineCompilation = true,
-        highAccuracy = false,
-        surfaceSyncEnabled = false,
-        memoryMapping = MemoryMapping.DOUBLE_BUFFER,
-        cpuOpt = true, fpsHack = false,
-        frameLimiter = FrameLimiter.FPS_30, frameSkipping = 0,
-        accurateThreadScheduling = true,
+        gpuDriver = GpuDriver.TURNIP,
     )
 }
 
@@ -467,8 +427,8 @@ fun shouldAutoRevertTo1x(fpsAvg: Float?, profile: GpuProfileId, autoRevertEnable
 
 /**
  * Modo seguro: valores forzados cuando algo falla.
- * 1x, SDL, buffer grande, Thread Scheduling ON, High Accuracy OFF,
- * Async ON, shader cache ON, Surface Sync Disabled.
+ * 1x, SDL, High Accuracy OFF, Async ON, shader cache ON,
+ * Surface Sync Disabled.
  */
 fun applySafeMode(settings: LauncherSettings): LauncherSettings = settings.copy(
     safeMode = true,
@@ -480,11 +440,8 @@ fun applySafeMode(settings: LauncherSettings): LauncherSettings = settings.copy(
     highAccuracy = false,
     surfaceSyncEnabled = false,
     audioBackend = AudioBackend.SDL,
-    audioBufferSize = 2048,
     ngsEnable = true,
-    accurateThreadScheduling = true,
     shaderCache = true,
-    frameSkipping = 0,
 )
 
 /**
@@ -506,8 +463,6 @@ fun effectiveSettings(settings: LauncherSettings): LauncherSettings =
  * Puede no hacer nada o correr al doble de velocidad: solo el teléfono
  * lo decide; se revierte con un toque (fpsHack = false). Se aplica al
  * reiniciar el juego (el hack se fija al crear el renderer).
- * No toca frameLimiter ni frameSkipping: son ajustes solo del launcher,
- * sin clave en el núcleo, así que no mueven el FPS.
  */
 fun apply60FpsMode(settings: LauncherSettings): LauncherSettings = settings.copy(
     resolutionMultiplier = 1f,
@@ -535,7 +490,7 @@ fun apply60FpsMode(settings: LauncherSettings): LauncherSettings = settings.copy
  * Forzado: 1x (960x544; 2x cuadruplica el framebuffer y las texturas),
  * filtro Bilinear (sin FXAA ni FSR: ambos cuestan GPU/memoria extra),
  * anisotrópico 1, Double Buffer, VSync off, High Accuracy off,
- * Surface Sync off, límite 30 fps.
+ * Surface Sync off.
  *
  * Caché: config.yml NO tiene claves de TAMAÑO de caché (verificado
  * en Vita3kConfigGenerator contra config.h: solo existen los
@@ -558,14 +513,26 @@ fun applyLowRamDefaults(settings: LauncherSettings): LauncherSettings = settings
     memoryMapping = MemoryMapping.DOUBLE_BUFFER,
     textureCache = false,
     shaderCache = true,
-    frameLimiter = FrameLimiter.FPS_30,
 )
 
 // ---------------------------------------------------------------------------
 // Prueba de rendimiento (30 s)
 // ---------------------------------------------------------------------------
 
-enum class BenchmarkSource { MANUAL_OVERLAY, NOT_MEASURED }
+enum class BenchmarkSource { MANUAL_OVERLAY, AUTO_MEASURED, NOT_MEASURED }
+
+/**
+ * Media de las muestras de FPS de una prueba de 30 s medida por el
+ * núcleo (EmbeddedGameActivity muestrea Vita3kCoreBridge.getFps()
+ * cada segundo). Solo cuentan las muestras válidas (> 0: -1 es "sin
+ * juego" y 0 es "sin medir"). null = sin muestras válidas. Pura y
+ * testeable en JVM.
+ */
+fun averageBenchmarkFps(samples: List<Float>): Float? {
+    val valid = samples.filter { it > 0f }
+    if (valid.isEmpty()) return null
+    return valid.sum() / valid.size
+}
 
 data class BenchmarkRun(
     val profile: GpuProfileId,

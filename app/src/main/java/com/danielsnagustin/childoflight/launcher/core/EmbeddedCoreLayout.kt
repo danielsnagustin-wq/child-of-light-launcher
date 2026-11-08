@@ -131,6 +131,19 @@ object EmbeddedCoreLayout {
      * Migra el layout de Etapa 1 al del núcleo embebido (una sola vez).
      * Intenta renameTo (misma partición, instantáneo); si falla, copia
      * recursiva y borra el origen solo si la copia fue completa.
+     *
+     * Conflicto: si existen los dos ux0 y el antiguo tiene un juego
+     * que el embebido NO tiene, no se sabe cuál es la instalación
+     * buena: no se mueve nada y se reporta para resolverlo a mano.
+     *
+     * Excepción (2026-11-08): si el destino embebido ya contiene el
+     * juego y el antiguo no tiene ningún juego que el embebido no
+     * tenga, el layout embebido ya es el bueno: no hay nada que mover
+     * y se devuelve AlreadyMigrated para que el lanzamiento continúe.
+     * Devolver Conflict en ese caso bloqueaba JUGAR para siempre
+     * aunque el juego ya estuviera instalado en vita/ux0 (el escaneo
+     * lo veía, instalado=true). El ux0 antiguo se deja intacto: lo
+     * ignora resolveUx0Dir porque el embebido tiene los juegos.
      */
     fun migrateToEmbeddedLayout(storageRoot: File): MigrationResult {
         val legacy = legacyUx0Dir(storageRoot)
@@ -146,9 +159,13 @@ object EmbeddedCoreLayout {
         if (legacy.isDirectory && dest.exists()) {
             if (dest.isDirectory && countFiles(dest) == 0) {
                 dest.deleteRecursively()
+            } else if (dest.isDirectory && gameTitles(legacy).all { it in gameTitles(dest) }) {
+                // El embebido ya tiene el juego (o el antiguo no tiene
+                // ningún juego): nada que mover, el lanzamiento sigue.
+                return MigrationResult.AlreadyMigrated
             } else {
                 return MigrationResult.Conflict(
-                    "Ya existe ${dest.name} en ${dest.parent} y también el ux0 antiguo; " +
+                    "Ya existe una instalación en el motor integrado y también la antigua; " +
                         "no se mueve nada para no mezclar dos instalaciones.",
                 )
             }
@@ -157,7 +174,7 @@ object EmbeddedCoreLayout {
         if (!legacy.isDirectory) return MigrationResult.NothingToMigrate
         val vita = vitaDir(storageRoot)
         if (!vita.exists() && !vita.mkdirs()) {
-            return MigrationResult.Conflict("No se pudo crear la carpeta ${vita.absolutePath}.")
+            return MigrationResult.Conflict("No se pudo crear la carpeta del motor integrado.")
         }
         val count = countFiles(legacy)
         if (legacy.renameTo(dest)) return MigrationResult.Migrated(count)
@@ -172,7 +189,7 @@ object EmbeddedCoreLayout {
             MigrationResult.Migrated(count)
         } catch (e: Exception) {
             dest.deleteRecursively()
-            MigrationResult.Conflict("No se pudo copiar ux0: ${e.message}")
+            MigrationResult.Conflict("No se pudo copiar la instalación antigua al motor integrado.")
         }
     }
 

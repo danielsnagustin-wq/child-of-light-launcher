@@ -5,7 +5,6 @@ import com.danielsnagustin.childoflight.launcher.model.AppLanguage
 import com.danielsnagustin.childoflight.launcher.model.AudioBackend
 import com.danielsnagustin.childoflight.launcher.model.CardSize
 import com.danielsnagustin.childoflight.launcher.model.CardTransparency
-import com.danielsnagustin.childoflight.launcher.model.FrameLimiter
 import com.danielsnagustin.childoflight.launcher.model.GpuBackend
 import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
@@ -30,7 +29,7 @@ import com.danielsnagustin.childoflight.launcher.model.UiPreferences
  * Formato: {"format":"col-settings-backup","version":1, ...campos...}.
  * Al importar se aplican los MISMOS clamps que ya existen en
  * SettingsRepository (resolución 1-4, aniso válido, opacidad 0.1-1,
- * volumen 0-100, buffer 256-2048, retraso >= 0, frame skip 0-2): un
+ * volumen 0-100, retraso >= 0): un
  * archivo editado a mano no puede pasar valores fuera de rango al
  * config.yml. Un archivo inválido devuelve failure con un mensaje
  * claro y NO se aplica nada parcial: la decodificación construye los
@@ -70,10 +69,6 @@ fun encodeSettingsBackup(settings: LauncherSettings, ui: UiPreferences): String 
     num("audioVolume", settings.audioVolume)
     str("audioBackend", settings.audioBackend.name)
     bool("ngsEnable", settings.ngsEnable)
-    num("audioBufferSize", settings.audioBufferSize)
-    str("frameLimiter", settings.frameLimiter.name)
-    num("frameSkipping", settings.frameSkipping)
-    bool("accurateThreadScheduling", settings.accurateThreadScheduling)
     bool("showFpsOverlay", settings.showFpsOverlay)
     str("performanceOverlayDetail", settings.performanceOverlayDetail.name)
     str("performanceOverlayPosition", settings.performanceOverlayPosition.name)
@@ -147,10 +142,6 @@ fun decodeSettingsBackup(
         audioVolume = intValue(map["audioVolume"], current.audioVolume).coerceIn(0, 100),
         audioBackend = enumValue(map["audioBackend"], AudioBackend.entries.toTypedArray(), current.audioBackend),
         ngsEnable = boolValue(map["ngsEnable"], current.ngsEnable),
-        audioBufferSize = intValue(map["audioBufferSize"], current.audioBufferSize).coerceIn(256, 2048),
-        frameLimiter = enumValue(map["frameLimiter"], FrameLimiter.entries.toTypedArray(), current.frameLimiter),
-        frameSkipping = intValue(map["frameSkipping"], current.frameSkipping).coerceIn(0, 2),
-        accurateThreadScheduling = boolValue(map["accurateThreadScheduling"], current.accurateThreadScheduling),
         showFpsOverlay = boolValue(map["showFpsOverlay"], current.showFpsOverlay),
         performanceOverlayDetail = enumValue(map["performanceOverlayDetail"], PerformanceOverlayDetail.entries.toTypedArray(), current.performanceOverlayDetail),
         performanceOverlayPosition = enumValue(map["performanceOverlayPosition"], PerformanceOverlayPosition.entries.toTypedArray(), current.performanceOverlayPosition),

@@ -59,7 +59,6 @@ import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsAudioScreen
 import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsControlsScreen
 import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsCpuScreen
 import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsDiagnosticsScreen
-import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsFirmwareScreen
 import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsGeneralScreen
 import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsGpuScreen
 import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsPerformanceScreen
@@ -90,9 +89,9 @@ class MainActivity : ComponentActivity() {
                 ThemeMode.SYSTEM, null -> isSystemInDarkTheme()
             }
             val accent = try {
-                Color(android.graphics.Color.parseColor(uiPrefs?.accent?.hex ?: "#F2B705"))
+                Color(android.graphics.Color.parseColor(uiPrefs?.accent?.hex ?: "#8CCBEB"))
             } catch (_: Exception) {
-                Color(0xFFF2B705)
+                Color(0xFF8CCBEB)
             }
             val scale = uiPrefs?.textSize?.scale ?: 1.0f
             val typography = Typography(
@@ -151,7 +150,6 @@ private fun LauncherApp(vm: LauncherViewModel) {
             Screen.SETTINGS_AUDIO,
             Screen.SETTINGS_PERFORMANCE,
             Screen.SETTINGS_CONTROLS,
-            Screen.SETTINGS_FIRMWARE,
             Screen.SETTINGS_STORAGE,
             Screen.SETTINGS_DIAGNOSTICS -> Screen.SETTINGS.name
             else -> Screen.HOME.name
@@ -221,7 +219,6 @@ private fun LauncherApp(vm: LauncherViewModel) {
                     Screen.SETTINGS_AUDIO -> SettingsAudioScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
                     Screen.SETTINGS_PERFORMANCE -> SettingsPerformanceScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
                     Screen.SETTINGS_CONTROLS -> SettingsControlsScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
-                    Screen.SETTINGS_FIRMWARE -> SettingsFirmwareScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
                     Screen.SETTINGS_STORAGE -> SettingsStorageScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
                     Screen.SETTINGS_DIAGNOSTICS -> SettingsDiagnosticsScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
                     Screen.GPU -> GpuDiagnosticsScreen(vm) { screenName = Screen.SETTINGS.name }

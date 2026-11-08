@@ -33,7 +33,7 @@ import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import kotlinx.coroutines.launch
 
 /**
- * Contenido del menú de pausa (Compose, negro AMOLED + dorado).
+ * Contenido del menú de pausa (Compose, AMOLED #10131D + azul hielo).
  * El juego está en pausa mientras se ve: Continuar o atrás lo cierran
  * y el juego sigue. Los ajustes rápidos se guardan y se aplican al
  * reiniciar el juego (el núcleo lee config.yml al arrancar).
@@ -65,7 +65,7 @@ fun PauseMenuScreen(
                 "Pausa",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
-                color = ColGold,
+                color = ColAccent,
             )
             Text(
                 "El juego está en pausa.",
@@ -73,7 +73,7 @@ fun PauseMenuScreen(
                 color = Color(0xFFB8C2D4),
             )
             Spacer(modifier = Modifier.height(4.dp))
-            GoldButton("Continuar", onClick = onContinue, modifier = Modifier.fillMaxWidth())
+            PrimaryButton("Continuar", onClick = onContinue, modifier = Modifier.fillMaxWidth())
             OutlinedButton(
                 onClick = {
                     scope.launch {
@@ -87,7 +87,7 @@ fun PauseMenuScreen(
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Guardar sesión") }
-            saveMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = ColGold) }
+            saveMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = ColAccent) }
             TextButton(onClick = { quickSettingsOpen = !quickSettingsOpen }) {
                 Text(if (quickSettingsOpen) "Ajustes rápidos ▴" else "Ajustes rápidos ▾")
             }

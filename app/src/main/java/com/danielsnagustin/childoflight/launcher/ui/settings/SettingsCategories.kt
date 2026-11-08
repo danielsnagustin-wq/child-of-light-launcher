@@ -44,11 +44,6 @@ enum class SettingsCategory(val screen: Screen, val title: String, val subtitle:
         "Controles y HUD",
         "Overlay táctil en el juego: mostrar, opacidad y perfiles.",
     ),
-    FIRMWARE(
-        Screen.SETTINGS_FIRMWARE,
-        "Firmware",
-        "Importar, instalar en el núcleo y borrar el firmware.",
-    ),
     STORAGE(
         Screen.SETTINGS_STORAGE,
         "Almacenamiento",

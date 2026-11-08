@@ -44,7 +44,7 @@ class UiPreferencesRepository(private val context: Context) {
     val uiFlow: Flow<UiPreferences> = context.uiDataStore.data.map { p ->
         UiPreferences(
             theme = runCatching { ThemeMode.valueOf(p[Keys.THEME] ?: "DARK") }.getOrDefault(ThemeMode.DARK),
-            accent = runCatching { AccentColor.valueOf(p[Keys.ACCENT] ?: "GOLD") }.getOrDefault(AccentColor.GOLD),
+            accent = runCatching { AccentColor.valueOf(p[Keys.ACCENT] ?: "ICE_BLUE") }.getOrDefault(AccentColor.ICE_BLUE),
             homeBackground = runCatching { HomeBackground.valueOf(p[Keys.BACKGROUND] ?: "NIGHT") }.getOrDefault(HomeBackground.NIGHT),
             textSize = runCatching { TextSize.valueOf(p[Keys.TEXT_SIZE] ?: "MEDIUM") }.getOrDefault(TextSize.MEDIUM),
             language = runCatching { AppLanguage.valueOf(p[Keys.LANGUAGE] ?: "SPANISH") }.getOrDefault(AppLanguage.SPANISH),

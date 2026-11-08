@@ -72,10 +72,19 @@ class EmbeddedCoreLayoutTest {
     }
 
     @Test
-    fun `conflicto si existen ux0 antiguo y vita ux0 no mueve nada`() {
+    fun `conflicto si el antiguo tiene otro juego que el embebido no tiene`() {
         val root = tempRoot()
         try {
-            val legacy = File(root, "ux0/app/PCSB00598/eboot.bin")
+            // NOTA (2026-11-08): este test antes ponía el MISMO juego
+            // (PCSB00598) en los dos lados; con el arreglo del conflicto
+            // de migración eso ya no es Conflict: si el embebido ya
+            // tiene el juego y el antiguo no tiene otro, el lanzamiento
+            // debe continuar (AlreadyMigrated). El Conflict real es
+            // cuando el antiguo tiene OTRO juego que el embebido no
+            // tiene: ahí sí hay ambigüedad sobre cuál es la instalación
+            // buena. El caso del mismo juego en ambos lados lo cubre el
+            // test `migracion no bloquea si el embebido ya tiene el mismo juego`.
+            val legacy = File(root, "ux0/app/PCSE00480/eboot.bin")
             legacy.parentFile.mkdirs()
             legacy.writeText("antiguo")
             val migrated = File(root, "vita/ux0/app/PCSB00598/eboot.bin")
@@ -89,6 +98,92 @@ class EmbeddedCoreLayoutTest {
             assertTrue(migrated.isFile)
             assertEquals("antiguo", legacy.readText())
             assertEquals("migrado", migrated.readText())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `migracion no bloquea si el embebido ya tiene el mismo juego`() {
+        val root = tempRoot()
+        try {
+            // Caso del bug JUGAR (2026-11-08, reporte del teléfono):
+            // el juego ya está instalado en vita/ux0 y el ux0 antiguo
+            // sigue existiendo con el mismo juego. Antes esto era
+            // Conflict en cada lanzamiento y JUGAR no arrancaba nunca.
+            val legacy = File(root, "ux0/app/PCSB00598/eboot.bin")
+            legacy.parentFile.mkdirs()
+            legacy.writeText("antiguo")
+            val migrated = File(root, "vita/ux0/app/PCSB00598/eboot.bin")
+            migrated.parentFile.mkdirs()
+            migrated.writeText("migrado")
+
+            val result = EmbeddedCoreLayout.migrateToEmbeddedLayout(root)
+            assertEquals(EmbeddedCoreLayout.MigrationResult.AlreadyMigrated, result)
+            // No se tocó nada: el antiguo se deja intacto.
+            assertTrue(legacy.isFile)
+            assertTrue(migrated.isFile)
+            assertEquals("antiguo", legacy.readText())
+            assertEquals("migrado", migrated.readText())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `migracion no bloquea si el embebido tiene el juego y el antiguo no tiene juegos`() {
+        val root = tempRoot()
+        try {
+            val legacySave = File(root, "ux0/user/00/savedata/PCSB00598/slot0")
+            legacySave.parentFile.mkdirs()
+            legacySave.writeText("partida")
+            val migrated = File(root, "vita/ux0/app/PCSB00598/eboot.bin")
+            migrated.parentFile.mkdirs()
+            migrated.writeText("migrado")
+
+            val result = EmbeddedCoreLayout.migrateToEmbeddedLayout(root)
+            assertEquals(EmbeddedCoreLayout.MigrationResult.AlreadyMigrated, result)
+            assertTrue(legacySave.isFile)
+            assertTrue(migrated.isFile)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `conflicto si el antiguo tiene otro juego en pkg que el embebido no tiene`() {
+        val root = tempRoot()
+        try {
+            val legacyPkg = File(root, "ux0/pkg/PCSE00480.pkg")
+            legacyPkg.parentFile.mkdirs()
+            legacyPkg.writeText("otro juego")
+            val migrated = File(root, "vita/ux0/app/PCSB00598/eboot.bin")
+            migrated.parentFile.mkdirs()
+            migrated.writeText("migrado")
+
+            val result = EmbeddedCoreLayout.migrateToEmbeddedLayout(root)
+            assertTrue(result is EmbeddedCoreLayout.MigrationResult.Conflict)
+            assertTrue(legacyPkg.isFile)
+            assertTrue(migrated.isFile)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `destino embebido vacio con pkg en el antiguo migra como antes`() {
+        val root = tempRoot()
+        try {
+            val legacyPkg = File(root, "ux0/pkg/PCSB00598.pkg")
+            legacyPkg.parentFile.mkdirs()
+            legacyPkg.writeText("falso pkg")
+            File(root, "vita/ux0/app").mkdirs()
+            File(root, "vita/ux0/user/00/savedata").mkdirs()
+
+            val result = EmbeddedCoreLayout.migrateToEmbeddedLayout(root)
+            assertEquals(EmbeddedCoreLayout.MigrationResult.Migrated(1), result)
+            assertTrue(File(root, "vita/ux0/pkg/PCSB00598.pkg").isFile)
+            assertFalse(File(root, "ux0").exists())
         } finally {
             root.deleteRecursively()
         }

@@ -52,14 +52,11 @@ fun resetCategorySettings(current: LauncherSettings, category: SettingsCategory)
         SettingsCategory.AUDIO -> current.copy(
             audioVolume = preset.audioVolume,
             audioBackend = preset.audioBackend,
-            audioBufferSize = preset.audioBufferSize,
             ngsEnable = preset.ngsEnable,
         )
         SettingsCategory.PERFORMANCE -> current.copy(
             textureCache = preset.textureCache,
             shaderCache = preset.shaderCache,
-            frameLimiter = preset.frameLimiter,
-            frameSkipping = preset.frameSkipping,
             showFpsOverlay = preset.showFpsOverlay,
             performanceOverlayDetail = preset.performanceOverlayDetail,
             performanceOverlayPosition = preset.performanceOverlayPosition,
@@ -75,10 +72,8 @@ fun resetCategorySettings(current: LauncherSettings, category: SettingsCategory)
             touchOverlayNeonGlow = preset.touchOverlayNeonGlow,
             touchOverlayHiddenProfileIds = preset.touchOverlayHiddenProfileIds,
         )
-        SettingsCategory.FIRMWARE -> current
         SettingsCategory.STORAGE -> current
         SettingsCategory.DIAGNOSTICS -> current.copy(
-            accurateThreadScheduling = preset.accurateThreadScheduling,
             closeBackgroundApps = preset.closeBackgroundApps,
             safeMode = preset.safeMode,
         )
@@ -89,7 +84,7 @@ fun resetCategorySettings(current: LauncherSettings, category: SettingsCategory)
  * Solo Personalización tiene campos de UiPreferences: el resto de
  * categorías devuelven las preferencias tal cual. Restablecer la
  * personalización NO toca los perfiles de controles táctiles (eso lo
- * hace "Restablecer toda la personalización", que además resetea el
+ * hace "Restablecer personalización y editor táctil", que además resetea el
  * editor táctil): aquí solo vuelven tema, acento, fondo, texto,
  * idioma, portada, tamaño y transparencia de tarjetas e iconos.
  */
@@ -105,4 +100,4 @@ fun resetCategoryUiPrefs(current: UiPreferences, category: SettingsCategory): Ui
 
 /** true si la categoría tiene algún campo de ajustes que restablecer. */
 fun categoryHasResettableSettings(category: SettingsCategory): Boolean =
-    category != SettingsCategory.FIRMWARE && category != SettingsCategory.STORAGE
+    category != SettingsCategory.STORAGE

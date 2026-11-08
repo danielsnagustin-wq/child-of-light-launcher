@@ -94,4 +94,18 @@ class HomeStatusChipsTest {
         assertEquals(StatusLevel.OK, levelOf(ready, HomeStatusKey.FIRMWARE))
         assertEquals("3.74", detailOf(ready, HomeStatusKey.FIRMWARE))
     }
+
+    @Test
+    fun firmwareImportadoVsInstalado_detalleDistingue() {
+        // Rediseño 2026-11-08: el chip distingue importado de
+        // instalado. Guardado (PUP sin instalar) → "importado";
+        // instalado → la versión real. Sin firmware → sin detalle.
+        val saved = homeStatusChips(GameStatus(), FirmwareStatus.Saved("PSVUPDAT.PUP guardado"))
+        assertEquals(StatusLevel.PENDING, levelOf(saved, HomeStatusKey.FIRMWARE))
+        assertEquals("importado", detailOf(saved, HomeStatusKey.FIRMWARE))
+        val ready = homeStatusChips(GameStatus(firmwareInstalled = true, firmwareName = "3.74"), FirmwareStatus.Ready("vs0"))
+        assertEquals("3.74", detailOf(ready, HomeStatusKey.FIRMWARE))
+        val missing = homeStatusChips(GameStatus(), FirmwareStatus.Missing)
+        assertEquals("", detailOf(missing, HomeStatusKey.FIRMWARE))
+    }
 }

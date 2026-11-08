@@ -22,9 +22,9 @@ fun presetCompatibilityNote(profile: GpuProfileId, gpu: GpuInfo?): String = when
     GpuProfileId.G99_QUALITY ->
         "2x con FSR en Mali: prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado."
     GpuProfileId.MALI_PERFORMANCE ->
-        "Mali genérico (no G99): 1x siempre, Double Buffer forzado. Sin Turnip: el driver Turnip no funciona en Mali."
+        "Mali genérico (no G99): 1x siempre, Double Buffer forzado, sin caché de texturas (libera RAM). Sin Turnip: el driver Turnip no funciona en Mali."
     GpuProfileId.MALI_BALANCED ->
-        "Mali genérico: 1x con FSR y Frame Skip 0 si el FPS es estable. Sin Turnip: el driver Turnip no funciona en Mali."
+        "Mali genérico: 1x con FSR si el FPS es estable. Sin Turnip: el driver Turnip no funciona en Mali."
     GpuProfileId.ADRENO_PERFORMANCE ->
         "Solo Snapdragon / Adreno: en Mali se usa el perfil G99 / Mali. Sin Turnip."
     GpuProfileId.ADRENO_QUALITY_TURNIP ->
@@ -34,6 +34,4 @@ fun presetCompatibilityNote(profile: GpuProfileId, gpu: GpuInfo?): String = when
             } else {
                 "Vulkan + Turnip a 2x."
             }
-    GpuProfileId.GENERIC_PERFORMANCE ->
-        "Perfil seguro para GPU sin detectar: 1x, Double Buffer, sin Turnip."
 }

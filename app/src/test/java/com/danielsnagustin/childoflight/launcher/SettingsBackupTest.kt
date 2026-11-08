@@ -73,15 +73,13 @@ class SettingsBackupTest {
     fun outOfRangeValuesAreClampedLikeTheRepository() {
         val json = "{\"format\":\"col-settings-backup\",\"version\":1," +
             "\"resolutionMultiplier\":99,\"anisotropicFiltering\":3," +
-            "\"audioVolume\":500,\"audioBufferSize\":9999,\"fileLoadingDelay\":-5," +
-            "\"frameSkipping\":9,\"touchOverlayOpacity\":5.0}"
+            "\"audioVolume\":500,\"fileLoadingDelay\":-5," +
+            "\"touchOverlayOpacity\":5.0}"
         val decoded = decodeSettingsBackup(json, LauncherSettings(), UiPreferences()).getOrThrow()
         assertEquals(4f, decoded.first.resolutionMultiplier, 0.001f)
         assertEquals(1, decoded.first.anisotropicFiltering)
         assertEquals(100, decoded.first.audioVolume)
-        assertEquals(2048, decoded.first.audioBufferSize)
         assertEquals(0, decoded.first.fileLoadingDelay)
-        assertEquals(2, decoded.first.frameSkipping)
         assertEquals(1f, decoded.first.touchOverlayOpacity, 0.001f)
     }
 

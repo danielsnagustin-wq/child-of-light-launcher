@@ -46,7 +46,7 @@ enum class IgniculusMode(val label: String) { DIRECT_TOUCH("Toque directo"), JOY
  * - button: botón asignable a cualquier botón de Vita (vitaButton).
  * - igniculus: zona táctil para la luciérnaga (modo toque directo o joystick, sensibilidad).
  * visible=false = oculto (no aparece en el overlay ni estorba).
- * colorHex: color del control, p. ej. "#F2B705".
+ * colorHex: color del control, p. ej. "#8CCBEB".
  */
 data class TouchControl(
     val id: String,
@@ -57,7 +57,7 @@ data class TouchControl(
     val yFraction: Float = 0.5f,
     val sizeDp: Int = 64,
     val opacity: Float = 0.8f,
-    val colorHex: String = "#F2B705",
+    val colorHex: String = "#8CCBEB",
     val shape: ControlShape = ControlShape.CIRCLE,
     val visible: Boolean = true,
     val stickMode: StickMode = StickMode.ANALOG,
@@ -408,7 +408,7 @@ class TouchLayoutRepository(private val context: Context) {
                         yFraction = finiteFloat(p[5], 0.5f),
                         sizeDp = p[6].toIntOrNull() ?: 64,
                         opacity = finiteFloat(p[7], 0.8f),
-                        colorHex = p.getOrNull(8) ?: "#F2B705",
+                        colorHex = p.getOrNull(8) ?: "#8CCBEB",
                         shape = p.getOrNull(9)?.let { runCatching { ControlShape.valueOf(it) }.getOrNull() } ?: ControlShape.CIRCLE,
                         visible = p.getOrNull(10)?.toBooleanStrictOrNull() ?: true,
                         stickMode = p.getOrNull(11)?.let { runCatching { StickMode.valueOf(it) }.getOrNull() } ?: StickMode.ANALOG,

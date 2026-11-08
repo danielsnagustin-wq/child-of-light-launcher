@@ -57,12 +57,12 @@ import com.danielsnagustin.childoflight.launcher.data.TouchControl
 import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
 import com.danielsnagustin.childoflight.launcher.data.VitaButton
 
-private val CONTROL_COLORS = listOf("#F2B705", "#7FB3D5", "#4CAF50", "#E57373", "#BA68C8", "#FFFFFF")
+private val CONTROL_COLORS = listOf("#8CCBEB", "#7FB3D5", "#4CAF50", "#E57373", "#BA68C8", "#FFFFFF")
 
 private fun parseHex(hex: String): Color = try {
     Color(android.graphics.Color.parseColor(hex))
 } catch (_: Exception) {
-    Color(0xFFF2B705)
+    Color(0xFF8CCBEB)
 }
 
 /**

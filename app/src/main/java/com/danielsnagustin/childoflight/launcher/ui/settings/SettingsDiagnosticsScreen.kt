@@ -16,9 +16,8 @@ import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.data.DeviceCompat
 import com.danielsnagustin.childoflight.launcher.data.DeviceMemory
 import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
-import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 import com.danielsnagustin.childoflight.launcher.ui.ColMutedText
-import com.danielsnagustin.childoflight.launcher.ui.ColSuccessGreen
+import com.danielsnagustin.childoflight.launcher.ui.ColTurquoise
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
 import com.danielsnagustin.childoflight.launcher.ui.Screen
@@ -75,12 +74,10 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 val context = LocalContext.current
                 val ramGb = remember { DeviceMemory.totalRamBytes(context)?.let { it / 1_073_741_824.0 } }
                 Text("RAM total: ${ramGb?.let { "%.1f GB".format(it) } ?: "no detectada"}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = Color.White)
-                Text("Backend efectivo: ${resolveBackend(s, gpu).label}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = Color.White)
-                Text("Resolución: ${s.resolutionLabel}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = Color.White)
                 Text(
                     "Último FPS (prueba de 30 s): ${lastFps?.let { "$it fps" } ?: "sin medir"}",
                     style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                    color = if (lastFps != null) ColSuccessGreen else ColMutedText,
+                    color = if (lastFps != null) ColTurquoise else ColMutedText,
                 )
                 Text(
                     "Núcleo embebido: ${if (embeddedCore == true) "presente" else "no presente"}",
@@ -89,11 +86,11 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 )
                 Text("Firmware: ${FirmwareResolver.label(firmwareStatus)}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = Color.White)
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("Configuración activa: perfil ${s.activeProfile.label} · ${s.backend} · ${s.resolutionLabel} · filtro ${s.screenFilter} · VSync ${if (s.vSync) "ON" else "OFF"} · modo 60 FPS ${if (s.fpsHack) "ON" else "OFF"} · modo seguro ${if (s.safeMode) "ON" else "OFF"}.", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = Color.White)
+                Text("Configuración activa: perfil ${s.activeProfile.label} · ${s.backend} · ${s.resolutionLabel} · filtro ${s.screenFilter} · VSync ${if (s.vSync) "ON" else "OFF"} · modo 60 FPS ${if (s.fpsHack) "ON" else "OFF"}.", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = Color.White)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("Errores recientes del log:", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = Color.White)
                 if (recentErrors.isEmpty()) {
-                    Text("Sin errores recientes en el log.", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = ColSuccessGreen)
+                    Text("Sin errores recientes en el log.", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = ColTurquoise)
                 } else {
                     recentErrors.forEach { line ->
                         Text("• $line", style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = Color.White)
@@ -109,9 +106,8 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
             item {
                 SectionTitle("Corrección de errores")
                 NoteText("Mitigaciones del launcher (no reescriben el núcleo del juego). Si algo falla, empieza por el Modo seguro.")
-                SettingSwitch("Accurate Thread Scheduling", "Predeterminado nuevo en el núcleo: evita freezes/cuelgues. ON recomendado. Sin clave verificada en config.h: se guarda en el launcher.", s.accurateThreadScheduling) { vm.saveSettings(s.copy(accurateThreadScheduling = it)) }
                 SettingSwitch("Cerrar apps en segundo plano antes de jugar", "Best-effort con el permiso del sistema. Libera RAM antes de lanzar.", s.closeBackgroundApps) { vm.saveSettings(s.copy(closeBackgroundApps = it)) }
-                SettingSwitch("Modo seguro", "Fuerza 1x, SDL, buffer 2048, Thread Scheduling ON, High Accuracy OFF. Para cuando algo falle.", s.safeMode) { vm.setSafeMode(it) }
+                SettingSwitch("Modo seguro", "Fuerza 1x, SDL, High Accuracy OFF. Para cuando algo falle.", s.safeMode) { vm.setSafeMode(it) }
             }
         }
     }

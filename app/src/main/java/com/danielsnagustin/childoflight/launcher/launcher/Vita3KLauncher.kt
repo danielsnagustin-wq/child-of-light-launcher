@@ -268,6 +268,9 @@ class Vita3KLauncher(private val context: Context) {
      * onInstallProgress (opcional): % real del núcleo al instalar el
      * .pkg guardado (juego, update, DLCs). Solo se usa para mostrarlo
      * en UI; sin él, la instalación es exactamente igual que antes.
+     * benchmark (opcional): true = prueba de 30 s; la Activity del
+     * juego muestrea el FPS del núcleo y lo guarda al salir, para
+     * registrar la prueba automáticamente al volver.
      */
     suspend fun launch(
         library: GameLibraryRepository,
@@ -275,12 +278,13 @@ class Vita3KLauncher(private val context: Context) {
         sessionManager: SessionManager? = null,
         gpu: GpuInfo? = null,
         onInstallProgress: EmbeddedPkgInstaller.ProgressListener? = null,
+        benchmark: Boolean = false,
     ): LaunchOutcome {
         // BUG (auditoría): writeConfig (file.writeText) y checkPrerequisites
         // pueden lanzar IOException y tumbar la corrutina del ViewModel en
         // play()/startBenchmark(). El lanzamiento nunca debe lanzar.
         return try {
-            launchImpl(library, settings, sessionManager, gpu, onInstallProgress)
+            launchImpl(library, settings, sessionManager, gpu, onInstallProgress, benchmark)
         } catch (e: Exception) {
             LaunchOutcome.Blocked("No se pudo lanzar: ${e.message}")
         }
@@ -326,6 +330,7 @@ class Vita3KLauncher(private val context: Context) {
         sessionManager: SessionManager? = null,
         gpu: GpuInfo? = null,
         onInstallProgress: EmbeddedPkgInstaller.ProgressListener? = null,
+        benchmark: Boolean = false,
     ): LaunchOutcome {
         val pre = checkPrerequisites(library)
         if (!pre.ready) {
@@ -369,7 +374,7 @@ class Vita3KLauncher(private val context: Context) {
         val status = library.scanStatus()
         when (val decision = EmbeddedGameLauncher.decide(status, Vita3kCoreBridge.available, pre.firmwareStatus.ready, settings.allowExternalVita3k)) {
             is EmbeddedGameLauncher.Decision.UseEmbedded -> {
-                return when (val attempt = tryLaunchEmbedded(library, titleId, configFile.absolutePath)) {
+                return when (val attempt = tryLaunchEmbedded(library, titleId, configFile.absolutePath, benchmark)) {
                     is EmbeddedAttempt.Ok -> attempt.outcome
                     is EmbeddedAttempt.Failed -> {
                         LauncherLog.append(context, "launch", "Intento embebido falló: ${attempt.reason}")
@@ -390,7 +395,7 @@ class Vita3KLauncher(private val context: Context) {
                     LauncherLog.append(context, "launch", "Instalación .pkg embebida falló: $reason")
                     return LaunchOutcome.EmbeddedFailed("No se pudo instalar el juego en el motor integrado: $reason")
                 }
-                return when (val attempt = tryLaunchEmbedded(library, titleId, configFile.absolutePath)) {
+                return when (val attempt = tryLaunchEmbedded(library, titleId, configFile.absolutePath, benchmark)) {
                     is EmbeddedAttempt.Ok -> attempt.outcome
                     is EmbeddedAttempt.Failed -> {
                         LauncherLog.append(context, "launch", "Intento embebido falló tras instalar el .pkg: ${attempt.reason}")
@@ -442,6 +447,7 @@ class Vita3KLauncher(private val context: Context) {
         library: GameLibraryRepository,
         titleId: String,
         configPath: String,
+        benchmark: Boolean = false,
     ): EmbeddedAttempt {
         return try {
             when (val migration = EmbeddedCoreLayout.migrateToEmbeddedLayout(library.vitaRoot)) {
@@ -479,7 +485,7 @@ class Vita3KLauncher(private val context: Context) {
                     "El motor integrado no pudo arrancar el juego: $detail. Vuelve a intentarlo; si sigue igual, repórtalo.",
                 )
             }
-            val intent = EmbeddedGameActivity.createLaunchIntent(context, titleId, "Child of Light")
+            val intent = EmbeddedGameActivity.createLaunchIntent(context, titleId, "Child of Light", benchmark)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
             LauncherLog.append(context, "launch", "Núcleo embebido lanzó $titleId (EmbeddedGameActivity)")

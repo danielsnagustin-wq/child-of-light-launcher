@@ -46,6 +46,7 @@ import com.danielsnagustin.childoflight.launcher.model.ImportResult
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.TROPHIES_27
 import com.danielsnagustin.childoflight.launcher.model.TrophyProgress
+import com.danielsnagustin.childoflight.launcher.model.UiPreferences
 import com.danielsnagustin.childoflight.launcher.model.applySafeMode
 import com.danielsnagustin.childoflight.launcher.ui.settings.audioFixTarget
 import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsCategory
@@ -314,6 +315,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         refreshLog()
         loadCoverBitmap()
         viewModelScope.launch(Dispatchers.IO) { sessionManager.ensureDefaultSession() }
+        // El snapshot de "Corregir audio" vive en un archivo privado:
+        // si la app muere, "Deshacer" sigue disponible al volver.
+        viewModelScope.launch(Dispatchers.IO) { _audioFixSnapshot.value = readSettingsSnapshot(audioFixSnapshotFile()) }
         viewModelScope.launch {
             // M37: si el DataStore está corrupto, first() lanza y tumbaba
             // esta corrutina sin aviso. Best-effort: sin GPU, se usa el
@@ -370,7 +374,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private fun loadCoverBitmap() {
         viewModelScope.launch(Dispatchers.IO) {
             _coverBitmap.value = runCatching {
-                BitmapFactory.decodeResource(context.resources, R.drawable.col_cover_full)?.asImageBitmap()
+                BitmapFactory.decodeResource(context.resources, R.drawable.col_cover_clean)?.asImageBitmap()
             }.getOrNull()
         }
     }
@@ -441,6 +445,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val current = settingsRepo.settingsFlow.first()
             settingsRepo.applyPreset(profile, current = current)
+            // Turnip solo vale en Adreno y solo si el zip está
+            // instalado: en Mali (o sin Turnip instalado) el preset
+            // "Calidad / Turnip" dejaría gpuDriver=TURNIP sin efecto
+            // y sin forma de revertirlo desde la UI de Mali. Se
+            // vuelve al driver del sistema y se avisa.
+            if (profile == GpuProfileId.ADRENO_QUALITY_TURNIP) {
+                val gpu = settingsRepo.gpuInfoFlow.first()
+                val updated = settingsRepo.settingsFlow.first()
+                if (gpu?.vendor != GpuVendor.ADRENO || !updated.turnipInstalled) {
+                    settingsRepo.save(updated.copy(gpuDriver = com.danielsnagustin.childoflight.launcher.model.GpuDriver.SYSTEM))
+                    _message.value = "Preset aplicado: ${profile.label}. Turnip no está disponible en este teléfono (solo Adreno con el driver instalado): se usa el driver del sistema."
+                    LauncherLog.append(context, "preset", "Preset aplicado: ${profile.name} (Turnip no disponible, driver Sistema)")
+                    return@launch
+                }
+            }
             _message.value = "Preset aplicado: ${profile.label}"
             LauncherLog.append(context, "preset", "Preset aplicado: ${profile.name}")
         }
@@ -454,52 +473,93 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /** Modo seguro: fuerza 1x, SDL, buffer grande, Thread Scheduling ON, High Accuracy OFF. */
+    /**
+     * Modo seguro: fuerza 1x, SDL, High Accuracy OFF. Al activarlo se
+     * guarda una copia de los ajustes actuales en un archivo privado
+     * (col-safe-mode-snapshot.json); al desactivarlo se restauran.
+     */
     fun setSafeMode(enabled: Boolean) {
         viewModelScope.launch {
             val current = settingsRepo.settingsFlow.first()
-            val updated = if (enabled) applySafeMode(current) else current.copy(safeMode = false)
-            settingsRepo.save(updated)
-            _message.value = if (enabled) {
-                "Modo seguro activado: 1x, SDL, buffer 2048, Thread Scheduling ON, High Accuracy OFF."
+            if (enabled) {
+                writeSettingsSnapshot(safeModeSnapshotFile(), current)
+                settingsRepo.save(applySafeMode(current))
+                _message.value = "Modo seguro activado: 1x, SDL, High Accuracy OFF. Tus ajustes anteriores quedan guardados: al desactivarlo se restauran."
             } else {
-                "Modo seguro desactivado. Tus ajustes anteriores no se restauran solos: vuelve a aplicar tu preset si lo necesitas."
+                val snapshot = readSettingsSnapshot(safeModeSnapshotFile())
+                deleteSettingsSnapshot(safeModeSnapshotFile())
+                if (snapshot != null) {
+                    settingsRepo.save(snapshot.copy(safeMode = false))
+                    _message.value = "Modo seguro desactivado. Ajustes anteriores restaurados."
+                } else {
+                    settingsRepo.save(current.copy(safeMode = false))
+                    _message.value = "Modo seguro desactivado. No había ajustes guardados que restaurar: vuelve a aplicar tu preset si lo necesitas."
+                }
             }
         }
     }
 
     /**
-     * "Corregir audio": SDL + buffer 1024 + NGS ON + shaderCache ON +
-     * limpiar caché de shaders (Ola 2, Etapa 4). Antes de aplicar se
-     * guarda una copia de los ajustes actuales en _audioFixSnapshot:
-     * la pantalla de Audio ofrece "Deshacer" para restaurarlos. La
-     * caché limpiada no se recupera (se vuelve a llenar sola al jugar)
-     * y el diálogo lo dice antes de aplicar. El destino de los ajustes
-     * es audioFixTarget (misma fuente que el diálogo de confirmación).
-     * No reinicia el juego solo: hay que volver a lanzar el juego.
+     * "Corregir audio": SDL + NGS ON + shaderCache ON + limpiar caché
+     * de shaders (Ola 2, Etapa 4). Antes de aplicar se guarda una
+     * copia de los ajustes actuales en un archivo privado
+     * (col-audio-fix-snapshot.json): la pantalla de Audio ofrece
+     * "Deshacer" para restaurarlos, también si la app se cierra
+     * entre medias. La caché limpiada no se recupera (se vuelve a
+     * llenar sola al jugar) y el diálogo lo dice antes de aplicar.
+     * El destino de los ajustes es audioFixTarget (misma fuente que
+     * el diálogo de confirmación). No reinicia el juego solo: hay
+     * que volver a lanzar el juego.
      */
     private val _audioFixSnapshot = MutableStateFlow<LauncherSettings?>(null)
     val audioFixSnapshot: StateFlow<LauncherSettings?> = _audioFixSnapshot.asStateFlow()
 
+    /**
+     * Snapshots persistentes de ajustes (auditoría de funcionalidad
+     * 2026-11-08): el mismo JSON que la copia de seguridad
+     * (encode/decodeSettingsBackup), en archivos privados del
+     * launcher. Solo se guarda la parte de ajustes; la de UI se
+     * decodifica con los valores por defecto y se ignora.
+     */
+    private fun audioFixSnapshotFile() = java.io.File(context.filesDir, "col-audio-fix-snapshot.json")
+    private fun safeModeSnapshotFile() = java.io.File(context.filesDir, "col-safe-mode-snapshot.json")
+
+    private fun writeSettingsSnapshot(file: java.io.File, settings: LauncherSettings) {
+        runCatching { file.writeText(encodeSettingsBackup(settings, UiPreferences())) }
+    }
+
+    private fun readSettingsSnapshot(file: java.io.File): LauncherSettings? {
+        if (!file.exists()) return null
+        return runCatching {
+            decodeSettingsBackup(file.readText(), LauncherSettings(), UiPreferences()).getOrNull()?.first
+        }.getOrNull()
+    }
+
+    private fun deleteSettingsSnapshot(file: java.io.File) {
+        runCatching { file.delete() }
+    }
+
     fun fixAudio() {
         viewModelScope.launch(Dispatchers.IO) {
             val current = settingsRepo.settingsFlow.first()
+            writeSettingsSnapshot(audioFixSnapshotFile(), current)
             _audioFixSnapshot.value = current
             settingsRepo.save(audioFixTarget(current))
             val cleared = turnipRepo.clearShaderCache()
             withContext(Dispatchers.Main) {
-                _message.value = "Audio corregido: SDL + buffer 1024 + NGS ON + caché de shaders limpiada " +
+                _message.value = "Audio corregido: SDL + NGS ON + caché de shaders limpiada " +
                     "(${cleared.deletedFiles} archivos). Vuelve a lanzar el juego para aplicar el cambio."
             }
-            LauncherLog.append(context, "audio", "Corregir audio: SDL + buffer 1024, caché limpiada")
+            LauncherLog.append(context, "audio", "Corregir audio: SDL + NGS ON, caché limpiada")
         }
     }
 
-    /** Restaura los ajustes guardados antes de "Corregir audio" y limpia el snapshot. */
+    /** Restaura los ajustes guardados antes de "Corregir audio" y borra el snapshot. */
     fun undoFixAudio() {
         viewModelScope.launch {
-            val snapshot = _audioFixSnapshot.value ?: return@launch
+            val snapshot = readSettingsSnapshot(audioFixSnapshotFile()) ?: _audioFixSnapshot.value ?: return@launch
             settingsRepo.save(snapshot)
+            deleteSettingsSnapshot(audioFixSnapshotFile())
             _audioFixSnapshot.value = null
             _message.value = "Audio restaurado a los valores anteriores a «Corregir audio». " +
                 "La caché de shaders limpiada no se recupera: se vuelve a llenar sola al jugar."
@@ -509,6 +569,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     /** Oculta el botón "Deshacer" sin restaurar nada (el usuario acepta el cambio). */
     fun clearAudioFixSnapshot() {
+        deleteSettingsSnapshot(audioFixSnapshotFile())
         _audioFixSnapshot.value = null
     }
 
@@ -1353,6 +1414,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun noteReturnedFromGame() {
         viewModelScope.launch(Dispatchers.IO) {
             sessionManager.notePlayEnded()
+            // Prueba de 30 s: si el juego midió el FPS automáticamente
+            // (EmbeddedGameActivity muestrea getFps cada segundo y lo
+            // guarda al salir), se registra solo; si no hay medición,
+            // queda el registro manual desde Diagnóstico.
+            val pending = _pendingBenchmark.value ?: return@launch
+            val autoFps = settingsRepo.takeAutoBenchmarkFps() ?: return@launch
+            if (!autoFps.isFinite() || autoFps < 1f || autoFps > 240f) return@launch
+            completeBenchmark(autoFps, BenchmarkSource.AUTO_MEASURED, pending)
         }
     }
 
@@ -1450,7 +1519,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /** Prueba de 30 s: lanza el juego con el preset actual y deja pendiente registrar el FPS visto en el overlay. */
+    /** Prueba de 30 s: lanza el juego con el preset actual; el núcleo mide el FPS solo mientras juegas y al volver se registra automáticamente. Si no hay medición (app externa), queda pendiente registrar el FPS visto en el overlay. */
     fun startBenchmark() {
         viewModelScope.launch(Dispatchers.IO) {
             if (!tryBeginLaunch()) return@launch
@@ -1468,7 +1537,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 startedAtMillis = System.currentTimeMillis(),
                 durationSeconds = 30,
                 source = BenchmarkSource.NOT_MEASURED,
-                note = "Prueba de 30 s con preset ${settings.activeProfile.label}. FPS sin medir: anota el FPS del overlay al volver.",
+                note = "Prueba de 30 s con preset ${settings.activeProfile.label}. El FPS se mide solo mientras juegas; si no hay medición al volver, anota el FPS del overlay.",
             )
             _pendingBenchmark.value = run
             // config.yml antes del firmware, igual que en play(): la
@@ -1479,7 +1548,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // Firmware: igual que en play(), instalar el PUP guardado
             // en el núcleo si está presente (best-effort, no bloquea).
             ensureFirmwareForEmbedded()
-            val outcome = launcher.launch(library, settings, sessionManager, gpu)
+            val outcome = launcher.launch(library, settings, sessionManager, gpu, benchmark = true)
             if (outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternal ||
                 outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ||
                 outcome is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded
@@ -1493,7 +1562,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ->
                         "Prueba de 30 s en marcha. ${Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL}"
                     is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded ->
-                        "Prueba de 30 s en marcha (núcleo embebido). Juega 30 segundos y al volver registra el FPS." +
+                        "Prueba de 30 s en marcha (núcleo embebido). El FPS se mide solo mientras juegas; al volver se registra automáticamente." +
                             if (gpu?.vulkanSupported == false) " Sin Vulkan en este teléfono: se usa OpenGL, puede ir más lento." else ""
                     is Vita3KLauncher.LaunchOutcome.Blocked -> {
                         _pendingBenchmark.value = null
@@ -1521,8 +1590,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     /**
      * Registra el FPS medio visto en el overlay. Si es el preset G99
      * Calidad 2x y baja de 28 fps, vuelve a 1x automáticamente (si el
-     * ajuste está activado). La medición es manual porque en Etapa 1
-     * no hay núcleo embebido que mida FPS por dentro.
+     * ajuste está activado). La medición manual es el respaldo cuando
+     * el juego no midió el FPS solo (p. ej. jugaste en la app
+     * externa): con el núcleo embebido, la prueba se registra sola
+     * al volver (ver noteReturnedFromGame).
      */
     fun recordBenchmarkFps(fps: Float) {
         val pending = _pendingBenchmark.value ?: return
@@ -1533,22 +1604,30 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             _message.value = "FPS no válido: $fps. Anota el FPS del overlay (entre 1 y 240)."
             return
         }
-        viewModelScope.launch {
-            val settings = settingsRepo.settingsFlow.first()
-            // M25: el auto-revert se decide con el perfil ACTUAL, no con el
-            // de cuando empezó la prueba (el usuario pudo cambiarlo).
-            val revert = shouldAutoRevertTo1x(fps, settings.activeProfile, settings.autoRevertTo1xIfBelow28Fps)
-            val completed = pending.copy(fpsAvg = fps, source = BenchmarkSource.MANUAL_OVERLAY, autoReverted = revert)
-            settingsRepo.recordBenchmark(completed)
-            _pendingBenchmark.value = null
-            if (revert) {
-                settingsRepo.applyPreset(GpuProfileId.G99_RECOMMENDED, current = settings)
-                _message.value = "FPS medio: $fps. Menos de 28 fps con Calidad 2x: vuelto a 1x automáticamente (preset G99 Recomendado)."
-            } else {
-                _message.value = "Prueba registrada: $fps fps medios con ${pending.profile.label}."
-            }
-            LauncherLog.append(context, "benchmark", "Prueba ${pending.profile.name}: $fps fps, autoRevert=$revert")
+        viewModelScope.launch { completeBenchmark(fps, BenchmarkSource.MANUAL_OVERLAY, pending) }
+    }
+
+    /**
+     * Cierra una prueba de 30 s (manual o medida por el núcleo):
+     * guarda el historial, limpia el pendiente y aplica el
+     * auto-revert a 1x si toca. `source` distingue cómo se midió.
+     */
+    private suspend fun completeBenchmark(fps: Float, source: BenchmarkSource, pending: BenchmarkRun) {
+        val settings = settingsRepo.settingsFlow.first()
+        // M25: el auto-revert se decide con el perfil ACTUAL, no con el
+        // de cuando empezó la prueba (el usuario pudo cambiarlo).
+        val revert = shouldAutoRevertTo1x(fps, settings.activeProfile, settings.autoRevertTo1xIfBelow28Fps)
+        val completed = pending.copy(fpsAvg = fps, source = source, autoReverted = revert)
+        settingsRepo.recordBenchmark(completed)
+        _pendingBenchmark.value = null
+        val how = if (source == BenchmarkSource.AUTO_MEASURED) "medido automáticamente por el juego" else "registrado a mano"
+        if (revert) {
+            settingsRepo.applyPreset(GpuProfileId.G99_RECOMMENDED, current = settings)
+            _message.value = "FPS medio: $fps ($how). Menos de 28 fps con Calidad 2x: vuelto a 1x automáticamente (preset G99 Recomendado)."
+        } else {
+            _message.value = "Prueba registrada: $fps fps medios ($how) con ${pending.profile.label}."
         }
+        LauncherLog.append(context, "benchmark", "Prueba ${pending.profile.name}: $fps fps ($source), autoRevert=$revert")
     }
 
     fun dismissBenchmark() { _pendingBenchmark.value = null }
@@ -1778,16 +1857,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     // --- Restauración por categoría (Ola 3, Etapa 9b) ---
-    // Restablece SOLO esa categoría (ver CategoryReset.kt). Firmware y
-    // Almacenamiento no tienen ajustes: son archivos, y el mensaje lo
-    // dice en vez de fingir que se restableció algo.
+    // Restablece SOLO esa categoría (ver CategoryReset.kt). Almacenamiento
+    // no tiene ajustes: son archivos, y el mensaje lo dice en vez de
+    // fingir que se restableció algo. El firmware ya no es una categoría
+    // de Ajustes: vive en Importar (juego y DLCs).
     fun resetCategory(category: SettingsCategory) {
         viewModelScope.launch {
             if (!categoryHasResettableSettings(category)) {
-                _message.value = when (category) {
-                    SettingsCategory.FIRMWARE -> "Firmware no tiene ajustes que restablecer: el firmware son archivos (PUP guardado o instalado en el núcleo), no ajustes."
-                    else -> "Almacenamiento no tiene ajustes que restablecer: son archivos (copias en Descargas, juego, DLCs), no ajustes."
-                }
+                _message.value = "Almacenamiento no tiene ajustes que restablecer: son archivos (copias en Descargas, juego, DLCs), no ajustes."
                 return@launch
             }
             val current = settingsRepo.settingsFlow.first()
@@ -2092,9 +2169,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             appendLine("Backend: ${settings.backend} | Resolución: ${settings.resolutionLabel} | Filtro: ${settings.screenFilter}")
             appendLine("Aniso: ${settings.anisotropicFiltering}x | VSync: ${settings.vSync} | Async: ${settings.asyncPipelineCompilation}")
             appendLine("High Accuracy: ${settings.highAccuracy} | Surface Sync: ${settings.surfaceSyncEnabled} | Memory Mapping: ${settings.memoryMapping}")
-            appendLine("Audio: ${settings.audioBackend} | Buffer: ${settings.audioBufferSize} | Volumen: ${settings.audioVolume} | NGS: ${settings.ngsEnable}")
-            appendLine("CPU opt (JIT): ${settings.cpuOpt} | FPS hack: ${settings.fpsHack} | Frame limiter: ${settings.frameLimiter.label} | Frame skip: ${settings.frameSkipping}")
-            appendLine("Thread Scheduling: ${settings.accurateThreadScheduling} | Modo seguro: ${settings.safeMode}")
+            appendLine("Audio: ${settings.audioBackend} | Volumen: ${settings.audioVolume} | NGS: ${settings.ngsEnable}")
+            appendLine("CPU opt (JIT): ${settings.cpuOpt} | FPS hack: ${settings.fpsHack}")
+            appendLine("Modo seguro: ${settings.safeMode}")
             appendLine("Driver: ${settings.gpuDriver} | Turnip: ${settings.turnipVersion} (instalado: ${settings.turnipInstalled})")
             appendLine()
             appendLine("--- config.yml generado ---")

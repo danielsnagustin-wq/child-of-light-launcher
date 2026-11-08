@@ -74,9 +74,13 @@ class SettingsSearchTest {
     }
 
     @Test
-    fun benchmarkLinksToPerformanceAndDiagnostics() {
+    fun benchmarkLinksOnlyToDiagnostics() {
+        // Dedup: la prueba de 30 s vive SOLO en Diagnóstico ("GPU y
+        // diagnóstico"). Rendimiento ya no enlaza a ella: buscar
+        // "prueba 30 segundos" no debe devolver entradas de
+        // PERFORMANCE.
         val results = searchSettings("prueba 30 segundos")
-        assertTrue(results.any { it.category == SettingsCategory.PERFORMANCE })
         assertTrue(results.any { it.category == SettingsCategory.DIAGNOSTICS })
+        assertTrue(results.none { it.category == SettingsCategory.PERFORMANCE })
     }
 }

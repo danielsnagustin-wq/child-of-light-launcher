@@ -1,7 +1,6 @@
 package com.danielsnagustin.childoflight.launcher
 
 import com.danielsnagustin.childoflight.launcher.data.DeviceMemory
-import com.danielsnagustin.childoflight.launcher.model.FrameLimiter
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.MemoryMapping
 import com.danielsnagustin.childoflight.launcher.model.ScreenFilter
@@ -37,7 +36,6 @@ class LowRamProfileTest {
         assertFalse(s.surfaceSyncEnabled)
         assertFalse(s.textureCache)
         assertTrue(s.shaderCache)
-        assertEquals(FrameLimiter.FPS_30, s.frameLimiter)
     }
 
     @Test
@@ -56,8 +54,6 @@ class LowRamProfileTest {
     fun lowRamPreservesNonMemorySettings() {
         val base = presetSettings(GpuProfileId.MALI_PERFORMANCE)
         val s = applyLowRamDefaults(base)
-        // Frame skipping es de GPU, no de RAM: se conserva el del preset.
-        assertEquals(1, s.frameSkipping)
         assertEquals(base.backend, s.backend)
         assertTrue(s.cpuOpt)
         assertEquals(base.audioBackend, s.audioBackend)

@@ -8,15 +8,19 @@ import android.os.Bundle
 import android.view.Surface
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.Toast
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.data.SettingsRepository
 import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
 import com.danielsnagustin.childoflight.launcher.launcher.Vita3KLauncher
+import com.danielsnagustin.childoflight.launcher.model.averageBenchmarkFps
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.libsdl.app.SDLActivity
@@ -92,20 +96,28 @@ class EmbeddedGameActivity : SDLActivity() {
     companion object {
         const val EXTRA_TITLE_ID = "title_id"
         const val EXTRA_GAME_TITLE = "game_title"
+        /** true = prueba de 30 s: muestrear el FPS del núcleo y guardarlo al salir. */
+        const val EXTRA_BENCHMARK = "benchmark"
 
         /** Request code del menú de pausa (startActivityForResult). */
         const val REQUEST_PAUSE_MENU = 2001
 
-        fun createLaunchIntent(context: Context, titleId: String, gameTitle: String): Intent {
+        fun createLaunchIntent(context: Context, titleId: String, gameTitle: String, benchmark: Boolean = false): Intent {
             return Intent(context, EmbeddedGameActivity::class.java).apply {
                 putExtra(EXTRA_TITLE_ID, titleId)
                 putExtra(EXTRA_GAME_TITLE, gameTitle)
+                putExtra(EXTRA_BENCHMARK, benchmark)
                 addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
             }
         }
     }
 
     private var currentTitleId: String = ""
+
+    // --- Prueba de 30 s (muestreo de FPS) ---
+    private var benchmarkMode: Boolean = false
+    private var benchmarkJob: Job? = null
+    private val benchmarkSamples = mutableListOf<Float>()
 
     // --- Overlay táctil (GamepadOverlayView + mando virtual SDL) ---
     private var overlayView: GamepadOverlayView? = null
@@ -149,6 +161,7 @@ class EmbeddedGameActivity : SDLActivity() {
             return
         }
         currentTitleId = titleId
+        benchmarkMode = intent.getBooleanExtra(EXTRA_BENCHMARK, false)
         val storageRoot = EmbeddedCoreLayout.storageRoot(this)
         val rc = Vita3kCoreBridge.init(storageRoot.absolutePath)
         if (rc != Vita3kCoreBridge.OK) {
@@ -303,17 +316,71 @@ class EmbeddedGameActivity : SDLActivity() {
             )
         }
         refreshOverlay()
+        applyPerformanceScreenFlag()
+        maybeStartBenchmarkSampling()
     }
 
     override fun onPause() {
         // Soltar todo lo pulsado al pausar: sin botones atascados al volver.
         overlayView?.releaseAll()
+        stopBenchmarkSamplingAndSave()
         super.onPause()
         runCatching {
             Vita3kCoreBridge.setPauseReasonEnabled(
                 Vita3kCoreBridge.PAUSE_REASON_BACKGROUND,
                 true,
             )
+        }
+    }
+
+    /**
+     * Prueba de 30 s (auditoría de funcionalidad 2026-11-08): si el
+     * lanzamiento vino con benchmark=true, muestrea el FPS real del
+     * núcleo (Vita3kCoreBridge.getFps(), que lee EmuEnvState::fps)
+     * cada segundo mientras el juego está en primer plano. Al salir
+     * (onPause) guarda la media en DataStore; el launcher la consume
+     * una sola vez al volver y registra la prueba solo. Sin muestras
+     * válidas no se guarda nada: la prueba queda para registro
+     * manual. El muestreo no toca el juego: es una lectura JNI por
+     * segundo, sin escribir nada en el núcleo.
+     */
+    private fun maybeStartBenchmarkSampling() {
+        if (!benchmarkMode || !Vita3kCoreBridge.available) return
+        if (benchmarkJob?.isActive == true) return
+        benchmarkJob = overlayScope.launch {
+            while (isActive) {
+                val fps = runCatching { Vita3kCoreBridge.getFps() }.getOrDefault(-1f)
+                if (fps > 0f) benchmarkSamples += fps
+                delay(1000)
+            }
+        }
+    }
+
+    private fun stopBenchmarkSamplingAndSave() {
+        benchmarkJob?.cancel()
+        benchmarkJob = null
+        if (!benchmarkMode || benchmarkSamples.isEmpty()) return
+        val mean = averageBenchmarkFps(benchmarkSamples) ?: return
+        overlayScope.launch(Dispatchers.IO) {
+            runCatching { SettingsRepository(this@EmbeddedGameActivity).saveAutoBenchmarkFps(mean) }
+        }
+    }
+
+    /**
+     * Modo rendimiento del launcher: mantener la pantalla encendida
+     * mientras se juega. Antes solo se aplicaba en MainActivity: al
+     * abrir el juego la bandera se perdía y la pantalla podía
+     * apagarse en mitad de la partida. Se aplica aquí en cada
+     * onResume (y se quita si el ajuste está OFF).
+     */
+    private fun applyPerformanceScreenFlag() {
+        overlayScope.launch {
+            val settings = runCatching { SettingsRepository(this@EmbeddedGameActivity).settingsFlow.first() }.getOrNull()
+            if (settings?.performanceMode == true) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
         }
     }
 

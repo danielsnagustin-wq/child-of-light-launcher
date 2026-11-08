@@ -40,8 +40,6 @@ import com.danielsnagustin.childoflight.launcher.ui.SettingSwitch
  * restaura. Honesto en el diálogo: la caché de shaders limpiada no
  * se recupera, se vuelve a llenar sola al jugar.
  *
- * El tamaño de buffer es SOLO-LAUNCHER: no hay clave de buffer en
- * config.h, así que va etiquetado como ajuste del launcher.
  */
 @Composable
 fun SettingsAudioScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Screen) -> Unit) {
@@ -51,7 +49,7 @@ fun SettingsAudioScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (
     val s = settings
     SettingsCategoryScaffold(
         title = "Audio",
-        subtitle = "Backend, buffer, NGS y volumen.",
+        subtitle = "Backend, NGS y volumen.",
         onBack = onBack,
         onResetCategory = { vm.resetCategory(SettingsCategory.AUDIO) },
         dialogs = {
@@ -95,15 +93,13 @@ fun SettingsAudioScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (
                 SectionTitle("Audio")
                 EnumChips("Backend de audio", AudioBackend.entries, s.audioBackend, { it.label }) { vm.saveSettings(s.copy(audioBackend = it)) }
                 NoteText("SDL es el predeterminado desde v7 porque arregla ruido. Cubeb es la alternativa (v1.3: cubeb y SDL ya no deberían crepitar/cortar).")
-                EnumChips("Tamaño de buffer de audio", listOf(256, 512, 1024, 2048), s.audioBufferSize, { "$it" }) { vm.saveSettings(s.copy(audioBufferSize = it)) }
-                NoteText("Si hay crackles (chasquidos), sube el buffer un paso (p. ej. 512 → 1024). Es ajuste del launcher: no hay clave de buffer en config.h.")
                 SettingSwitch("NGS (audio del sistema Vita)", "ngs-enable en config.yml. ON recomendado.", s.ngsEnable) { vm.saveSettings(s.copy(ngsEnable = it)) }
                 SettingSlider("Volumen", s.audioVolume, 0..100, { vm.saveSettings(s.copy(audioVolume = it)) }) { "$it%" }
             }
             item {
                 SectionTitle("Corregir audio")
                 Button(onClick = { showFixPreview = true }, modifier = Modifier.fillMaxWidth()) { Text("Corregir audio") }
-                NoteText("Muestra antes qué va a cambiar (SDL + buffer 1024 + NGS ON + caché de shaders ON y limpiada) y guarda tus valores para poder deshacer. Vuelve a lanzar el juego para aplicar el cambio.")
+                NoteText("Muestra antes qué va a cambiar (SDL + NGS ON + caché de shaders ON y limpiada) y guarda tus valores para poder deshacer. Vuelve a lanzar el juego para aplicar el cambio.")
                 if (audioFixSnapshot != null) {
                     Spacer(modifier = Modifier.height(8.dp))
                     PremiumCard {
@@ -113,7 +109,7 @@ fun SettingsAudioScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White,
                         )
-                        NoteText("Deshacer restaura el backend, el buffer, NGS y la caché de shaders de antes. La caché de shaders limpiada no se recupera: se vuelve a llenar sola al jugar.")
+                        NoteText("Deshacer restaura el backend, NGS y la caché de shaders de antes. La caché de shaders limpiada no se recupera: se vuelve a llenar sola al jugar.")
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedButton(onClick = { vm.undoFixAudio() }, modifier = Modifier.fillMaxWidth()) { Text("Deshacer") }
                         Spacer(modifier = Modifier.height(8.dp))

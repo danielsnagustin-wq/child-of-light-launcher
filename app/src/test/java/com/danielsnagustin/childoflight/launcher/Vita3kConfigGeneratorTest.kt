@@ -19,8 +19,9 @@ import org.junit.Test
 
 /**
  * El generador solo emite claves verificadas en config.h de Vita3K.
- * Los ajustes sin clave verificada van como comentario TODO-VERIFY,
- * nunca como clave inventada.
+ * Los ajustes sin clave verificada no se emiten en absoluto: no
+ * existen en el modelo de ajustes (se eliminaron por no tener
+ * efecto real, auditoría de funcionalidad 2026-11-08).
  */
 class Vita3kConfigGeneratorTest {
 
@@ -129,16 +130,17 @@ class Vita3kConfigGeneratorTest {
     }
 
     @Test
-    fun unverifiedSettingsAreCommentsNotKeys() {
+    fun removedUnverifiedSettingsAreNeverEmitted() {
         val yaml = Vita3kConfigGenerator.generate(presetSettings(GpuProfileId.G99_RECOMMENDED), "/data/vita3k")
-        // No debe existir ninguna línea "clave: valor" para estos ajustes.
+        // Los ajustes sin clave verificada se eliminaron del modelo:
+        // no debe existir ninguna línea "clave: valor" ni mención
+        // para ellos en el YAML generado.
         assertFalse(yaml.lines().any { it.startsWith("frame-limiter:") })
         assertFalse(yaml.lines().any { it.startsWith("frame-skipping:") })
         assertFalse(yaml.lines().any { it.startsWith("accurate-thread-scheduling:") })
         assertFalse(yaml.lines().any { it.startsWith("audio-buffer-size:") })
-        // Pero sí deben aparecer como TODO-VERIFY documentados.
-        assertTrue(yaml.contains("TODO-VERIFY"))
-        assertTrue(yaml.contains("frame-limiter"))
+        assertFalse(yaml.contains("TODO-VERIFY"))
+        assertFalse(yaml.contains("frame-limiter"))
     }
 
     @Test
@@ -248,13 +250,13 @@ class Vita3kConfigGeneratorTest {
     @Test
     fun displayInfoMessageNeverEmittedAsRealKey() {
         // display-info-message NO existe en config.h (lectura completa
-        // 0-465, pin 3e43bc80): nunca debe salir como clave real, solo
-        // como comentario TODO-VERIFY que explica por qué no se emite.
+        // 0-465, pin 3e43bc80): nunca debe salir, ni como clave real
+        // ni como comentario.
         val yaml = Vita3kConfigGenerator.generate(
             LauncherSettings(), "/data/vita3k",
         )
         assertFalse(yaml.contains("display-info-message: "))
-        assertTrue(yaml.contains("TODO-VERIFY: display-info-message"))
+        assertFalse(yaml.contains("display-info-message"))
     }
 
     @Test

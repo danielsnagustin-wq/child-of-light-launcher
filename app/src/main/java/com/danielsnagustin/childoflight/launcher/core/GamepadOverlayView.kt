@@ -69,7 +69,7 @@ class GamepadOverlayView @JvmOverloads constructor(
             refreshChildren()
         }
 
-    /** Halo dorado (neón) alrededor de los botones. */
+    /** Halo azul hielo (neón) alrededor de los botones. */
     var neonGlow: Boolean = false
         set(value) {
             field = value
@@ -140,11 +140,11 @@ class GamepadOverlayView @JvmOverloads constructor(
     private fun parseHex(hex: String): Int = try {
         Color.parseColor(hex)
     } catch (_: Exception) {
-        Color.parseColor("#F2B705")
+        Color.parseColor("#8CCBEB")
     }
 
-    /** Color dorado del launcher (negro AMOLED + dorado, como el resto de la app). */
-    private val goldColor: Int get() = Color.parseColor("#F2B705")
+    /** Color de acento del launcher (azul hielo, como el resto de la app). */
+    private val accentColor: Int get() = Color.parseColor("#8CCBEB")
 
     private abstract inner class OverlayControlView(
         context: Context,
@@ -292,7 +292,7 @@ class GamepadOverlayView @JvmOverloads constructor(
             fillPaint.color = parseHex(control.colorHex)
             fillPaint.alpha = (effectiveAlpha() * 255).toInt()
             canvas.drawCircle(cx, cy, knobRadius, fillPaint)
-            strokePaint.color = goldColor
+            strokePaint.color = accentColor
             strokePaint.alpha = (effectiveAlpha() * 255).toInt()
             canvas.drawCircle(cx, cy, knobRadius, strokePaint)
             drawLabel(canvas, rect, effectiveAlpha())

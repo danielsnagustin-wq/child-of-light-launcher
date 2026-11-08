@@ -41,9 +41,9 @@ import com.danielsnagustin.childoflight.launcher.ui.premiumBackgroundBrush
  *
  * Ola 3, Etapa 9b: `onResetCategory` añade el botón "Restablecer esta
  * categoría" (con confirmación) al final de la pantalla. Restablece
- * SOLO esa categoría (ver CategoryReset.kt); Firmware y Almacenamiento
- * no tienen ajustes que restablecer y el ViewModel lo dice en el
- * mensaje. Las pantallas que no lo pasan no muestran el botón.
+ * SOLO esa categoría (ver CategoryReset.kt). Almacenamiento no
+ * tiene ajustes que restablecer y no pasa el botón. Las pantallas
+ * que no lo pasan no muestran el botón.
  */
 @Composable
 fun SettingsCategoryScaffold(

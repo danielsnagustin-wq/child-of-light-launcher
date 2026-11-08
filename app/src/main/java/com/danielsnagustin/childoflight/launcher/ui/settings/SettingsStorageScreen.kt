@@ -22,7 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
-import com.danielsnagustin.childoflight.launcher.ui.ColSuccessGreen
+import com.danielsnagustin.childoflight.launcher.ui.ColTurquoise
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
 import com.danielsnagustin.childoflight.launcher.ui.PremiumCard
@@ -48,7 +48,6 @@ fun SettingsStorageScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
         title = "Almacenamiento",
         subtitle = "Dónde vive cada cosa y qué se puede borrar.",
         onBack = onBack,
-        onResetCategory = { vm.resetCategory(SettingsCategory.STORAGE) },
         dialogs = {
             if (showDeleteDownloadsConfirm) {
                 AlertDialog(
@@ -84,7 +83,7 @@ fun SettingsStorageScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                 NoteText("La única copia en Descargas es la entrega explícita a la app externa («Instalar en la app externa», con confirmación antes de copiar). Cuando el núcleo embebido esté listo, no hará falta copiar nada.")
                 Spacer(modifier = Modifier.height(12.dp))
                 if (downloadsCopies.isEmpty()) {
-                    Text("Descargas/ChildOfLight/: vacía ✓", style = MaterialTheme.typography.bodyMedium, color = ColSuccessGreen)
+                    Text("Descargas/ChildOfLight/: vacía ✓", style = MaterialTheme.typography.bodyMedium, color = ColTurquoise)
                 } else {
                     Text(
                         "Copias en Descargas/ChildOfLight/:",

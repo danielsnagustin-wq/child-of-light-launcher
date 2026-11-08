@@ -19,10 +19,10 @@ import java.io.File
  * vita3k/audio/src/audio.cpp (audio-backend),
  * vita3k/android/jni/native_drivers.cpp + vita3k/util/src/android_driver.cpp
  * (custom-driver-name). Cada clave emitida abajo existe en
- * CONFIG_INDIVIDUAL con ese nombre exacto. Las claves con
- * "TODO-VERIFY" NO se emiten como reales: se escriben como
- * comentario, porque no aparecen en config.h y emitirlas sería
- * inventar que Vita3K las lee.
+ * CONFIG_INDIVIDUAL con ese nombre exacto. Los ajustes del
+ * launcher SIN clave verificada en config.h no se emiten en
+ * absoluto: no existen en el modelo de ajustes (se eliminaron
+ * por no tener efecto real), así que no hay líneas TODO-VERIFY.
  *
  * Claves verificadas usadas:
  * - backend-renderer ("Vulkan"), resolution-multiplier (float 1.0/2.0/3.0/4.0),
@@ -63,20 +63,17 @@ import java.io.File
  *   con installCustomDriver, ver driver_bridge.cpp),
  *   pref-path (string, ruta del vita_fs).
  *
- * NO verificadas (comentario TODO, no se emiten):
+ * NO verificadas (no se emiten):
  * - display-info-message: NO existe en config.h (lectura completa
  *   0-465, pin 3e43bc80) ni en Config::CurrentConfig
  *   (config/state.h:136-224). No hay ningún mecanismo de "mensajes
  *   informativos" en config; lo más cercano es warn-missing-firmware
  *   (config.h:382) y show-live-area-screen (:322), ninguno es un
  *   aviso informativo general. Por eso NO se emite.
- * - frame limiter (no hay clave en config.h ni en config.cpp)
- * - frame skipping (no hay clave en config.h ni en config.cpp)
- * - accurate thread scheduling (no hay clave en config.h ni en
- *   config.cpp; es ajuste del fork Vita3K-Android / Vita3K+, se
- *   guarda en el launcher)
- * - audio buffer size (no hay clave de buffer en config.h ni en
- *   config.cpp)
+ * - frame limiter, frame skipping, accurate thread scheduling y
+ *   audio buffer size: sin clave en config.h ni en config.cpp.
+ *   No tienen efecto real en el launcher y se eliminaron del
+ *   modelo de ajustes (auditoría de funcionalidad 2026-11-08).
  * - cpu-backend separado (no hay clave: Dynarmic es el backend por
  *   defecto y cpu-opt controla sus optimizaciones)
  */
@@ -94,14 +91,13 @@ object Vita3kConfigGenerator {
         sb.appendLine("# config.yml generado por Child of Light Launcher (Etapa 1)")
         sb.appendLine("# Perfil activo: ${s.activeProfile.label}")
         if (settings.safeMode) {
-            sb.appendLine("# MODO SEGURO activo: 1x, SDL, buffer grande, Thread Scheduling ON, High Accuracy OFF.")
+            sb.appendLine("# MODO SEGURO activo: 1x, SDL, High Accuracy OFF.")
         }
         if (s.fpsHack) {
             sb.appendLine("# Modo 60 FPS activo: fps-hack + paquete rápido (1x, VSync ON, Double Buffer, cachés ON). Se revierte apagando el interruptor en Ajustes.")
         }
         sb.appendLine("# Fuente de claves: config.h del núcleo (pin 3e43bc80, 2026-11-07).")
-        sb.appendLine("# Las líneas TODO-VERIFY son ajustes del launcher SIN clave verificada en config.h.")
-        sb.appendLine("# No se inventan claves: esos ajustes no se escriben como claves reales.")
+        sb.appendLine("# No se inventan claves: solo se emiten las verificadas en config.h.")
         sb.appendLine()
         // --- GPU ---
         sb.appendLine("# GPU — backend-renderer verificado (\"Vulkan\" / \"OpenGL\").")
@@ -166,7 +162,6 @@ object Vita3kConfigGenerator {
         sb.appendLine("audio-backend: \"${s.audioBackend.vita3kValue}\"")
         sb.appendLine("audio-volume: ${s.audioVolume}")
         sb.appendLine("ngs-enable: ${s.ngsEnable}")
-        sb.appendLine("# TODO-VERIFY: audio-buffer-size (${s.audioBufferSize}) es ajuste del launcher; no hay clave de buffer en config.h ni en config.cpp (pin 3e43bc80), así que NO se emite como clave real.")
         // --- Overlay ---
         // performance-overlay-detail/position VERIFICADOS (pin 3e43bc80,
         // config.h:362,364): ints con default MINIMUM = 0 y TOP_LEFT = 0.
@@ -190,11 +185,6 @@ object Vita3kConfigGenerator {
         // emite false siempre: el launcher es un port, no muestra la
         // bienvenida del emulador.
         sb.appendLine("show-welcome: false")
-        // display-info-message NO existe en config.h (lectura completa
-        // 0-465, pin 3e43bc80) ni en Config::CurrentConfig
-        // (config/state.h:136-224): NO se emite como clave real, solo
-        // queda este TODO-VERIFY en el YAML para que se vea por qué.
-        sb.appendLine("# TODO-VERIFY: display-info-message NO existe en config.h (pin 3e43bc80) ni en Config::CurrentConfig: no hay ningún mecanismo de mensajes informativos en config, así que NO se emite como clave real. Lo más cercano es warn-missing-firmware (config.h:382), que es un aviso de firmware, no de info.")
         // --- PSN emulado (DLC) ---
         // psn-signed-in VERIFICADO (config.h:398): int, default false
         // en upstream. Lo consumen sceNpCheckCallback y
@@ -213,10 +203,6 @@ object Vita3kConfigGenerator {
         // EmbeddedPkgInstaller.installDlcPkg): esto no la sustituye,
         // la complementa.
         sb.appendLine("psn-signed-in: 1")
-        // --- Ajustes solo-launcher ---
-        sb.appendLine("# TODO-VERIFY: frame-limiter (${s.frameLimiter.label}) no tiene clave en config.h ni en config.cpp (pin 3e43bc80); lo aplica el launcher al lanzar (límite objetivo), no el núcleo vía YAML.")
-        sb.appendLine("# TODO-VERIFY: frame-skipping (${s.frameSkipping}) no tiene clave en config.h ni en config.cpp (pin 3e43bc80); ajuste del launcher.")
-        sb.appendLine("# TODO-VERIFY: accurate-thread-scheduling (${s.accurateThreadScheduling}) no tiene clave en config.h ni en config.cpp (pin 3e43bc80; es ajuste del fork Android); se guarda en el launcher y se aplica si el build lo soporta.")
         // --- Rutas ---
         sb.appendLine("pref-path: \"$vitaFsPath\"")
         return sb.toString()

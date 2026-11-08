@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.data.DeviceCompat
 import com.danielsnagustin.childoflight.launcher.data.DeviceMemory
+import com.danielsnagustin.childoflight.launcher.model.BenchmarkSource
 import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 import com.danielsnagustin.childoflight.launcher.ui.settings.extractRecentErrorLines
 
@@ -39,9 +40,17 @@ import com.danielsnagustin.childoflight.launcher.ui.settings.extractRecentErrorL
  * GPU y diagnóstico.
  * - Detección: SoC, GPU, versión Vulkan, driver.
  * - En G99/Mali-G57 muestra "Procesador verificado por el usuario".
- * - Prueba de 30 s + registro manual del FPS del overlay.
+ * - Prueba de 30 s: el núcleo mide el FPS solo; si no hay
+ *   medición, registro manual del FPS del overlay.
  * - Optimización de batería, núcleo, log reciente y reporte de bug.
  */
+/** Etiqueta legible del origen de la medición (el enum se guarda en DataStore). */
+private fun benchmarkSourceLabel(source: BenchmarkSource): String = when (source) {
+    BenchmarkSource.MANUAL_OVERLAY -> "manual"
+    BenchmarkSource.AUTO_MEASURED -> "automático"
+    BenchmarkSource.NOT_MEASURED -> "sin medir"
+}
+
 @Composable
 fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     val gpu by vm.gpuFlow.collectAsState(initial = null)
@@ -99,19 +108,19 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             if (!DeviceCompat.is64BitDevice()) {
                 Text(
                     "⚠ Este teléfono es de 32 bits: el núcleo embebido necesita 64 bits (arm64), así que el juego se abrirá con la app externa.",
-                    color = ColGold,
+                    color = ColAccent,
                     fontWeight = FontWeight.Bold,
                 )
             }
             if (!g.vulkanSupported) {
                 Text(
                     "⚠ Sin Vulkan en este teléfono. El núcleo usará OpenGL en su lugar: puede ir más lento o con fallos gráficos. Si el juego no arranca o se ve mal, activa el modo seguro en Ajustes.",
-                    color = ColGold,
+                    color = ColAccent,
                     fontWeight = FontWeight.Bold,
                 )
             }
             if (g.isUserVerifiedDevice) {
-                Text("✓ Procesador verificado por el usuario: Child of Light va muy bien en este procesador.", color = ColGold, fontWeight = FontWeight.Bold)
+                Text("✓ Procesador verificado por el usuario: Child of Light va muy bien en este procesador.", color = ColAccent, fontWeight = FontWeight.Bold)
                 NoteText("Por eso el preset por defecto es G99 Recomendado (1x, Frame Skip 0): se optimiza para mantener esa fluidez estable, no para recortar de más.")
             } else if (g.vendor.name == "MALI") {
                 NoteText("Mali: hay cosas que definitivamente no funcionan y es posible que nunca funcionen, pero el núcleo trae arreglos para Mali (vertex fix, Double Buffer mejorado) y Child of Light, al ser 2D UbiArt, es más ligero que un juego 3D: a 1x tiene más chance. No se prometen 60 fps en Mali.")
@@ -145,22 +154,22 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         SectionTitle("Errores recientes del log")
         val recentErrors = extractRecentErrorLines(logText)
         if (recentErrors.isEmpty()) {
-            Text("Sin errores recientes en el log.", color = ColSuccessGreen)
+            Text("Sin errores recientes en el log.", color = ColTurquoise)
         } else {
             recentErrors.forEach { line -> Text("• $line", style = MaterialTheme.typography.bodySmall) }
         }
         NoteText("El informe exportado (Reportar bug) es solo texto: dispositivo, ajustes, estado y errores recientes. No adjunta ningún archivo privado.")
 
         SectionTitle("Prueba de 30 segundos")
-        NoteText("Lanza el juego con el preset actual. Juega 30 segundos mirando el FPS del overlay y al volver regístralo. Si es G99 Calidad (2x) y baja de 28 fps, vuelve a 1x automáticamente.")
-        GoldButton("Probar 30 segundos", onClick = { vm.startBenchmark() }, enabled = !launching)
+        NoteText("Lanza el juego con el preset actual. El FPS se mide automáticamente mientras juegas y al volver se registra solo. Si no hay medición (app externa), juega 30 segundos mirando el FPS del overlay y regístralo a mano. Si es G99 Calidad (2x) y baja de 28 fps, vuelve a 1x automáticamente.")
+        PrimaryButton("Jugar 30 segundos", onClick = { vm.startBenchmark() }, enabled = !launching)
         if (pending != null) {
-            Text("Prueba en marcha: ${pending?.profile?.label}. Al volver, registra el FPS.", fontWeight = FontWeight.Bold)
+            Text("Prueba en marcha: ${pending?.profile?.label}. Al volver, el FPS se registra solo si el juego lo midió; si no, regístralo a mano.", fontWeight = FontWeight.Bold)
             OutlinedButton(onClick = { showFpsDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("Registrar FPS visto en el overlay") }
             OutlinedButton(onClick = { vm.dismissBenchmark() }, modifier = Modifier.fillMaxWidth()) { Text("Cancelar prueba") }
         }
         benchmarks.take(3).forEach { run ->
-            Text("· ${run.profile.label}: ${run.fpsAvg?.let { "$it fps" } ?: "sin medir"} (${run.source})${if (run.autoReverted) " — volvió a 1x" else ""}")
+            Text("· ${run.profile.label}: ${run.fpsAvg?.let { "$it fps" } ?: "sin medir"} (${benchmarkSourceLabel(run.source)})${if (run.autoReverted) " — volvió a 1x" else ""}")
         }
 
         SectionTitle("Batería y rendimiento")
@@ -202,7 +211,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                         Text(
                             "Escribe un número válido (por ejemplo: 30).",
                             style = MaterialTheme.typography.bodySmall,
-                            color = ColGold,
+                            color = ColAccent,
                         )
                     }
                 }

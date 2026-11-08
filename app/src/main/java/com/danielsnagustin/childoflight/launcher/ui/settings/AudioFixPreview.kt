@@ -16,12 +16,11 @@ data class AudioFixChange(val label: String, val before: String, val after: Stri
 /** Los ajustes tal como quedan tras "Corregir audio". Misma fuente que usa el ViewModel. */
 fun audioFixTarget(current: LauncherSettings): LauncherSettings = current.copy(
     audioBackend = AudioBackend.SDL,
-    audioBufferSize = 1024,
     ngsEnable = true,
     shaderCache = true,
 )
 
-/** Las 4 filas que muestra el diálogo de confirmación (antes -> después). */
+/** Las 3 filas que muestra el diálogo de confirmación (antes -> después). */
 fun audioFixChanges(current: LauncherSettings): List<AudioFixChange> {
     val target = audioFixTarget(current)
     fun onOff(value: Boolean) = if (value) "ON" else "OFF"
@@ -30,11 +29,6 @@ fun audioFixChanges(current: LauncherSettings): List<AudioFixChange> {
             "Backend de audio",
             current.audioBackend.label,
             target.audioBackend.label,
-        ),
-        AudioFixChange(
-            "Tamaño de buffer de audio",
-            "${current.audioBufferSize}",
-            "${target.audioBufferSize}",
         ),
         AudioFixChange(
             "NGS (audio del sistema Vita)",

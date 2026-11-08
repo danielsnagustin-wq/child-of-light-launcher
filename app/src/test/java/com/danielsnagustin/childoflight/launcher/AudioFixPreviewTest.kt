@@ -16,16 +16,14 @@ class AudioFixPreviewTest {
 
     private val brokenAudio = LauncherSettings(
         audioBackend = AudioBackend.CUBEB,
-        audioBufferSize = 256,
         ngsEnable = false,
         shaderCache = false,
     )
 
     @Test
-    fun fixTargetIsSdlBuffer1024NgsOnShaderCacheOn() {
+    fun fixTargetIsSdlNgsOnShaderCacheOn() {
         val target = audioFixTarget(brokenAudio)
         assertEquals(AudioBackend.SDL, target.audioBackend)
-        assertEquals(1024, target.audioBufferSize)
         assertTrue(target.ngsEnable)
         assertTrue(target.shaderCache)
     }
@@ -45,14 +43,12 @@ class AudioFixPreviewTest {
     }
 
     @Test
-    fun previewListsFourChangesWithBeforeAndAfter() {
+    fun previewListsThreeChangesWithBeforeAndAfter() {
         val changes = audioFixChanges(brokenAudio)
-        assertEquals(4, changes.size)
+        assertEquals(3, changes.size)
         val byLabel = changes.associateBy { it.label }
         assertEquals("Cubeb (alternativa)", byLabel.getValue("Backend de audio").before)
         assertEquals("SDL (recomendado)", byLabel.getValue("Backend de audio").after)
-        assertEquals("256", byLabel.getValue("Tamaño de buffer de audio").before)
-        assertEquals("1024", byLabel.getValue("Tamaño de buffer de audio").after)
         assertEquals("OFF", byLabel.getValue("NGS (audio del sistema Vita)").before)
         assertEquals("ON", byLabel.getValue("NGS (audio del sistema Vita)").after)
         assertEquals("OFF", byLabel.getValue("Caché de shaders").before)
@@ -63,7 +59,6 @@ class AudioFixPreviewTest {
     fun previewShowsNoChangeWhenAlreadyFixed() {
         val alreadyFixed = LauncherSettings(
             audioBackend = AudioBackend.SDL,
-            audioBufferSize = 1024,
             ngsEnable = true,
             shaderCache = true,
         )

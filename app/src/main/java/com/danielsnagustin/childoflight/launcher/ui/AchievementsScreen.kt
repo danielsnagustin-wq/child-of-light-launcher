@@ -128,7 +128,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             color = Color.White,
                         )
                         Spacer(modifier = Modifier.height(6.dp))
-                        GoldProgressBar(progress = if (progress.isEmpty()) 0f else unlocked / 27f)
+                        PrimaryProgressBar(progress = if (progress.isEmpty()) 0f else unlocked / 27f)
                     }
                 }
             }
@@ -165,7 +165,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                         )
                         if (item.trophy.tier != null) Text("Grado: ${item.trophy.tier}", style = MaterialTheme.typography.bodySmall, color = ColMutedText)
                         if (item.trophy.onlineRequired) {
-                            Text("⚠ Puede no desbloquearse sin la función online de Vita (enviar Oculi a un amigo).", style = MaterialTheme.typography.bodySmall, color = ColGold)
+                            Text("⚠ Puede no desbloquearse sin la función online de Vita (enviar Oculi a un amigo).", style = MaterialTheme.typography.bodySmall, color = ColAccent)
                         }
                         item.unlockedAtMillis?.let { at ->
                             val date = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(at))

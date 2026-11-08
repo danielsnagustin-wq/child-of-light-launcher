@@ -18,7 +18,7 @@ import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
 import kotlinx.coroutines.launch
 
 /**
- * Menú de pausa propio del launcher (Compose, negro AMOLED + dorado).
+ * Menú de pausa propio del launcher (Compose, AMOLED #10131D + azul hielo).
  *
  * Es una Activity transparente encima del juego: al abrirse, la
  * Activity del juego pasa a onPause y el núcleo se pausa por fondo
@@ -72,7 +72,7 @@ class PauseMenuActivity : ComponentActivity() {
         )
         settingsRepo = SettingsRepository(this)
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(primary = ColGold, secondary = ColGold)) {
+            MaterialTheme(colorScheme = darkColorScheme(primary = ColAccent, secondary = ColAccent)) {
                 val settings by settingsRepo.settingsFlow.collectAsState(initial = null)
                 PauseMenuScreen(
                     settings = settings,

@@ -48,13 +48,13 @@ class TouchLayoutAuditFixesTest {
     fun corrupt14FieldControlKeepsControlWithDefaults() {
         // B8: un solo campo corrupto en el formato de 14 campos ya no
         // descarta el control entero.
-        val badEnum = "btn_a|A|button|NO_EXISTE|0.87|0.71|64|0.85|#F2B705|CIRCLE|true|ANALOG|DIRECT_TOUCH|1.0"
+        val badEnum = "btn_a|A|button|NO_EXISTE|0.87|0.71|64|0.85|#8CCBEB|CIRCLE|true|ANALOG|DIRECT_TOUCH|1.0"
         val decodedEnum = TouchLayoutRepository.decodeControl(badEnum)
         assertNotNull(decodedEnum)
         assertEquals(VitaButton.NONE, decodedEnum!!.vitaButton)
         assertEquals(0.87f, decodedEnum.xFraction, 0.001f)
 
-        val badNumber = "btn_a|A|button|CROSS|xx|0.71|zz|0.85|#F2B705|CIRCLE|true|ANALOG|DIRECT_TOUCH|1.0"
+        val badNumber = "btn_a|A|button|CROSS|xx|0.71|zz|0.85|#8CCBEB|CIRCLE|true|ANALOG|DIRECT_TOUCH|1.0"
         val decodedNumber = TouchLayoutRepository.decodeControl(badNumber)
         assertNotNull(decodedNumber)
         assertEquals(0.5f, decodedNumber!!.xFraction, 0.001f)
@@ -66,7 +66,7 @@ class TouchLayoutAuditFixesTest {
         // B9: fracción > 1, tamaño negativo, opacidad > 1 y
         // sensibilidad fuera de rango se fijan al leer, no sacan el
         // botón de la pantalla ni rompen el layout.
-        val raw = "btn_a|A|button|CROSS|1.5|-0.2|-10|2.0|#F2B705|CIRCLE|true|ANALOG|DIRECT_TOUCH|9.9"
+        val raw = "btn_a|A|button|CROSS|1.5|-0.2|-10|2.0|#8CCBEB|CIRCLE|true|ANALOG|DIRECT_TOUCH|9.9"
         val decoded = TouchLayoutRepository.decodeControl(raw)
         assertNotNull(decoded)
         assertEquals(1.0f, decoded!!.xFraction, 0.001f)
@@ -78,7 +78,7 @@ class TouchLayoutAuditFixesTest {
 
     @Test
     fun decodeTreatsNaNAsMissing() {
-        val raw = "btn_a|A|button|CROSS|NaN|0.71|64|0.85|#F2B705|CIRCLE|true|ANALOG|DIRECT_TOUCH|1.0"
+        val raw = "btn_a|A|button|CROSS|NaN|0.71|64|0.85|#8CCBEB|CIRCLE|true|ANALOG|DIRECT_TOUCH|1.0"
         val decoded = TouchLayoutRepository.decodeControl(raw)
         assertNotNull(decoded)
         assertEquals(0.5f, decoded!!.xFraction, 0.001f)

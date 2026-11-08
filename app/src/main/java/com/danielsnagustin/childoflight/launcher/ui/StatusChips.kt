@@ -16,6 +16,16 @@ import com.danielsnagustin.childoflight.launcher.model.GameStatus
  * - PENDING: está a medias (juego solo en .pkg sin instalar en el
  *   núcleo; PUP guardado sin instalar en el núcleo).
  * - MISSING: no hay nada.
+ * No hay nivel de error: GameStatus / FirmwareStatus no expresan
+ * errores, así que no se inventa un estado de error.
+ *
+ * Detalles reales (nada inventado):
+ * - Juego: Title ID. DLCs: cantidad. Update: sin detalle (el
+ *   escaneo no registra versión de update; es solo un booleano).
+ * - Firmware: Ready → la versión instalada (p. ej. "3.74");
+ *   Saved → "importado" (PUP guardado, pendiente de instalar en el
+ *   núcleo). Así se distingue importado de instalado. Los DLCs
+ *   tampoco tienen versión en los datos (DlcInfo no lleva versión).
  */
 enum class StatusLevel {
     OK,
@@ -66,7 +76,15 @@ fun homeStatusChips(status: GameStatus, firmware: FirmwareStatus): List<StatusCh
         StatusChipData(
             key = HomeStatusKey.FIRMWARE,
             level = firmwareLevel,
-            detail = status.firmwareName ?: "",
+            // Ready: la versión instalada (firmwareName = "3.74" o la
+            // fuente). Saved: "importado" — el PUP está guardado pero
+            // NO instalado en el núcleo; no se muestra el texto largo
+            // "PSVUPDAT.PUP (guardado, no instalado)" en el chip.
+            detail = when (firmware) {
+                is FirmwareStatus.Ready -> status.firmwareName ?: ""
+                is FirmwareStatus.Saved -> "importado"
+                is FirmwareStatus.Missing -> ""
+            },
         ),
     )
 }

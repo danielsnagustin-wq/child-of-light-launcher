@@ -29,9 +29,7 @@ import com.danielsnagustin.childoflight.launcher.model.CardSize
 import com.danielsnagustin.childoflight.launcher.model.CardTransparency
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.GpuVendor
-import com.danielsnagustin.childoflight.launcher.model.resolveBackend
-import com.danielsnagustin.childoflight.launcher.ui.ColMutedText
-import com.danielsnagustin.childoflight.launcher.ui.ColSuccessGreen
+import com.danielsnagustin.childoflight.launcher.ui.ColTurquoise
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
 import com.danielsnagustin.childoflight.launcher.ui.PremiumCard
@@ -50,7 +48,6 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
     val settings by vm.settingsFlow.collectAsState(initial = null)
     val gpu by vm.gpuFlow.collectAsState(initial = null)
     val uiPrefs by vm.uiFlow.collectAsState(initial = null)
-    val benchmarks by vm.benchmarksFlow.collectAsState(initial = emptyList())
     val externalVita3k by vm.externalVita3k.collectAsState()
     val configText by vm.generatedConfig.collectAsState()
     var showConfig by rememberSaveable { mutableStateOf(false) }
@@ -64,8 +61,6 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
     }
 
     val s = settings
-    // Último FPS medido: el historial va de más reciente a más antiguo.
-    val lastFps = benchmarks.firstOrNull { it.fpsAvg != null }?.fpsAvg
     SettingsCategoryScaffold(
         title = "General",
         subtitle = "Perfil, presets y lo principal del launcher.",
@@ -114,20 +109,6 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text("GPU: ${gpu?.shortLabel ?: "no detectada"}", style = MaterialTheme.typography.bodyMedium, color = Color.White)
-                    Text("Resolución: ${s.resolutionLabel}", style = MaterialTheme.typography.bodyMedium, color = Color.White)
-                    Text(
-                        "Backend: ${resolveBackend(s, gpu).label}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White,
-                    )
-                    Text(
-                        "Último FPS (prueba de 30 s): ${lastFps?.let { "$it fps" } ?: "sin medir"}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (lastFps != null) ColSuccessGreen else ColMutedText,
-                    )
-                }
-                if (gpu?.isUserVerifiedDevice == true) {
-                    NoteText("✓ Helio G99 · Mali-G57 MC2 — procesador verificado por ti. El preset por defecto es G99 Recomendado: 1x estable, sin recortar de más.")
                 }
             }
             item {
@@ -170,8 +151,6 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                     SecondaryButton("Logros (27)", onClick = { onNavigate(Screen.ACHIEVEMENTS) })
                     Spacer(modifier = Modifier.height(8.dp))
                     SecondaryButton("Controles táctiles", onClick = { onNavigate(Screen.TOUCH) })
-                    Spacer(modifier = Modifier.height(8.dp))
-                    SecondaryButton("GPU y diagnóstico", onClick = { onNavigate(Screen.GPU) })
                 }
             }
             item {
@@ -189,7 +168,7 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                 Text(
                     if (externalVita3k != null) "✓ App externa instalada ($externalVita3k)" else "✗ App externa no instalada",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (externalVita3k != null) ColSuccessGreen else Color.White,
+                    color = if (externalVita3k != null) ColTurquoise else Color.White,
                 )
             }
             item {

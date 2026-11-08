@@ -7,19 +7,27 @@ package com.danielsnagustin.childoflight.launcher.model
  */
 enum class ThemeMode(val label: String) { SYSTEM("Sistema"), LIGHT("Claro"), DARK("Oscuro") }
 
+/**
+ * Color de acento (2026-11-08): paleta Dark Fantasy Premium, sin
+ * tonos cálidos. El acento alimenta MaterialTheme (Switch,
+ * Slider, FilterChip, primaryContainer) y el botón principal. Por
+ * defecto azul hielo. Los valores antiguos ya no existen: un valor
+ * guardado desconocido cae al valor por defecto
+ * (ver UiPreferencesRepository).
+ */
 enum class AccentColor(val hex: String, val label: String) {
-    GOLD("#F2B705", "Dorado"),
-    BLUE("#7FB3D5", "Azul"),
-    GREEN("#4CAF50", "Verde"),
-    RED("#E57373", "Rojo"),
-    PURPLE("#BA68C8", "Morado"),
+    ICE_BLUE("#8CCBEB", "Azul hielo"),
+    LAVENDER_BLUE("#6578B8", "Azul lavanda"),
+    LAVENDER("#A99ACD", "Lavanda"),
+    TURQUOISE("#75D6CE", "Turquesa"),
+    SILVER("#DCE8F5", "Plata"),
 }
 
 enum class HomeBackground(val hex: String, val label: String) {
-    // AMOLED (2026-11-07): tintes casi negros. El fondo de la Home es
-    // negro puro #000000 con un leve tinte arriba; nada de azul marino.
-    // Se guardan por nombre, así que cambiar el hex es seguro.
-    NIGHT("#000000", "Negro AMOLED"),
+    // AMOLED (2026-11-08): fondo #10131D con un leve tinte arriba;
+    // nada de azul marino. Se guardan por nombre, así que cambiar el
+    // hex es seguro.
+    NIGHT("#10131D", "Negro AMOLED"),
     BLUE("#05070D", "Azul noche (AMOLED)"),
     GREEN("#040805", "Verde oscuro (AMOLED)"),
     PURPLE("#080510", "Morado oscuro (AMOLED)"),
@@ -73,12 +81,11 @@ enum class IconSize(val label: String, val sizeDp: Int) {
 enum class HomeSection(val label: String) {
     GAME_CARD("Tarjeta del juego"),
     GPU_CARD("Tarjeta GPU"),
-    NAV_BUTTONS("Botones de navegación"),
 }
 
 data class UiPreferences(
     val theme: ThemeMode = ThemeMode.DARK,
-    val accent: AccentColor = AccentColor.GOLD,
+    val accent: AccentColor = AccentColor.ICE_BLUE,
     val homeBackground: HomeBackground = HomeBackground.NIGHT,
     val textSize: TextSize = TextSize.MEDIUM,
     val language: AppLanguage = AppLanguage.SPANISH,

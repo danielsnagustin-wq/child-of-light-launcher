@@ -1,15 +1,9 @@
 package com.danielsnagustin.childoflight.launcher.ui.settings
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -22,9 +16,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.model.AccentColor
@@ -36,32 +27,27 @@ import com.danielsnagustin.childoflight.launcher.model.IconSize
 import com.danielsnagustin.childoflight.launcher.model.TextSize
 import com.danielsnagustin.childoflight.launcher.model.ThemeMode
 import com.danielsnagustin.childoflight.launcher.model.UiPreferences
-import com.danielsnagustin.childoflight.launcher.ui.ColGold
 import com.danielsnagustin.childoflight.launcher.ui.EnumChips
-import com.danielsnagustin.childoflight.launcher.ui.GoldButton
+import com.danielsnagustin.childoflight.launcher.ui.PrimaryButton
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
-import com.danielsnagustin.childoflight.launcher.ui.PlayIcon
-import com.danielsnagustin.childoflight.launcher.ui.PremiumCard
 import com.danielsnagustin.childoflight.launcher.ui.Screen
-import com.danielsnagustin.childoflight.launcher.ui.SectionTitle
 import com.danielsnagustin.childoflight.launcher.ui.SettingSwitch
 
 /**
  * Categoría "Personalización" (Ola 2, Etapa 1; Ola 3, Etapa 6):
- * apariencia del launcher y de la portada, con VISTA PREVIA ANTES DE
- * APLICAR.
+ * apariencia del launcher y de la portada.
  *
  * La pantalla edita una COPIA LOCAL (borrador) de UiPreferences: tocar
- * una opción solo cambia el borrador y la vista previa en vivo. Nada
- * se guarda hasta pulsar "Aplicar personalización" (saveUiPrefs con el
- * borrador); "Descartar cambios" vuelve a lo guardado. El botón
- * "Restablecer toda la personalización" sigue siendo inmediato: es una
- * acción explícita de restablecimiento, no una opción.
+ * una opción solo cambia el borrador. Nada se guarda hasta pulsar
+ * "Aplicar personalización" (saveUiPrefs con el borrador);
+ * "Descartar cambios" vuelve a lo guardado. El botón "Restablecer
+ * personalización y editor táctil" sigue siendo inmediato: es una
+ * acción explícita de restablecimiento, no una opción. Se llama así
+ * porque resetea UiPreferences Y los perfiles del editor táctil,
+ * a diferencia de "Restablecer esta categoría" del pie de pantalla,
+ * que solo toca tema/acento/fondo/texto/idioma/portada.
  *
- * La vista previa es real, no una maqueta: usa PremiumCard con el
- * tamaño y la transparencia del borrador, el acento y el fondo del
- * borrador, y un icono vectorial real escalado al tamaño del borrador.
  * Sobre los iconos, honesto: existe UN solo juego de iconos
  * vectoriales consistente (ColIcons.kt); este ajuste cambia su
  * TAMAÑO, no el pack. No hay selector de paquetes de iconos.
@@ -84,60 +70,7 @@ fun SettingsPersonalizationScreen(vm: LauncherViewModel, onBack: () -> Unit, onN
     ) {
         item {
             current?.let { ui ->
-                SectionTitle("Vista previa")
-                NoteText("La vista previa se actualiza al cambiar cada opción. Nada se guarda hasta pulsar Aplicar.")
-                val accentColor = runCatching { Color(android.graphics.Color.parseColor(ui.accent.hex)) }.getOrDefault(ColGold)
-                PremiumCard(cardSize = ui.cardSize, cardTransparency = ui.cardTransparency) {
-                    Text(
-                        "Child of Light",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = accentColor,
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // Los iconos dibujan su Canvas a 24 dp fijos
-                        // (ColIcons.kt, sin tocar); la vista previa los
-                        // escala de verdad al tamaño del borrador.
-                        val iconScale = ui.iconSize.sizeDp / 24f
-                        Box(
-                            modifier = Modifier.size(ui.iconSize.sizeDp.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            PlayIcon(
-                                modifier = Modifier.graphicsLayer(scaleX = iconScale, scaleY = iconScale),
-                                tint = accentColor,
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            "JUGAR",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            "27 logros",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White,
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Box(
-                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(ColGold).padding(horizontal = 16.dp, vertical = 8.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text("JUGAR", color = Color.Black, fontWeight = FontWeight.Bold)
-                    }
-                    Text(
-                        "Muestra del botón dorado y de la tarjeta con el tema, el acento, el fondo, el tamaño y la transparencia del borrador.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.White,
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                GoldButton(
+                PrimaryButton(
                     "Aplicar personalización",
                     onClick = { vm.saveUiPrefs(ui); draft = null },
                     modifier = Modifier.fillMaxWidth(),
@@ -210,7 +143,7 @@ fun SettingsPersonalizationScreen(vm: LauncherViewModel, onBack: () -> Unit, onN
                 OutlinedButton(
                     onClick = { vm.resetAllCustomization(); draft = null },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Restablecer toda la personalización") }
+                ) { Text("Restablecer personalización y editor táctil") }
             } ?: Text("Cargando personalización…")
         }
     }

@@ -34,7 +34,6 @@ class CategoryResetTest {
         showFpsOverlay = true,
         safeMode = true,
         closeBackgroundApps = false,
-        accurateThreadScheduling = false,
         allowExternalVita3k = true,
         hideTouchWhenGamepadConnected = false,
     )
@@ -80,7 +79,6 @@ class CategoryResetTest {
     @Test
     fun diagnosticsResetRestoresOnlyDiagnosticsFields() {
         val reset = resetCategorySettings(changed, SettingsCategory.DIAGNOSTICS)
-        assertTrue(reset.accurateThreadScheduling)
         assertTrue(reset.closeBackgroundApps)
         assertFalse(reset.safeMode)
         assertTrue(reset.fpsHack)
@@ -107,10 +105,11 @@ class CategoryResetTest {
     }
 
     @Test
-    fun firmwareAndStorageHaveNothingToReset() {
-        assertFalse(categoryHasResettableSettings(SettingsCategory.FIRMWARE))
+    fun storageHasNothingToReset() {
+        // NOTA (2026-11-08): el firmware ya no es una categoría de
+        // Ajustes (vive en Importar, con el juego y los DLCs), así que
+        // ya no hay rama FIRMWARE que probar aquí.
         assertFalse(categoryHasResettableSettings(SettingsCategory.STORAGE))
-        assertEquals(changed, resetCategorySettings(changed, SettingsCategory.FIRMWARE))
         assertEquals(changed, resetCategorySettings(changed, SettingsCategory.STORAGE))
         assertTrue(categoryHasResettableSettings(SettingsCategory.GPU))
         assertTrue(categoryHasResettableSettings(SettingsCategory.PERSONALIZATION))

@@ -73,43 +73,50 @@ val ContentMaxWidth: Dp = 720.dp
  */
 fun previewHeightForScreen(maxHeight: Dp): Dp = if (maxHeight < 500.dp) 200.dp else 300.dp
 
-// --- Paleta AMOLED (2026-11-07): negro puro #000000, píxeles apagados.
-// Nada de azul marino oscuro: los fondos son negro puro y las tarjetas
-// un negro muy suave (#0A0A0A / #111111) con borde dorado sutil. El
-// texto es blanco o gris claro (#B8C2D4): nunca gris oscuro sobre
-// negro, para no perder legibilidad. Los acentos dorados se mantienen.
-val ColNight = Color(0xFF000000)
-val ColGold = Color(0xFFF2B705)
-val ColBlue = Color(0xFF7FB3D5)
-val ColCard = Color(0xFF1A1A1A)
+// --- Paleta Dark Fantasy Premium (2026-11-08): AMOLED #10131D,
+// azul hielo como acento principal. Sustituye por completo a la
+// paleta anterior: la nueva identidad no usa tonos cálidos en
+// ninguna parte de la UI.
+// - Azul hielo #8CCBEB: acciones principales y acento por defecto.
+// - Azul lavanda #6578B8 y lavanda #A99ACD: selecciones y secundarios.
+// - Turquesa #75D6CE: estados activos y confirmaciones.
+// - Plata #DCE8F5: textos destacados y superficies claras.
+// - Fondo AMOLED #10131D (sustituye al negro #000000).
+// El texto es blanco o gris azulado (#B8C2D4): nunca gris oscuro
+// sobre fondo oscuro, para no perder legibilidad.
+val ColNight = Color(0xFF10131D)
+val ColAccent = Color(0xFF8CCBEB)
+val ColIceBlue = Color(0xFF8CCBEB)
+val ColLavenderBlue = Color(0xFF6578B8)
+val ColLavender = Color(0xFFA99ACD)
+val ColTurquoise = Color(0xFF75D6CE)
+val ColSilver = Color(0xFFDCE8F5)
+val ColBlue = Color(0xFF8CCBEB)
+val ColCard = Color(0xFF232A44)
 
-// --- Paleta premium (auditoría + rediseño 2026-11-07) ---
-// Degradado negro profundo con el dorado solo para lo importante
-// (JUGAR, progreso). Antes era noche→violeta (#0E1420/#241A33);
-// en AMOLED eso es azul marino: ahora es negro puro.
-val ColViolet = Color(0xFF0A0A0A)
-val ColVioletDeep = Color(0xFF000000)
-val ColCardElevated = Color(0xFF111111)
+// --- Superficies ---
+// Tarjetas sobre el fondo #10131D: un azul noche apenas más claro,
+// con borde azul hielo sutil.
+val ColCardElevated = Color(0xFF1A2036)
 val ColMutedText = Color(0xFFB8C2D4)
-val ColSuccessGreen = Color(0xFF6FCF97)
 
-/** Fondo AMOLED: negro puro #000000 (píxeles apagados, ahorra batería). */
+/** Fondo AMOLED #10131D (sustituye al negro puro #000000). */
 fun premiumBackgroundBrush(): Brush = Brush.verticalGradient(
-    listOf(Color.Black, Color.Black),
+    listOf(ColNight, ColNight),
 )
 
-/** Fondo de la Home: el tinte elegido por el usuario (casi negro) arriba → negro puro abajo. */
+/** Fondo de la Home: el tinte elegido por el usuario (casi negro) arriba → AMOLED #10131D abajo. */
 fun homeBackgroundBrush(baseHex: String?): Brush {
     val base = try {
-        Color(android.graphics.Color.parseColor(baseHex ?: "#000000"))
+        Color(android.graphics.Color.parseColor(baseHex ?: "#10131D"))
     } catch (_: Exception) {
-        Color.Black
+        ColNight
     }
-    return Brush.verticalGradient(listOf(base, Color.Black))
+    return Brush.verticalGradient(listOf(base, ColNight))
 }
 
 /**
- * Tarjeta premium: negro muy suave (#111111) con borde dorado sutil. Sin sombra: en negro puro no se ve.
+ * Tarjeta premium: superficie azul noche (#1A2036) con borde azul hielo sutil. Sin sombra: sobre #10131D no se ve.
  *
  * Ola 3, Etapa 6: tamaño y transparencia reales desde UiPreferences.
  * Los defaults son el comportamiento actual (padding 16 dp, radio 20 dp,
@@ -123,7 +130,7 @@ fun PremiumCard(
     cardTransparency: CardTransparency = CardTransparency.OPAQUE,
     content: @Composable () -> Unit,
 ) {
-    val border = BorderStroke(1.dp, ColGold.copy(alpha = 0.22f))
+    val border = BorderStroke(1.dp, ColAccent.copy(alpha = 0.22f))
     val shape = RoundedCornerShape(cardSize.cornerDp.dp)
     val containerColor = ColCardElevated.copy(alpha = cardTransparency.alpha)
     val innerPadding = cardSize.paddingDp.dp
@@ -239,16 +246,16 @@ fun PulsingText(text: String, color: Color, style: androidx.compose.ui.text.Text
     )
 }
 
-/** Botón principal dorado (solo para lo importante: JUGAR, acciones clave). */
+/** Botón principal azul hielo (solo para lo importante: JUGAR, acciones clave). */
 @Composable
-fun GoldButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val tap = rememberTapHaptic()
     val scale by animateFloatAsState(
         targetValue = if (pressed) 0.96f else 1f,
         animationSpec = tween(durationMillis = 120),
-        label = "goldPress",
+        label = "primaryPress",
     )
     Button(
         onClick = { tap(); onClick() },
@@ -258,8 +265,8 @@ fun GoldButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier,
         enabled = enabled,
         shape = RoundedCornerShape(16.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = ColGold,
-            contentColor = Color.Black,
+            containerColor = ColAccent,
+            contentColor = ColNight,
             disabledContainerColor = ColCard,
             disabledContentColor = ColMutedText,
         ),
@@ -269,18 +276,18 @@ fun GoldButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier,
 }
 
 /**
- * Botón dorado con subtítulo (Fase 2, Ola 1): JUGAR con el Title ID
+ * Botón azul hielo con subtítulo (Fase 2, Ola 1): JUGAR con el Title ID
  * y la resolución debajo, e icono vectorial a la izquierda. El icono
  * va en el botón, nunca en la cadena de texto.
  */
 @Composable
-fun GoldButtonWithSubtitle(
+fun PrimaryButtonWithSubtitle(
     text: String,
     subtitle: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    icon: @Composable () -> Unit = { PlayIcon(tint = Color.Black) },
+    icon: @Composable () -> Unit = { PlayIcon(tint = ColNight) },
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
@@ -288,7 +295,7 @@ fun GoldButtonWithSubtitle(
     val scale by animateFloatAsState(
         targetValue = if (pressed) 0.96f else 1f,
         animationSpec = tween(durationMillis = 120),
-        label = "goldPressSubtitle",
+        label = "primaryPressSubtitle",
     )
     Button(
         onClick = { tap(); onClick() },
@@ -298,8 +305,8 @@ fun GoldButtonWithSubtitle(
         enabled = enabled,
         shape = RoundedCornerShape(16.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = ColGold,
-            contentColor = Color.Black,
+            containerColor = ColAccent,
+            contentColor = ColNight,
             disabledContainerColor = ColCard,
             disabledContentColor = ColMutedText,
         ),
@@ -318,15 +325,19 @@ fun GoldButtonWithSubtitle(
 }
 
 /**
- * Chip de estado (Fase 2, Ola 1): punto de color + texto. Verde =
- * instalado / listo, dorado = pendiente (a medias), gris = no
- * instalado. El nivel viene de la función pura homeStatusChips.
+ * Chip de estado (Fase 2, Ola 1; rediseño 2026-11-08): punto de color
+ * + etiqueta + estado REAL en palabras + detalle real.
+ * Turquesa = instalado / listo, lavanda = pendiente (a medias),
+ * gris azulado = ausente. El nivel viene de la función pura
+ * homeStatusChips; la palabra de estado viene de AppStrings
+ * (traducida) y se pasa desde la Home. No hay nivel de error: los
+ * datos reales (GameStatus / FirmwareStatus) no expresan errores.
  */
 @Composable
-fun StatusChip(chip: StatusChipData, label: String) {
+fun StatusChip(chip: StatusChipData, label: String, stateWord: String) {
     val dotColor = when (chip.level) {
-        StatusLevel.OK -> ColSuccessGreen
-        StatusLevel.PENDING -> ColGold
+        StatusLevel.OK -> ColTurquoise
+        StatusLevel.PENDING -> ColLavender
         StatusLevel.MISSING -> ColMutedText
     }
     Row(
@@ -339,7 +350,7 @@ fun StatusChip(chip: StatusChipData, label: String) {
         )
         Spacer(modifier = Modifier.width(6.dp))
         Text(
-            text = label + if (chip.detail.isNotEmpty()) " · ${chip.detail}" else "",
+            text = label + " · " + stateWord + if (chip.detail.isNotEmpty()) " · ${chip.detail}" else "",
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold,
             color = Color.White,
@@ -348,10 +359,10 @@ fun StatusChip(chip: StatusChipData, label: String) {
 }
 
 /**
- * Variante de tarjeta con borde azul acuarela sutil (Fase 2, Ola 1):
- * mismo fondo que PremiumCard, pero el acento secundario ColBlue en
- * vez del dorado. Para tarjetas informativas; JUGAR y lo importante
- * siguen en dorado.
+ * Variante de tarjeta con borde azul hielo sutil (Fase 2, Ola 1):
+ * mismo fondo que PremiumCard, con el acento ColBlue. Para tarjetas
+ * informativas; JUGAR y lo importante usan el botón principal azul
+ * hielo.
  */
 @Composable
 fun AquaCard(
@@ -388,7 +399,7 @@ fun AquaCard(
     }
 }
 
-/** Botón secundario: contorno claro, sin amarillo. */
+/** Botón secundario: contorno claro, sin tonos cálidos. */
 @Composable
 fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -419,17 +430,17 @@ fun BackButton(onBack: () -> Unit) {
     Spacer(modifier = Modifier.height(24.dp))
 }
 
-/** Barra de progreso dorada (logros). Anima el progreso al cambiar (800 ms), no salta. */
+/** Barra de progreso azul hielo (logros). Anima el progreso al cambiar (800 ms), no salta. */
 @Composable
-fun GoldProgressBar(progress: Float, modifier: Modifier = Modifier) {
+fun PrimaryProgressBar(progress: Float, modifier: Modifier = Modifier) {
     // Antes era LinearProgressIndicator: con progreso 0 dibujaba un
-    // punto dorado (la tapa redondeada del indicador) y parecía un error
+    // punto azul hielo (la tapa redondeada del indicador) y parecía un error
     // de la barra. Barra propia: sin punto cuando no hay progreso.
     val p = progress.coerceIn(0f, 1f)
     val animated by animateFloatAsState(
         targetValue = p,
         animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
-        label = "goldProgress",
+        label = "primaryProgress",
     )
     Box(
         modifier = modifier.fillMaxWidth().height(8.dp)
@@ -438,7 +449,7 @@ fun GoldProgressBar(progress: Float, modifier: Modifier = Modifier) {
         if (animated > 0f) {
             Box(
                 modifier = Modifier.fillMaxWidth(animated).height(8.dp)
-                    .clip(RoundedCornerShape(4.dp)).background(ColGold),
+                    .clip(RoundedCornerShape(4.dp)).background(ColAccent),
             )
         }
     }
@@ -450,7 +461,7 @@ fun SectionTitle(text: String) {
         text = text,
         style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.Bold,
-        color = ColGold,
+        color = ColAccent,
         modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
     )
 }

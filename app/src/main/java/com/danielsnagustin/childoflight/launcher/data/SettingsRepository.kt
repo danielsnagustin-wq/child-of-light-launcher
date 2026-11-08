@@ -12,7 +12,6 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.danielsnagustin.childoflight.launcher.model.BenchmarkRun
 import com.danielsnagustin.childoflight.launcher.model.BenchmarkSource
-import com.danielsnagustin.childoflight.launcher.model.FrameLimiter
 import com.danielsnagustin.childoflight.launcher.model.GpuBackend
 import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuInfo
@@ -55,11 +54,7 @@ class SettingsRepository(private val context: Context) {
         val FILE_LOADING_DELAY = intPreferencesKey("file_loading_delay")
         val AUDIO_VOLUME = intPreferencesKey("audio_volume")
         val AUDIO_BACKEND = stringPreferencesKey("audio_backend")
-        val AUDIO_BUFFER = intPreferencesKey("audio_buffer_size")
         val NGS_ENABLE = booleanPreferencesKey("ngs_enable")
-        val FRAME_LIMITER = stringPreferencesKey("frame_limiter")
-        val FRAME_SKIPPING = intPreferencesKey("frame_skipping")
-        val ACCURATE_THREAD = booleanPreferencesKey("accurate_thread_scheduling")
         val SHOW_FPS = booleanPreferencesKey("show_fps_overlay")
         val OVERLAY_DETAIL = stringPreferencesKey("performance_overlay_detail")
         val OVERLAY_POSITION = stringPreferencesKey("performance_overlay_position")
@@ -97,6 +92,13 @@ class SettingsRepository(private val context: Context) {
         val GPU_DETECTED_AT = longPreferencesKey("gpu_detected_at")
         // Historial de pruebas: hasta 5, codificadas como "profile|gpu|started|fps|source|reverted|note"
         val BENCHMARKS = stringPreferencesKey("benchmarks")
+        // FPS medio medido automáticamente por el núcleo durante una
+        // prueba de 30 s (EmbeddedGameActivity muestrea getFps cada
+        // segundo y guarda la media al salir del juego). Se consume
+        // una sola vez al volver al launcher; si caduca (> 10 min) o
+        // no es válido, la prueba queda para registro manual.
+        val BENCHMARK_AUTO_FPS = floatPreferencesKey("benchmark_auto_fps")
+        val BENCHMARK_AUTO_FPS_AT = longPreferencesKey("benchmark_auto_fps_at")
     }
 
     val settingsFlow: Flow<LauncherSettings> = context.settingsDataStore.data.map { p ->
@@ -120,10 +122,6 @@ class SettingsRepository(private val context: Context) {
             audioVolume = (p[Keys.AUDIO_VOLUME] ?: 100).coerceIn(0, 100),
             audioBackend = runCatching { com.danielsnagustin.childoflight.launcher.model.AudioBackend.valueOf(p[Keys.AUDIO_BACKEND] ?: "SDL") }.getOrDefault(com.danielsnagustin.childoflight.launcher.model.AudioBackend.SDL),
             ngsEnable = p[Keys.NGS_ENABLE] ?: true,
-            audioBufferSize = (p[Keys.AUDIO_BUFFER] ?: 512).coerceIn(256, 2048),
-            frameLimiter = runCatching { FrameLimiter.valueOf(p[Keys.FRAME_LIMITER] ?: "FPS_30") }.getOrDefault(FrameLimiter.FPS_30),
-            frameSkipping = (p[Keys.FRAME_SKIPPING] ?: 0).coerceIn(0, 2),
-            accurateThreadScheduling = p[Keys.ACCURATE_THREAD] ?: true,
             showFpsOverlay = p[Keys.SHOW_FPS] ?: false,
             performanceOverlayDetail = runCatching { PerformanceOverlayDetail.valueOf(p[Keys.OVERLAY_DETAIL] ?: "MINIMUM") }.getOrDefault(PerformanceOverlayDetail.MINIMUM),
             performanceOverlayPosition = runCatching { PerformanceOverlayPosition.valueOf(p[Keys.OVERLAY_POSITION] ?: "TOP_LEFT") }.getOrDefault(PerformanceOverlayPosition.TOP_LEFT),
@@ -187,11 +185,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.FILE_LOADING_DELAY] = settings.fileLoadingDelay.coerceAtLeast(0)
             p[Keys.AUDIO_VOLUME] = settings.audioVolume
             p[Keys.AUDIO_BACKEND] = settings.audioBackend.name
-            p[Keys.AUDIO_BUFFER] = settings.audioBufferSize
             p[Keys.NGS_ENABLE] = settings.ngsEnable
-            p[Keys.FRAME_LIMITER] = settings.frameLimiter.name
-            p[Keys.FRAME_SKIPPING] = settings.frameSkipping
-            p[Keys.ACCURATE_THREAD] = settings.accurateThreadScheduling
             p[Keys.SHOW_FPS] = settings.showFpsOverlay
             p[Keys.OVERLAY_DETAIL] = settings.performanceOverlayDetail.name
             p[Keys.OVERLAY_POSITION] = settings.performanceOverlayPosition.name
@@ -259,7 +253,6 @@ class SettingsRepository(private val context: Context) {
             turnipInstalled = current?.turnipInstalled ?: false,
             audioVolume = current?.audioVolume ?: 100,
             audioBackend = current?.audioBackend ?: com.danielsnagustin.childoflight.launcher.model.AudioBackend.SDL,
-            audioBufferSize = current?.audioBufferSize ?: 512,
             ngsEnable = current?.ngsEnable ?: true,
             safeMode = current?.safeMode ?: false,
             closeBackgroundApps = current?.closeBackgroundApps ?: true,
@@ -311,6 +304,37 @@ class SettingsRepository(private val context: Context) {
             val updated = (listOf(run) + existing).take(5)
             p[Keys.BENCHMARKS] = updated.joinToString(";;") { encodeBenchmark(it) }
         }
+    }
+
+    /**
+     * Guarda el FPS medio medido por el núcleo durante una prueba de
+     * 30 s. Lo escribe EmbeddedGameActivity al salir del juego.
+     */
+    suspend fun saveAutoBenchmarkFps(fps: Float) {
+        context.settingsDataStore.edit { p ->
+            p[Keys.BENCHMARK_AUTO_FPS] = fps
+            p[Keys.BENCHMARK_AUTO_FPS_AT] = System.currentTimeMillis()
+        }
+    }
+
+    /**
+     * Lee y consume (borra) el FPS medido automáticamente. Devuelve
+     * null si no hay medición, si no es válida (1..240) o si caducó
+     * (más de [maxAgeMillis] desde que se guardó). Consumirla una
+     * sola vez evita que una medición vieja se registre en una
+     * prueba posterior.
+     */
+    suspend fun takeAutoBenchmarkFps(maxAgeMillis: Long = 10 * 60 * 1000L): Float? {
+        val p = context.settingsDataStore.data.first()
+        val fps = p[Keys.BENCHMARK_AUTO_FPS] ?: return null
+        val at = p[Keys.BENCHMARK_AUTO_FPS_AT] ?: 0L
+        context.settingsDataStore.edit { e ->
+            e.remove(Keys.BENCHMARK_AUTO_FPS)
+            e.remove(Keys.BENCHMARK_AUTO_FPS_AT)
+        }
+        if (!fps.isFinite() || fps < 1f || fps > 240f) return null
+        if (System.currentTimeMillis() - at > maxAgeMillis) return null
+        return fps
     }
 
     companion object {

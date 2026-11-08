@@ -11,25 +11,34 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
+import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
+import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
 import com.danielsnagustin.childoflight.launcher.model.AppLanguage
 
 /**
- * Pantalla de Importación (Fase 2, Ola 1): juego principal, DLCs y
- * updates, todo en un solo lugar. Antes vivía en Ajustes; se muda
- * aquí tal cual (mismos pickers, mismas funciones del ViewModel,
- * mismo resultado detallado), y la Home apunta aquí.
+ * Pantalla de Importación (Fase 2, Ola 1): juego principal, DLCs,
+ * updates y firmware, todo en un solo lugar. Antes vivía en Ajustes;
+ * se muda aquí tal cual (mismos pickers, mismas funciones del
+ * ViewModel, mismo resultado detallado), y la Home apunta aquí. El
+ * firmware también vive aquí desde 2026-11-08: ya no es una sección
+ * de Ajustes, porque va con el juego y los DLCs.
  *
  * Estados REALES desde GameStatus (disco): nada ficticio. Cada
  * apartado muestra lo que hay instalado (Title ID, tamaño, lista
@@ -71,6 +80,14 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     val pickWorkBin = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) vm.importWorkBin(uri)
     }
+    // Firmware (mudado desde Ajustes): mismo flujo del ViewModel.
+    val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
+    val firmwareInstalling by vm.firmwareInstallingFlow.collectAsState()
+    val embeddedCore by vm.embeddedCoreFlow.collectAsState()
+    var showDeleteFirmwareConfirm by rememberSaveable { mutableStateOf(false) }
+    val pickFirmware = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) vm.importFirmware(uri)
+    }
 
     val s = settings
     Box(
@@ -102,7 +119,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                         } else {
                             PulsingText(
                                 progress?.message ?: strings.importingLabel,
-                                ColGold,
+                                ColAccent,
                                 MaterialTheme.typography.bodyMedium,
                             )
                             Spacer(modifier = Modifier.height(12.dp))
@@ -147,7 +164,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             strings.pendingImport,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = ColGold,
+                            color = ColAccent,
                         )
                     }
                     Spacer(modifier = Modifier.height(12.dp))
@@ -200,6 +217,44 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                     NoteText("Elige el .zip, .vpk o .pkg del update.")
                 }
             }
+            // --- Firmware (mudado desde Ajustes: va con el juego y los DLCs) ---
+            item {
+                SectionTitle("Firmware")
+                PremiumCard {
+                    Text(
+                        "Firmware: ${FirmwareResolver.label(firmwareStatus)}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                    )
+                    if (firmwareStatus is FirmwareStatus.Missing) {
+                        NoteText(FirmwareResolver.NO_FIRMWARE_MESSAGE)
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    SecondaryButton("Importar firmware (.PUP, tu copia)", onClick = { pickFirmware.launch("*/*") }, enabled = !importing)
+                    if (firmwareInstalling) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        NoteText("Instalando el firmware en el núcleo embebido… puede tardar unos minutos. No cierres la app.")
+                    } else if (firmwareStatus is FirmwareStatus.Saved) {
+                        if (embeddedCore == true) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            SecondaryButton("Instalar en el núcleo embebido", onClick = { vm.installSavedFirmwareInCore() }, enabled = !importing)
+                        } else {
+                            NoteText(
+                                "El PUP ya está guardado en el teléfono. El núcleo embebido aún no está en esta versión: " +
+                                    "se instalará solo cuando llegue (al importar, al pulsar JUGAR o desde aquí). " +
+                                    "Mientras tanto, la app externa usa su propio firmware.",
+                            )
+                        }
+                    }
+                    if (firmwareStatus is FirmwareStatus.Ready) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SecondaryButton("Borrar firmware", onClick = { showDeleteFirmwareConfirm = true }, enabled = !importing)
+                    }
+                    NoteText("Tu PUP se queda solo en tu teléfono: el launcher lo lee de ahí y lo instala en el núcleo embebido. No tienes que enviarlo por chat ni subirlo a ningún sitio. El launcher no incluye firmware ni claves.")
+                }
+            }
             // --- .pkg: licencia pendiente y entrega a la app externa (mudado desde Ajustes, tal cual) ---
             item {
                 pendingLicense?.let { pending ->
@@ -229,13 +284,13 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                         Text(
                             "Licencia (work.bin): ${if (status.pkgLicensePresent) "guardada ✓" else "falta ✗"}",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = if (status.pkgLicensePresent) ColSuccessGreen else Color.White,
+                            color = if (status.pkgLicensePresent) ColTurquoise else Color.White,
                         )
                         if (s?.pkgDeliveredToVita3k == true) {
-                            Text("✓ Copiado a Descargas/ChildOfLight/", style = MaterialTheme.typography.bodyMedium, color = ColSuccessGreen)
+                            Text("✓ Copiado a Descargas/ChildOfLight/", style = MaterialTheme.typography.bodyMedium, color = ColTurquoise)
                         }
                         if (s?.pkgInstalledInVita3k == true) {
-                            Text("✓ Instalado en la app externa (confirmado por ti)", style = MaterialTheme.typography.bodyMedium, color = ColSuccessGreen)
+                            Text("✓ Instalado en la app externa (confirmado por ti)", style = MaterialTheme.typography.bodyMedium, color = ColTurquoise)
                         }
                         Spacer(modifier = Modifier.height(12.dp))
                         SecondaryButton("Instalar en la app externa", onClick = { vm.deliverPkgToVita3k() }, enabled = !importing && status.pkgLicensePresent)
@@ -253,6 +308,17 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             item {
                 BackButton(onBack)
             }
+        }
+        if (showDeleteFirmwareConfirm) {
+            AlertDialog(
+                onDismissRequest = { showDeleteFirmwareConfirm = false },
+                title = { Text("¿Borrar el firmware?") },
+                text = { Text("Se borra el PUP guardado y el firmware instalado en el núcleo. El juego, los DLCs y los saves no se tocan. Para jugar con el núcleo embebido habrá que importar el PUP de nuevo.") },
+                confirmButton = {
+                    TextButton(onClick = { vm.deleteFirmware(); showDeleteFirmwareConfirm = false }) { Text("Borrar") }
+                },
+                dismissButton = { TextButton(onClick = { showDeleteFirmwareConfirm = false }) { Text("Cancelar") } },
+            )
         }
     }
 }

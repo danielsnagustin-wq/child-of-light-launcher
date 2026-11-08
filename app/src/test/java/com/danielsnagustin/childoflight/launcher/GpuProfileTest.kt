@@ -47,10 +47,7 @@ class GpuProfileTest {
         assertEquals(true, s.asyncPipelineCompilation)
         assertEquals(false, s.surfaceSyncEnabled)
         assertEquals("DOUBLE_BUFFER", s.memoryMapping.name)
-        assertEquals(true, s.accurateThreadScheduling)
         assertEquals(true, s.cpuOpt)
-        assertEquals(0, s.frameSkipping)
-        assertEquals("FPS_30", s.frameLimiter.name)
         assertEquals("SDL", s.audioBackend.name)
         assertEquals(true, s.ngsEnable)
     }
@@ -60,7 +57,6 @@ class GpuProfileTest {
         val s = presetSettings(GpuProfileId.G99_QUALITY)
         assertEquals(2f, s.resolutionMultiplier, 0.001f)
         assertEquals("FSR", s.screenFilter.name)
-        assertEquals(0, s.frameSkipping)
     }
 
     @Test
@@ -70,6 +66,10 @@ class GpuProfileTest {
         assertEquals(1f, perf.resolutionMultiplier, 0.001f)
         assertEquals(1f, balanced.resolutionMultiplier, 0.001f)
         assertEquals("DOUBLE_BUFFER", perf.memoryMapping.name)
+        // Mali Rendimiento redefine su diferencia real: sin caché de
+        // texturas (libera RAM); Equilibrado la conserva.
+        assertEquals(false, perf.textureCache)
+        assertEquals(true, balanced.textureCache)
     }
 
     @Test
@@ -96,32 +96,31 @@ class GpuProfileTest {
         assertEquals(1f, s.resolutionMultiplier, 0.001f)
         assertEquals(false, s.highAccuracy)
         assertEquals("SDL", s.audioBackend.name)
-        assertEquals(2048, s.audioBufferSize)
-        assertEquals(true, s.accurateThreadScheduling)
         assertEquals(true, s.safeMode)
     }
 
     // --- Compatibilidad por GPU (auditoría 2026-11-07) ---
 
     @Test
-    fun powerVrIsClassifiedAndGetsGenericSafeProfile() {
+    fun powerVrIsClassifiedAndGetsMaliSafeProfile() {
         assertEquals(GpuVendor.POWERVR, GpuDetector.classify("PowerVR Rogue GE8320", "Imagination Technologies"))
         assertEquals(GpuVendor.POWERVR, GpuDetector.classify("", "Imagination Technologies"))
         val gpu = GpuInfo(vendor = GpuVendor.POWERVR, renderer = "PowerVR Rogue GE8320", vulkanSupported = true)
-        assertEquals(GpuProfileId.GENERIC_PERFORMANCE, defaultProfileFor(gpu))
-        val s = presetSettings(GpuProfileId.GENERIC_PERFORMANCE)
+        assertEquals(GpuProfileId.MALI_PERFORMANCE, defaultProfileFor(gpu))
+        val s = presetSettings(GpuProfileId.MALI_PERFORMANCE)
         assertEquals(1f, s.resolutionMultiplier, 0.001f)
         assertEquals("DOUBLE_BUFFER", s.memoryMapping.name)
+        assertEquals(false, s.textureCache)
     }
 
     @Test
     fun unknownAndOtherGpuNeverLackAProfile() {
         val unknown = GpuInfo(vendor = GpuVendor.UNKNOWN, renderer = "No detectado", vulkanSupported = false)
-        assertEquals(GpuProfileId.GENERIC_PERFORMANCE, defaultProfileFor(unknown))
+        assertEquals(GpuProfileId.MALI_PERFORMANCE, defaultProfileFor(unknown))
         assertEquals(GpuVendor.UNKNOWN, GpuDetector.classify("", ""))
-        // Xclipse (Exynos/AMD) y resto: OTHER -> Genérico seguro.
+        // Xclipse (Exynos/AMD) y resto: OTHER -> Mali seguro.
         val other = GpuInfo(vendor = GpuVendor.OTHER, renderer = "Xclipse 920", vulkanSupported = true)
-        assertEquals(GpuProfileId.GENERIC_PERFORMANCE, defaultProfileFor(other))
+        assertEquals(GpuProfileId.MALI_PERFORMANCE, defaultProfileFor(other))
         assertEquals(GpuVendor.OTHER, GpuDetector.classify("Xclipse 920", "Samsung"))
     }
 
@@ -139,8 +138,8 @@ class GpuProfileTest {
 
     @Test
     fun turnipPresetIsTheOnlyOneWithTurnipDriver() {
-        // Turnip solo en ADRENO_QUALITY_TURNIP; ningún preset Mali o
-        // genérico lo activa (en Mali no funciona).
+        // Turnip solo en ADRENO_QUALITY_TURNIP; ningún preset Mali
+        // lo activa (en Mali no funciona).
         for (profile in GpuProfileId.entries) {
             val driver = presetSettings(profile).gpuDriver.name
             if (profile == GpuProfileId.ADRENO_QUALITY_TURNIP) {

@@ -48,7 +48,7 @@ fun SettingsControlsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate
                 ) { "$it%" }
                 SettingSwitch(
                     "Brillo neón",
-                    "Halo dorado alrededor de los botones. En negro AMOLED puro se ve premium; OFF = botones planos.",
+                    "Halo azul hielo alrededor de los botones. En AMOLED #10131D se ve premium; OFF = botones planos.",
                     s.touchOverlayNeonGlow,
                 ) { vm.saveSettings(s.copy(touchOverlayNeonGlow = it)) }
                 SettingSwitch(
