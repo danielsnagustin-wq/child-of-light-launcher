@@ -3,6 +3,8 @@ package com.danielsnagustin.childoflight.launcher.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,9 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -91,58 +91,61 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
 
     val unlocked = progress.count { it.unlocked }
     val percent = trophyProgressPercent(progress)
+    val tap = rememberTapHaptic()
 
     Box(
         modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
     ) {
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
     ) {
-        // Cabecera: mini portada + título + progreso con barra dorada.
-        PremiumCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Miniatura 384x216 (~0,33 MB decodificada) en vez de la
-                // portada completa 1080x608 (~2,6 MB): aquí solo se ve a
-                // 96x54 dp. La Home sí usa la completa (se muestra casi
-                // a tamaño nativo). Ver auditoría RAM ≤ 4 GB 2026-11-07.
-                Image(
-                    painter = painterResource(R.drawable.col_cover_thumb),
-                    contentDescription = "Child of Light",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(width = 96.dp, height = 54.dp).clip(RoundedCornerShape(12.dp)),
-                )
-                Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-                    Text(
-                        "Child of Light",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
+        item {
+            // Cabecera: mini portada + título + progreso con barra dorada.
+            PremiumCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Miniatura 384x216 (~0,33 MB decodificada) en vez de la
+                    // portada completa 1080x608 (~2,6 MB): aquí solo se ve a
+                    // 96x54 dp. La Home sí usa la completa (se muestra casi
+                    // a tamaño nativo). Ver auditoría RAM ≤ 4 GB 2026-11-07.
+                    Image(
+                        painter = painterResource(R.drawable.col_cover_thumb),
+                        contentDescription = "Child of Light",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(width = 96.dp, height = 54.dp).clip(RoundedCornerShape(12.dp)),
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        "$unlocked / 27 desbloqueados ($percent%)",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White,
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    GoldProgressBar(progress = if (progress.isEmpty()) 0f else unlocked / 27f)
+                    Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
+                        Text(
+                            "Child of Light",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "$unlocked / 27 desbloqueados ($percent%)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        GoldProgressBar(progress = if (progress.isEmpty()) 0f else unlocked / 27f)
+                    }
                 }
             }
+            NoteText("Logros LOCALES del launcher: no se sincronizan con PSN / PlayStation Network ni con Steam. No hay platino en este juego (ni en PS4 ni en Vita).")
+            scan?.let { s ->
+                NoteText("Trofeos del núcleo (ux0/user/00/trophy/): ${s.note}")
+            }
+            Spacer(modifier = Modifier.height(8.dp))
         }
-        NoteText("Logros LOCALES del launcher: no se sincronizan con PSN / PlayStation Network ni con Steam. No hay platino en este juego (ni en PS4 ni en Vita).")
-        scan?.let { s ->
-            NoteText("Trofeos del núcleo (ux0/user/00/trophy/): ${s.note}")
-        }
-        Spacer(modifier = Modifier.height(8.dp))
 
-        progress.forEach { item ->
+        items(progress, key = { it.trophy.number }) { item ->
             Card(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = if (item.unlocked) ColCardElevated else MaterialTheme.colorScheme.surfaceVariant,
                 ),
-                onClick = { selected = item },
+                onClick = { tap(); selected = item },
             ) {
                 Row(
                     modifier = Modifier.padding(12.dp),
@@ -176,9 +179,11 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-        OutlinedButton(onClick = { showResetConfirm = true }, modifier = Modifier.fillMaxWidth()) { Text("Borrar progreso de logros") }
-        BackButton(onBack)
+        item {
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedButton(onClick = { showResetConfirm = true }, modifier = Modifier.fillMaxWidth()) { Text("Borrar progreso de logros") }
+            BackButton(onBack)
+        }
     }
     }
 

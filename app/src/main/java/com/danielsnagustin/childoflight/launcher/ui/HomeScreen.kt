@@ -1,28 +1,26 @@
 package com.danielsnagustin.childoflight.launcher.ui
 
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,283 +39,74 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.danielsnagustin.childoflight.launcher.R
+import com.danielsnagustin.childoflight.launcher.model.CardSize
+import com.danielsnagustin.childoflight.launcher.model.CardTransparency
 import com.danielsnagustin.childoflight.launcher.model.HomeSection
-import com.danielsnagustin.childoflight.launcher.model.trophyProgressPercent
+import com.danielsnagustin.childoflight.launcher.model.IconSize
+import kotlinx.coroutines.delay
 
 /**
  * Pantalla principal: portada grande + JUGAR/IMPORTAR, premium AMOLED.
  *
  * Rediseño 2026-11-07 (petición del usuario: "arregla la interfaz",
  * referencia de diseño oscuro + dorado):
- * - Portada grande arriba con esquinas redondeadas: recorte panorámico
- *   LIMPIO del arte oficial (drawable-nodpi/col_cover.png), sin la
- *   marca de agua que tenía la portada de la referencia. El arte vive
- *   también en el icono de la app, pero la Home ya no es solo un
- *   degradado: la portada es lo primero que se ve.
- * - Título "Child of Light", subtítulo "PS Vita · Ubisoft · UbiArt",
- *   estado del juego (instalado / DLCs / update), aviso dorado cuando
- *   falta importar y botón dorado grande: JUGAR si está importado,
- *   IMPORTAR JUEGO si no (va a Configuración, donde vive la importación).
+ * - Portada grande arriba con esquinas redondeadas: el arte oficial
+ *   COMPLETO, sin recorte. El arte original es cuadrado 1254x1254
+ *   (1:1) y la portada anterior (1080x608, 16:9) recortaba ~44% de
+ *   la altura. Ahora la tarjeta es cuadrada (aspectRatio 1f) y la
+ *   imagen se muestra con ContentScale.Fit sobre fondo negro: a
+ *   igualdad de proporción no hay recorte ni bandas. El título y el
+ *   subtítulo van sobre un gradiente inferior DENTRO de la tarjeta.
+ *   La imagen vive en drawable-nodpi/col_cover_full.jpg (1024x1024,
+ *   del arte original) y se decodifica una vez en el ViewModel.
+ * - Chips de estado (Juego, DLCs, Update, Firmware) con punto de
+ *   color (verde instalado, dorado pendiente, gris no instalado),
+ *   derivados del estado real con la función pura homeStatusChips.
+ * - Botón dorado grande: JUGAR con subtítulo (Title ID · resolución)
+ *   e icono vectorial si está importado, IMPORTAR JUEGO si no (va a
+ *   la pantalla de Importación, no a Configuración).
  * - Fila de dos tarjetas: Rendimiento (GPU detectada + perfil) y Logros
  *   (X de 27 + barra; toca para ver la lista). Fila "Configuración
- *   avanzada" que abre Configuración. La tarjeta "Para jugar" sigue
- *   debajo: explica qué falta (juego, app externa, licencia) con las
- *   acciones directas.
- * - Movimiento: la portada entra con fundido + zoom suave (una vez) y
- *   un brillo dorado lento respira en su borde inferior; las tarjetas
- *   entran en cascada (FadeSlideIn). Nada de bucles rápidos.
+ *   avanzada" que abre Configuración. El estado del juego y su
+ *   importación viven solo en la tarjeta superior: sin duplicados.
+ * - Movimiento: la portada entra con fundido + zoom suave (una sola vez
+ *   por sesión) y un brillo dorado estático en su borde inferior; las
+ *   tarjetas entran en cascada (FadeSlideIn, solo la primera vez). En las
+ *   vueltas a Home la pantalla aparece al instante, sin esperar ~800 ms
+ *   de animaciones. Nada de bucles infinitos ni animaciones que mantengan
+ *   la GPU despierta.
+ * - Cada sección recoge solo sus flujos: antes HomeScreen recogía 6
+ *   flujos arriba y cualquier emisión recomponía toda la pantalla.
  * - AMOLED negro puro #000000 con acentos dorados; sin "Vita3K" en
  *   ningún texto visible (la app externa se llama siempre "app externa")
  *   y sin modelo de teléfono (solo procesador/GPU detectados).
  */
 @Composable
-fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
-    val status by vm.status.collectAsState()
-    val settings by vm.settingsFlow.collectAsState(initial = null)
-    val gpu by vm.gpuFlow.collectAsState(initial = null)
-    val achievements by vm.achievementsFlow.collectAsState(initial = emptyList())
+fun HomeScreen(
+    vm: LauncherViewModel,
+    introDone: Boolean = false,
+    onIntroDone: () -> Unit = {},
+    onNavigate: (Screen) -> Unit,
+) {
     val uiPrefs by vm.uiFlow.collectAsState(initial = null)
-    val benchmarks by vm.benchmarksFlow.collectAsState(initial = emptyList())
-    // Deshabilitar JUGAR mientras hay un lanzamiento en curso (doble
-    // toque = dos launch() a la vez); la guarda vive en el ViewModel.
-    val launching by vm.launchingFlow.collectAsState()
-
     val strings = stringsFor(uiPrefs?.language ?: com.danielsnagustin.childoflight.launcher.model.AppLanguage.SPANISH)
-    val lastFps = benchmarks.firstOrNull()?.fpsAvg
-    val unlocked = achievements.count { it.unlocked }
-    val percent = trophyProgressPercent(achievements)
-    val gameOk = status.gameInstalled
 
-    val gameCard: @Composable () -> Unit = {
-        PremiumCard {
-            // Portada grande: entra con zoom suave + fundido (una vez).
-            CoverEntrance {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
-                        .clip(RoundedCornerShape(16.dp)),
-                ) {
-                    // Portada 1080x608 en drawable-nodpi: sin escalado por
-                    // densidad y decodificada ~2,6 MB (ARGB_8888), que es
-                    // casi el tamaño al que se muestra (ancho de pantalla
-                    // a ~3x). No se subescala: no hay sobrecarga que
-                    // corregir aquí. La miniatura de Logros usa
-                    // col_cover_thumb (384x216). Auditoría RAM 2026-11-07.
-                    Image(
-                        painter = painterResource(R.drawable.col_cover),
-                        contentDescription = "Child of Light",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    // Brillo dorado sutil que respira en el borde inferior:
-                    // la portada se siente viva. Solo un alpha animado.
-                    val coverGlow by rememberInfiniteTransition(label = "coverGlow").animateFloat(
-                        initialValue = 0.02f,
-                        targetValue = 0.08f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(4000, easing = FastOutSlowInEasing),
-                            repeatMode = RepeatMode.Reverse,
-                        ),
-                        label = "coverGlowAlpha",
-                    )
-                    Box(
-                        modifier = Modifier.fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        Color.Transparent,
-                                        Color.Transparent,
-                                        ColGold.copy(alpha = coverGlow),
-                                    ),
-                                ),
-                            ),
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-            Text("Child of Light", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.White)
-            Text("PS Vita · Ubisoft · UbiArt", style = MaterialTheme.typography.bodyMedium, color = ColMutedText)
-            Spacer(modifier = Modifier.height(10.dp))
-            Text("${strings.state}: ${status.installedLabel}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = Color.White)
-            Text(
-                "${strings.dlcs}: ${status.dlcCount} · ${strings.update}: ${if (status.updateInstalled) "sí" else "no"}",
-                style = MaterialTheme.typography.bodySmall,
-                color = ColMutedText,
-            )
-            if (uiPrefs?.showFpsOnHome != false && lastFps != null) {
-                Text("FPS (última prueba): $lastFps", style = MaterialTheme.typography.bodySmall, color = ColMutedText)
-            }
-            if (!gameOk) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    "⚠ ${strings.pendingImport}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = ColGold,
-                )
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-            if (gameOk) {
-                GoldButton(strings.play, onClick = { vm.play() }, enabled = !launching)
-            } else {
-                GoldButton("⬇  ${strings.importGame.uppercase()}", onClick = { onNavigate(Screen.SETTINGS) })
-            }
-        }
-    }
-
-    // Fila de dos tarjetas: Rendimiento (GPU + perfil) y Logros (X/27).
-    // La de Logros respeta "Mostrar logros en la pantalla principal": si
-    // está oculta, Rendimiento ocupa todo el ancho.
-    val infoRow: @Composable () -> Unit = {
-        val showAchievements = uiPrefs?.showAchievementsOnHome != false
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            HalfCard(modifier = Modifier.weight(1f)) {
-                Text("▣", fontSize = 22.sp, color = ColGold)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("Rendimiento", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    gpu?.shortLabel ?: "GPU no detectada",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ColMutedText,
-                )
-                Text(
-                    "Perfil: ${settings?.activeProfile?.label ?: "—"} · ${settings?.resolutionLabel ?: ""}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ColMutedText,
-                )
-            }
-            if (showAchievements) {
-                HalfCard(modifier = Modifier.weight(1f), onClick = { onNavigate(Screen.ACHIEVEMENTS) }) {
-                    Text("🏆", fontSize = 22.sp)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(strings.achievementsShort, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        "$unlocked de 27 completados",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = ColMutedText,
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    GoldProgressBar(progress = if (achievements.isEmpty()) 0f else unlocked / 27f)
-                }
-            }
-        }
-    }
-
-    val advancedRow: @Composable () -> Unit = {
-        Row(
-            modifier = Modifier.fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .clickable { onNavigate(Screen.SETTINGS) }
-                .padding(horizontal = 8.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            SlidersIcon()
-            Text(
-                strings.advancedSettings,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = Color.White,
-                modifier = Modifier.weight(1f).padding(start = 12.dp),
-            )
-            Text("›", style = MaterialTheme.typography.headlineMedium, color = ColMutedText)
-        }
-    }
-
-    // Tarjeta "Para jugar": lo que falta para poder jugar, con la acción
-    // directa. La Home quedaba medio vacía y el usuario no veía por qué
-    // JUGAR no hacía nada: el juego y la app externa son dos pasos
-    // separados y aquí se ven los dos. Sin esto, el estado real solo
-    // vivía en Diagnóstico, donde el usuario no mira.
-    val playStatusCard: @Composable () -> Unit = {
-        val vita3k by vm.externalVita3k.collectAsState()
-        val vitaOk = vita3k != null
-        val pkgOnly = status.pkgInstalled && !status.gameExtracted
-        val delivered = settings?.pkgDeliveredToVita3k == true
-        val confirmedInVita3k = settings?.pkgInstalledInVita3k == true
-        PremiumCard {
-            Text("Para jugar", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                when {
-                    pkgOnly -> "✓ Juego (.pkg) guardado (${status.pkgTitleId?.id ?: ""})"
-                    gameOk -> "✓ Juego instalado (${status.titleId?.id ?: ""})"
-                    else -> "✗ Juego sin instalar"
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (gameOk) ColSuccessGreen else Color.White,
-            )
-            Text(
-                if (vitaOk) "✓ App externa instalada ($vita3k)" else "✗ App externa no instalada",
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (vitaOk) ColSuccessGreen else Color.White,
-            )
-            if (pkgOnly) {
-                Text(
-                    if (status.pkgLicensePresent) "✓ Licencia (work.bin) guardada" else "✗ Falta la licencia (work.bin)",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (status.pkgLicensePresent) ColSuccessGreen else Color.White,
-                )
-                Text(
-                    when {
-                        confirmedInVita3k -> "✓ Instalado en la app externa"
-                        delivered -> "✓ Copiado a Descargas — falta instalarlo en la app externa"
-                        else -> "✗ Falta instalarlo en la app externa"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (confirmedInVita3k) ColSuccessGreen else Color.White,
-                )
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            if (!gameOk) {
-                SecondaryButton("Importar juego", onClick = { onNavigate(Screen.SETTINGS) })
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-            if (!vitaOk) {
-                SecondaryButton("Instalar app externa", onClick = { vm.openVita3kReleases() })
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-            if (pkgOnly && !status.pkgLicensePresent) {
-                SecondaryButton("Elegir work.bin", onClick = { onNavigate(Screen.SETTINGS) })
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-            if (pkgOnly && status.pkgLicensePresent && !delivered) {
-                SecondaryButton("Instalar en la app externa", onClick = { vm.deliverPkgToVita3k() })
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-            if (pkgOnly && delivered && !confirmedInVita3k) {
-                SecondaryButton("Ya lo instalé en la app externa", onClick = { vm.confirmPkgInstalledInVita3k() })
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-            Text(
-                when {
-                    !gameOk -> "Importa tu copia de Child of Light (.zip, .vpk o .pkg — el nombre del archivo da igual)."
-                    !vitaOk -> "Instala la app externa para jugar: el launcher no trae núcleo embebido en Etapa 1."
-                    pkgOnly && !status.pkgLicensePresent -> "Sin la licencia (work.bin) no se puede instalar el .pkg."
-                    pkgOnly && !delivered -> "El .pkg está guardado. Instálalo en la app externa para poder jugar."
-                    pkgOnly && !confirmedInVita3k -> "Copiado a Descargas/ChildOfLight/. Instálalo en la app externa (File → Install Package (.pkg)) y confirma aquí. Cuando lo instales, puedes borrar la copia desde Ajustes → Almacenamiento."
-                    pkgOnly -> "Todo listo: pulsa JUGAR y abre el juego en la biblioteca de la app externa."
-                    else -> "Todo listo: pulsa JUGAR. Recuerda importar tu copia también dentro de la app externa."
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = ColMutedText,
-            )
+    // La intro (portada + tarjetas) solo se reproduce una vez por sesión:
+    // AnimatedContent descarta y recrea la composición de Home en cada
+    // navegación, así que sin esta bandera la entrada se repetía (~800 ms)
+    // en cada vuelta a Home. 900 ms = portada 650 ms + último retardo 180 ms.
+    if (!introDone) {
+        LaunchedEffect(Unit) {
+            delay(900)
+            onIntroDone()
         }
     }
 
@@ -338,31 +127,253 @@ fun HomeScreen(vm: LauncherViewModel, onNavigate: (Screen) -> Unit) {
             // El orden de secciones lo elige el usuario (GAME_CARD / GPU_CARD);
             // NAV_BUTTONS ya no se muestra en Home: vive en Configuración.
             // Aparición progresiva: cada bloque entra con fundido + subida,
-            // con ~90 ms entre ellos. Una sola vez al abrir la Home. La fila
+            // con ~90 ms entre ellos. Solo la primera vez por sesión. La fila
             // de Logros vive dentro de la sección GPU_CARD (fila de dos
             // tarjetas: Rendimiento + Logros).
             val order = uiPrefs?.sectionOrder ?: HomeSection.entries.toList()
             order.forEach { section ->
                 when (section) {
-                    HomeSection.GAME_CARD -> { FadeSlideIn(0) { gameCard() }; Spacer(modifier = Modifier.height(16.dp)) }
-                    HomeSection.GPU_CARD -> { FadeSlideIn(90) { infoRow() }; Spacer(modifier = Modifier.height(8.dp)) }
+                    HomeSection.GAME_CARD -> { FadeSlideIn(0, play = !introDone) { GameCard(vm, uiPrefs, strings, introDone, onNavigate) }; Spacer(modifier = Modifier.height(16.dp)) }
+                    HomeSection.GPU_CARD -> { FadeSlideIn(90, play = !introDone) { InfoRow(vm, uiPrefs, strings, onNavigate) }; Spacer(modifier = Modifier.height(8.dp)) }
                     HomeSection.NAV_BUTTONS -> { /* En Configuración (engranaje). */ }
                 }
             }
-            FadeSlideIn(180) { advancedRow() }
-            Spacer(modifier = Modifier.height(8.dp))
-            FadeSlideIn(270) { playStatusCard() }
+            FadeSlideIn(180, play = !introDone) { AdvancedRow(strings, onNavigate, iconSize = uiPrefs?.iconSize ?: IconSize.MEDIUM) }
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }
 
+// Tarjeta superior del juego (portada + estado + JUGAR/IMPORTAR). Recoge
+// solo sus flujos: estado, ajustes, benchmarks, firmware y lanzamiento.
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun GameCard(
+    vm: LauncherViewModel,
+    uiPrefs: com.danielsnagustin.childoflight.launcher.model.UiPreferences?,
+    strings: AppStrings,
+    introDone: Boolean,
+    onNavigate: (Screen) -> Unit,
+) {
+    val status by vm.status.collectAsState()
+    val settings by vm.settingsFlow.collectAsState(initial = null)
+    val benchmarks by vm.benchmarksFlow.collectAsState(initial = emptyList())
+    val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
+    // Deshabilitar JUGAR mientras hay un lanzamiento en curso (doble
+    // toque = dos launch() a la vez); la guarda vive en el ViewModel.
+    val launching by vm.launchingFlow.collectAsState()
+    val cover by vm.coverBitmap.collectAsState()
+
+    val lastFps = benchmarks.firstOrNull()?.fpsAvg
+    val gameOk = status.gameInstalled
+    val chips = homeStatusChips(status, firmwareStatus)
+
+    PremiumCard(
+        cardSize = uiPrefs?.cardSize ?: CardSize.NORMAL,
+        cardTransparency = uiPrefs?.cardTransparency ?: CardTransparency.OPAQUE,
+    ) {
+            // Portada cuadrada: entra con zoom suave + fundido (una vez).
+            // Arte original 1254x1254 (1:1) servido como col_cover_full
+            // (1024x1024): tarjeta aspectRatio 1f + ContentScale.Fit
+            // sobre negro = la ilustración entera, sin recortar nada y
+            // sin bandas (misma proporción). Título y subtítulo sobre
+            // gradiente inferior, dentro de la tarjeta.
+            CoverEntrance(play = !introDone) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color.Black),
+                ) {
+                    // La imagen se decodifica UNA vez en el ViewModel (hilo
+                    // IO) y se reutiliza: painterResource decodifica en el
+                    // hilo principal y lo repetía en cada vuelta a Home
+                    // (la composición se descarta al navegar).
+                    if (cover != null) {
+                        Image(
+                            bitmap = cover!!,
+                            contentDescription = "Child of Light",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        Image(
+                            painter = painterResource(R.drawable.col_cover_full),
+                            contentDescription = "Child of Light",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    // Gradiente inferior estático para que el título se
+                    // lea sobre el arte. Sin animaciones infinitas.
+                    Box(
+                        modifier = Modifier.fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        Color.Transparent,
+                                        Color.Transparent,
+                                        Color.Black.copy(alpha = 0.55f),
+                                        Color.Black.copy(alpha = 0.85f),
+                                    ),
+                                ),
+                            ),
+                    )
+                    Column(
+                        modifier = Modifier.align(Alignment.BottomStart).padding(16.dp),
+                    ) {
+                        Text("Child of Light", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.White)
+                        Text("PS Vita · Ubisoft · UbiArt", style = MaterialTheme.typography.bodyMedium, color = ColMutedText)
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                chips.forEach { chip ->
+                    val label = when (chip.key) {
+                        HomeStatusKey.GAME -> strings.game
+                        HomeStatusKey.DLCS -> strings.dlcs
+                        HomeStatusKey.UPDATE -> strings.update
+                        HomeStatusKey.FIRMWARE -> strings.firmware
+                    }
+                    StatusChip(chip, label)
+                }
+            }
+            if (uiPrefs?.showFpsOnHome != false && lastFps != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text("FPS (última prueba): $lastFps", style = MaterialTheme.typography.bodySmall, color = ColMutedText)
+            }
+            if (!gameOk) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    "⚠ ${strings.pendingImport}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ColGold,
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            if (gameOk) {
+                val subtitle = listOfNotNull(
+                    status.titleId?.id,
+                    settings?.resolutionLabel?.takeIf { it.isNotEmpty() },
+                ).joinToString(" · ")
+                GoldButtonWithSubtitle(strings.playShort, subtitle, onClick = { vm.play() }, enabled = !launching)
+            } else {
+                GoldButton(strings.importGame.uppercase(), onClick = { onNavigate(Screen.IMPORT) })
+            }
+        }
+    }
+
+// Fila de dos tarjetas: Rendimiento (GPU + perfil) y Logros (X/27).
+// La de Logros respeta "Mostrar logros en la pantalla principal": si
+// está oculta, Rendimiento ocupa todo el ancho. Recoge solo sus flujos.
+@Composable
+private fun InfoRow(
+    vm: LauncherViewModel,
+    uiPrefs: com.danielsnagustin.childoflight.launcher.model.UiPreferences?,
+    strings: AppStrings,
+    onNavigate: (Screen) -> Unit,
+) {
+    val gpu by vm.gpuFlow.collectAsState(initial = null)
+    val settings by vm.settingsFlow.collectAsState(initial = null)
+    val achievements by vm.achievementsFlow.collectAsState(initial = emptyList())
+    val unlocked = achievements.count { it.unlocked }
+    val tap = rememberTapHaptic()
+    val showAchievements = uiPrefs?.showAchievementsOnHome != false
+    // Los iconos vectoriales dibujan a 24 dp fijos: se escalan por
+    // graphicsLayer (vectorial, sin pérdida) según el ajuste de tamaño.
+    val iconScale = (uiPrefs?.iconSize ?: IconSize.MEDIUM).sizeDp / 24f
+    // Misma altura en las dos tarjetas: la fila mide lo que mide la
+    // más alta y cada tarjeta llena ese alto.
+    Row(
+            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            HalfCard(
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                cardSize = uiPrefs?.cardSize ?: CardSize.NORMAL,
+                cardTransparency = uiPrefs?.cardTransparency ?: CardTransparency.OPAQUE,
+            ) {
+                PerformanceIcon(modifier = Modifier.graphicsLayer(scaleX = iconScale, scaleY = iconScale))
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Rendimiento", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    gpu?.shortLabel ?: "GPU no detectada",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ColMutedText,
+                )
+                Text(
+                    "Perfil: ${settings?.activeProfile?.label ?: "—"} · ${settings?.resolutionLabel ?: ""}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ColMutedText,
+                )
+            }
+            if (showAchievements) {
+                HalfCard(
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    onClick = { tap(); onNavigate(Screen.ACHIEVEMENTS) },
+                    cardSize = uiPrefs?.cardSize ?: CardSize.NORMAL,
+                    cardTransparency = uiPrefs?.cardTransparency ?: CardTransparency.OPAQUE,
+                ) {
+                    TrophyIcon(modifier = Modifier.graphicsLayer(scaleX = iconScale, scaleY = iconScale))
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(strings.achievementsShort, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "$unlocked de 27 completados",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ColMutedText,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    GoldProgressBar(progress = if (achievements.isEmpty()) 0f else unlocked / 27f)
+                }
+            }
+        }
+}
+
+@Composable
+private fun AdvancedRow(
+    strings: AppStrings,
+    onNavigate: (Screen) -> Unit,
+    iconSize: IconSize = IconSize.MEDIUM,
+) {
+    val tap = rememberTapHaptic()
+    Row(
+        modifier = Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable { tap(); onNavigate(Screen.SETTINGS) }
+                .padding(horizontal = 8.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SlidersIcon(modifier = Modifier.graphicsLayer(scaleX = iconSize.sizeDp / 24f, scaleY = iconSize.sizeDp / 24f))
+            Text(
+                strings.advancedSettings,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+                modifier = Modifier.weight(1f).padding(start = 12.dp),
+            )
+            Text("›", style = MaterialTheme.typography.headlineMedium, color = ColMutedText)
+        }
+}
+
 /**
  * Entrada de la portada: fundido + zoom suave (1.06 → 1.00, 650 ms).
- * Una sola vez al componer.
+ * Una sola vez al componer. play = false muestra la portada directamente
+ * (en las vueltas a Home no se espera la entrada).
  */
 @Composable
-private fun CoverEntrance(content: @Composable () -> Unit) {
+private fun CoverEntrance(play: Boolean = true, content: @Composable () -> Unit) {
+    if (!play) {
+        content()
+        return
+    }
     var started by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { started = true }
     val scale by animateFloatAsState(
@@ -391,60 +402,39 @@ private fun CoverEntrance(content: @Composable () -> Unit) {
 private fun HalfCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    cardSize: CardSize = CardSize.NORMAL,
+    cardTransparency: CardTransparency = CardTransparency.OPAQUE,
     content: @Composable () -> Unit,
 ) {
     val border = BorderStroke(1.dp, ColGold.copy(alpha = 0.22f))
+    val shape = RoundedCornerShape(cardSize.cornerDp.dp)
+    val containerColor = ColCardElevated.copy(alpha = cardTransparency.alpha)
+    val innerPadding = cardSize.paddingDp.dp
     if (onClick != null) {
         Card(
             modifier = modifier,
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = ColCardElevated),
+            shape = shape,
+            colors = CardDefaults.cardColors(containerColor = containerColor),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             border = border,
             onClick = onClick,
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(innerPadding)) {
                 content()
             }
         }
     } else {
         Card(
             modifier = modifier,
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = ColCardElevated),
+            shape = shape,
+            colors = CardDefaults.cardColors(containerColor = containerColor),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             border = border,
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(innerPadding)) {
                 content()
             }
         }
     }
 }
 
-/** Icono de "ajustes" (dos deslizadores): líneas grises, pomos dorados. */
-@Composable
-private fun SlidersIcon(modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier.size(24.dp)) {
-        val w = size.width
-        val h = size.height
-        val stroke = 2.5.dp.toPx()
-        val knob = 4.5.dp.toPx()
-        drawLine(
-            color = ColMutedText,
-            start = Offset(0f, h * 0.32f),
-            end = Offset(w, h * 0.32f),
-            strokeWidth = stroke,
-            cap = StrokeCap.Round,
-        )
-        drawLine(
-            color = ColMutedText,
-            start = Offset(0f, h * 0.68f),
-            end = Offset(w, h * 0.68f),
-            strokeWidth = stroke,
-            cap = StrokeCap.Round,
-        )
-        drawCircle(color = ColGold, radius = knob, center = Offset(w * 0.32f, h * 0.32f))
-        drawCircle(color = ColGold, radius = knob, center = Offset(w * 0.68f, h * 0.68f))
-    }
-}

@@ -24,7 +24,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -49,9 +51,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.danielsnagustin.childoflight.launcher.model.CardSize
+import com.danielsnagustin.childoflight.launcher.model.CardTransparency
 import kotlinx.coroutines.delay
 
 /** Ancho máximo del contenido en pantallas grandes (tablet / horizontal): las tarjetas y botones no se estiran a todo el ancho. En teléfonos (< 720 dp) no hace nada. */
@@ -102,36 +108,47 @@ fun homeBackgroundBrush(baseHex: String?): Brush {
     return Brush.verticalGradient(listOf(base, Color.Black))
 }
 
-/** Tarjeta premium: negro muy suave (#111111) con borde dorado sutil. Sin sombra: en negro puro no se ve. */
+/**
+ * Tarjeta premium: negro muy suave (#111111) con borde dorado sutil. Sin sombra: en negro puro no se ve.
+ *
+ * Ola 3, Etapa 6: tamaño y transparencia reales desde UiPreferences.
+ * Los defaults son el comportamiento actual (padding 16 dp, radio 20 dp,
+ * opaco), así que los call sites que no pasan nada no cambian.
+ */
 @Composable
 fun PremiumCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    cardSize: CardSize = CardSize.NORMAL,
+    cardTransparency: CardTransparency = CardTransparency.OPAQUE,
     content: @Composable () -> Unit,
 ) {
     val border = BorderStroke(1.dp, ColGold.copy(alpha = 0.22f))
+    val shape = RoundedCornerShape(cardSize.cornerDp.dp)
+    val containerColor = ColCardElevated.copy(alpha = cardTransparency.alpha)
+    val innerPadding = cardSize.paddingDp.dp
     if (onClick != null) {
         Card(
             modifier = modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = ColCardElevated),
+            shape = shape,
+            colors = CardDefaults.cardColors(containerColor = containerColor),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             border = border,
             onClick = onClick,
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(innerPadding)) {
                 content()
             }
         }
     } else {
         Card(
             modifier = modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = ColCardElevated),
+            shape = shape,
+            colors = CardDefaults.cardColors(containerColor = containerColor),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             border = border,
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(innerPadding)) {
                 content()
             }
         }
@@ -166,9 +183,15 @@ fun ScreenHeader(title: String, subtitle: String? = null) {
 // rápidos ni animaciones que mantengan la GPU despierta.
 // ---------------------------------------------------------------------------
 
-/** Aparición progresiva: fundido + subida suave con retardo. Una sola vez al componer. */
+/** Aparición progresiva: fundido + subida suave con retardo. Una sola vez al componer.
+ * play = false muestra el contenido directamente (la intro de Home solo se
+ * reproduce una vez por sesión; en las vueltas siguientes no se espera). */
 @Composable
-fun FadeSlideIn(delayMillis: Int, content: @Composable () -> Unit) {
+fun FadeSlideIn(delayMillis: Int, play: Boolean = true, content: @Composable () -> Unit) {
+    if (!play) {
+        content()
+        return
+    }
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         delay(delayMillis.toLong())
@@ -184,6 +207,15 @@ fun FadeSlideIn(delayMillis: Int, content: @Composable () -> Unit) {
     ) {
         content()
     }
+}
+
+/** Vibración ligera al tocar: el toque se siente al instante aunque el
+ * trabajo que dispara tarde un poco. Respeta el ajuste de vibración del
+ * sistema (si está apagada, no hace nada). */
+@Composable
+fun rememberTapHaptic(): () -> Unit {
+    val haptic = LocalHapticFeedback.current
+    return remember(haptic) { { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) } }
 }
 
 /** Pulso suave de alpha (0.55 ↔ 1) para textos de progreso. Solo mientras se muestra. */
@@ -212,13 +244,14 @@ fun PulsingText(text: String, color: Color, style: androidx.compose.ui.text.Text
 fun GoldButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
+    val tap = rememberTapHaptic()
     val scale by animateFloatAsState(
         targetValue = if (pressed) 0.96f else 1f,
         animationSpec = tween(durationMillis = 120),
         label = "goldPress",
     )
     Button(
-        onClick = onClick,
+        onClick = { tap(); onClick() },
         modifier = modifier.fillMaxWidth().height(56.dp)
             .graphicsLayer(scaleX = scale, scaleY = scale),
         interactionSource = interactionSource,
@@ -235,18 +268,139 @@ fun GoldButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier,
     }
 }
 
+/**
+ * Botón dorado con subtítulo (Fase 2, Ola 1): JUGAR con el Title ID
+ * y la resolución debajo, e icono vectorial a la izquierda. El icono
+ * va en el botón, nunca en la cadena de texto.
+ */
+@Composable
+fun GoldButtonWithSubtitle(
+    text: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    icon: @Composable () -> Unit = { PlayIcon(tint = Color.Black) },
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val tap = rememberTapHaptic()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.96f else 1f,
+        animationSpec = tween(durationMillis = 120),
+        label = "goldPressSubtitle",
+    )
+    Button(
+        onClick = { tap(); onClick() },
+        modifier = modifier.fillMaxWidth().height(64.dp)
+            .graphicsLayer(scaleX = scale, scaleY = scale),
+        interactionSource = interactionSource,
+        enabled = enabled,
+        shape = RoundedCornerShape(16.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = ColGold,
+            contentColor = Color.Black,
+            disabledContainerColor = ColCard,
+            disabledContentColor = ColMutedText,
+        ),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            icon()
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(horizontalAlignment = Alignment.Start) {
+                Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                if (subtitle.isNotEmpty()) {
+                    Text(subtitle, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Chip de estado (Fase 2, Ola 1): punto de color + texto. Verde =
+ * instalado / listo, dorado = pendiente (a medias), gris = no
+ * instalado. El nivel viene de la función pura homeStatusChips.
+ */
+@Composable
+fun StatusChip(chip: StatusChipData, label: String) {
+    val dotColor = when (chip.level) {
+        StatusLevel.OK -> ColSuccessGreen
+        StatusLevel.PENDING -> ColGold
+        StatusLevel.MISSING -> ColMutedText
+    }
+    Row(
+        modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(ColCard)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier.size(8.dp).clip(CircleShape).background(dotColor),
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = label + if (chip.detail.isNotEmpty()) " · ${chip.detail}" else "",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.SemiBold,
+            color = Color.White,
+        )
+    }
+}
+
+/**
+ * Variante de tarjeta con borde azul acuarela sutil (Fase 2, Ola 1):
+ * mismo fondo que PremiumCard, pero el acento secundario ColBlue en
+ * vez del dorado. Para tarjetas informativas; JUGAR y lo importante
+ * siguen en dorado.
+ */
+@Composable
+fun AquaCard(
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    content: @Composable () -> Unit,
+) {
+    val border = BorderStroke(1.dp, ColBlue.copy(alpha = 0.35f))
+    if (onClick != null) {
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = ColCardElevated),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            border = border,
+            onClick = onClick,
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                content()
+            }
+        }
+    } else {
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = ColCardElevated),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            border = border,
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                content()
+            }
+        }
+    }
+}
+
 /** Botón secundario: contorno claro, sin amarillo. */
 @Composable
 fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
+    val tap = rememberTapHaptic()
     val scale by animateFloatAsState(
         targetValue = if (pressed) 0.96f else 1f,
         animationSpec = tween(durationMillis = 120),
         label = "secondaryPress",
     )
     OutlinedButton(
-        onClick = onClick,
+        onClick = { tap(); onClick() },
         modifier = modifier.fillMaxWidth().height(52.dp)
             .graphicsLayer(scaleX = scale, scaleY = scale),
         interactionSource = interactionSource,
@@ -351,10 +505,11 @@ fun <T> EnumChips(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+            val tap = rememberTapHaptic()
             options.forEach { option ->
                 FilterChip(
                     selected = selected == option,
-                    onClick = { onSelect(option) },
+                    onClick = { tap(); onSelect(option) },
                     label = { Text(label(option)) },
                 )
             }

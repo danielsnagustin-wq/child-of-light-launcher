@@ -49,11 +49,21 @@ import com.danielsnagustin.childoflight.launcher.ui.AlertAction
 import com.danielsnagustin.childoflight.launcher.ui.CleanupScreen
 import com.danielsnagustin.childoflight.launcher.ui.GpuDiagnosticsScreen
 import com.danielsnagustin.childoflight.launcher.ui.HomeScreen
+import com.danielsnagustin.childoflight.launcher.ui.ImportScreen
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.SavesScreen
 import com.danielsnagustin.childoflight.launcher.ui.Screen
 import com.danielsnagustin.childoflight.launcher.ui.SettingsScreen
-import com.danielsnagustin.childoflight.launcher.ui.TouchLayoutScreen
+import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsAudioScreen
+import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsControlsScreen
+import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsCpuScreen
+import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsDiagnosticsScreen
+import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsFirmwareScreen
+import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsGeneralScreen
+import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsGpuScreen
+import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsPerformanceScreen
+import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsPersonalizationScreen
+import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsStorageScreen
 
 /**
  * Actividad única del launcher.
@@ -120,9 +130,31 @@ private fun LauncherApp(vm: LauncherViewModel) {
     // cualquier pantalla. Ahora la pantalla sobrevive a rotación y atrás
     // vuelve a Home (desde Limpiar, vuelve a Configuración).
     var screenName by rememberSaveable { mutableStateOf(Screen.HOME.name) }
+    // La animación de entrada de Home solo se reproduce una vez por sesión:
+    // AnimatedContent descarta y recrea la composición de Home en cada
+    // navegación, así que sin esta bandera la portada (650 ms) y las
+    // tarjetas (450 ms + retardos) se repetían en cada vuelta a Home.
+    var homeIntroDone by rememberSaveable { mutableStateOf(false) }
     val screen = runCatching { Screen.valueOf(screenName) }.getOrDefault(Screen.HOME)
+    // Atrás (Ola 2): categoría de Ajustes -> hub de Ajustes; Limpiar
+    // -> hub de Ajustes; GPU y diagnóstico -> hub de Ajustes (solo se
+    // llega desde Ajustes); resto -> Home.
     BackHandler(enabled = screen != Screen.HOME) {
-        screenName = if (screen == Screen.CLEANUP) Screen.SETTINGS.name else Screen.HOME.name
+        screenName = when (screen) {
+            Screen.CLEANUP -> Screen.SETTINGS.name
+            Screen.GPU -> Screen.SETTINGS.name
+            Screen.SETTINGS_GENERAL,
+            Screen.SETTINGS_PERSONALIZATION,
+            Screen.SETTINGS_GPU,
+            Screen.SETTINGS_CPU,
+            Screen.SETTINGS_AUDIO,
+            Screen.SETTINGS_PERFORMANCE,
+            Screen.SETTINGS_CONTROLS,
+            Screen.SETTINGS_FIRMWARE,
+            Screen.SETTINGS_STORAGE,
+            Screen.SETTINGS_DIAGNOSTICS -> Screen.SETTINGS.name
+            else -> Screen.HOME.name
+        }
     }
     val snackbarHostState = remember { SnackbarHostState() }
     val message by vm.message.collectAsState()
@@ -161,25 +193,37 @@ private fun LauncherApp(vm: LauncherViewModel) {
 
     Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
         Box(modifier = Modifier.padding(padding)) {
-            // Transición suave entre pantallas (fundido + deslizamiento,
-            // 250 ms): la navegación deja de ser un salto seco.
+            // Transición rápida entre pantallas (fundido + deslizamiento,
+            // 150 ms): en una pantalla de 90 Hz, 250 ms se siente pesado
+            // al entrar y al volver a Home.
             AnimatedContent(
                 targetState = screen,
                 transitionSpec = {
-                    (fadeIn(animationSpec = tween(250)) + slideInHorizontally(
+                    (fadeIn(animationSpec = tween(150)) + slideInHorizontally(
                         initialOffsetX = { it / 6 },
-                        animationSpec = tween(250),
-                    )) togetherWith (fadeOut(animationSpec = tween(200)) + slideOutHorizontally(
+                        animationSpec = tween(150),
+                    )) togetherWith (fadeOut(animationSpec = tween(120)) + slideOutHorizontally(
                         targetOffsetX = { -it / 6 },
-                        animationSpec = tween(200),
+                        animationSpec = tween(120),
                     ))
                 },
                 label = "screenTransition",
             ) { target ->
                 when (target) {
-                    Screen.HOME -> HomeScreen(vm) { screenName = it.name }
+                    Screen.HOME -> HomeScreen(vm, introDone = homeIntroDone, onIntroDone = { homeIntroDone = true }) { screenName = it.name }
+                    Screen.IMPORT -> ImportScreen(vm) { screenName = Screen.HOME.name }
                     Screen.SETTINGS -> SettingsScreen(vm, { screenName = Screen.HOME.name }, { screenName = it.name })
-                    Screen.GPU -> GpuDiagnosticsScreen(vm) { screenName = Screen.HOME.name }
+                    Screen.SETTINGS_GENERAL -> SettingsGeneralScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
+                    Screen.SETTINGS_PERSONALIZATION -> SettingsPersonalizationScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
+                    Screen.SETTINGS_GPU -> SettingsGpuScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
+                    Screen.SETTINGS_CPU -> SettingsCpuScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
+                    Screen.SETTINGS_AUDIO -> SettingsAudioScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
+                    Screen.SETTINGS_PERFORMANCE -> SettingsPerformanceScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
+                    Screen.SETTINGS_CONTROLS -> SettingsControlsScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
+                    Screen.SETTINGS_FIRMWARE -> SettingsFirmwareScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
+                    Screen.SETTINGS_STORAGE -> SettingsStorageScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
+                    Screen.SETTINGS_DIAGNOSTICS -> SettingsDiagnosticsScreen(vm, { screenName = Screen.SETTINGS.name }, { screenName = it.name })
+                    Screen.GPU -> GpuDiagnosticsScreen(vm) { screenName = Screen.SETTINGS.name }
                     Screen.TOUCH -> TouchLayoutScreen(vm) { screenName = Screen.HOME.name }
                     Screen.SAVES -> SavesScreen(vm) { screenName = Screen.HOME.name }
                     Screen.ACHIEVEMENTS -> AchievementsScreen(vm) { screenName = Screen.HOME.name }
@@ -204,7 +248,7 @@ private fun LauncherApp(vm: LauncherViewModel) {
             confirmButton = {
                 when (info.action) {
                     AlertAction.INSTALL_VITA3K -> TextButton(onClick = { vm.clearAlert(); vm.openVita3kReleases() }) { Text("Instalar app externa") }
-                    AlertAction.GO_IMPORT -> TextButton(onClick = { vm.clearAlert(); screenName = Screen.SETTINGS.name }) { Text("Ir a importar") }
+                    AlertAction.GO_IMPORT -> TextButton(onClick = { vm.clearAlert(); screenName = Screen.IMPORT.name }) { Text("Ir a importar") }
                     AlertAction.DELIVER_PKG_TO_VITA3K -> TextButton(onClick = { vm.clearAlert(); vm.deliverPkgToVita3k() }) { Text("Instalar en la app externa") }
                     AlertAction.CONFIRM_DOWNLOADS_COPY -> TextButton(onClick = { vm.clearAlert(); vm.confirmDeliverPkgToDownloads() }) { Text("Copiar a Descargas") }
                     AlertAction.CONFIRM_PKG_INSTALLED -> TextButton(onClick = { vm.clearAlert(); vm.confirmPkgInstalledInVita3k() }) { Text("Ya lo instalé en la app externa") }

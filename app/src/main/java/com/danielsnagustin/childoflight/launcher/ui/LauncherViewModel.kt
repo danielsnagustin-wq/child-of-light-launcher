@@ -2,11 +2,15 @@ package com.danielsnagustin.childoflight.launcher.ui
 
 import android.app.Application
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import com.danielsnagustin.childoflight.launcher.R
 import com.danielsnagustin.childoflight.launcher.core.EmbeddedPkgInstaller
 import com.danielsnagustin.childoflight.launcher.core.Vita3kCoreBridge
 import com.danielsnagustin.childoflight.launcher.data.AchievementRepository
@@ -29,8 +33,9 @@ import com.danielsnagustin.childoflight.launcher.data.TrophyStoreScan
 import com.danielsnagustin.childoflight.launcher.data.TurnipDriverRepository
 import com.danielsnagustin.childoflight.launcher.data.UiPreferencesRepository
 import com.danielsnagustin.childoflight.launcher.data.Vita3kConfigGenerator
+import com.danielsnagustin.childoflight.launcher.data.decodeSettingsBackup
+import com.danielsnagustin.childoflight.launcher.data.encodeSettingsBackup
 import com.danielsnagustin.childoflight.launcher.launcher.Vita3KLauncher
-import com.danielsnagustin.childoflight.launcher.model.AudioBackend
 import com.danielsnagustin.childoflight.launcher.model.BenchmarkRun
 import com.danielsnagustin.childoflight.launcher.model.BenchmarkSource
 import com.danielsnagustin.childoflight.launcher.model.GameStatus
@@ -42,6 +47,12 @@ import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.TROPHIES_27
 import com.danielsnagustin.childoflight.launcher.model.TrophyProgress
 import com.danielsnagustin.childoflight.launcher.model.applySafeMode
+import com.danielsnagustin.childoflight.launcher.ui.settings.audioFixTarget
+import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsCategory
+import com.danielsnagustin.childoflight.launcher.ui.settings.categoryHasResettableSettings
+import com.danielsnagustin.childoflight.launcher.ui.settings.extractRecentErrorLines
+import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategorySettings
+import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategoryUiPrefs
 import com.danielsnagustin.childoflight.launcher.model.defaultProfileFor
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import com.danielsnagustin.childoflight.launcher.model.shouldAutoRevertTo1x
@@ -79,6 +90,16 @@ data class PendingPkgLicense(
  * usuario veía "no pasa nada" y no sabía qué había fallado.
  */
 data class AlertInfo(val text: String, val action: AlertAction? = null)
+
+/**
+ * Progreso de instalación en el núcleo (Fase 2, Ola 1): % real del
+ * núcleo (0-100) + mensaje del núcleo, o percent null = trabajo en
+ * curso sin % (la copia del archivo no tiene hook de progreso;
+ * nunca se inventa un %). Null = no hay nada en curso. Lo alimenta
+ * la instalación de firmware en el núcleo, la instalación del .pkg
+ * al jugar y la copia de la importación (indeterminada, con nombre).
+ */
+data class InstallProgress(val percent: Int?, val message: String)
 
 /**
  * Texto de confirmación antes de copiar a Descargas/ChildOfLight/.
@@ -234,7 +255,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _importing = MutableStateFlow(false)
     val importing: StateFlow<Boolean> = _importing.asStateFlow()
 
-    /** Versión de Vita3K externo instalado, o null si no está instalado (para la Home). */
+    /** Progreso de instalación en el núcleo (ver InstallProgress). */
+    private val _installProgress = MutableStateFlow<InstallProgress?>(null)
+    val installProgress: StateFlow<InstallProgress?> = _installProgress.asStateFlow()
+
+    /** Versión de la app externa instalada, o null si no está instalada (para Ajustes → Avanzado — Motor). */
     private val _externalVita3k = MutableStateFlow<String?>(null)
     val externalVita3k: StateFlow<String?> = _externalVita3k.asStateFlow()
 
@@ -271,6 +296,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _logText = MutableStateFlow("")
     val logText: StateFlow<String> = _logText.asStateFlow()
 
+    // Portada de Home decodificada UNA vez en el hilo IO: painterResource
+    // decodifica en el hilo principal y lo repetía en cada vuelta a Home
+    // (la composición se descarta al navegar). Null mientras carga: la
+    // Home usa painterResource como respaldo transitorio.
+    private val _coverBitmap = MutableStateFlow<ImageBitmap?>(null)
+    val coverBitmap: StateFlow<ImageBitmap?> = _coverBitmap.asStateFlow()
+
     private val _pendingBenchmark = MutableStateFlow<BenchmarkRun?>(null)
     val pendingBenchmark: StateFlow<BenchmarkRun?> = _pendingBenchmark.asStateFlow()
 
@@ -280,6 +312,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     init {
         refreshStatus()
         refreshLog()
+        loadCoverBitmap()
         viewModelScope.launch(Dispatchers.IO) { sessionManager.ensureDefaultSession() }
         viewModelScope.launch {
             // M37: si el DataStore está corrupto, first() lanza y tumbaba
@@ -326,7 +359,20 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun refreshLog() {
-        _logText.value = LauncherLog.readLast(context, 60)
+        // El log se leía en el hilo principal (file.readLines() en init y
+        // en cada onResume): hasta 200 KB de I/O bloqueando el primer
+        // frame. Ahora en IO; la UI observa el flujo.
+        viewModelScope.launch(Dispatchers.IO) {
+            _logText.value = LauncherLog.readLast(context, 60)
+        }
+    }
+
+    private fun loadCoverBitmap() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _coverBitmap.value = runCatching {
+                BitmapFactory.decodeResource(context.resources, R.drawable.col_cover_full)?.asImageBitmap()
+            }.getOrNull()
+        }
     }
 
     fun refreshConfigPreview(settings: LauncherSettings) {
@@ -423,21 +469,23 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * "Corregir audio": SDL + buffer 1024 + limpiar caché de shaders.
-     * No reinicia el juego solo: el núcleo no está embebido en Etapa 1,
-     * así que se avisa de que hay que volver a lanzar el juego.
+     * "Corregir audio": SDL + buffer 1024 + NGS ON + shaderCache ON +
+     * limpiar caché de shaders (Ola 2, Etapa 4). Antes de aplicar se
+     * guarda una copia de los ajustes actuales en _audioFixSnapshot:
+     * la pantalla de Audio ofrece "Deshacer" para restaurarlos. La
+     * caché limpiada no se recupera (se vuelve a llenar sola al jugar)
+     * y el diálogo lo dice antes de aplicar. El destino de los ajustes
+     * es audioFixTarget (misma fuente que el diálogo de confirmación).
+     * No reinicia el juego solo: hay que volver a lanzar el juego.
      */
+    private val _audioFixSnapshot = MutableStateFlow<LauncherSettings?>(null)
+    val audioFixSnapshot: StateFlow<LauncherSettings?> = _audioFixSnapshot.asStateFlow()
+
     fun fixAudio() {
         viewModelScope.launch(Dispatchers.IO) {
             val current = settingsRepo.settingsFlow.first()
-            settingsRepo.save(
-                current.copy(
-                    audioBackend = AudioBackend.SDL,
-                    audioBufferSize = 1024,
-                    ngsEnable = true,
-                    shaderCache = true,
-                ),
-            )
+            _audioFixSnapshot.value = current
+            settingsRepo.save(audioFixTarget(current))
             val cleared = turnipRepo.clearShaderCache()
             withContext(Dispatchers.Main) {
                 _message.value = "Audio corregido: SDL + buffer 1024 + NGS ON + caché de shaders limpiada " +
@@ -445,6 +493,23 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             }
             LauncherLog.append(context, "audio", "Corregir audio: SDL + buffer 1024, caché limpiada")
         }
+    }
+
+    /** Restaura los ajustes guardados antes de "Corregir audio" y limpia el snapshot. */
+    fun undoFixAudio() {
+        viewModelScope.launch {
+            val snapshot = _audioFixSnapshot.value ?: return@launch
+            settingsRepo.save(snapshot)
+            _audioFixSnapshot.value = null
+            _message.value = "Audio restaurado a los valores anteriores a «Corregir audio». " +
+                "La caché de shaders limpiada no se recupera: se vuelve a llenar sola al jugar."
+            LauncherLog.append(context, "audio", "Corregir audio deshecho: valores anteriores restaurados")
+        }
+    }
+
+    /** Oculta el botón "Deshacer" sin restaurar nada (el usuario acepta el cambio). */
+    fun clearAudioFixSnapshot() {
+        _audioFixSnapshot.value = null
     }
 
     fun clearShaderCache() {
@@ -572,7 +637,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         _firmwareInstalling.value = true
         return try {
             val installer = EmbeddedPkgInstaller(library)
-            val result = installer.installFirmware(pup) { _, _ -> /* progreso: TODO mostrar % en UI */ }
+            val result = installer.installFirmware(pup) { percent, status ->
+                _installProgress.value = InstallProgress(percent, status)
+            }
             result.fold(
                 onSuccess = { version ->
                     FirmwareResolver.markInstalled(library.vitaRoot, version)
@@ -592,6 +659,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             )
         } finally {
             _firmwareInstalling.value = false
+            _installProgress.value = null
         }
     }
 
@@ -651,6 +719,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         _pendingDuplicate.value = PendingDuplicate(uri, "GAME_FOLDER")
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                _installProgress.value = InstallProgress(null, "Importando… ${fileNameOf(uri)}")
                 val result = library.importGameFolder(uri, force)
                 withContext(Dispatchers.Main) { showImportResult(result) }
             } finally {
@@ -665,6 +734,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         _pendingDuplicate.value = PendingDuplicate(uri, "DLC_FOLDER")
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                _installProgress.value = InstallProgress(null, "Importando… ${fileNameOf(uri)}")
                 val result = library.importDlcFolder(uri, force)
                 withContext(Dispatchers.Main) { showImportResult(result) }
             } finally {
@@ -707,6 +777,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     private fun endImport() {
         _importing.value = false
+        _installProgress.value = null
         refreshStatus()
     }
 
@@ -801,7 +872,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             }
             "$what se guardó como .pkg (${result.titleId.id} · ${formatBytes(result.sizeBytes)}), " +
                 "pero falta su licencia (work.bin de 512 B): sin ella no se puede instalar.\n\n" +
-                "Elige el work.bin en Ajustes (tarjeta «Falta la licencia»): es el archivo work.bin " +
+                "Elige el work.bin en Importar (tarjeta «Falta la licencia»): es el archivo work.bin " +
                 "que acompaña al .pkg (a veces se descarga como «work (5).bin»)."
         }
         is ImportResult.Rejected -> "No se instaló nada:\n\n${result.reason.removePrefix(com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository.DUPLICATE_MARKER)}"
@@ -814,6 +885,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val name = fileNameOf(uri)
+                // Copia sin % real: estado indeterminado honesto con el
+                // nombre del archivo; el % solo existe al instalar en
+                // el núcleo (installProgress con percent).
+                _installProgress.value = InstallProgress(null, "Importando… $name")
                 val result = block(name)
                 withContext(Dispatchers.Main) {
                     showImportResult(result)
@@ -1151,7 +1226,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // Firmware: si hay PUP guardado y núcleo presente, instalarlo
             // ahora (best-effort, nunca bloquea el lanzamiento).
             ensureFirmwareForEmbedded()
-            val outcome = launcher.launch(library, settings, sessionManager, gpu)
+            // Instalación del .pkg en el núcleo (al jugar con .pkg
+            // guardado): el % real del núcleo llega a installProgress
+            // y se muestra en Import; al terminar se limpia.
+            val outcome = launcher.launch(library, settings, sessionManager, gpu) { percent, status ->
+                _installProgress.value = InstallProgress(percent, status)
+            }
+            _installProgress.value = null
             if (outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternal ||
                 outcome is Vita3KLauncher.LaunchOutcome.LaunchedExternalFirmwareWarning ||
                 outcome is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded
@@ -1251,12 +1332,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     /**
      * Al volver del juego (MainActivity.onResume): cierra la medición
      * de tiempo de la sesión activa y guarda el snapshot de lo jugado.
-     * No hace nada si no hay una partida en curso registrada.
+     * No hace nada si no hay una partida en curso registrada. No
+     * refresca el estado: onResume ya llamó a refreshStatus() justo
+     * antes, y el segundo escaneo completo del juego (~1,14 GB) en
+     * cada vuelta era trabajo duplicado.
      */
     fun noteReturnedFromGame() {
         viewModelScope.launch(Dispatchers.IO) {
             sessionManager.notePlayEnded()
-            refreshStatus()
         }
     }
 
@@ -1681,6 +1764,80 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    // --- Restauración por categoría (Ola 3, Etapa 9b) ---
+    // Restablece SOLO esa categoría (ver CategoryReset.kt). Firmware y
+    // Almacenamiento no tienen ajustes: son archivos, y el mensaje lo
+    // dice en vez de fingir que se restableció algo.
+    fun resetCategory(category: SettingsCategory) {
+        viewModelScope.launch {
+            if (!categoryHasResettableSettings(category)) {
+                _message.value = when (category) {
+                    SettingsCategory.FIRMWARE -> "Firmware no tiene ajustes que restablecer: el firmware son archivos (PUP guardado o instalado en el núcleo), no ajustes."
+                    else -> "Almacenamiento no tiene ajustes que restablecer: son archivos (copias en Descargas, juego, DLCs), no ajustes."
+                }
+                return@launch
+            }
+            val current = settingsRepo.settingsFlow.first()
+            val currentUi = uiRepo.uiFlow.first()
+            settingsRepo.save(resetCategorySettings(current, category))
+            uiRepo.save(resetCategoryUiPrefs(currentUi, category))
+            _message.value = "Categoría ${category.title} restablecida a los valores del preset ${current.activeProfile.label}."
+        }
+    }
+
+    // --- Copia de seguridad de ajustes (Ola 3, Etapa 9a) ---
+    // JSON por SAF (ver SettingsBackup.kt). Al importar se aplican los
+    // mismos clamps que al guardar; un archivo inválido no aplica nada.
+
+    fun exportSettingsBackup(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val current = settingsRepo.settingsFlow.first()
+                val currentUi = uiRepo.uiFlow.first()
+                val text = encodeSettingsBackup(current, currentUi)
+                context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
+                withContext(Dispatchers.Main) { _message.value = "Copia de seguridad exportada." }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { _message.value = "No se pudo exportar la copia: ${e.message}" }
+            }
+        }
+    }
+
+    fun importSettingsBackup(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            // Lectura acotada a 256 KB: una copia real son unos pocos KB;
+            // un archivo enorme elegido por error no debe cargar el
+            // teléfono entero. Si el JSON queda truncado, la
+            // decodificación lo rechaza como inválido.
+            val text = try {
+                context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
+                    val buffer = CharArray(262_144)
+                    val read = reader.read(buffer)
+                    if (read < 0) "" else String(buffer, 0, read)
+                }
+            } catch (e: Exception) {
+                null
+            }
+            if (text == null) {
+                withContext(Dispatchers.Main) { _message.value = "No se pudo leer el archivo de copia de seguridad." }
+                return@launch
+            }
+            val current = settingsRepo.settingsFlow.first()
+            val currentUi = uiRepo.uiFlow.first()
+            val decoded = decodeSettingsBackup(text, current, currentUi)
+            if (decoded.isFailure) {
+                withContext(Dispatchers.Main) {
+                    _message.value = decoded.exceptionOrNull()?.message ?: "Archivo de copia de seguridad inválido. No se aplicó nada."
+                }
+                return@launch
+            }
+            val (settings, ui) = decoded.getOrThrow()
+            settingsRepo.save(settings)
+            uiRepo.save(ui)
+            withContext(Dispatchers.Main) { _message.value = "Copia de seguridad importada: ajustes y personalización restaurados." }
+        }
+    }
+
     // --- Borrar no usados ---
 
     fun deleteDlc(dlcId: String) {
@@ -1888,11 +2045,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun buildBugReportText(settings: LauncherSettings, gpu: GpuInfo?): String {
         val status = _status.value
+        // Ola 3, Etapa 10: el log se lee una vez y se reutiliza para el
+        // log completo y para los errores recientes.
+        val recentLog = LauncherLog.readLast(context, 60)
         return buildString {
             appendLine("=== Reporte de bug — Child of Light Launcher ===")
             appendLine("Fecha: ${java.util.Date()}")
             appendLine("App: com.danielsnagustin.childoflight.launcher v0.1.0")
             appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+            // Modelo: solo en el informe de diagnóstico y en Ajustes →
+            // Diagnóstico (ver SettingsDiagnosticsScreen).
+            appendLine("Modelo: ${Build.MODEL}")
             appendLine("Procesador: ${gpu?.socModel?.ifBlank { null } ?: Build.SOC_MODEL ?: Build.HARDWARE}")
             appendLine("SoC: ${gpu?.socModel ?: "no detectado"}")
             appendLine("GPU: ${gpu?.renderer ?: "no detectada"} (${gpu?.vendor})")
@@ -1923,8 +2086,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             appendLine()
             appendLine("--- config.yml generado ---")
             appendLine(Vita3kConfigGenerator.generate(settings, library.vitaRoot.absolutePath, gpu))
+            appendLine("--- Errores recientes del log ---")
+            val recentErrors = extractRecentErrorLines(recentLog)
+            if (recentErrors.isEmpty()) {
+                appendLine("Sin errores recientes.")
+            } else {
+                recentErrors.forEach { appendLine(it) }
+            }
             appendLine("--- Log del launcher (últimas líneas) ---")
-            appendLine(LauncherLog.readLast(context, 60))
+            appendLine(recentLog)
         }
     }
 

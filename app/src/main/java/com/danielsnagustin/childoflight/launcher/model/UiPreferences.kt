@@ -33,6 +33,42 @@ enum class TextSize(val scale: Float, val label: String) {
     LARGE(1.15f, "Grande"),
 }
 
+/**
+ * Tamaño de las tarjetas (Ola 3, Etapa 6): escala real de padding y
+ * radio de PremiumCard. Normal = el comportamiento actual (16 dp de
+ * padding, radio 20 dp); Compacta y Amplia lo achican o agrandan.
+ */
+enum class CardSize(val label: String, val paddingDp: Int, val cornerDp: Int) {
+    COMPACT("Compacta", 10, 14),
+    NORMAL("Normal", 16, 20),
+    LARGE("Amplia", 22, 26),
+}
+
+/**
+ * Transparencia de las tarjetas (Ola 3, Etapa 6): alpha real del fondo
+ * de la tarjeta. Opaco = el comportamiento actual (alpha 1.0).
+ */
+enum class CardTransparency(val label: String, val alpha: Float) {
+    OPAQUE("Opaco", 1f),
+    SOFT("Suave", 0.92f),
+    TRANSLUCENT("Translúcido", 0.8f),
+}
+
+/**
+ * Tamaño de los iconos (Ola 3, Etapa 6): tamaño real de los iconos
+ * vectoriales Canvas. Mediano = el tamaño actual (24 dp).
+ *
+ * Honesto: existe UN solo juego de iconos vectoriales consistente
+ * (ColIcons.kt). NO hay un segundo pack de iconos que elegir: este
+ * ajuste cambia el TAMAÑO, no el pack. No se inventa un selector de
+ * paquetes que no existe.
+ */
+enum class IconSize(val label: String, val sizeDp: Int) {
+    SMALL("Pequeño", 18),
+    MEDIUM("Mediano", 24),
+    LARGE("Grande", 32),
+}
+
 /** Secciones de la pantalla principal, en el orden que elija el usuario. */
 enum class HomeSection(val label: String) {
     GAME_CARD("Tarjeta del juego"),
@@ -51,4 +87,10 @@ data class UiPreferences(
     val sectionOrder: List<HomeSection> = HomeSection.entries.toList(),
     /** Presets de GPU ocultos por "Limpiar no usados" (siguen existiendo, no se listan). */
     val hiddenPresets: Set<GpuProfileId> = emptySet(),
+    /** Tamaño de las tarjetas (Etapa 6). Default = comportamiento actual. */
+    val cardSize: CardSize = CardSize.NORMAL,
+    /** Transparencia de las tarjetas (Etapa 6). Default = opaco, como hoy. */
+    val cardTransparency: CardTransparency = CardTransparency.OPAQUE,
+    /** Tamaño de los iconos vectoriales (Etapa 6). Default = 24 dp, como hoy. */
+    val iconSize: IconSize = IconSize.MEDIUM,
 )

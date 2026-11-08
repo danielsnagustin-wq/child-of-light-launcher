@@ -259,18 +259,22 @@ class Vita3KLauncher(private val context: Context) {
      * (fallback Vulkan -> OpenGL si el teléfono no tiene Vulkan, ver
      * Vita3kConfigGenerator). La vía externa no lee el config.yml del
      * launcher, así que ahí el parámetro no cambia nada.
+     * onInstallProgress (opcional): % real del núcleo al instalar el
+     * .pkg guardado (juego, update, DLCs). Solo se usa para mostrarlo
+     * en UI; sin él, la instalación es exactamente igual que antes.
      */
     suspend fun launch(
         library: GameLibraryRepository,
         settings: LauncherSettings,
         sessionManager: SessionManager? = null,
         gpu: GpuInfo? = null,
+        onInstallProgress: EmbeddedPkgInstaller.ProgressListener? = null,
     ): LaunchOutcome {
         // BUG (auditoría): writeConfig (file.writeText) y checkPrerequisites
         // pueden lanzar IOException y tumbar la corrutina del ViewModel en
         // play()/startBenchmark(). El lanzamiento nunca debe lanzar.
         return try {
-            launchImpl(library, settings, sessionManager, gpu)
+            launchImpl(library, settings, sessionManager, gpu, onInstallProgress)
         } catch (e: Exception) {
             LaunchOutcome.Blocked("No se pudo lanzar: ${e.message}")
         }
@@ -315,6 +319,7 @@ class Vita3KLauncher(private val context: Context) {
         settings: LauncherSettings,
         sessionManager: SessionManager? = null,
         gpu: GpuInfo? = null,
+        onInstallProgress: EmbeddedPkgInstaller.ProgressListener? = null,
     ): LaunchOutcome {
         val pre = checkPrerequisites(library)
         if (!pre.ready) {
@@ -371,7 +376,7 @@ class Vita3KLauncher(private val context: Context) {
                 // Si la instalación o el arranque fallan, se devuelve el
                 // motivo exacto (EmbeddedFailed), sin vía externa.
                 val embeddedTitle = TitleId.fromString(decision.titleId)
-                val installed = embeddedTitle?.let { installPkgWithEmbeddedCore(library, it) }
+                val installed = embeddedTitle?.let { installPkgWithEmbeddedCore(library, it, onInstallProgress) }
                     ?: Result.failure(IllegalStateException("Title ID no válido: ${decision.titleId}"))
                 if (installed.isFailure) {
                     val reason = installed.exceptionOrNull()?.message
@@ -483,26 +488,29 @@ class Vita3KLauncher(private val context: Context) {
      * Instala el .pkg del juego con el propio núcleo embebido
      * (EmbeddedPkgInstaller), y después el update y los DLCs
      * guardados en .pkg: sin ellos el usuario jugaría solo el juego
-     * base. El progreso detallado aún no se muestra en UI (TODO:
-     * cablear el progreso a la pantalla de JUGAR); por ahora solo se
-     * registra inicio y fin en el log. Devuelve Result: un fallo del
-     * juego base bloquea el lanzamiento con el motivo exacto; un
-     * fallo del update/DLC no bloquea el lanzamiento del juego base,
-     * pero queda registrado (no silencioso).
+     * base. El progreso real del núcleo llega por onInstallProgress
+     * (null = no se muestra, como antes) y se registra inicio y fin
+     * en el log. Devuelve Result: un fallo del juego base bloquea el
+     * lanzamiento con el motivo exacto; un fallo del update/DLC no
+     * bloquea el lanzamiento del juego base, pero queda registrado
+     * (no silencioso).
      */
     private suspend fun installPkgWithEmbeddedCore(
         library: GameLibraryRepository,
         titleId: TitleId,
+        onInstallProgress: EmbeddedPkgInstaller.ProgressListener? = null,
     ): Result<Unit> {
         LauncherLog.append(context, "pkg", "Instalando .pkg en el núcleo embebido: ${titleId.id}")
         val installer = EmbeddedPkgInstaller(library)
-        val result = installer.installGamePkg(titleId) { _, _ -> /* progreso: TODO mostrar en UI */ }
+        val progress: EmbeddedPkgInstaller.ProgressListener =
+            onInstallProgress ?: EmbeddedPkgInstaller.ProgressListener { _, _ -> }
+        val result = installer.installGamePkg(titleId, progress)
         result.onFailure {
             LauncherLog.append(context, "pkg", "Instalación .pkg embebida falló: ${it.message}")
             return Result.failure(it)
         }
         if (library.pkgPatchFile(titleId.id).isFile) {
-            installer.installUpdatePkg(titleId) { _, _ -> }
+            installer.installUpdatePkg(titleId, progress)
                 .onSuccess { LauncherLog.append(context, "pkg", "Update embebido instalado: ${titleId.id}") }
                 .onFailure { LauncherLog.append(context, "pkg", "Instalación del update embebido falló: ${it.message}") }
         }
@@ -510,7 +518,7 @@ class Vita3KLauncher(private val context: Context) {
             ?.filter { it.isFile && it.name.lowercase().endsWith(".pkg") }
             ?.forEach { pkg ->
                 val dlcId = pkg.nameWithoutExtension
-                installer.installDlcPkg(dlcId) { _, _ -> }
+                installer.installDlcPkg(dlcId, progress)
                     .onSuccess { LauncherLog.append(context, "pkg", "DLC embebido instalado: $dlcId") }
                     .onFailure { LauncherLog.append(context, "pkg", "Instalación del DLC $dlcId embebido falló: ${it.message}") }
             }

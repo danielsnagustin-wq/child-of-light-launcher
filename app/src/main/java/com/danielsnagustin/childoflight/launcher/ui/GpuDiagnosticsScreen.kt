@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.data.DeviceCompat
 import com.danielsnagustin.childoflight.launcher.data.DeviceMemory
 import com.danielsnagustin.childoflight.launcher.model.resolveBackend
+import com.danielsnagustin.childoflight.launcher.ui.settings.extractRecentErrorLines
 
 /**
  * GPU y diagnóstico.
@@ -131,6 +132,24 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         NoteText("El firmware nunca es un paso inicial: el primer uso solo pide juego + DLCs. Importarlo es una opción avanzada en Ajustes.")
         Text("Backend: ${settings?.backend?.label ?: "—"} · Driver: ${settings?.gpuDriver ?: "—"}${if (settings?.turnipInstalled == true) " (${settings?.turnipVersion})" else ""}")
         Text("Resolución: ${settings?.resolutionLabel ?: "—"} · FPS overlay: ${if (settings?.showFpsOverlay == true) "ON" else "OFF"}")
+
+        // Ola 3, Etapa 10: configuración activa resumida, último FPS y
+        // errores recientes del log (el modelo del dispositivo solo se
+        // muestra en Ajustes → Diagnóstico, no aquí).
+        SectionTitle("Resumen de la configuración activa")
+        val lastFps = benchmarks.firstOrNull { it.fpsAvg != null }?.fpsAvg
+        Text("Perfil activo: ${settings?.activeProfile?.label ?: "—"}")
+        Text("Backend efectivo: ${settings?.let { resolveBackend(it, g) }?.label ?: "—"} · Resolución: ${settings?.resolutionLabel ?: "—"} · Filtro: ${settings?.screenFilter ?: "—"}")
+        Text("VSync: ${if (settings?.vSync == true) "ON" else "OFF"} · Modo 60 FPS: ${if (settings?.fpsHack == true) "ON" else "OFF"} · Modo seguro: ${if (settings?.safeMode == true) "ON" else "OFF"}")
+        Text("Último FPS (prueba de 30 s): ${lastFps?.let { "$it fps" } ?: "sin medir"}")
+        SectionTitle("Errores recientes del log")
+        val recentErrors = extractRecentErrorLines(logText)
+        if (recentErrors.isEmpty()) {
+            Text("Sin errores recientes en el log.", color = ColSuccessGreen)
+        } else {
+            recentErrors.forEach { line -> Text("• $line", style = MaterialTheme.typography.bodySmall) }
+        }
+        NoteText("El informe exportado (Reportar bug) es solo texto: dispositivo, ajustes, estado y errores recientes. No adjunta ningún archivo privado.")
 
         SectionTitle("Prueba de 30 segundos")
         NoteText("Lanza el juego con el preset actual. Juega 30 segundos mirando el FPS del overlay y al volver regístralo. Si es G99 Calidad (2x) y baja de 28 fps, vuelve a 1x automáticamente.")

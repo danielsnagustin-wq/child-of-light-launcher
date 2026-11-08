@@ -9,9 +9,12 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.danielsnagustin.childoflight.launcher.model.AccentColor
 import com.danielsnagustin.childoflight.launcher.model.AppLanguage
+import com.danielsnagustin.childoflight.launcher.model.CardSize
+import com.danielsnagustin.childoflight.launcher.model.CardTransparency
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.HomeBackground
 import com.danielsnagustin.childoflight.launcher.model.HomeSection
+import com.danielsnagustin.childoflight.launcher.model.IconSize
 import com.danielsnagustin.childoflight.launcher.model.TextSize
 import com.danielsnagustin.childoflight.launcher.model.ThemeMode
 import com.danielsnagustin.childoflight.launcher.model.UiPreferences
@@ -33,6 +36,9 @@ class UiPreferencesRepository(private val context: Context) {
         val SHOW_ACHIEVEMENTS_HOME = booleanPreferencesKey("ui_show_achievements_home")
         val SECTION_ORDER = stringPreferencesKey("ui_section_order")
         val HIDDEN_PRESETS = stringPreferencesKey("ui_hidden_presets")
+        val CARD_SIZE = stringPreferencesKey("ui_card_size")
+        val CARD_TRANSPARENCY = stringPreferencesKey("ui_card_transparency")
+        val ICON_SIZE = stringPreferencesKey("ui_icon_size")
     }
 
     val uiFlow: Flow<UiPreferences> = context.uiDataStore.data.map { p ->
@@ -46,6 +52,11 @@ class UiPreferencesRepository(private val context: Context) {
             showAchievementsOnHome = p[Keys.SHOW_ACHIEVEMENTS_HOME] ?: true,
             sectionOrder = decodeSectionOrder(p[Keys.SECTION_ORDER]),
             hiddenPresets = decodeHiddenPresets(p[Keys.HIDDEN_PRESETS] ?: ""),
+            // Claves nuevas (Etapa 6): un valor guardado desconocido o
+            // ausente cae al default seguro (comportamiento actual).
+            cardSize = runCatching { CardSize.valueOf(p[Keys.CARD_SIZE] ?: "NORMAL") }.getOrDefault(CardSize.NORMAL),
+            cardTransparency = runCatching { CardTransparency.valueOf(p[Keys.CARD_TRANSPARENCY] ?: "OPAQUE") }.getOrDefault(CardTransparency.OPAQUE),
+            iconSize = runCatching { IconSize.valueOf(p[Keys.ICON_SIZE] ?: "MEDIUM") }.getOrDefault(IconSize.MEDIUM),
         )
     }
 
@@ -60,6 +71,9 @@ class UiPreferencesRepository(private val context: Context) {
             p[Keys.SHOW_ACHIEVEMENTS_HOME] = prefs.showAchievementsOnHome
             p[Keys.SECTION_ORDER] = prefs.sectionOrder.joinToString(",") { it.name }
             p[Keys.HIDDEN_PRESETS] = prefs.hiddenPresets.joinToString(",") { it.name }
+            p[Keys.CARD_SIZE] = prefs.cardSize.name
+            p[Keys.CARD_TRANSPARENCY] = prefs.cardTransparency.name
+            p[Keys.ICON_SIZE] = prefs.iconSize.name
         }
     }
 

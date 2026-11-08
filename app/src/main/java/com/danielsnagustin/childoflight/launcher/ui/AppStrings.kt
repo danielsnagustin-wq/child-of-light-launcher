@@ -36,6 +36,17 @@ data class AppStrings(
     val firmware: String,
     val notInstalled: String,
     val installed: String,
+    val importTitle: String,
+    val importSubtitle: String,
+    val mainGame: String,
+    val dlcSection: String,
+    val updatesSection: String,
+    val noDlcsYet: String,
+    val noUpdateYet: String,
+    val importingLabel: String,
+    val installingLabel: String,
+    val playShort: String,
+    val game: String,
 )
 
 val STRINGS_ES = AppStrings(
@@ -64,6 +75,17 @@ val STRINGS_ES = AppStrings(
     firmware = "Firmware",
     notInstalled = "No instalado",
     installed = "Instalado",
+    importTitle = "Importar",
+    importSubtitle = "Juego, DLCs y updates: todo en un solo lugar.",
+    mainGame = "Juego principal",
+    dlcSection = "DLC",
+    updatesSection = "Actualizaciones",
+    noDlcsYet = "Aún no hay DLCs importados.",
+    noUpdateYet = "No hay update instalado.",
+    importingLabel = "Importando…",
+    installingLabel = "Instalando en el núcleo…",
+    playShort = "JUGAR",
+    game = "Juego",
 )
 
 val STRINGS_EN = AppStrings(
@@ -92,6 +114,17 @@ val STRINGS_EN = AppStrings(
     firmware = "Firmware",
     notInstalled = "Not installed",
     installed = "Installed",
+    importTitle = "Import",
+    importSubtitle = "Game, DLCs and updates: all in one place.",
+    mainGame = "Main game",
+    dlcSection = "DLC",
+    updatesSection = "Updates",
+    noDlcsYet = "No DLCs imported yet.",
+    noUpdateYet = "No update installed.",
+    importingLabel = "Importing…",
+    installingLabel = "Installing in the core…",
+    playShort = "PLAY",
+    game = "Game",
 )
 
 fun stringsFor(language: AppLanguage): AppStrings =

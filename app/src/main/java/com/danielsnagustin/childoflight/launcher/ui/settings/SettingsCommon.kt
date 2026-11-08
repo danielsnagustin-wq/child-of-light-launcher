@@ -1,0 +1,135 @@
+package com.danielsnagustin.childoflight.launcher.ui.settings
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.danielsnagustin.childoflight.launcher.ui.BackButton
+import com.danielsnagustin.childoflight.launcher.ui.ContentMaxWidth
+import com.danielsnagustin.childoflight.launcher.ui.PremiumCard
+import com.danielsnagustin.childoflight.launcher.ui.ScreenHeader
+import com.danielsnagustin.childoflight.launcher.ui.ColMutedText
+import com.danielsnagustin.childoflight.launcher.ui.premiumBackgroundBrush
+
+/**
+ * Armazón común de las 10 pantallas de categoría de Ajustes (Ola 2).
+ * Mismo fondo, mismo ancho máximo y mismo botón Volver que la antigua
+ * pantalla única: las categorías se sienten parte de Ajustes, no
+ * pantallas sueltas. Los diálogos van en el hueco `dialogs` para que
+ * no queden dentro de la lista con scroll.
+ *
+ * Ola 3, Etapa 9b: `onResetCategory` añade el botón "Restablecer esta
+ * categoría" (con confirmación) al final de la pantalla. Restablece
+ * SOLO esa categoría (ver CategoryReset.kt); Firmware y Almacenamiento
+ * no tienen ajustes que restablecer y el ViewModel lo dice en el
+ * mensaje. Las pantallas que no lo pasan no muestran el botón.
+ */
+@Composable
+fun SettingsCategoryScaffold(
+    title: String,
+    subtitle: String?,
+    onBack: () -> Unit,
+    dialogs: @Composable () -> Unit = {},
+    onResetCategory: (() -> Unit)? = null,
+    content: LazyListScope.() -> Unit,
+) {
+    var showResetCategoryConfirm by rememberSaveable { mutableStateOf(false) }
+    Box(
+        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
+    ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
+        ) {
+            item {
+                ScreenHeader(title, subtitle)
+            }
+            content()
+            if (onResetCategory != null) {
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedButton(
+                        onClick = { showResetCategoryConfirm = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Restablecer esta categoría") }
+                }
+            }
+            item {
+                BackButton(onBack)
+            }
+        }
+    }
+    if (showResetCategoryConfirm && onResetCategory != null) {
+        AlertDialog(
+            onDismissRequest = { showResetCategoryConfirm = false },
+            title = { Text("¿Restablecer esta categoría?") },
+            text = { Text("Se restablecen solo los ajustes de esta categoría a los valores del preset del perfil activo (o a los defaults en Personalización). El resto de ajustes no se toca.") },
+            confirmButton = {
+                TextButton(onClick = { onResetCategory(); showResetCategoryConfirm = false }) { Text("Restablecer") }
+            },
+            dismissButton = { TextButton(onClick = { showResetCategoryConfirm = false }) { Text("Cancelar") } },
+        )
+    }
+    dialogs()
+}
+
+/** Fila de categoría en el hub: tarjeta con título + subtítulo, toca para entrar. */
+@Composable
+fun CategoryRow(category: SettingsCategory, onClick: () -> Unit) {
+    PremiumCard(onClick = onClick) {
+        Text(
+            category.title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = androidx.compose.ui.graphics.Color.White,
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            category.subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = ColMutedText,
+        )
+    }
+    Spacer(modifier = Modifier.height(10.dp))
+}
+
+/** Fila de resultado del buscador: título del ajuste + categoría a la que lleva. */
+@Composable
+fun SearchResultRow(result: SearchableSetting, onClick: () -> Unit) {
+    PremiumCard(onClick = onClick) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                result.title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = androidx.compose.ui.graphics.Color.White,
+            )
+            Text(
+                "En: ${result.category.title}",
+                style = MaterialTheme.typography.bodySmall,
+                color = ColMutedText,
+            )
+        }
+    }
+    Spacer(modifier = Modifier.height(10.dp))
+}

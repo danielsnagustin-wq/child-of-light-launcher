@@ -173,6 +173,12 @@ object DownloadsCleanup {
  */
 class GameLibraryRepository(private val context: Context) {
 
+    // Caché de tamaños de directorio: scanStatus() se llama en init, en
+    // cada onResume y al volver del juego, y antes recorría TODO el juego
+    // (~1,14 GB) y cada DLC en cada llamada. La caché solo guarda el
+    // tamaño; el contenido (qué hay instalado) se sigue leyendo siempre.
+    private val dirSizeCache = DirSizeCache()
+
     companion object {
         /**
          * Prefijo de ImportResult.Rejected cuando el juego/DLC/update ya
@@ -536,7 +542,7 @@ class GameLibraryRepository(private val context: Context) {
                 installedCount++
                 if (extractedTitle == null) {
                     extractedTitle = candidate
-                    gameSize = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                    gameSize = dirSizeCache.sizeOf(dir)
                 }
             }
         }
@@ -571,7 +577,7 @@ class GameLibraryRepository(private val context: Context) {
             val base = addcontDir(title.id)
             if (base.exists()) {
                 base.listFiles()?.filter { it.isDirectory }?.forEach { dlcDir ->
-                    val size = dlcDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                    val size = dirSizeCache.sizeOf(dlcDir)
                     dlcs.add(DlcInfo(dlcDir.name, title.id, size))
                 }
             }
