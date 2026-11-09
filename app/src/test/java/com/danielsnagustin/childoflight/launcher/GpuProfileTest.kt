@@ -6,9 +6,13 @@ import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
+import com.danielsnagustin.childoflight.launcher.model.applyLowRamDefaults
 import com.danielsnagustin.childoflight.launcher.model.applySafeMode
 import com.danielsnagustin.childoflight.launcher.model.defaultProfileFor
+import com.danielsnagustin.childoflight.launcher.model.divergesFromPreset
+import com.danielsnagustin.childoflight.launcher.model.isLowRamConservativeVariant
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
+import com.danielsnagustin.childoflight.launcher.model.preserveManualCacheChoices
 import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 import com.danielsnagustin.childoflight.launcher.model.shouldAutoRevertTo1x
 import org.junit.Assert.assertEquals
@@ -151,5 +155,104 @@ class GpuProfileTest {
                 assertEquals("SYSTEM", driver)
             }
         }
+    }
+
+    // --- R4-P1-13: aplicar un preset conserva las cachés y el overlay
+    // manuales del usuario (antes los pisaba en silencio). La fusión
+    // vive en la función pura preserveManualCacheChoices, que es lo
+    // que SettingsRepository.applyPreset aplica (DataStore no corre
+    // en tests JVM).
+
+    @Test
+    fun applyPresetPreservesManualCacheChoices() {
+        val manual = presetSettings(GpuProfileId.G99_RECOMMENDED).copy(
+            textureCache = false,
+            shaderCache = false,
+            showFpsOverlay = true,
+            hashlessTextureCache = true,
+            showCompileShaders = true,
+        )
+        val applied = preserveManualCacheChoices(presetSettings(GpuProfileId.G99_QUALITY), manual)
+        assertFalse(applied.textureCache)
+        assertFalse(applied.shaderCache)
+        assertTrue(applied.showFpsOverlay)
+        assertTrue(applied.hashlessTextureCache)
+        assertTrue(applied.showCompileShaders)
+        // Los valores del preset sí se aplican: 2x con FSR.
+        assertEquals(2f, applied.resolutionMultiplier, 0.001f)
+        assertEquals("FSR", applied.screenFilter.name)
+        assertEquals(GpuProfileId.G99_QUALITY, applied.activeProfile)
+    }
+
+    @Test
+    fun preserveManualCacheChoicesWithNoCurrentKeepsPreset() {
+        val applied = preserveManualCacheChoices(presetSettings(GpuProfileId.MALI_PERFORMANCE), null)
+        assertEquals(presetSettings(GpuProfileId.MALI_PERFORMANCE), applied)
+        assertFalse(applied.textureCache)
+    }
+
+    @Test
+    fun lowRamFirstBootDoesNotPreserveFactoryCacheDefault() {
+        // Primer arranque en 4 GB: el current son los defaults de
+        // fábrica (caché ON) y la variante conservadora la apaga;
+        // conservarla la volvería a ON y rompería la cadena R4-P0-9.
+        val firstBoot = applyLowRamDefaults(presetSettings(GpuProfileId.G99_RECOMMENDED))
+        val applied = preserveManualCacheChoices(firstBoot, LauncherSettings(), lowRam = true)
+        assertFalse(applied.textureCache)
+        assertTrue(isLowRamConservativeVariant(applied))
+        assertTrue(divergesFromPreset(applied))
+    }
+
+    @Test
+    fun g99RecommendedAndMaliPerformanceDifferOnlyInTextureCache() {
+        // Verificado campo a campo: la única diferencia real entre
+        // ambos presets es textureCache (true frente a false).
+        val g99 = presetSettings(GpuProfileId.G99_RECOMMENDED)
+        val mali = presetSettings(GpuProfileId.MALI_PERFORMANCE)
+        assertEquals(g99.copy(textureCache = false), mali.copy(activeProfile = GpuProfileId.G99_RECOMMENDED))
+        assertTrue(g99.textureCache)
+        assertFalse(mali.textureCache)
+    }
+
+    @Test
+    fun maliPerformanceOverG99StateKeepsTextureCacheAndDiverges() {
+        // Aplicar Mali Rendimiento con la caché manual ON conservada
+        // deja textureCache ON: el resultado coincide con G99 salvo
+        // la etiqueta, y ESO se ve como "Perfil modificado" (el aviso
+        // explícito obligatorio de R4-P1-13).
+        val applied = preserveManualCacheChoices(
+            presetSettings(GpuProfileId.MALI_PERFORMANCE),
+            presetSettings(GpuProfileId.G99_RECOMMENDED),
+        )
+        assertTrue(applied.textureCache)
+        assertEquals(GpuProfileId.MALI_PERFORMANCE, applied.activeProfile)
+        assertTrue(divergesFromPreset(applied))
+        assertFalse(isLowRamConservativeVariant(applied))
+    }
+
+    @Test
+    fun manualCacheToggleUnderQualityDivergesAndIsNotLowRamVariant() {
+        // Apagar la caché a mano y aplicar el mismo preset Calidad:
+        // se conserva OFF y el indicador muestra "Perfil modificado"
+        // (no es la variante lowRam: esa también bajaría a 1x).
+        val manual = presetSettings(GpuProfileId.G99_QUALITY).copy(textureCache = false)
+        val applied = preserveManualCacheChoices(presetSettings(GpuProfileId.G99_QUALITY), manual)
+        assertFalse(applied.textureCache)
+        assertTrue(divergesFromPreset(applied))
+        assertFalse(isLowRamConservativeVariant(applied))
+    }
+
+    @Test
+    fun manualCacheToggleUnderRecommendedMatchesLowRamVariant() {
+        // Apagar la caché a mano bajo G99 Recomendado es
+        // indistinguible del primer arranque lowRam (en ese preset
+        // la caché es lo único que cambia la variante): el indicador
+        // muestra "Perfil conservador (poca RAM)". Ambigüedad ya
+        // documentada en R4-P0-9, no introducida aquí.
+        val manual = presetSettings(GpuProfileId.G99_RECOMMENDED).copy(textureCache = false)
+        val applied = preserveManualCacheChoices(presetSettings(GpuProfileId.G99_RECOMMENDED), manual)
+        assertFalse(applied.textureCache)
+        assertTrue(divergesFromPreset(applied))
+        assertTrue(isLowRamConservativeVariant(applied))
     }
 }

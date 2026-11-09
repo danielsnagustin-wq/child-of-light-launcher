@@ -364,4 +364,112 @@ class TrophyTrpReaderTest {
         val comparison = TrophyTrpReader.compareByName(value, LAUNCHER_27_EN)
         assertEquals(listOf(1), comparison.matchedLauncherNumbers)
     }
+
+    // R4-P1-8: la caché del TRP por (ruta, tamaño, última
+    // modificación). Cada test usa su propio directorio temporal: la
+    // caché es de una entrada en el objeto y dos rutas distintas no
+    // deben compartir resultado.
+
+    @Test
+    fun readFileCached_secondReadWithoutChange_returnsSameResult() {
+        val dir = Files.createTempDirectory("trp-cache-").toFile()
+        try {
+            val file = File(dir, "TROPHY.TRP")
+            file.writeBytes(buildReducedTrp20())
+            val first = success(TrophyTrpReader.readFileCached(file))
+            val second = success(TrophyTrpReader.readFileCached(file))
+            assertEquals(20, first.trophyCount)
+            assertEquals(first, second)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun readFileCached_sameStatAfterRewrite_returnsCachedNotNewContent() {
+        // Prueba de que la segunda lectura NO toca el disco: se
+        // reescribe el archivo con otro npcommid del MISMO tamaño y
+        // se restaura la fecha original, así que la clave de caché no
+        // cambia y debe devolverse el contenido viejo.
+        val dir = Files.createTempDirectory("trp-cache-").toFile()
+        try {
+            val file = File(dir, "TROPHY.TRP")
+            file.writeBytes(buildReducedTrp20())
+            val originalModified = file.lastModified()
+            val first = success(TrophyTrpReader.readFileCached(file))
+            assertEquals("NPWR00001_00", first.npcommid)
+            // Mismo tamaño, otro npcommid: reemplazo a nivel de bytes
+            // (el contenedor lleva bytes binarios y un round-trip por
+            // String UTF-8 no conservaría el tamaño exacto).
+            val rewritten = buildReducedTrp20()
+            val needle = "NPWR00001_00".toByteArray(Charsets.UTF_8)
+            val replacement = "NPWR00002_00".toByteArray(Charsets.UTF_8)
+            var index = -1
+            for (i in 0..rewritten.size - needle.size) {
+                if (rewritten.copyOfRange(i, i + needle.size).contentEquals(needle)) {
+                    index = i
+                    break
+                }
+            }
+            assertTrue(index >= 0)
+            replacement.copyInto(rewritten, index)
+            assertEquals(buildReducedTrp20().size, rewritten.size)
+            file.writeBytes(rewritten)
+            assertTrue(file.setLastModified(originalModified))
+            val second = success(TrophyTrpReader.readFileCached(file))
+            assertEquals("NPWR00001_00", second.npcommid)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun readFileCached_rewrittenFile_invalidatesCache() {
+        val dir = Files.createTempDirectory("trp-cache-").toFile()
+        try {
+            val file = File(dir, "TROPHY.TRP")
+            file.writeBytes(buildReducedTrp20())
+            assertEquals(20, success(TrophyTrpReader.readFileCached(file)).trophyCount)
+            // Otro contenido y otro tamaño: la clave cambia y la
+            // caché se invalida (es lo que pasa al reinstalar el juego).
+            file.writeBytes(buildReducedTrp3())
+            assertEquals(3, success(TrophyTrpReader.readFileCached(file)).trophyCount)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun readFileCached_differentPaths_doNotShareResults() {
+        val dirA = Files.createTempDirectory("trp-cache-a-").toFile()
+        val dirB = Files.createTempDirectory("trp-cache-b-").toFile()
+        try {
+            val fileA = File(dirA, "TROPHY.TRP")
+            val fileB = File(dirB, "TROPHY.TRP")
+            fileA.writeBytes(buildReducedTrp20())
+            fileB.writeBytes(buildReducedTrp3())
+            assertEquals(20, success(TrophyTrpReader.readFileCached(fileA)).trophyCount)
+            assertEquals(3, success(TrophyTrpReader.readFileCached(fileB)).trophyCount)
+            // Releer el primero no devuelve el del segundo.
+            assertEquals(20, success(TrophyTrpReader.readFileCached(fileA)).trophyCount)
+        } finally {
+            dirA.deleteRecursively()
+            dirB.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun readBundledTrpCached_secondRead_returnsCachedAndInvalidatesOnRewrite() {
+        val dir = Files.createTempDirectory("trp-cache-").toFile()
+        try {
+            val trophyDir = File(dir, "sce_sys/trophy").apply { mkdirs() }
+            File(trophyDir, "TROPHY.TRP").writeBytes(buildReducedTrp20())
+            assertEquals(20, success(TrophyTrpReader.readBundledTrp(dir)).trophyCount)
+            assertEquals(20, success(TrophyTrpReader.readBundledTrp(dir)).trophyCount)
+            File(trophyDir, "TROPHY.TRP").writeBytes(buildReducedTrp3())
+            assertEquals(3, success(TrophyTrpReader.readBundledTrp(dir)).trophyCount)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
 }
