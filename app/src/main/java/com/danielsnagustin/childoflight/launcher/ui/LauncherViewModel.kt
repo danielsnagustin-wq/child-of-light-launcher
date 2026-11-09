@@ -487,6 +487,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _audioFixSnapshot = MutableStateFlow<LauncherSettings?>(null)
     val audioFixSnapshot: StateFlow<LauncherSettings?> = _audioFixSnapshot.asStateFlow()
 
+    // MISMA REGLA (crash real 2026-11-09, 0.2.46): refreshStatus() se
+    // llama desde el init y su corrutina toca refreshMutex y
+    // refreshPending (P1-16). Vivían DESPUÉS del init: la corrutina
+    // podía correr antes de que sus inicializadores se ejecutaran
+    // (campo null -> NPE en tryLock) y la app moría al abrir.
+    private val refreshMutex = Mutex()
+    private val refreshPending = AtomicBoolean(false)
+
     init {
         refreshStatus()
         refreshLog()
@@ -528,8 +536,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     // mucho 2 escaneos por ráfaga. Un withLock a secas NO vale:
     // encolaría los 5 escaneos. AtomicBoolean: el flag lo escribe
     // cualquier corrutina IO (fuera del mutex) y lo lee la que escanea.
-    private val refreshMutex = Mutex()
-    private val refreshPending = AtomicBoolean(false)
+    // (Las declaraciones viven ANTES del init: ver comentario de orden
+    // de inicialización junto a _audioFixSnapshot.)
 
     fun refreshStatus() {
         viewModelScope.launch(Dispatchers.IO) {
