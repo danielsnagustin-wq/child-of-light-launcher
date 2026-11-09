@@ -1414,16 +1414,34 @@ class GameLibraryRepository(private val context: Context) {
                     if (titleDir.listFiles()?.isEmpty() != false) {
                         ImportResult.Rejected("El update está vacío: la carpeta ${title.id} no trae archivos.")
                     } else {
-                    if (!force) {
-                        updateDuplicateMessage(title.id, incomingIsPkg = false)?.let { return duplicateResult(it) }
-                    }
-                    val dest = patchDir(title.id)
-                    // BUG (auditoría): igual que el juego — se borraba el
-                    // update viejo antes de copiar el nuevo (pérdida de datos
-                    // si la copia fallaba). Instalación atómica con respaldo.
-                    installDirAtomic(titleDir, dest)
-                    LauncherLog.append(context, "import", "Update instalado para ${title.id}")
-                    ImportResult.UpdateSuccess(title)
+                        // P2-27: validar el contenido del update igual que
+                        // el del juego (antes solo se comprobaba que la
+                        // carpeta no estuviera vacía): el eboot, si lo
+                        // trae, debe ser válido (un update sin eboot puede
+                        // ser un parche solo de datos y se admite), y el
+                        // SFO debe decir CATEGORY "gp" (un juego trae
+                        // "gd": instalarlo como update lo pondría en
+                        // patch/ y el núcleo lo ignoraría).
+                        val updateEboot = ImportTreeSearch.findEboot(titleDir)
+                        if (updateEboot != null && !isValidEbootFile(updateEboot)) {
+                            ImportResult.Failed("El eboot.bin del update no es válido (ni ELF ni SELF, o está truncado). El archivo puede estar corrupto o no ser un update de Child of Light.")
+                        } else {
+                            val category = ImportTreeSearch.sfoCategory(titleDir)
+                            if (category != null && category != "gp") {
+                                ImportResult.Rejected("El paquete no es un update: su param.sfo dice CATEGORY \"$category\" (un update trae \"gp\"). Revisa que sea el .zip del update, no el del juego.")
+                            } else {
+                                if (!force) {
+                                    updateDuplicateMessage(title.id, incomingIsPkg = false)?.let { return duplicateResult(it) }
+                                }
+                                val dest = patchDir(title.id)
+                                // BUG (auditoría): igual que el juego — se borraba el
+                                // update viejo antes de copiar el nuevo (pérdida de datos
+                                // si la copia fallaba). Instalación atómica con respaldo.
+                                installDirAtomic(titleDir, dest)
+                                LauncherLog.append(context, "import", "Update instalado para ${title.id}")
+                                ImportResult.UpdateSuccess(title)
+                            }
+                        }
                     }
                 }
             }

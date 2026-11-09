@@ -73,6 +73,23 @@ class ParamSfoTest {
     }
 
     @Test
+    fun categoryIsParsed() {
+        // P2-27: un update trae CATEGORY "gp"; un juego trae "gd".
+        val patch = ParamSfo.parse(
+            buildSfoBytes(listOf("TITLE_ID" to "PCSB00598", "CATEGORY" to "gp")),
+        ).getOrThrow()
+        assertEquals("gp", patch.category)
+        val game = ParamSfo.parse(
+            buildSfoBytes(listOf("TITLE_ID" to "PCSB00598", "CATEGORY" to "gd")),
+        ).getOrThrow()
+        assertEquals("gd", game.category)
+        val noCategory = ParamSfo.parse(
+            buildSfoBytes(listOf("TITLE_ID" to "PCSB00598")),
+        ).getOrThrow()
+        assertNull(noCategory.category)
+    }
+
+    @Test
     fun missingTitleIdReturnsNull() {
         val info = ParamSfo.parse(
             buildSfoBytes(listOf("TITLE" to "Child of Light")),

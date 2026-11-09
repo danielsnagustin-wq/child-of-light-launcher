@@ -108,27 +108,38 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
      * porque la licencia ya estaba en el núcleo).
      */
     suspend fun installGamePkg(titleId: TitleId, onProgress: ProgressListener): Result<Unit> {
+        // P2-28: el .pkg puede vivir en el ux0 antiguo (la migración no
+        // mueve pkg/): se busca en ambos ux0 y su work.bin es el que
+        // está junto al .pkg encontrado, no el del ux0 efectivo.
+        val pkgFile = library.findPkgGameFile(titleId.id)
+            ?: return Result.failure(IllegalStateException("No está el archivo ${titleId.id}.pkg."))
         return installPkgFile(
-            pkgFile = library.pkgGameFile(titleId.id),
-            workBinFile = library.pkgWorkBinFile(titleId.id),
+            pkgFile = pkgFile,
+            workBinFile = library.findPkgWorkBinFile(pkgFile),
             onProgress = onProgress,
         )
     }
 
     /** Instala un .pkg de DLC (por DLC ID) con su work.bin. */
     suspend fun installDlcPkg(dlcId: String, onProgress: ProgressListener): Result<Unit> {
+        // P2-28: igual que el juego: buscar en ambos ux0.
+        val pkgFile = library.findPkgDlcFile(dlcId)
+            ?: return Result.failure(IllegalStateException("No está el archivo $dlcId.pkg."))
         return installPkgFile(
-            pkgFile = library.pkgDlcFile(dlcId),
-            workBinFile = library.pkgDlcWorkBinFile(dlcId),
+            pkgFile = pkgFile,
+            workBinFile = library.findPkgWorkBinFile(pkgFile),
             onProgress = onProgress,
         )
     }
 
     /** Instala un .pkg de UPDATE con su work.bin. */
     suspend fun installUpdatePkg(titleId: TitleId, onProgress: ProgressListener): Result<Unit> {
+        // P2-28: igual que el juego: buscar en ambos ux0.
+        val pkgFile = library.findPkgPatchFile(titleId.id)
+            ?: return Result.failure(IllegalStateException("No está el archivo ${titleId.id}.pkg."))
         return installPkgFile(
-            pkgFile = library.pkgPatchFile(titleId.id),
-            workBinFile = library.pkgPatchWorkBinFile(titleId.id),
+            pkgFile = pkgFile,
+            workBinFile = library.findPkgWorkBinFile(pkgFile),
             onProgress = onProgress,
         )
     }
@@ -349,10 +360,11 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
     fun storedGamePkgs(): List<Pair<TitleId, PkgKind>> {
         val out = mutableListOf<Pair<TitleId, PkgKind>>()
         for (candidate in TitleId.entries) {
-            if (library.pkgGameFile(candidate.id).isFile) {
+            // P2-28: buscar en ambos ux0 (el .pkg puede vivir en el antiguo).
+            if (library.findPkgGameFile(candidate.id) != null) {
                 out.add(candidate to PkgKind.GAME)
             }
-            if (library.pkgPatchFile(candidate.id).isFile) {
+            if (library.findPkgPatchFile(candidate.id) != null) {
                 out.add(candidate to PkgKind.UPDATE)
             }
         }

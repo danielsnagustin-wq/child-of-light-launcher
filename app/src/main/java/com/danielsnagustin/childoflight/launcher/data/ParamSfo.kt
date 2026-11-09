@@ -30,6 +30,12 @@ data class SfoInfo(
     val titleId: String?,
     /** Nombre del juego leído del SFO, p. ej. "Child of Light". null si no lo trae. */
     val title: String?,
+    /**
+     * CATEGORY leída del SFO ("gd" juego, "gp" update/parche, "ac"
+     * contenido adicional). null si no la trae. P2-27: un update trae
+     * "gp"; un juego importado como update trae "gd" y se rechaza.
+     */
+    val category: String? = null,
 )
 
 object ParamSfo {
@@ -68,6 +74,7 @@ object ParamSfo {
         }
         var titleId: String? = null
         var title: String? = null
+        var category: String? = null
         for (i in 0 until entryCount) {
             val entryOff = 0x14 + i * 16
             if (entryOff + 16 > bytes.size) {
@@ -83,16 +90,17 @@ object ParamSfo {
             val keyPos = keyTableStart + keyOffset
             if (keyPos < 0 || keyPos >= bytes.size) continue
             val key = readCString(bytes, keyPos, dataTableStart)
-            if (key != "TITLE_ID" && key != "TITLE") continue
+            if (key != "TITLE_ID" && key != "TITLE" && key != "CATEGORY") continue
             val dataPos = dataTableStart + dataOffset
             if (dataPos < 0 || dataPos >= bytes.size || dataLen < 0) continue
             val value = readCString(bytes, dataPos, minOf(dataPos + dataLen, bytes.size))
             when (key) {
                 "TITLE_ID" -> titleId = value
                 "TITLE" -> title = value
+                "CATEGORY" -> category = value
             }
         }
-        return Result.success(SfoInfo(titleId?.trim(), title?.trim()))
+        return Result.success(SfoInfo(titleId?.trim(), title?.trim(), category?.trim()))
     }
 
     /** Parsea el param.sfo de un archivo (lo lee entero, con tope de tamaño). */

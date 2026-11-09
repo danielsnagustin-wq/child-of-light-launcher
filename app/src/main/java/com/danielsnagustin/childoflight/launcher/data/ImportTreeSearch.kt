@@ -110,6 +110,18 @@ object ImportTreeSearch {
         findChildIgnoreCase(titleDir, "eboot.bin")?.takeIf { it.isFile }
 
     /**
+     * CATEGORY del param.sfo de una carpeta de título ("gd" juego,
+     * "gp" update, "ac" DLC), o null si no hay SFO legible o no trae
+     * CATEGORY. P2-27: un update trae "gp"; un juego importado como
+     * update trae "gd".
+     */
+    fun sfoCategory(titleDir: File): String? {
+        val sceSys = findChildIgnoreCase(titleDir, "sce_sys")?.takeIf { it.isDirectory } ?: return null
+        val sfo = findChildIgnoreCase(sceSys, "param.sfo")?.takeIf { it.isFile } ?: return null
+        return ParamSfo.parse(sfo).getOrNull()?.category
+    }
+
+    /**
      * Juego PLANO: eboot.bin en la raíz del árbol (sin carpeta de Title
      * ID) con sce_sys/param.sfo al lado. El Title ID se lee del SFO por
      * contenido, nunca del nombre de ninguna carpeta: hay paquetes que
