@@ -1333,8 +1333,15 @@ class GameLibraryRepository(private val context: Context) {
                     // truncado instalaba una carpeta sin ejecutable y el
                     // juego quedaba "instalado" pero sin arrancar.
                     // Sin distinguir mayúsculas: EBOOT.BIN también vale.
-                    if (ImportTreeSearch.findEboot(titleDir) == null) {
+                    // P1-7: validar el CONTENIDO, no solo la existencia:
+                    // un archivo llamado eboot.bin con 4 bytes de basura
+                    // pasaba y el juego quedaba "instalado" sin arrancar
+                    // nunca (mismo agujero que el P0-1, en la entrada).
+                    val eboot = ImportTreeSearch.findEboot(titleDir)
+                    if (eboot == null) {
                         ImportResult.Failed("Extracción incompleta: no apareció ${title.id}/eboot.bin. El archivo puede estar truncado.")
+                    } else if (!isValidEbootFile(eboot)) {
+                        ImportResult.Failed("El eboot.bin del archivo no es válido (ni ELF ni SELF, o está truncado). El archivo puede estar corrupto o no ser el juego: revisa que sea el .zip del juego completo.")
                     } else {
                     if (!force) {
                         gameDuplicateMessage(title.id, incomingIsPkg = false)?.let { return duplicateResult(it) }
@@ -1546,9 +1553,18 @@ class GameLibraryRepository(private val context: Context) {
             // Sin distinguir mayúsculas: el pre-chequeo (findChildIgnoreCase)
             // acepta EBOOT.BIN, pero este post-chequeo era sensible al caso
             // y una carpeta válida se rechazaba con "Copia incompleta".
-            if (ImportTreeSearch.findEboot(staged) == null) {
+            val stagedEboot = ImportTreeSearch.findEboot(staged)
+            if (stagedEboot == null) {
                 tmp.deleteRecursively()
                 return ImportResult.Failed("Copia incompleta: no apareció eboot.bin tras copiar la carpeta.")
+            }
+            // P1-7: validar el CONTENIDO, no solo la existencia: un
+            // archivo llamado eboot.bin con 4 bytes de basura pasaba el
+            // pre-chequeo y el juego quedaba "instalado" sin arrancar
+            // nunca. Se valida la copia (File) que se va a instalar.
+            if (!isValidEbootFile(stagedEboot)) {
+                tmp.deleteRecursively()
+                return ImportResult.Failed("El eboot.bin de la carpeta no es válido (ni ELF ni SELF, o está truncado). La carpeta puede estar corrupta o no ser el juego.")
             }
             installDirAtomic(staged, appDir(title.id))
             tmp.deleteRecursively()
