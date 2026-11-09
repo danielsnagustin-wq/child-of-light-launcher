@@ -36,11 +36,12 @@ import kotlinx.coroutines.launch
  * El menú de pausa del propio núcleo (overlay del renderer, que se
  * dibuja cuando el juego está pausado) queda DETRÁS de este menú y
  * no se puede tocar mientras esta Activity está encima; al elegir
- * Continuar desaparece con la reanudación. No hay clave de config
- * que lo desactive (verificado en el pin 3e43bc80:
- * renderer.cpp update_overlays lo muestra siempre que
- * renderer->paused; TODO-VERIFY: buscar una vía JNI para
- * suprimirlo del todo).
+ * Continuar desaparece con la reanudación. No hay vía para
+ * suprimirlo del todo (P2-42, verificado en el pin 3e43bc80:
+ * renderer.cpp:99-117 muestra el pause_overlay siempre que
+ * renderer->paused; config.h no trae ninguna clave de pausa/overlay
+ * y ningún JNI de android/jni toca el overlay_manager). No es un
+ * problema: está detrás de este menú y se quita solo al reanudar.
  *
  * Acciones:
  * - Continuar: cierra el menú y el juego sigue.

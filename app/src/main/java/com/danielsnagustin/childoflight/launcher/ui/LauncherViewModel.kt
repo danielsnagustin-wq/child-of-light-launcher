@@ -73,7 +73,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Acción que puede ofrecer el diálogo de aviso importante. */
@@ -408,6 +407,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val pendingPkgLicense: StateFlow<PendingPkgLicense?> = _pendingPkgLicense.asStateFlow()
 
     fun clearMessage() { _message.value = null }
+
+    // P2-39: mostrar un aviso al usuario (p. ej. cuando Reportar no
+    // pudo exportar porque los ajustes aún no cargaron).
+    fun showMessage(text: String) { _message.value = text }
     fun clearAlert() {
         _alert.value = null
         // Si se cierra el diálogo de duplicado, el reemplazo pendiente se abandona.
@@ -1351,15 +1354,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // P2-C5: locale fijo (Locale.US): sin él, en locale español el
-    // formato daba "1,14 GB" con coma.
-    private fun formatBytes(bytes: Long): String = when {
-        bytes >= 1_000_000_000L -> String.format(Locale.US, "%.2f GB", bytes / 1_000_000_000.0)
-        bytes >= 1_000_000L -> String.format(Locale.US, "%.1f MB", bytes / 1_000_000.0)
-        bytes >= 1_000L -> "${bytes / 1_000} KB"
-        else -> "$bytes bytes"
-    }
-
     private fun importResultMessage(result: ImportResult): String = when (result) {
         is ImportResult.Success -> result.detail
         is ImportResult.DlcSuccess -> "DLC ${result.dlcId} instalado para ${result.titleId.id}."
@@ -1381,7 +1375,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     "Pulsa JUGAR: el motor integrado instalará el .pkg y arrancará el juego."
                 else -> "No se pudo instalar en el núcleo ahora mismo: el .pkg queda guardado. Comprueba que tienes instalada la versión con el motor (la APK nativa, no la pequeña) y vuelve a importarlo para reintentarlo. El motivo exacto queda en el reporte de bug."
             }
-            "$what se guardó como .pkg (${result.titleId.id} · ${formatBytes(result.sizeBytes)}) en el almacenamiento interno del launcher.\n\n" +
+            "$what se guardó como .pkg (${result.titleId.id} · ${DownloadsCleanup.formatBytes(result.sizeBytes)}) en el almacenamiento interno del launcher.\n\n" +
                 installNote
         }
         is ImportResult.PkgNeedsLicense -> {
@@ -1390,7 +1384,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC -> "El DLC"
                 com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE -> "El update"
             }
-            "$what se guardó como .pkg (${result.titleId.id} · ${formatBytes(result.sizeBytes)}), " +
+            "$what se guardó como .pkg (${result.titleId.id} · ${DownloadsCleanup.formatBytes(result.sizeBytes)}), " +
                 "pero falta su licencia (work.bin de 512 B): sin ella no se puede instalar.\n\n" +
                 "Elige el work.bin en Importar (tarjeta «Falta la licencia»): es el archivo work.bin " +
                 "que acompaña al .pkg (a veces se descarga como «work (5).bin»)."

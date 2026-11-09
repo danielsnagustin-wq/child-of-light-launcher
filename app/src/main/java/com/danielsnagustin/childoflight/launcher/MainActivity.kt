@@ -40,6 +40,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filterNotNull
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
@@ -246,6 +249,10 @@ private fun LauncherApp(vm: LauncherViewModel) {
         val s = settings
         val g = gpu
         if (uri != null && s != null) vm.exportBugReport(uri, s, g)
+        // P2-39: si el usuario ya eligió el archivo pero los ajustes
+        // aún no cargaron, antes no pasaba nada y no se avisaba: ahora
+        // se dice por qué no se exportó.
+        else if (uri != null) vm.showMessage("Los ajustes aún no han cargado: espera un momento y vuelve a pulsar Reportar.")
     }
 
     // Modo rendimiento: pantalla encendida mientras el launcher está abierto.
@@ -258,10 +265,28 @@ private fun LauncherApp(vm: LauncherViewModel) {
         }
     }
 
-    LaunchedEffect(message) {
-        message?.let {
-            snackbarHostState.showSnackbar(it)
+    // P2-39: los mensajes se ENCOLAN y se muestran uno a uno. Antes,
+    // LaunchedEffect(message) se reiniciaba con cada mensaje nuevo y
+    // el que se estaba mostrando se perdía (showSnackbar cancelado).
+    // El productor recoge cada mensaje y libera el hueco enseguida
+    // (clearMessage) para que el siguiente pueda llegar; el consumidor
+    // los muestra en orden. Ambas corrutinas corren en Main, así que
+    // la cola no necesita sincronización.
+    val messageQueue = remember { ArrayDeque<String>() }
+    LaunchedEffect(Unit) {
+        snapshotFlow { message }.filterNotNull().collect { text ->
+            messageQueue.addLast(text)
             vm.clearMessage()
+        }
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            val text = messageQueue.removeFirstOrNull()
+            if (text == null) {
+                delay(100)
+                continue
+            }
+            snackbarHostState.showSnackbar(text)
         }
     }
 

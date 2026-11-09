@@ -66,7 +66,11 @@ import java.io.FileOutputStream
  * 6. Vía externa (solo opción avanzada): lanza la app externa
  *    org.vita3k.emulator si está instalada, con un Intent MAIN
  *    normal. No se inventa un deep-link para arrancar un Title ID
- *    concreto: no hay uno documentado verificado (TODO-VERIFY).
+ *    concreto: no existe (P2-42, verificado en el pin 3e43bc80:
+ *    android/jni/main_android.cpp:66-76 toma el Title ID de argv
+ *    ("-r", de Emulator.getArguments()), que un Intent externo no
+ *    puede inyectar; el pin no trae ningún intent-filter ni acción
+ *    para lanzar un juego).
  *    Solo se llega aquí cuando decide() devolvió UseExternal, es
  *    decir, sin núcleo embebido y con la opción avanzada activada.
  *    Si falta firmware LOCAL, solo se AVISA con una frase y se lanza

@@ -587,8 +587,10 @@ class SessionManager(
             }
             snapshotActive()
             refresh()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             // Best-effort: no bloquear el regreso del juego por un fallo de disco.
+            // P2-41: el fallo queda en el log (antes se tragaba sin rastro).
+            LauncherLog.append(context, "session", "No se pudo guardar el snapshot al volver del juego: ${e.message}")
         }
         if (playExternal) {
             playStartMillis = System.currentTimeMillis()
@@ -615,8 +617,10 @@ class SessionManager(
             repo.clearSessionSavedata(active.id)
             updateSession(active.id) { it.copy(savedataFiles = 0, savedataBytes = 0L) }
             refresh()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             // Best-effort: el borrado de saves no debe tumbar la corrutina.
+            // P2-41: el fallo queda en el log (antes se tragaba sin rastro).
+            LauncherLog.append(context, "session", "No se pudo borrar la savedata de la sesión activa: ${e.message}")
         }
     }
 
@@ -724,8 +728,10 @@ class SessionManager(
         val active = activeSession ?: return
         try {
             snapshotExtras(active, active.savedataFiles to active.savedataBytes)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             // Best-effort: no bloquear al llamador por un fallo de disco.
+            // P2-41: el fallo queda en el log (antes se tragaba sin rastro).
+            LauncherLog.append(context, "session", "No se pudo actualizar el contador de trofeos de la sesión activa: ${e.message}")
         }
     }
 

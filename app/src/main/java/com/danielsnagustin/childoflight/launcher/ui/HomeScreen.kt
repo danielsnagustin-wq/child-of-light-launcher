@@ -287,18 +287,15 @@ private fun GameCard(
  * P1-16: recibe el StateFlow y lo recoge DENTRO: cada % recompone
  * solo esta tarjeta, no todo el Inicio (antes GameCard recogía el
  * flujo arriba y cada emisión recomponía portada, chips y tarjetas).
+ * P2-37: el % se recoge SOLO en InstallProgressContent (el texto +
+ * la barra que lo muestran): el armazón de la tarjeta (fondo, aviso
+ * "No cierres la app") ya no recompone con cada %.
  */
 @Composable
 private fun LaunchProgressCard(
     installProgressFlow: StateFlow<InstallProgress?>,
     uiPrefs: com.danielsnagustin.childoflight.launcher.model.UiPreferences?,
 ) {
-    // Progreso REAL de la instalación del .pkg en el núcleo (el
-    // ViewModel lo alimenta en play() vía onInstallProgress): antes
-    // Home nunca lo recogía y al pulsar JUGAR con solo .pkg el botón
-    // se apagaba sin mostrar nada durante varios minutos (1,14 GB),
-    // así que parecía que el juego no iniciaba. Ahora se ve aquí.
-    val installProgress by installProgressFlow.collectAsState()
     // Personalización que funciona (0.2.15): fondo y textos según el
     // tema, acento del usuario en el texto pulsante.
     val dark = isDarkUi(uiPrefs)
@@ -309,31 +306,51 @@ private fun LaunchProgressCard(
             .background(cardColor(dark))
             .padding(12.dp),
     ) {
-        val progress = installProgress
-        if (progress?.percent != null) {
-            Text(
-                "Instalando en el núcleo… ${progress.percent}% — ${progress.message}",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = cardTextColor(dark),
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            PrimaryProgressBar(progress = (progress.percent ?: 0) / 100f)
-        } else {
-            PulsingText(
-                progress?.message ?: "Preparando el juego…",
-                accent,
-                MaterialTheme.typography.bodyMedium,
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        }
+        InstallProgressContent(installProgressFlow, dark, accent)
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             "No cierres la app. Instalar el juego puede tardar varios minutos.",
             style = MaterialTheme.typography.bodySmall,
             color = mutedTextColor(dark),
         )
+    }
+}
+
+/**
+ * Contenido que cambia con el progreso (P2-37): es el ÚNICO que
+ * recoge installProgress. El texto del % y la barra leen el mismo
+ * estado, así que van juntos aquí; el resto de la tarjeta es estático.
+ */
+@Composable
+private fun InstallProgressContent(
+    installProgressFlow: StateFlow<InstallProgress?>,
+    dark: Boolean,
+    accent: androidx.compose.ui.graphics.Color,
+) {
+    // Progreso REAL de la instalación del .pkg en el núcleo (el
+    // ViewModel lo alimenta en play() vía onInstallProgress): antes
+    // Home nunca lo recogía y al pulsar JUGAR con solo .pkg el botón
+    // se apagaba sin mostrar nada durante varios minutos (1,14 GB),
+    // así que parecía que el juego no iniciaba. Ahora se ve aquí.
+    val installProgress by installProgressFlow.collectAsState()
+    val progress = installProgress
+    if (progress?.percent != null) {
+        Text(
+            "Instalando en el núcleo… ${progress.percent}% — ${progress.message}",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = cardTextColor(dark),
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        PrimaryProgressBar(progress = (progress.percent ?: 0) / 100f)
+    } else {
+        PulsingText(
+            progress?.message ?: "Preparando el juego…",
+            accent,
+            MaterialTheme.typography.bodyMedium,
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
     }
 }
 
