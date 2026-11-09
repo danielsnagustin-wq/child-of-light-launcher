@@ -287,6 +287,13 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeOverl
     return JNI_FALSE;
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeOverlayGamepadCount(
+    JNIEnv * /* env */, jobject /* thiz */) {
+    LOGW("nativeOverlayGamepadCount STUB: núcleo no embebido");
+    return -1;
+}
+
 // --- Etapa 2 (fundación): drivers GPU personalizados ---
 // Mismo contrato que driver_bridge.cpp: sin núcleo, "" / vacío / false.
 
