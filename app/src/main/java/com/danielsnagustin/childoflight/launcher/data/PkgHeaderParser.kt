@@ -213,8 +213,11 @@ object PkgHeaderParser {
     // El segmento del Title ID se captura laxo (9 caracteres): si no es
     // PCSE00480/PCSB00598, el error dice "otro juego" en vez de
     // "formato no esperado".
+    // S6: el separador "_00-" es OPCIONAL: un Content ID atípico sin
+    // él ("EP0001-PCSB00598-CHILDOFLIGHT0000") también se acepta y
+    // deja contentName en "" (el llamador usa el nombre del archivo).
     private val CONTENT_ID_REGEX =
-        Regex("^([A-Z]{2})[0-9]{4}-([A-Z0-9]{9})_[0-9]{2}-.+$")
+        Regex("^([A-Z]{2})[0-9]{4}-([A-Z0-9]{9})(?:_[0-9]{2}-.+|-.+)$")
 
     /** ¿Empiezan estos bytes por la magia de un .pkg? */
     fun isPkgMagic(firstBytes: ByteArray): Boolean {
