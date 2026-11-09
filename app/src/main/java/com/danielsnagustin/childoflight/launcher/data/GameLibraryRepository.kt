@@ -224,6 +224,47 @@ class GameLibraryRepository(private val context: Context) {
                 false
             }
         }
+
+        /**
+         * ¿El archivo es un SELF válido de Vita? Un eboot.bin instalado
+         * NO es un ELF: sigue siendo un SELF, que empieza por 'S' 'E'
+         * 'C' 0x00 (pin 3e43bc80, kernel/src/load_self.cpp:508-509:
+         * SCE_MAGIC = 0x00454353). El núcleo lo descifra EN MEMORIA al
+         * cargarlo (load_self), nunca en disco. Puro (solo File).
+         */
+        fun isSelfFile(file: File): Boolean {
+            if (!file.isFile) return false
+            return try {
+                file.inputStream().use { input ->
+                    val magic = ByteArray(4)
+                    if (input.read(magic) != 4) return false
+                    magic[0] == 'S'.code.toByte() && magic[1] == 'E'.code.toByte() &&
+                        magic[2] == 'C'.code.toByte() && magic[3] == 0.toByte()
+                }
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        /**
+         * ¿El eboot.bin es cargable por el núcleo? ELF (descifrado) o
+         * SELF (cifrado, el estado normal en disco). Puro (solo File).
+         */
+        fun isValidEbootFile(file: File): Boolean = isElfFile(file) || isSelfFile(file)
+
+        /**
+         * Fusiona DLCs extraídos y DLCs en .pkg guardado sin duplicar
+         * el mismo DLC en sus dos formas: un DLC instalado (carpeta
+         * en addcont/) cuyo .pkg sigue guardado se cuenta UNA vez
+         * (la carpeta extraída manda; el .pkg es solo su copia de
+         * respaldo). Sin esto, un solo DLC se veía como 2 (reporte
+         * 2026-11-08 21:46: "DLCs: 2" con un solo DLC puesto).
+         * Puro (solo listas) para poder probarlo en la JVM.
+         */
+        fun mergeDlcLists(extracted: List<DlcInfo>, storedPkgs: List<DlcInfo>): List<DlcInfo> {
+            val extractedIds = extracted.map { it.dlcId }.toSet()
+            return extracted + storedPkgs.filter { it.dlcId !in extractedIds }
+        }
     }
 
     /** ¿El juego ya está subido (extraído en ux0/app/ o como .pkg)? Dual: en el ux0 efectivo o en el antiguo. */
@@ -421,18 +462,20 @@ class GameLibraryRepository(private val context: Context) {
     fun pkgWorkBinFile(titleId: String): File = File(pkgDir(), "$titleId.work.bin")
 
     /**
-     * ¿El eboot.bin instalado es un ELF válido? Tras instalar un .pkg
-     * el núcleo descifra el PFS (install_pkg de upstream: extrae
-     * cifrado y luego F00D lo pasa a <TITLE>_dec y lo renombra). Si
-     * ese proceso se interrumpe (app cerrada a mitad: 1,14 GB),
-     * queda eboot.bin en disco pero CIFRADO: el escáner lo ve como
-     * "extraído" y el núcleo no puede arrancar el juego. Un ELF de
-     * Vita empieza por 0x7F 'E' 'L' 'F'; el contenido cifrado no.
-     * false también si no hay eboot.bin.
+     * ¿El eboot.bin instalado es cargable por el núcleo? Un eboot bien
+     * instalado es un SELF en disco ('S' 'E' 'C' 0x00; pin 3e43bc80,
+     * kernel/src/load_self.cpp:508-509: SCE_MAGIC = 0x00454353) y el
+     * núcleo lo descifra EN MEMORIA al cargarlo; un ELF también vale.
+     * La versión anterior exigía solo ELF y fallaba SIEMPRE con un
+     * juego bien instalado: cada JUGAR reinstalaba el .pkg (reporte
+     * 2026-11-08 21:46: "Eboot sin descifrar" 3 veces en un minuto).
+     * Solo un eboot sin ninguna de las dos magias (instalación
+     * truncada o corrupta) dispara la reinstalación. false también
+     * si no hay eboot.bin.
      */
     fun isEbootDecrypted(titleId: String): Boolean {
         val eboot = runCatching { ImportTreeSearch.findEboot(appDir(titleId)) }.getOrNull() ?: return false
-        return isElfFile(eboot)
+        return isValidEbootFile(eboot)
     }
 
     /**
@@ -825,7 +868,7 @@ class GameLibraryRepository(private val context: Context) {
             LauncherLog.append(context, "status", "Dos .pkg de juego guardados (${pkgTitlesFound.joinToString { it.id }}); se muestra ${pkgTitle?.id}.")
         }
         val title = extractedTitle ?: pkgTitle
-        val dlcs = mutableListOf<DlcInfo>()
+        val extractedDlcs = mutableListOf<DlcInfo>()
         if (title != null) {
             val base = addcontDir(title.id)
             if (base.exists()) {
@@ -834,13 +877,14 @@ class GameLibraryRepository(private val context: Context) {
                 // restoreStaleBackups, no se listan como fantasmas).
                 base.listFiles()?.filter { it.isDirectory && ".bak-" !in it.name }?.forEach { dlcDir ->
                     val size = dirSizeCache.sizeOf(dlcDir)
-                    dlcs.add(DlcInfo(dlcDir.name, title.id, size))
+                    extractedDlcs.add(DlcInfo(dlcDir.name, title.id, size))
                 }
             }
         }
         // DLCs en .pkg (sin extraer): ux0/pkg/dlc/<DLC>.pkg, en ambos
         // ux0. P2-C7: el título de cada DLC se lee de SU header, no se
         // atribuye todo al título efectivo.
+        val storedDlcPkgs = mutableListOf<DlcInfo>()
         val seenDlcPkgs = mutableSetOf<String>()
         for (ux0 in bothUx0Dirs()) {
             val dlcDir = File(File(ux0, "pkg"), "dlc")
@@ -852,9 +896,12 @@ class GameLibraryRepository(private val context: Context) {
                     val dlcTitle = runCatching {
                         pkgFile.inputStream().use { PkgHeaderParser.parse(it) }
                     }.getOrNull()?.getOrNull()?.titleId ?: title
-                    dlcs.add(DlcInfo(pkgFile.nameWithoutExtension, dlcTitle?.id ?: title?.id ?: "", pkgFile.length(), isPkg = true))
+                    storedDlcPkgs.add(DlcInfo(pkgFile.nameWithoutExtension, dlcTitle?.id ?: title?.id ?: "", pkgFile.length(), isPkg = true))
                 }
         }
+        // Un DLC instalado (carpeta) cuyo .pkg sigue guardado se cuenta
+        // UNA vez, no dos (mergeDlcLists).
+        val dlcs = mergeDlcLists(extractedDlcs, storedDlcPkgs)
         val updateInstalled = TitleId.entries.any { candidate ->
             (patchDir(candidate.id).exists() &&
                 (patchDir(candidate.id).listFiles()?.isNotEmpty() == true)) ||

@@ -449,16 +449,19 @@ class Vita3KLauncher(private val context: Context) {
         when (val decision = EmbeddedGameLauncher.decide(status, Vita3kCoreBridge.available, pre.firmwareStatus.ready, settings.allowExternalVita3k)) {
             is EmbeddedGameLauncher.Decision.UseEmbedded -> {
                 // Red de seguridad (bug -3, 2026-11-08): si el eboot
-                // instalado NO es un ELF válido, la instalación del
-                // .pkg se interrumpió a mitad del descifrado F00D (la
+                // instalado NO es un archivo válido (ni ELF ni SELF),
+                // la instalación del .pkg se interrumpió a mitad (la
                 // app se cerró a mitad: 1,14 GB) y el juego no
-                // arrancaría aunque loadGame lo viera. Si el .pkg
+                // arrancaría aunque loadGame lo viera. Un eboot bien
+                // instalado es un SELF en disco (el núcleo lo descifra
+                // en memoria al cargarlo), así que SELF también vale
+                // (GameLibraryRepository.isEbootDecrypted). Si el .pkg
                 // sigue guardado, se reinstala antes de validar, por
                 // el mismo camino que UseEmbeddedPkg.
                 if (!library.isEbootDecrypted(titleId)) {
                     val pkgFile = library.findPkgGameFile(titleId)
                     if (pkgFile != null) {
-                        LauncherLog.append(context, "pkg", "Eboot sin descifrar en $titleId: reinstalando el .pkg guardado.")
+                        LauncherLog.append(context, "pkg", "Eboot no válido en $titleId (ni ELF ni SELF): reinstalando el .pkg guardado.")
                         val reinstalled = reinstallGamePkg(library, titleId, pkgFile, onInstallProgress)
                         if (reinstalled.isFailure) {
                             // P1-12: instalado pero sin licencia (no es
