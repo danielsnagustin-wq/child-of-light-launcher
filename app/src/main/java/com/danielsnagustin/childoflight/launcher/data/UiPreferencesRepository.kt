@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.danielsnagustin.childoflight.launcher.model.AccentColor
@@ -74,8 +75,25 @@ class UiPreferencesRepository(private val context: Context) {
         emit(UiPreferences())
     }
 
-    suspend fun save(prefs: UiPreferences) {
-        context.uiDataStore.edit { p ->
+    /**
+     * P1-18: un fallo de E/S al escribir (disco lleno, archivo corrupto)
+     * no puede tumbar la app: viewModelScope tiene SupervisorJob y una
+     * excepción no capturada en un hijo mata el proceso. Toda escritura
+     * DataStore pasa por aquí: registra el fallo y devuelve false para
+     * que el llamador pueda avisar.
+     */
+    private suspend fun safeEdit(tag: String, transform: suspend (MutablePreferences) -> Unit): Boolean {
+        return try {
+            context.uiDataStore.edit(transform)
+            true
+        } catch (e: Exception) {
+            Log.w("ChildOfLight", "DataStore $tag no se pudo escribir: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun save(prefs: UiPreferences): Boolean {
+        safeEdit("preferencias de interfaz") { p ->
             p[Keys.THEME] = prefs.theme.name
             p[Keys.ACCENT] = prefs.accent.name
             p[Keys.BACKGROUND] = prefs.homeBackground.name
@@ -98,16 +116,16 @@ class UiPreferencesRepository(private val context: Context) {
      * ocurren dentro del mismo edit{}: DataStore serializa los edit y
      * cada llamada ve lo que escribió la anterior.
      */
-    suspend fun hideGpuPresets(profiles: Set<GpuProfileId>) {
-        if (profiles.isEmpty()) return
-        context.uiDataStore.edit { p ->
+    suspend fun hideGpuPresets(profiles: Set<GpuProfileId>): Boolean {
+        if (profiles.isEmpty()) return true
+        safeEdit("presets ocultos") { p ->
             val current = decodeHiddenPresets(p[Keys.HIDDEN_PRESETS] ?: "")
             p[Keys.HIDDEN_PRESETS] = (current + profiles).joinToString(",") { it.name }
         }
     }
 
-    suspend fun resetAll() {
-        save(UiPreferences())
+    suspend fun resetAll(): Boolean {
+        return save(UiPreferences())
     }
 
     companion object {

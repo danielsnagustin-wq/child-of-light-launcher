@@ -749,7 +749,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     // --- Ajustes ---
 
     fun saveSettings(settings: LauncherSettings) {
-        viewModelScope.launch { settingsRepo.save(settings) }
+        viewModelScope.launch {
+            // P1-18: si el guardado falla (disco lleno, archivo corrupto),
+            // la app ya no muere (safeEdit lo registra y devuelve false),
+            // pero el usuario debe saber que su cambio no quedó guardado.
+            if (!settingsRepo.save(settings)) {
+                _message.value = "No se pudieron guardar los ajustes (fallo al escribir). Inténtalo de nuevo."
+            }
+        }
     }
 
     fun applyPreset(profile: GpuProfileId) {

@@ -7,6 +7,7 @@ import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -171,7 +172,24 @@ class TouchLayoutRepository(private val context: Context) {
         emit(defaultTouchLayout())
     }
 
-    suspend fun save(layout: List<TouchControl>) {
+    /**
+     * P1-18: un fallo de E/S al escribir (disco lleno, archivo corrupto)
+     * no puede tumbar la app: viewModelScope tiene SupervisorJob y una
+     * excepción no capturada en un hijo mata el proceso. Toda escritura
+     * DataStore pasa por aquí: registra el fallo y devuelve false para
+     * que el llamador pueda avisar.
+     */
+    private suspend fun safeEdit(tag: String, transform: suspend (MutablePreferences) -> Unit): Boolean {
+        return try {
+            context.touchDataStore.edit(transform)
+            true
+        } catch (e: Exception) {
+            Log.w("ChildOfLight", "DataStore $tag no se pudo escribir: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun save(layout: List<TouchControl>): Boolean {
         mutationMutex.withLock { saveLocked(layout) }
     }
 
@@ -194,28 +212,28 @@ class TouchLayoutRepository(private val context: Context) {
             val current = currentActiveControls()
             val updated = current.filter { it.id != controlId }
             if (updated.size == current.size) return@withLock false
+            // P1-18: si el guardado falla, el borrado no ocurrió: no
+            // se puede devolver true.
             saveLocked(updated)
-            true
         }
     }
 
-    private suspend fun saveLocked(layout: List<TouchControl>) {
+    private suspend fun saveLocked(layout: List<TouchControl>): Boolean {
         val profiles = currentProfiles()
         val activeId = currentActiveId()
         if (profiles.none { it.id == activeId }) {
             // BUG (auditoría): si el perfil activo había sido borrado (antes
             // del fix de deleteProfile), save() no guardaba nada en silencio.
             // Auto-reparación: se guarda en el primer perfil y se activa.
-            if (profiles.isEmpty()) return
+            if (profiles.isEmpty()) return false
             val updated = profiles.mapIndexed { index, p ->
                 if (index == 0) p.copy(controls = layout) else p
             }
-            saveProfiles(updated)
-            setActiveProfileLocked(profiles.first().id)
-            return
+            if (!saveProfiles(updated)) return false
+            return setActiveProfileLocked(profiles.first().id)
         }
         val updated = profiles.map { if (it.id == activeId) it.copy(controls = layout) else it }
-        saveProfiles(updated)
+        return saveProfiles(updated)
     }
 
     /** Controles del perfil activo (o del primero si el activo no existe). */
@@ -226,8 +244,8 @@ class TouchLayoutRepository(private val context: Context) {
             ?: profiles.firstOrNull()?.controls ?: emptyList()
     }
 
-    private suspend fun setActiveProfileLocked(id: String) {
-        context.touchDataStore.edit { prefs -> prefs[Keys.ACTIVE_PROFILE] = id }
+    private suspend fun setActiveProfileLocked(id: String): Boolean {
+        safeEdit("perfil activo") { prefs -> prefs[Keys.ACTIVE_PROFILE] = id }
     }
 
     suspend fun reset() {
@@ -333,8 +351,8 @@ class TouchLayoutRepository(private val context: Context) {
         return context.touchDataStore.data.first()[Keys.ACTIVE_PROFILE] ?: "default-g99"
     }
 
-    private suspend fun saveProfiles(profiles: List<ControlProfile>) {
-        context.touchDataStore.edit { prefs ->
+    private suspend fun saveProfiles(profiles: List<ControlProfile>): Boolean {
+        safeEdit("perfiles de controles") { prefs ->
             prefs[Keys.PROFILES] = profiles.joinToString("\n###\n") { encodeProfile(it) }
         }
     }

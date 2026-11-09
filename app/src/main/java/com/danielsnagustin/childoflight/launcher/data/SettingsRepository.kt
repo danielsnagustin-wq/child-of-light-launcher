@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.danielsnagustin.childoflight.launcher.model.BenchmarkRun
@@ -185,9 +186,27 @@ class SettingsRepository(private val context: Context) {
         emit(emptyList())
     }
 
+    /**
+     * P1-18: un fallo de E/S al escribir (disco lleno, archivo corrupto)
+     * no puede tumbar la app: viewModelScope tiene SupervisorJob y una
+     * excepción no capturada en un hijo mata el proceso. Toda escritura
+     * DataStore pasa por aquí: registra el fallo y devuelve false para
+     * que el llamador pueda avisar. La lectura ya tiene su .catch en el
+     * flow (usa defaults); esto cubre la escritura.
+     */
+    private suspend fun safeEdit(tag: String, transform: suspend (MutablePreferences) -> Unit): Boolean {
+        return try {
+            context.settingsDataStore.edit(transform)
+            true
+        } catch (e: Exception) {
+            Log.w("ChildOfLight", "DataStore $tag no se pudo escribir: ${e.message}")
+            false
+        }
+    }
+
     /** Guarda el estado completo. La UI siempre pasa el estado actual modificado. */
-    suspend fun save(settings: LauncherSettings) {
-        context.settingsDataStore.edit { p ->
+    suspend fun save(settings: LauncherSettings): Boolean {
+        safeEdit("ajustes") { p ->
             p[Keys.BACKEND] = settings.backend.name
             // M22: mismo clamp que en lectura, antes de escribir.
             p[Keys.RESOLUTION] = clampResolution(settings.resolutionMultiplier)
@@ -305,8 +324,8 @@ class SettingsRepository(private val context: Context) {
         )
     }
 
-    suspend fun saveGpuInfo(gpu: GpuInfo) {
-        context.settingsDataStore.edit { p ->
+    suspend fun saveGpuInfo(gpu: GpuInfo): Boolean {
+        safeEdit("info GPU") { p ->
             p[Keys.GPU_DETECTED] = true
             p[Keys.GPU_VENDOR] = gpu.vendor.name
             p[Keys.GPU_RENDERER] = gpu.renderer
@@ -319,8 +338,8 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    suspend fun recordBenchmark(run: BenchmarkRun) {
-        context.settingsDataStore.edit { p ->
+    suspend fun recordBenchmark(run: BenchmarkRun): Boolean {
+        safeEdit("benchmarks") { p ->
             val existing = decodeBenchmarks(p[Keys.BENCHMARKS] ?: "")
             val updated = (listOf(run) + existing).take(5)
             p[Keys.BENCHMARKS] = updated.joinToString(";;") { encodeBenchmark(it) }
@@ -331,8 +350,8 @@ class SettingsRepository(private val context: Context) {
      * Guarda el FPS medio medido por el núcleo durante una prueba de
      * 30 s. Lo escribe EmbeddedGameActivity al salir del juego.
      */
-    suspend fun saveAutoBenchmarkFps(fps: Float) {
-        context.settingsDataStore.edit { p ->
+    suspend fun saveAutoBenchmarkFps(fps: Float): Boolean {
+        safeEdit("fps automático") { p ->
             p[Keys.BENCHMARK_AUTO_FPS] = fps
             p[Keys.BENCHMARK_AUTO_FPS_AT] = System.currentTimeMillis()
         }
@@ -349,7 +368,7 @@ class SettingsRepository(private val context: Context) {
         val p = context.settingsDataStore.data.first()
         val fps = p[Keys.BENCHMARK_AUTO_FPS] ?: return null
         val at = p[Keys.BENCHMARK_AUTO_FPS_AT] ?: 0L
-        context.settingsDataStore.edit { e ->
+        safeEdit("fps automático") { e ->
             e.remove(Keys.BENCHMARK_AUTO_FPS)
             e.remove(Keys.BENCHMARK_AUTO_FPS_AT)
         }
