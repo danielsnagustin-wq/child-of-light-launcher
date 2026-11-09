@@ -474,6 +474,13 @@ class Vita3KLauncher(private val context: Context) {
                     } else {
                         LauncherLog.append(context, "pkg", "Eboot sin descifrar en $titleId y no hay .pkg guardado para reinstalar.")
                     }
+                } else {
+                    // Juego instalado y eboot válido: el .pkg guardado
+                    // (1,14 GB) es redundante y el usuario no quiere
+                    // borrarlo a mano (2026-11-08) — se borra solo en
+                    // el lanzamiento. El work.bin se conserva.
+                    // Best-effort: si no hay .pkg, no pasa nada.
+                    runCatching { library.deleteStoredGamePkg(titleId) }
                 }
                 return when (val attempt = tryLaunchEmbedded(library, titleId, configFile.absolutePath, benchmark)) {
                     is EmbeddedAttempt.Ok -> attempt.outcome
@@ -694,6 +701,12 @@ class Vita3KLauncher(private val context: Context) {
         result.onFailure {
             LauncherLog.append(context, "pkg", "Reinstalación .pkg embebida falló: ${it.message}")
         }
+        // Reinstalación con éxito y eboot ya válido: el .pkg guardado
+        // es redundante (1,14 GB) y el usuario no quiere borrarlo a
+        // mano — se borra solo. El work.bin se conserva.
+        result.onSuccess {
+            runCatching { library.deleteStoredGamePkg(titleId) }
+        }
         return result
     }
 
@@ -730,6 +743,12 @@ class Vita3KLauncher(private val context: Context) {
             LauncherLog.append(context, "pkg", "Instalación .pkg embebida falló: ${it.message}")
             return Result.failure(it)
         }
+        // Juego instalado y verificado: el .pkg guardado (1,14 GB) es
+        // redundante y el usuario no quiere borrarlo a mano
+        // (2026-11-08) — se borra solo tras instalar. El work.bin
+        // se conserva. Best-effort: si el eboot no quedó válido, el
+        // .pkg se queda como respaldo para reinstalar.
+        runCatching { library.deleteStoredGamePkg(titleId.id) }
         val patchPkg = library.findPkgPatchFile(titleId.id)
         if (patchPkg != null) {
             installer.installPkgFile(patchPkg, library.findPkgWorkBinFile(patchPkg), progress)

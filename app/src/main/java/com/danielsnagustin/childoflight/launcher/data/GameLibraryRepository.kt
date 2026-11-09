@@ -1699,18 +1699,22 @@ class GameLibraryRepository(private val context: Context) {
 
     /**
      * Borra el .pkg de juego GUARDADO (ux0/pkg/<TITLE>.pkg) cuando el
-     * juego ya está extraído: el .pkg es una copia redundante (1,14 GB)
-     * y el juego que corre es el extraído, así que la app ocupaba el
-     * doble (2,54 GB de datos con un juego de 1,14 GB). NUNCA se borra
-     * si el juego no está extraído (sería la única copia: P0-2). El
-     * work.bin (licencia, 512 B) se conserva: no pesa nada y es la
-     * prueba de la licencia instalada.
+     * juego ya está extraído y su eboot es VÁLIDO (ELF o SELF): el .pkg
+     * es una copia redundante (1,14 GB) y el juego que corre es el
+     * extraído, así que la app ocupaba el doble (2,54 GB de datos con
+     * un juego de 1,14 GB). NUNCA se borra si el eboot no es válido
+     * (sería la única vía de reinstalación) ni si el juego no está
+     * extraído (sería la única copia: P0-2). El .pkg puede vivir en
+     * el ux0 antiguo (la migración no mueve pkg/), así que se busca
+     * en los dos. El work.bin (licencia, 512 B) se conserva: no pesa
+     * nada y es la prueba de la licencia instalada. Lo usa la limpieza
+     * manual (Ajustes → Limpiar no usados) y el borrado automático
+     * tras instalar (el usuario no quiere borrarlo a mano, 2026-11-08).
      */
     fun deleteStoredGamePkg(titleId: String): Boolean {
         if (titleId.isBlank() || titleId == "." || titleId == ".." || '/' in titleId || '\\' in titleId) return false
-        if (ImportTreeSearch.findEboot(appDir(titleId)) == null) return false
-        val pkg = pkgGameFile(titleId)
-        if (!pkg.isFile) return false
+        if (!isEbootDecrypted(titleId)) return false
+        val pkg = findPkgGameFile(titleId) ?: return false
         val size = pkg.length()
         val ok = pkg.delete()
         if (ok) LauncherLog.append(context, "delete", ".pkg guardado $titleId borrado ($size bytes): el juego ya está extraído")
