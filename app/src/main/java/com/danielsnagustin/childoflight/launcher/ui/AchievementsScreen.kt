@@ -187,23 +187,49 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             trpRead?.let { result ->
                 when (result) {
                     is TrpReadResult.Success -> {
-                        val comparison = remember(result) {
-                            TrophyTrpReader.compareByName(result.value, TROPHY_ENGLISH_NAMES)
+                        // P1-15: si el TRP no trae nombres, comparar por
+                        // nombre es falso por definición (coinciden 0 y
+                        // los 27 saldrían como "ausentes"). En ese caso
+                        // la comparación es SOLO por cantidad, que es el
+                        // dato que decide 20 vs 27 (R2-S01).
+                        if (!result.value.hasNames) {
+                            val launcherSize = TROPHY_ENGLISH_NAMES.size
+                            val diff = launcherSize - result.value.trophyCount
+                            NoteText(
+                                "TRP real del juego: ${result.value.trophyCount} trofeos. " +
+                                    "El TRP no trae nombres, así que la comparación es solo por cantidad: " +
+                                    "la lista del launcher trae $launcherSize. " +
+                                    when {
+                                        diff > 0 -> "La lista trae $diff de más; cuáles sobran no se puede saber sin los nombres."
+                                        diff < 0 -> "El TRP trae ${-diff} más que la lista."
+                                        else -> "Coincide la cantidad."
+                                    },
+                            )
+                        } else {
+                            val comparison = remember(result) {
+                                TrophyTrpReader.compareByName(result.value, TROPHY_ENGLISH_NAMES)
+                            }
+                            val namedInTrp = result.value.trophies.count { it.name != null }
+                            NoteText(
+                                "TRP real del juego: ${result.value.trophyCount} trofeos. " +
+                                    "Coinciden ${comparison.matchedLauncherNumbers.size} de 27 nombres con la lista del launcher." +
+                                    if (comparison.launcherOnlyNumbers.isNotEmpty()) {
+                                        " No están en el TRP: ${comparison.launcherOnlyNumbers.joinToString(", ")}."
+                                    } else {
+                                        ""
+                                    } +
+                                    if (comparison.trpOnlyNames.isNotEmpty()) {
+                                        " El TRP trae nombres fuera de la lista: ${comparison.trpOnlyNames.joinToString(", ")}."
+                                    } else {
+                                        ""
+                                    } +
+                                    if (namedInTrp < result.value.trophyCount) {
+                                        " Ojo: el TRP solo trae nombre para $namedInTrp de ${result.value.trophyCount} trofeos; un trofeo listado como ausente podría ser uno sin nombre en el TRP."
+                                    } else {
+                                        ""
+                                    },
+                            )
                         }
-                        NoteText(
-                            "TRP real del juego: ${result.value.trophyCount} trofeos. " +
-                                "Coinciden ${comparison.matchedLauncherNumbers.size} de 27 nombres con la lista del launcher." +
-                                if (comparison.launcherOnlyNumbers.isNotEmpty()) {
-                                    " No están en el TRP: ${comparison.launcherOnlyNumbers.joinToString(", ")}."
-                                } else {
-                                    ""
-                                } +
-                                if (comparison.trpOnlyNames.isNotEmpty()) {
-                                    " El TRP trae nombres fuera de la lista: ${comparison.trpOnlyNames.joinToString(", ")}."
-                                } else {
-                                    ""
-                                },
-                        )
                     }
                     is TrpReadResult.Unreadable -> {
                         NoteText("TRP real del juego: no se pudo leer. ${result.reason}")
