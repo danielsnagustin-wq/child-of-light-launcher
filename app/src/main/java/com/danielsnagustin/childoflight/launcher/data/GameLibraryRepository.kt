@@ -925,7 +925,18 @@ class GameLibraryRepository(private val context: Context) {
                 pkgTitle = foundTitle
                 pkgContentId = header?.contentId
                 pkgSize = pkg.length()
-                pkgLicense = findPkgWorkBinFile(pkg).isFile
+                // P1-3: "existe el archivo" no es licencia: un work.bin
+                // de otro juego (o un archivo cualquiera de 512 B) se
+                // aceptaba como licencia válida y el juego fallaba al
+                // arrancar sin explicación. Se valida el CONTENIDO
+                // contra el Content ID del .pkg, igual que al importar.
+                // Si no hay work.bin o no es válido, la licencia es
+                // "falta": es lo honesto, y el informe ya no miente.
+                pkgLicense = runCatching {
+                    findPkgWorkBinFile(pkg).inputStream().use {
+                        PkgHeaderParser.validateWorkBin(it, header?.contentId)
+                    }
+                }.getOrNull()?.isSuccess == true
             }
         }
         if (pkgTitlesFound.size > 1) {

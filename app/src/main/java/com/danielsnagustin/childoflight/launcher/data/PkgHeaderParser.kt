@@ -293,14 +293,33 @@ object PkgHeaderParser {
      *     Si se pasa expectedContentId, debe coincidir: el .bin tiene que
      *     ser la licencia DE ESTE .pkg, no de otro juego.
      *  B) texto zRIF: ASCII base64 que empieza por "KO", con relleno NUL
-     *     hasta 512 (por si alguien guarda el zRIF como archivo). Se
-     *     decodifica (base64 + inflate a 512 bytes) y su Content ID debe
+     *     hasta 512 (por si alguien guarda el zRIF como archivo). También
+     *     vale el archivo con SOLO la cadena "KO..." (~110 caracteres,
+     *     quizá con salto de línea final): antes se rechazaba en el
+     *     primer chequeo de tamaño sin llegar nunca a esta rama (P1-3).
+     *     Se decodifica (base64 + inflate a 512 bytes) y su Content ID debe
      *     coincidir con expectedContentId, igual que la forma A.
      * Un "work (5).bin" de NPS cumple A (el nombre con "(5)" no importa:
      * solo el contenido).
      */
     fun validateWorkBin(bytes: ByteArray, expectedContentId: String? = null): Result<Unit> {
-        if (bytes.size != 512) {
+        // P1-3: un zRIF en texto no tiene por qué venir rellenado con
+        // NUL hasta 512 bytes. Si el archivo trae solo la cadena
+        // "KO..." se recorta (fuera saltos de línea) y se rellena con
+        // NUL hasta 512; el resto del camino (Forma B) no cambia. Un
+        // archivo corto que NO empiece por "KO" sigue rechazándose por
+        // tamaño: un .rif binario válido siempre pesa 512.
+        val normalized = if (bytes.size < 512) {
+            val text = bytes.toString(Charsets.US_ASCII).trim()
+            if (text.startsWith("KO")) {
+                text.toByteArray(Charsets.US_ASCII).copyOf(512)
+            } else {
+                bytes
+            }
+        } else {
+            bytes
+        }
+        if (normalized.size != 512) {
             return Result.failure(
                 IllegalArgumentException(
                     "El work.bin debe pesar exactamente 512 bytes (pesa ${bytes.size}). " +
@@ -309,9 +328,9 @@ object PkgHeaderParser {
             )
         }
         // Forma B: texto zRIF.
-        if (bytes[0] == 'K'.code.toByte() && bytes[1] == 'O'.code.toByte()) {
-            val end = bytes.indexOfFirst { it == 0.toByte() }.takeIf { it >= 0 } ?: bytes.size
-            val text = bytes.copyOfRange(0, end).toString(Charsets.US_ASCII)
+        if (normalized[0] == 'K'.code.toByte() && normalized[1] == 'O'.code.toByte()) {
+            val end = normalized.indexOfFirst { it == 0.toByte() }.takeIf { it >= 0 } ?: normalized.size
+            val text = normalized.copyOfRange(0, end).toString(Charsets.US_ASCII)
             val bad = text.indices.firstOrNull { i ->
                 val c = text[i]
                 !(c.isLetterOrDigit() || c == '+' || c == '/' || c == '=')
@@ -349,7 +368,7 @@ object PkgHeaderParser {
             return Result.success(Unit)
         }
         // Forma A: binario .rif (la real de NPS).
-        val contentId = extractWorkBinContentId(bytes)
+        val contentId = extractWorkBinContentId(normalized)
         if (contentId == null) {
             return Result.failure(
                 IllegalArgumentException(

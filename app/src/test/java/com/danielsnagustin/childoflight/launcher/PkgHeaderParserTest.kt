@@ -227,4 +227,44 @@ class PkgHeaderParserTest {
         val tooBig = PkgHeaderParser.validateWorkBin(ByteArrayInputStream(ByteArray(513)))
         assertTrue(tooBig.isFailure)
     }
+
+    @Test
+    fun shortTextZrifWorkBinPasses() {
+        // P1-3: el archivo con SOLO la cadena "KO..." (~110 caracteres,
+        // sin relleno NUL hasta 512) es una licencia válida.
+        val full = workBinBytes()
+        val end = full.indexOfFirst { it == 0.toByte() }.takeIf { it >= 0 } ?: full.size
+        val short = full.copyOfRange(0, end)
+        assertTrue(short.size < 512)
+        assertTrue(PkgHeaderParser.validateWorkBin(short).isSuccess)
+        assertTrue(
+            PkgHeaderParser.validateWorkBin(short, "EP0001-PCSB00598_00-CHILDOFLIGHT0000").isSuccess,
+        )
+    }
+
+    @Test
+    fun shortTextZrifWithTrailingNewlinePasses() {
+        val full = workBinBytes()
+        val end = full.indexOfFirst { it == 0.toByte() }.takeIf { it >= 0 } ?: full.size
+        val short = full.copyOfRange(0, end) + "\n".toByteArray(Charsets.US_ASCII)
+        assertTrue(PkgHeaderParser.validateWorkBin(short).isSuccess)
+    }
+
+    @Test
+    fun shortTextZrifWithWrongContentIdIsRejected() {
+        val full = buildZrifWorkBinBytes("UP0001-PCSE00480_00-CHILDOFLIGHT0000")
+        val end = full.indexOfFirst { it == 0.toByte() }.takeIf { it >= 0 } ?: full.size
+        val short = full.copyOfRange(0, end)
+        val result = PkgHeaderParser.validateWorkBin(short, "EP0001-PCSB00598_00-CHILDOFLIGHT0000")
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()!!.message!!.contains("otro juego"))
+    }
+
+    @Test
+    fun shortTextZrifFromStreamPasses() {
+        val full = workBinBytes()
+        val end = full.indexOfFirst { it == 0.toByte() }.takeIf { it >= 0 } ?: full.size
+        val short = full.copyOfRange(0, end)
+        assertTrue(PkgHeaderParser.validateWorkBin(ByteArrayInputStream(short)).isSuccess)
+    }
 }
