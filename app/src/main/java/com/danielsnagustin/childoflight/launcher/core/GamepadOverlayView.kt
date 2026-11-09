@@ -150,6 +150,17 @@ class GamepadOverlayView @JvmOverloads constructor(
         Color.parseColor("#8CCBEB")
     }
 
+    /**
+     * Iconos que se dibujan dentro de los botones de cristal. Vive
+     * aquí (clase externa, no inner): Kotlin PROHÍBE las enum class
+     * dentro de una inner class ("'Enum class' is prohibited here",
+     * run #86, 2026-11-08) y por eso no puede vivir en
+     * OverlayControlView.
+     */
+    private enum class IconKind {
+        ARROW_UP, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, SWORD, SPIRAL, STAR, PAUSE, IGNICULUS
+    }
+
     private abstract inner class OverlayControlView(
         context: Context,
         protected val control: TouchControl,
@@ -297,10 +308,6 @@ class GamepadOverlayView @JvmOverloads constructor(
             VitaButton.DPAD_LEFT -> IconKind.ARROW_LEFT
             VitaButton.DPAD_RIGHT -> IconKind.ARROW_RIGHT
             else -> null
-        }
-
-        protected enum class IconKind {
-            ARROW_UP, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, SWORD, SPIRAL, STAR, PAUSE, IGNICULUS
         }
 
         /** Dibuja el icono centrado en (cx, cy) con radio r. La escala crece un poco al pulsar. */
