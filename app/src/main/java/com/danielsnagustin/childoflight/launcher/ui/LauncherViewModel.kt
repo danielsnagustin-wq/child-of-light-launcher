@@ -14,6 +14,7 @@ import com.danielsnagustin.childoflight.launcher.R
 import com.danielsnagustin.childoflight.launcher.core.EmbeddedCoreLayout
 import com.danielsnagustin.childoflight.launcher.core.EmbeddedPkgInstaller
 import com.danielsnagustin.childoflight.launcher.core.Vita3kCoreBridge
+import com.danielsnagustin.childoflight.launcher.core.OverlayInputStats
 import com.danielsnagustin.childoflight.launcher.data.AchievementRepository
 import com.danielsnagustin.childoflight.launcher.data.BundledTurnipDriver
 import com.danielsnagustin.childoflight.launcher.data.ControlProfile
@@ -790,7 +791,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             } else {
                 false
             }
-            val lowRamNote = if (appliedPreset && lowRam) " Memoria baja (4 GB o menos): perfil conservador (1x) aplicado." else ""
+            // R4-P0-9: la variante conservadora es VISIBLE: el mensaje
+            // dice que la caché de texturas quedó OFF (antes solo decía
+            // "perfil conservador (1x)" y el preset seguía llamándose
+            // "G99 Recomendado" aunque textureCache=false divergiera
+            // de él; ver isLowRamConservativeVariant).
+            val lowRamNote = if (appliedPreset && lowRam) " Memoria baja (4 GB o menos): perfil conservador (1x) aplicado, con la caché de texturas OFF para ahorrar memoria. Puedes reactivarla en Ajustes → Rendimiento." else ""
             withContext(Dispatchers.Main) {
                 // Sin Vulkan, el aviso va en el mismo mensaje de detección
                 // (primer arranque): el config.yml ya cae a OpenGL solo
@@ -1107,19 +1113,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     private suspend fun tryInstallSavedFirmwareInCoreLocked(): FirmwareCoreResult {
-        // P1-15: escribir config.yml ANTES de instalar el firmware
-        // (igual que play()): installFirmware inicializa el núcleo y
-        // el núcleo lee config.yml al iniciar; con un config.yml viejo
-        // (pref-path pre-arreglo -3) la sesión quedaría envenenada
-        // hasta matar el proceso. Best-effort: si no se puede escribir,
-        // se sigue (el fallo queda en el log, como en play()).
-        runCatching {
-            val settings = settingsRepo.settingsFlow.first()
-            val gpu = settingsRepo.gpuInfoFlow.first()
-            Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu)
-        }.onFailure {
-            LauncherLog.append(context, "config", "No se pudo escribir config.yml antes del firmware: ${it.message}")
-        }
+        // R4-P0-7: aquí ya NO se escribe config.yml al entrar: antes se
+        // escribía ANTES de comprobar siquiera si había firmware que
+        // instalar, y JUGAR acababa escribiéndolo 3 veces. La escritura
+        // vive ahora justo antes de instalar (abajo), cuando de verdad
+        // hay un PUP pendiente: installFirmware inicializa el núcleo y
+        // el núcleo lee config.yml al iniciar (P1-15).
         if (!Vita3kCoreBridge.available) {
             return FirmwareCoreResult.NotInstalled(
                 "Firmware guardado. El núcleo embebido aún no está en esta versión: " +
@@ -1154,6 +1153,22 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 "El archivo guardado no es un PUP válido (debe empezar por SCEUF). " +
                     "Elige de nuevo tu PSVUPDAT.PUP en Importar → Firmware.",
             )
+        }
+        // R4-P0-7: config.yml se escribe SOLO aquí, cuando de verdad hay
+        // un PUP pendiente de instalar (todos los retornos de arriba ya
+        // pasaron). P1-15: installFirmware inicializa el núcleo y el
+        // núcleo lee config.yml al iniciar; con un config.yml viejo
+        // (pref-path pre-arreglo -3) la sesión quedaría envenenada
+        // hasta matar el proceso. Best-effort: si no se puede escribir,
+        // se sigue (el fallo queda en el log, como en play()); además
+        // writeConfig es idempotente y no reescribe si el contenido es
+        // idéntico al que play() ya escribió.
+        runCatching {
+            val settings = settingsRepo.settingsFlow.first()
+            val gpu = settingsRepo.gpuInfoFlow.first()
+            Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu)
+        }.onFailure {
+            LauncherLog.append(context, "config", "No se pudo escribir config.yml antes del firmware: ${it.message}")
         }
         _firmwareInstalling.value = true
         return try {
@@ -1866,19 +1881,30 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     _message.value = "Este teléfono es de 32 bits: el núcleo embebido necesita 64 bits."
                 }
             }
-            // config.yml ANTES del firmware: instalar el firmware
-            // inicializa el núcleo (EmbeddedPkgInstaller) y el núcleo
-            // lee config.yml al iniciar; si se escribiera después, el
-            // juego arrancaría con los ajustes del lanzamiento anterior.
-            // Best-effort: launch() lo vuelve a escribir igual.
+            // R4-P0-7: config.yml se escribe UNA sola vez por JUGAR,
+            // aquí, antes del firmware: instalar el firmware inicializa
+            // el núcleo y el núcleo lee config.yml al iniciar; si se
+            // escribiera después, el juego arrancaría con los ajustes
+            // del lanzamiento anterior. launch() ya NO lo reescribe
+            // (configAlreadyWritten) y el firmware solo lo reescribe si
+            // de verdad instala un PUP y el contenido cambió
+            // (writeConfig es idempotente). Si esta escritura falla,
+            // configWritten queda false y launch() lo escribe como antes.
+            var configWritten = false
             runCatching {
                 Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu)
+                configWritten = true
             }.onFailure {
                 LauncherLog.append(context, "config", "No se pudo escribir config.yml antes del firmware: ${it.message}")
             }
             // Firmware: si hay PUP guardado y núcleo presente, instalarlo
             // ahora (best-effort, nunca bloquea el lanzamiento).
             ensureFirmwareForEmbedded()
+            // R4-P0-8: el escaneo anterior a este launch(), para saber
+            // después si launchImpl escaneó de verdad en este JUGAR
+            // (si checkPrerequisites lanzara, lastScannedStatus seguiría
+            // siendo el de un lanzamiento anterior y NO se reutiliza).
+            val scanBeforeLaunch = launcher.lastScannedStatus
             // Instalación del .pkg en el núcleo (al jugar con .pkg
             // guardado): el % real del núcleo llega a installProgress
             // y se muestra en Import; al terminar se limpia.
@@ -1887,6 +1913,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 onInstallProgress = { percent, status ->
                     _installProgress.value = InstallProgress(percent, status)
                 },
+                configAlreadyWritten = configWritten,
             )
             _installProgress.value = null
             LauncherLog.append(context, "launch", "JUGAR resultado: ${outcome::class.simpleName}")
@@ -2006,7 +2033,32 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     }
                 }
             }
-            refreshStatus()
+            // R4-P0-8: el refresco final solo re-escanea si el
+            // lanzamiento pudo cambiar algo en disco (instalación del
+            // .pkg, migración del layout o intento embebido fallido
+            // tras instalar). Con Blocked, vía externa o núcleo sin
+            // JNI no se instaló nada: se reutiliza el GameStatus que
+            // launchImpl ya escaneó (launcher.lastScannedStatus) y
+            // solo se re-lee el firmware (lectura barata del marcador),
+            // que ensureFirmwareForEmbedded sí pudo instalar en este
+            // JUGAR. La UI queda con el estado fresco sin otro escaneo.
+            if (outcome is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded ||
+                outcome is Vita3KLauncher.LaunchOutcome.EmbeddedFailed
+            ) {
+                refreshStatus()
+            } else {
+                // Solo se reutiliza si launchImpl escaneó EN ESTE JUGAR
+                // (cada scanStatus construye un GameStatus nuevo: la
+                // referencia cambia; si no cambió, el escaneo falló y
+                // se conserva el _status que ya había, sin pisarlo con
+                // un escaneo viejo de otro lanzamiento).
+                val freshScan = launcher.lastScannedStatus
+                if (freshScan != null && freshScan !== scanBeforeLaunch) {
+                    _status.value = freshScan
+                }
+                runCatching { FirmwareResolver.resolve(library.vitaRoot) }
+                    .onSuccess { _firmwareStatus.value = it }
+            }
             } finally {
                 endLaunch()
             }
@@ -2225,15 +2277,28 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 note = "Prueba de 30 s con preset ${settings.activeProfile.label}. El FPS se mide solo mientras juegas; si no hay medición al volver, anota el FPS del overlay.",
             )
             _pendingBenchmark.value = run
-            // config.yml antes del firmware, igual que en play(): la
-            // instalación del firmware inicializa el núcleo.
+            // R4-P0-7: config.yml se escribe UNA sola vez por prueba,
+            // aquí, antes del firmware, igual que en play(). launch()
+            // ya NO lo reescribe (configAlreadyWritten); si esta
+            // escritura falla, el flag queda false y launch() lo escribe.
+            var configWritten = false
             runCatching {
                 Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu)
+                configWritten = true
             }
             // Firmware: igual que en play(), instalar el PUP guardado
             // en el núcleo si está presente (best-effort, no bloquea).
             ensureFirmwareForEmbedded()
-            val outcome = launcher.launch(library, settings, sessionManager, gpu, benchmark = true)
+            // R4-P0-8: el pre-chequeo de arriba se pasa a launch() para
+            // que launchImpl reutilice su GameStatus en vez de
+            // re-escanear; el firmware se re-resuelve dentro porque
+            // ensureFirmwareForEmbedded pudo instalarlo entre medias.
+            val outcome = launcher.launch(
+                library, settings, sessionManager, gpu,
+                benchmark = true,
+                configAlreadyWritten = configWritten,
+                prerequisites = pre,
+            )
             // P0-1 / P1-12: igual que en play(): si el resultado es un
             // bloqueo o fallo por licencia, el pendiente queda listo
             // para que Importar ofrezca "Elegir work.bin".
@@ -2850,13 +2915,28 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     // --- Saves ---
 
-    /** Title ID fresco (no el estado de la UI, que puede ir desactualizado). */
-    private fun freshTitleId(): String? =
-        runCatching { library.scanStatus().titleId?.id }.getOrNull()
+    /**
+     * Title ID fresco (no el estado de la UI, que puede ir desactualizado).
+     * R4-P0-8: lectura LIGERA, sin scanStatus() completo: el título
+     * extraído sale de app/<TITLE>/eboot.bin y el del .pkg de su header
+     * (Content ID). Son las mismas fuentes que usa scanStatus() para
+     * titleId, sin tamaños, DLCs, saves ni MediaStore.
+     */
+    private fun freshTitleId(): String? {
+        freshExtractedTitleId()?.let { return it }
+        for (candidate in TitleId.entries) {
+            val pkg = runCatching { library.findPkgGameFile(candidate.id) }.getOrNull() ?: continue
+            val headerTitle = runCatching {
+                pkg.inputStream().use { PkgHeaderParser.parse(it) }
+            }.getOrNull()?.getOrNull()?.titleId
+            return (headerTitle ?: candidate).id
+        }
+        return null
+    }
 
     /** Title ID del juego EXTRAÍDO, fresco. null si el juego es solo .pkg. */
     private fun freshExtractedTitleId(): String? =
-        runCatching { library.scanStatus().extractedTitleId?.id }.getOrNull()
+        runCatching { sessionManager.lightExtractedTitleId() }.getOrNull()
 
     fun exportSaves(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -2992,6 +3072,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             appendLine("--- Núcleo ---")
             appendLine("Núcleo embebido: ${if (embeddedCorePresent()) "presente" else "NO presente"}")
             appendLine("App externa: ${externalVita3kVersion() ?: "no instalada"}")
+            appendLine()
+            appendLine("--- Mando virtual y pausa ---")
+            // Leído al exportar el reporte (no durante la partida): el
+            // nº de gamepads y la pausa son el estado en ese momento;
+            // los contadores son acumulados del proceso (toda la
+            // sesión de juego desde que se abrió la app).
+            val gamepadCount = Vita3kCoreBridge.overlayGamepadCount()
+            appendLine("Gamepads SDL: ${if (gamepadCount < 0) "sin dato" else "$gamepadCount"} | Mando virtual del juego: ${if (Vita3kCoreBridge.overlayIsAttached()) "presente" else "ausente"}")
+            appendLine("Pausa: ${if (Vita3kCoreBridge.isAppPaused()) "PAUSADO" else "en marcha"}")
+            val overlayStats = OverlayInputStats.snapshot()
+            appendLine("Pulsaciones táctiles: botones ${overlayStats.buttonsOk} entregados / ${overlayStats.buttonsLost} perdidos | ejes ${overlayStats.axesOk} entregados / ${overlayStats.axesLost} perdidos")
+            appendLine("Última pulsación: botón SDL ${overlayStats.lastButtonSdl} pressed=${overlayStats.lastButtonPressed} entregado=${overlayStats.lastButtonDelivered} | último eje: SDL ${overlayStats.lastAxisSdl} valor=${overlayStats.lastAxisValue} entregado=${overlayStats.lastAxisDelivered}")
             appendLine()
             appendLine("--- Ajustes activos ---")
             appendLine("Perfil: ${settings.activeProfile.label}")
