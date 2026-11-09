@@ -2619,23 +2619,23 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 withContext(Dispatchers.Main) { _message.value = "No hay juego instalado: no hay DLC que borrar." }
                 return@launch
             }
-            // R2-P2-03: el origen decide el mensaje. Un DLC guardado
-            // como .pkg y aún no instalado se borra como .pkg (no hay
-            // nada en addcont); un DLC ya instalado se borra de
-            // ux0/addcont (su .pkg original ya se consumió al
-            // instalarlo, no queda archivo que borrar). Se consulta
-            // ANTES de borrar, porque deleteDlc elimina el .pkg.
-            val storedPkg = library.findPkgDlcFile(dlcId)
-            val ok = library.deleteDlc(title, dlcId)
+            // P1-5: el resultado dice qué se borró de verdad (.pkg
+            // guardado, contenido instalado, o ambos, en cualquiera de
+            // los dos ux0) y si algo falló. Antes el mensaje decía
+            // "borrado" aunque la carpeta extraída siguiera ahí.
+            val result = library.deleteDlc(title, dlcId)
             withContext(Dispatchers.Main) {
-                _message.value = if (ok) {
-                    if (storedPkg != null) {
-                        "DLC $dlcId borrado: se eliminó su .pkg guardado (aún no estaba instalado en el juego)."
-                    } else {
-                        "DLC $dlcId borrado de ux0/addcont."
+                _message.value = when {
+                    result.failed ->
+                        "No se pudo borrar del todo el DLC $dlcId. Revisa el reporte de errores para el motivo exacto."
+                    result.ok -> {
+                        val parts = listOfNotNull(
+                            "su .pkg guardado".takeIf { result.deletedStoredPkg },
+                            "su contenido instalado".takeIf { result.deletedExtracted },
+                        )
+                        "DLC $dlcId borrado: se eliminó ${parts.joinToString(" y ")}."
                     }
-                } else {
-                    "No se pudo borrar el DLC $dlcId."
+                    else -> "No se encontró el DLC $dlcId: no había nada que borrar."
                 }
             }
             refreshStatus()
@@ -2682,13 +2682,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 }
                 return@launch
             }
-            val ok = library.deleteSavesOnly(title)
+            val result = library.deleteSavesOnly(title)
             // H6: la copia guardada de la sesión activa solo se borra si
             // realmente había saves vivos que borrar. Antes se borraba
             // siempre, incluso cuando el mensaje decía "No había saves".
-            if (ok) sessionManager.clearActiveSessionSavedata()
+            if (result.deleted && !result.failed) sessionManager.clearActiveSessionSavedata()
             withContext(Dispatchers.Main) {
-                _message.value = if (ok) "Saves borrados (también de la sesión activa). El juego y los DLCs siguen instalados." else "No había saves que borrar."
+                _message.value = when {
+                    result.failed -> "No se pudieron borrar los saves. Revisa el reporte de errores para el motivo exacto."
+                    result.deleted -> "Saves borrados (también de la sesión activa). El juego y los DLCs siguen instalados."
+                    else -> "No había saves que borrar."
+                }
             }
             refreshStatus()
         }

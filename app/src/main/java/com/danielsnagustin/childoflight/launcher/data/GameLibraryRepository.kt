@@ -576,6 +576,17 @@ class GameLibraryRepository(private val context: Context) {
     val vitaRoot: File get() = File(context.filesDir, "vita3k")
     /** ux0 efectivo: vita/ux0 si ya se migró al layout del núcleo, si no el ux0 antiguo. */
     val ux0Dir: File get() = EmbeddedCoreLayout.resolveUx0Dir(vitaRoot)
+
+    /**
+     * Los dos ux0 donde puede vivir contenido: el efectivo y el
+     * antiguo (P1-5). Tras la migración el juego vive en el efectivo,
+     * pero un DLC, un .pkg o unos saves pueden haber quedado en el
+     * antiguo: borrar solo en el efectivo dejaba copias fantasma.
+     */
+    private fun ux0Dirs(): List<File> {
+        val legacy = EmbeddedCoreLayout.legacyUx0Dir(vitaRoot)
+        return if (legacy == ux0Dir) listOf(ux0Dir) else listOf(ux0Dir, legacy)
+    }
     val configFile: File get() = File(vitaRoot, "config.yml")
 
     fun appDir(titleId: String): File = File(ux0Dir, "app/$titleId")
@@ -1875,36 +1886,111 @@ class GameLibraryRepository(private val context: Context) {
     }
 
     /** Borra UN DLC instalado (ux0/addcont/<TITLE>/<DLC_ID>/ o ux0/pkg/dlc/<DLC_ID>.pkg). Con confirmación en la UI. */
-    fun deleteDlc(titleId: String, dlcId: String): Boolean {
+    /** Resultado real de borrar un DLC: qué formas se borraron y si algo falló. */
+    data class DlcDeleteResult(
+        val deletedStoredPkg: Boolean,
+        val deletedExtracted: Boolean,
+        val failed: Boolean,
+    ) {
+        /** true solo si se borró al menos una forma y nada falló. */
+        val ok: Boolean get() = (deletedStoredPkg || deletedExtracted) && !failed
+    }
+
+    /** Resultado real de borrar los saves: si había saves y si el borrado falló. */
+    data class SavesDeleteResult(
+        val deleted: Boolean,
+        val failed: Boolean,
+    )
+
+    /** contentKey del header de un .pkg de DLC guardado (null si no se lee). */
+    private fun pkgDlcContentKey(pkg: File): String? {
+        return runCatching {
+            pkg.inputStream().use { PkgHeaderParser.parse(it) }
+        }.getOrNull()?.getOrNull()?.contentName?.let { dlcMergeKey(it) }
+    }
+
+    fun deleteDlc(titleId: String, dlcId: String): DlcDeleteResult {
         // H5: dlcId llega de nombres de carpeta en disco; un valor con "/",
         // ".." o vacío haría que deleteRecursively apuntara fuera de addcont/.
-        if (dlcId.isBlank() || dlcId == "." || dlcId == ".." || '/' in dlcId || '\\' in dlcId) return false
-        // DLC en .pkg: se borra el .pkg y su work.bin.
-        val pkgDlc = pkgDlcFile(dlcId)
-        if (pkgDlc.isFile) {
-            val size = pkgDlc.length()
-            val ok = pkgDlc.delete()
-            pkgDlcWorkBinFile(dlcId).delete()
-            if (ok) LauncherLog.append(context, "delete", "DLC .pkg $dlcId borrado de $titleId ($size bytes)")
-            return ok
+        if (dlcId.isBlank() || dlcId == "." || dlcId == ".." || '/' in dlcId || '\\' in dlcId) {
+            return DlcDeleteResult(deletedStoredPkg = false, deletedExtracted = false, failed = true)
         }
-        val dir = File(addcontDir(titleId), dlcId)
-        if (!dir.exists()) return false
-        val size = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
-        // M16: el resultado del borrado se devolvía siempre true.
-        val ok = dir.deleteRecursively()
-        if (ok) LauncherLog.append(context, "delete", "DLC $dlcId borrado de $titleId ($size bytes)")
-        return ok
+        // P1-5: antes solo se borraba UNA forma (el .pkg si existía, y
+        // se volvía sin tocar la carpeta extraída) y solo en el ux0
+        // efectivo, pero el mensaje decía "DLC borrado". Ahora se
+        // borran AMBAS formas en AMBOS ux0 y se devuelve qué se borró
+        // de verdad. La coincidencia es por contentKey (P1-2): la
+        // carpeta extraída y el .pkg guardado pueden llamarse distinto
+        // (el .pkg real de NPS se llama por hash; la carpeta, por el
+        // nombre corto del contenido). Si el dlcId ES el nombre del
+        // .pkg (hash), su contentKey se añade a las claves buscadas.
+        val keys = mutableSetOf(dlcMergeKey(dlcId))
+        for (ux0 in ux0Dirs()) {
+            File(ux0, "pkg/dlc").listFiles()
+                ?.filter { it.isFile && it.nameWithoutExtension == dlcId }
+                ?.forEach { pkg -> pkgDlcContentKey(pkg)?.let { keys.add(it) } }
+        }
+        var deletedStoredPkg = false
+        var deletedExtracted = false
+        var failed = false
+        for (ux0 in ux0Dirs()) {
+            // Carpeta extraída: cualquier carpeta cuyo contentKey esté
+            // entre las claves buscadas.
+            File(ux0, "addcont/$titleId").listFiles()
+                ?.filter { it.isDirectory && dlcMergeKey(it.name) in keys }
+                ?.forEach { dir ->
+                    val size = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                    if (dir.deleteRecursively()) {
+                        deletedExtracted = true
+                        LauncherLog.append(context, "delete", "DLC $dlcId borrado de $titleId ($size bytes, ${dir.path})")
+                    } else {
+                        failed = true
+                        LauncherLog.append(context, "delete", "DLC $dlcId NO se pudo borrar de $titleId (${dir.path})")
+                    }
+                }
+            // .pkg guardado: nombre exacto o cualquier .pkg cuyo header
+            // traiga un contentKey buscado.
+            File(ux0, "pkg/dlc").listFiles()
+                ?.filter { it.isFile && it.extension.equals("pkg", ignoreCase = true) }
+                ?.filter { pkg ->
+                    pkg.nameWithoutExtension == dlcId || pkgDlcContentKey(pkg)?.let { it in keys } == true
+                }
+                ?.forEach { pkg ->
+                    val size = pkg.length()
+                    val ok = pkg.delete()
+                    File(pkg.parentFile, "${pkg.nameWithoutExtension}.work.bin").delete()
+                    if (ok) {
+                        deletedStoredPkg = true
+                        LauncherLog.append(context, "delete", "DLC .pkg $dlcId borrado de $titleId ($size bytes, ${pkg.path})")
+                    } else {
+                        failed = true
+                        LauncherLog.append(context, "delete", "DLC .pkg $dlcId NO se pudo borrar de $titleId (${pkg.path})")
+                    }
+                }
+        }
+        return DlcDeleteResult(deletedStoredPkg, deletedExtracted, failed)
     }
 
     /** Borra solo los saves (ux0/user/00/savedata/<TITLE>/), sin tocar juego/DLCs. */
-    fun deleteSavesOnly(titleId: String): Boolean {
-        val dir = saveDir(titleId)
-        if (!dir.exists()) return false
-        // M16: igual que deleteDlc, el resultado real del borrado.
-        val ok = dir.deleteRecursively()
-        if (ok) LauncherLog.append(context, "delete", "Saves borrados de $titleId")
-        return ok
+    fun deleteSavesOnly(titleId: String): SavesDeleteResult {
+        // P1-5: igual que deleteDlc, los saves podían quedar en el ux0
+        // antiguo tras la migración. Se borran en AMBOS ux0; el
+        // resultado distingue "no había saves" de "no se pudo borrar".
+        var deleted = false
+        var failed = false
+        for (ux0 in ux0Dirs()) {
+            val dir = File(ux0, "user/00/savedata/$titleId")
+            if (dir.exists()) {
+                if (dir.deleteRecursively()) {
+                    deleted = true
+                    LauncherLog.append(context, "delete", "Saves borrados de $titleId (${dir.path})")
+                } else {
+                    failed = true
+                    LauncherLog.append(context, "delete", "Saves NO se pudieron borrar de $titleId (${dir.path})")
+                }
+            }
+        }
+        return SavesDeleteResult(deleted, failed)
     }
 
     // ------------------------------------------------------------------
