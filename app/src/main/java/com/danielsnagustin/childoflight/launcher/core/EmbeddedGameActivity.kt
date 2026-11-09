@@ -6,6 +6,7 @@ import android.hardware.input.InputManager
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.view.KeyEvent
 import android.view.Surface
 import android.view.View
 import android.view.ViewGroup
@@ -503,6 +504,11 @@ class EmbeddedGameActivity : SDLActivity() {
      * Firma exacta exigida por main_android.cpp: (Ljava/lang/String;)V.
      */
     fun setCurrentGameId(gameId: String?) {
+        // Diagnóstico de pantalla negra (2026-11-08): si esta línea
+        // no aparece en el log, el núcleo nunca llegó a arrancar el
+        // juego (atascado en init/carga); si aparece y la pantalla
+        // sigue negra, el juego arrancó pero el render no presenta.
+        LauncherLog.append(this, "launch", "Núcleo confirmó juego en curso: ${gameId.orEmpty()} (on_launch)")
         runOnUiThread {
             currentTitleId = gameId.orEmpty()
             // R2-P2-29: el núcleo confirma aquí que el juego está en
@@ -551,7 +557,22 @@ class EmbeddedGameActivity : SDLActivity() {
      * juego ni lo deja en segundo plano). SDLActivity por defecto
      * cerraría la Activity; el juego se pausa por fondo mientras el
      * menú está abierto y se reanuda al elegir Continuar.
+     *
+     * NO basta con onBackPressed: la superficie SDL consume la tecla
+     * BACK (SDLActivity.handleKeyEvent devuelve true y la manda al
+     * núcleo como tecla) y onBackPressed nunca llega a correr; por
+     * eso atrás "no funcionaba" y había que salir con Inicio
+     * (2026-11-08). Se intercepta aquí, antes de que SDL la vea,
+     * solo en ACTION_UP (un solo menú por pulsación).
      */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
+            openPauseMenu()
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
         openPauseMenu()
