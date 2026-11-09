@@ -97,6 +97,9 @@ class GpuProfileTest {
         assertEquals(false, s.highAccuracy)
         assertEquals("SDL", s.audioBackend.name)
         assertEquals(true, s.safeMode)
+        // P2-14: el modo seguro apaga fps-hack (con 60 FPS ON el
+        // config.yml emitía fps-hack: true + v-sync: false).
+        assertEquals(false, s.fpsHack)
     }
 
     // --- Compatibilidad por GPU (auditoría 2026-11-07) ---

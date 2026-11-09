@@ -101,22 +101,38 @@ internal fun isBenchmarkPendingStale(startedAtMillis: Long, nowMillis: Long = Sy
  * restauración parte de los ajustes ACTUALES y solo revierte los campos
  * que el mecanismo sobrescribe; los 5 campos y el resto de cambios
  * sobreviven. Pura (JVM): SafeModeSnapshotRestoreTest.
+ *
+ * P2-15: de los campos que el mecanismo sobrescribe, solo se revierten
+ * los que el usuario NO tocó durante el modo seguro. Los valores forzados
+ * son constantes: si el valor actual difiere del forzado, el usuario lo
+ * cambió mientras el modo seguro estaba activo y se conserva; si sigue
+ * siendo el forzado, se restaura el valor anterior (snapshot). Sin esto,
+ * el mensaje "los cambios hechos mientras estaba activado se conservan"
+ * mentía para esos campos.
  */
-internal fun restoreSafeModeSnapshot(snapshot: LauncherSettings, current: LauncherSettings): LauncherSettings =
-    current.copy(
+internal fun restoreSafeModeSnapshot(snapshot: LauncherSettings, current: LauncherSettings): LauncherSettings {
+    val forced = applySafeMode(snapshot)
+    fun <T> keepIfTouched(currentValue: T, forcedValue: T, snapshotValue: T): T =
+        if (currentValue != forcedValue) currentValue else snapshotValue
+    return current.copy(
         safeMode = false,
         // Solo los campos que applySafeMode sobrescribe (model/LauncherSettings.kt).
-        resolutionMultiplier = snapshot.resolutionMultiplier,
-        screenFilter = snapshot.screenFilter,
-        anisotropicFiltering = snapshot.anisotropicFiltering,
-        vSync = snapshot.vSync,
-        asyncPipelineCompilation = snapshot.asyncPipelineCompilation,
-        highAccuracy = snapshot.highAccuracy,
-        surfaceSyncEnabled = snapshot.surfaceSyncEnabled,
-        audioBackend = snapshot.audioBackend,
-        ngsEnable = snapshot.ngsEnable,
-        shaderCache = snapshot.shaderCache,
+        resolutionMultiplier = keepIfTouched(current.resolutionMultiplier, forced.resolutionMultiplier, snapshot.resolutionMultiplier),
+        screenFilter = keepIfTouched(current.screenFilter, forced.screenFilter, snapshot.screenFilter),
+        anisotropicFiltering = keepIfTouched(current.anisotropicFiltering, forced.anisotropicFiltering, snapshot.anisotropicFiltering),
+        vSync = keepIfTouched(current.vSync, forced.vSync, snapshot.vSync),
+        asyncPipelineCompilation = keepIfTouched(current.asyncPipelineCompilation, forced.asyncPipelineCompilation, snapshot.asyncPipelineCompilation),
+        highAccuracy = keepIfTouched(current.highAccuracy, forced.highAccuracy, snapshot.highAccuracy),
+        surfaceSyncEnabled = keepIfTouched(current.surfaceSyncEnabled, forced.surfaceSyncEnabled, snapshot.surfaceSyncEnabled),
+        audioBackend = keepIfTouched(current.audioBackend, forced.audioBackend, snapshot.audioBackend),
+        ngsEnable = keepIfTouched(current.ngsEnable, forced.ngsEnable, snapshot.ngsEnable),
+        shaderCache = keepIfTouched(current.shaderCache, forced.shaderCache, snapshot.shaderCache),
+        // P2-14: el modo seguro también apaga fps-hack; al salir, vuelve
+        // el valor anterior (salvo que el usuario lo encendiera durante
+        // el modo seguro, que se conserva).
+        fpsHack = keepIfTouched(current.fpsHack, forced.fpsHack, snapshot.fpsHack),
     )
+}
 
 /**
  * R2-P1-09 (misma lógica para "Corregir audio" → Deshacer): solo se

@@ -89,10 +89,28 @@ class SafeModeSnapshotRestoreTest {
         // Los cambios en campos que el modo seguro NO toca se conservan.
         assertTrue(restored.fpsHack)
         assertTrue(restored.showFpsOverlay)
-        // Solo se revierten los campos que el modo seguro sobrescribe.
-        assertEquals(2f, restored.resolutionMultiplier, 0.001f)
+        // P2-15: un cambio hecho DURANTE el modo seguro en un campo que
+        // el modo seguro sí toca también se conserva (antes se revertía
+        // al snapshot y el mensaje "se conservan" mentía): la resolución
+        // a 3x sobrevive porque 3x != el forzado 1x.
+        assertEquals(3f, restored.resolutionMultiplier, 0.001f)
+        // Los campos tocados por el modo seguro que el usuario NO tocó
+        // vuelven a su valor anterior (siguen siendo el forzado).
         assertTrue(restored.vSync)
         assertTrue(restored.highAccuracy)
+    }
+
+    @Test
+    fun safeModeRestoreRestoresFpsHackWhenUntouched() {
+        // P2-14: el modo seguro apaga fps-hack; al salir, si el usuario
+        // no lo tocó durante el modo seguro, vuelve el valor anterior.
+        val before = LauncherSettings(fpsHack = true, vSync = true)
+        val snapshot = snapshotViaFile(before)
+        val current = applySafeMode(before)
+        assertFalse(current.fpsHack)
+        val restored = restoreSafeModeSnapshot(snapshot, current)
+        assertTrue(restored.fpsHack)
+        assertTrue(restored.vSync)
     }
 
     @Test

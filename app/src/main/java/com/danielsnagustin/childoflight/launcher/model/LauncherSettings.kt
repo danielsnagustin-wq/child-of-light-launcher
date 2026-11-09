@@ -439,7 +439,9 @@ fun shouldAutoRevertTo1x(fpsAvg: Float?, profile: GpuProfileId, autoRevertEnable
 /**
  * Modo seguro: valores forzados cuando algo falla.
  * 1x, SDL, High Accuracy OFF, Async ON, shader cache ON,
- * Surface Sync Disabled.
+ * Surface Sync Disabled, fps-hack OFF (P2-14: con 60 FPS ON el
+ * config.yml emitía fps-hack: true + v-sync: false y el "modo
+ * seguro" no era seguro).
  */
 fun applySafeMode(settings: LauncherSettings): LauncherSettings = settings.copy(
     safeMode = true,
@@ -453,6 +455,7 @@ fun applySafeMode(settings: LauncherSettings): LauncherSettings = settings.copy(
     audioBackend = AudioBackend.SDL,
     ngsEnable = true,
     shaderCache = true,
+    fpsHack = false,
 )
 
 /**
