@@ -163,7 +163,21 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeCopyL
     if (licensePath == nullptr) {
         return JNI_FALSE;
     }
-    const jboolean ok = Java_org_vita3k_emulator_NativeLib_copyLicense(env, nullptr, licensePath);
+    // P2-32 (igual que installPkg, P4): copyLicense escribe el .rif
+    // en ux0/license; una excepción C++ sin capturar cruzando JNI
+    // aborta el proceso; se captura y se devuelve false.
+    jboolean ok = JNI_FALSE;
+    try {
+        ok = Java_org_vita3k_emulator_NativeLib_copyLicense(env, nullptr, licensePath);
+    } catch (const std::exception &e) {
+        LOGE("nativeCopyLicense: excepción C++ capturada: %s", e.what());
+        launcher_clear_pending_exception(env);
+        return JNI_FALSE;
+    } catch (...) {
+        LOGE("nativeCopyLicense: excepción C++ desconocida capturada");
+        launcher_clear_pending_exception(env);
+        return JNI_FALSE;
+    }
     if (launcher_clear_pending_exception(env)) {
         return JNI_FALSE;
     }
@@ -181,7 +195,21 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeCreat
     if (zrif == nullptr) {
         return JNI_FALSE;
     }
-    const jboolean ok = Java_org_vita3k_emulator_NativeLib_createLicense(env, nullptr, zrif);
+    // P2-32 (igual que installPkg, P4): createLicense escribe el
+    // .rif; una excepción C++ sin capturar cruzando JNI aborta el
+    // proceso; se captura y se devuelve false.
+    jboolean ok = JNI_FALSE;
+    try {
+        ok = Java_org_vita3k_emulator_NativeLib_createLicense(env, nullptr, zrif);
+    } catch (const std::exception &e) {
+        LOGE("nativeCreateLicense: excepción C++ capturada: %s", e.what());
+        launcher_clear_pending_exception(env);
+        return JNI_FALSE;
+    } catch (...) {
+        LOGE("nativeCreateLicense: excepción C++ desconocida capturada");
+        launcher_clear_pending_exception(env);
+        return JNI_FALSE;
+    }
     if (launcher_clear_pending_exception(env)) {
         return JNI_FALSE;
     }
@@ -199,8 +227,22 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeFindP
     if (pkgPath == nullptr) {
         return launcher_new_empty_string(env);
     }
-    return launcher_empty_string_or_null(
-        env, Java_org_vita3k_emulator_NativeLib_findPkgZrif(env, nullptr, pkgPath));
+    // P2-32 (igual que installPkg, P4): findPkgZrif lee la cabecera
+    // del .pkg; una excepción C++ sin capturar cruzando JNI aborta el
+    // proceso; se captura y se devuelve "" (fallo controlado).
+    jstring result = nullptr;
+    try {
+        result = Java_org_vita3k_emulator_NativeLib_findPkgZrif(env, nullptr, pkgPath);
+    } catch (const std::exception &e) {
+        LOGE("nativeFindPkgZrif: excepción C++ capturada: %s", e.what());
+        launcher_clear_pending_exception(env);
+        return launcher_new_empty_string(env);
+    } catch (...) {
+        LOGE("nativeFindPkgZrif: excepción C++ desconocida capturada");
+        launcher_clear_pending_exception(env);
+        return launcher_new_empty_string(env);
+    }
+    return launcher_empty_string_or_null(env, result);
 #else
     LOGW("nativeFindPkgZrif STUB: núcleo no embebido");
     return launcher_new_empty_string(env);
@@ -214,8 +256,22 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeConve
     if (licensePath == nullptr) {
         return launcher_new_empty_string(env);
     }
-    return launcher_empty_string_or_null(
-        env, Java_org_vita3k_emulator_NativeLib_convertRifToZrif(env, nullptr, licensePath));
+    // P2-32 (igual que installPkg, P4): convertRifToZrif lee el .rif
+    // y hace criptografía; una excepción C++ sin capturar cruzando JNI
+    // aborta el proceso; se captura y se devuelve "" (fallo controlado).
+    jstring result = nullptr;
+    try {
+        result = Java_org_vita3k_emulator_NativeLib_convertRifToZrif(env, nullptr, licensePath);
+    } catch (const std::exception &e) {
+        LOGE("nativeConvertRifToZrif: excepción C++ capturada: %s", e.what());
+        launcher_clear_pending_exception(env);
+        return launcher_new_empty_string(env);
+    } catch (...) {
+        LOGE("nativeConvertRifToZrif: excepción C++ desconocida capturada");
+        launcher_clear_pending_exception(env);
+        return launcher_new_empty_string(env);
+    }
+    return launcher_empty_string_or_null(env, result);
 #else
     LOGW("nativeConvertRifToZrif STUB: núcleo no embebido");
     return launcher_new_empty_string(env);

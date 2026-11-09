@@ -14,6 +14,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,6 +36,8 @@ import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
  * - Driver Turnip instalado pero sin usar (driver actual = Sistema).
  * - .pkg de juego guardado cuyo juego ya está extraído (copia
  *   redundante: el juego ocupa el doble, .pkg + extraído).
+ * - Respaldos .bak huérfanos (destino existe: la instalación
+ *   completó y el respaldo quedó atrás; se muestran con su tamaño).
  * - DLCs instalados (borra de ux0/addcont/<TITLE>/<DLC>/).
  * - Saves (borra solo los saves, sin tocar juego/DLCs).
  * El borrado en lote pide confirmación y dice exactamente qué borra.
@@ -70,6 +73,14 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     }
     val turnipUnused = settings?.turnipInstalled == true &&
         settings?.gpuDriver?.name == "SYSTEM"
+    // P2-31: respaldos .bak huérfanos (destino existe). Se revisan al
+    // entrar en la pantalla; null = aún revisando. Delegated property:
+    // los valores derivados se calculan con ?.let (no smart-cast).
+    val orphanBak by vm.orphanBackupsFlow.collectAsState(initial = null)
+    val orphanCount = orphanBak?.first ?: 0
+    val orphanBytes = orphanBak?.second ?: 0L
+    var showDeleteOrphanBakConfirm by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) { vm.refreshOrphanBackups() }
 
     Box(
         modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
@@ -133,6 +144,24 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         }
         NoteText("Solo se borra el .pkg. La licencia (work.bin) no se borra y el juego extraído no se toca.")
 
+        // P2-31: respaldos .bak huérfanos: la instalación completó y
+        // el respaldo viejo quedó atrás ocupando espacio (pueden ser
+        // GBs). Solo se borran con confirmación; un .bak cuyo destino
+        // falta no es huérfano y nunca aparece aquí.
+        SectionTitle("Respaldos .bak huérfanos")
+        if (orphanBak == null) Text("Revisando…")
+        else if (orphanCount == 0) Text("Ninguno: no hay respaldos .bak de instalaciones que ya completaron.")
+        else {
+            Text(
+                "Hay $orphanCount respaldo(s) .bak de instalaciones que ya completaron (${DownloadsCleanup.formatBytes(orphanBytes)}): el juego o DLC nuevo ya está en su sitio y el respaldo viejo solo ocupa espacio.",
+                fontWeight = FontWeight.SemiBold,
+            )
+            OutlinedButton(onClick = { showDeleteOrphanBakConfirm = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("🗑 Borrar respaldos .bak (${DownloadsCleanup.formatBytes(orphanBytes)})")
+            }
+        }
+        NoteText("Solo se borran respaldos cuyo juego o DLC ya está instalado en su sitio. Un .bak cuyo destino falta NO se toca: es el único respaldo del juego anterior y se restaura solo si hace falta.")
+
         SectionTitle("DLCs instalados (${status.dlcCount})")
         if (status.dlcs.isEmpty()) Text("Ninguno.")
         status.dlcs.forEach { dlc ->
@@ -181,6 +210,22 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 }) { Text("Borrar todo") }
             },
             dismissButton = { TextButton(onClick = { showBatchConfirm = false }) { Text("Cancelar") } },
+        )
+    }
+    if (showDeleteOrphanBakConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteOrphanBakConfirm = false },
+            title = { Text("¿Borrar los respaldos .bak huérfanos?") },
+            text = {
+                Text(
+                    "Se borrarán $orphanCount respaldo(s) (${DownloadsCleanup.formatBytes(orphanBytes)}). " +
+                        "El juego y los DLCs instalados no se tocan.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { vm.deleteOrphanBackups(); showDeleteOrphanBakConfirm = false }) { Text("Borrar") }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteOrphanBakConfirm = false }) { Text("Cancelar") } },
         )
     }
     deleteControlTarget?.let { controlId ->

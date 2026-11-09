@@ -510,6 +510,10 @@ class GameLibraryRepository(private val context: Context) {
      * en [scanStatus]); un .bak-* cuyo destino ya existe se deja en
      * disco: ocupa espacio, pero borrarlo sería borrar un respaldo
      * cuya copia nueva no se ha verificado como completa.
+     * P2-31: el borrado de esos .bak-* huérfanos (destino existe) es
+     * una acción EXPLÍCITA del usuario en "Limpiar no usados"
+     * ([deleteOrphanBackups], con su tamaño visible antes de
+     * confirmar); aquí, en la limpieza silenciosa, siguen sin tocarse.
      */
     private fun cleanStaleImportLeftovers() {
         runCatching {
@@ -549,6 +553,76 @@ class GameLibraryRepository(private val context: Context) {
                     ?.forEach { restoreBackupsIn(it) }
             }
         }
+    }
+
+    /**
+     * P2-31: .bak-* HUÉRFANOS: su destino ORIGINAL existe (la
+     * instalación completó y el respaldo quedó atrás porque el borrado
+     * del respaldo falló, o la app murió entre la copia y el borrado).
+     * [restoreStaleBackups] nunca los toca (solo restaura cuando el
+     * destino FALTA), así que solo ocupan espacio — pueden ser GBs.
+     * NO se borran solos al arrancar: el borrado es una acción
+     * explícita del usuario en "Limpiar no usados", con el tamaño
+     * visible antes de confirmar. Un .bak-* cuyo destino falta NO es
+     * huérfano (es el único respaldo del juego anterior) y no se toca.
+     * Devuelve (cantidad, bytes totales).
+     */
+    fun findOrphanBackups(): Pair<Int, Long> {
+        val orphans = scanOrphanBackups()
+        return orphans.size to orphans.sumOf { dirSizeBytes(it) }
+    }
+
+    /** Borra los .bak-* huérfanos ([findOrphanBackups]) y devuelve (cantidad borrada, bytes liberados). */
+    fun deleteOrphanBackups(): Pair<Int, Long> {
+        var count = 0
+        var freed = 0L
+        for (bak in scanOrphanBackups()) {
+            val bytes = dirSizeBytes(bak)
+            bak.deleteRecursively()
+            if (!bak.exists()) {
+                count++
+                freed += bytes
+            }
+        }
+        if (count > 0) {
+            LauncherLog.append(context, "delete", "Respaldos .bak huérfanos borrados: $count (${DownloadsCleanup.formatBytes(freed)} liberados).")
+        }
+        return count to freed
+    }
+
+    /** Todos los .bak-* huérfanos en ambos ux0 (padres + addcont/<título>/). */
+    private fun scanOrphanBackups(): List<File> {
+        val found = mutableListOf<File>()
+        for (ux0 in bothUx0Dirs()) {
+            val parents = mutableListOf(
+                File(ux0, "pkg"),
+                File(ux0, "pkg/dlc"),
+                File(ux0, "pkg/patch"),
+                File(ux0, "app"),
+                File(ux0, "patch"),
+            )
+            File(ux0, "addcont").listFiles()
+                ?.filter { it.isDirectory }
+                ?.forEach { parents.add(it) }
+            parents.forEach { found.addAll(orphanBackupsIn(it)) }
+        }
+        return found
+    }
+
+    /** .bak-* de un directorio cuyo destino original EXISTE (huérfanos). */
+    private fun orphanBackupsIn(dir: File): List<File> {
+        return dir.listFiles()?.filter { f ->
+            ".bak-" in f.name && run {
+                val originalName = f.name.substringBefore(".bak-")
+                originalName.isNotBlank() && originalName != f.name && File(dir, originalName).exists()
+            }
+        } ?: emptyList()
+    }
+
+    /** Tamaño en bytes de un archivo o directorio (recursivo). */
+    private fun dirSizeBytes(file: File): Long {
+        if (file.isFile) return file.length()
+        return file.walkTopDown().filter { it.isFile }.sumOf { it.length() }
     }
 
     private fun restoreBackupsIn(dir: File) {
@@ -1840,6 +1914,10 @@ class GameLibraryRepository(private val context: Context) {
                     File(ux0, "patch/${target.id}") to "update$suffix",
                     File(ux0, "addcont/${target.id}") to "DLCs$suffix",
                     File(ux0, "user/00/savedata/${target.id}") to "saves$suffix",
+                    // P2-30: los trofeos también son datos del juego:
+                    // sin esto, borrar el juego dejaba el TROPHY.TRP
+                    // y los trofeos ganados en ux0/user/00/trophy/.
+                    File(ux0, "user/00/trophy/${target.id}") to "trofeos$suffix",
                 ).forEach { (dir, label) ->
                     if (dir.exists()) {
                         dir.deleteRecursively()
@@ -1860,6 +1938,14 @@ class GameLibraryRepository(private val context: Context) {
                     }
                 }
                 if (pkgDeleted && "paquete .pkg$suffix" !in deleted) deleted.add("paquete .pkg$suffix")
+                // P2-30: los .bak-* hermanos de este título: si quedan,
+                // el próximo escaneo los restaura (su destino ya no
+                // existe) y el juego "resucita". Se borran aquí porque
+                // este es el borrado total explícito del usuario, no una
+                // limpieza silenciosa (P0-2).
+                if (deleteTitleBackups(ux0, target.id) && "respaldos .bak$suffix" !in deleted) {
+                    deleted.add("respaldos .bak$suffix")
+                }
             }
         }
         // DLCs en .pkg: se borra la carpeta entera en ambos ux0.
@@ -1884,8 +1970,53 @@ class GameLibraryRepository(private val context: Context) {
                 File(ux0, "patch/$titleId").exists() ||
                 File(ux0, "addcont/$titleId").exists() ||
                 File(ux0, "user/00/savedata/$titleId").exists() ||
-                File(File(ux0, "pkg"), "$titleId.pkg").isFile
+                // P2-30: los trofeos y los .bak-* hermanos también son
+                // datos del título: si solo quedaran ellos, el título
+                // seguiría contando como objetivo del borrado total.
+                File(ux0, "user/00/trophy/$titleId").exists() ||
+                File(File(ux0, "pkg"), "$titleId.pkg").isFile ||
+                hasTitleBackups(ux0, titleId)
         }
+
+    /**
+     * Borra los respaldos .bak-* hermanos de los datos de un título
+     * (app/<T>.bak-*, patch/<T>.bak-*, pkg/<T>.pkg.bak-*,
+     * pkg/<T>.work.bin.bak-*, pkg/patch/<T>.pkg.bak-*,
+     * pkg/patch/<T>.work.bin.bak-*). Los .bak-* DENTRO de addcont/<T>/
+     * y de pkg/dlc/ no se listan: mueren con el borrado recursivo de
+     * esos directorios. Devuelve true si borró al menos uno.
+     */
+    private fun deleteTitleBackups(ux0: File, titleId: String): Boolean {
+        var deletedAny = false
+        val parents = listOf(
+            File(ux0, "app") to listOf("$titleId.bak-"),
+            File(ux0, "patch") to listOf("$titleId.bak-"),
+            File(ux0, "pkg") to listOf("$titleId.pkg.bak-", "$titleId.work.bin.bak-"),
+            File(ux0, "pkg/patch") to listOf("$titleId.pkg.bak-", "$titleId.work.bin.bak-"),
+        )
+        for ((parent, prefixes) in parents) {
+            parent.listFiles()?.forEach { f ->
+                if (prefixes.any { f.name.startsWith(it) }) {
+                    f.deleteRecursively()
+                    deletedAny = true
+                }
+            }
+        }
+        return deletedAny
+    }
+
+    /** ¿Queda algún .bak-* hermano de los datos de este título? */
+    private fun hasTitleBackups(ux0: File, titleId: String): Boolean {
+        val parents = listOf(
+            File(ux0, "app") to listOf("$titleId.bak-"),
+            File(ux0, "patch") to listOf("$titleId.bak-"),
+            File(ux0, "pkg") to listOf("$titleId.pkg.bak-", "$titleId.work.bin.bak-"),
+            File(ux0, "pkg/patch") to listOf("$titleId.pkg.bak-", "$titleId.work.bin.bak-"),
+        )
+        return parents.any { (parent, prefixes) ->
+            parent.listFiles()?.any { f -> prefixes.any { f.name.startsWith(it) } } == true
+        }
+    }
 
     /**
      * Borra el .pkg de juego GUARDADO (ux0/pkg/<TITLE>.pkg) cuando el

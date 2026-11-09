@@ -344,6 +344,35 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    // P2-31: respaldos .bak huérfanos (su destino existe: la
+    // instalación completó y el respaldo quedó atrás). Se muestran con
+    // su tamaño en "Limpiar no usados" y se borran solo con
+    // confirmación del usuario; un .bak cuyo destino falta no es
+    // huérfano y nunca aparece aquí.
+    private val _orphanBackups = MutableStateFlow<Pair<Int, Long>?>(null)
+    val orphanBackupsFlow: StateFlow<Pair<Int, Long>?> = _orphanBackups.asStateFlow()
+
+    fun refreshOrphanBackups() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _orphanBackups.value = runCatching { library.findOrphanBackups() }.getOrNull()
+        }
+    }
+
+    fun deleteOrphanBackups() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching { library.deleteOrphanBackups() }.getOrNull()
+            refreshOrphanBackups()
+            refreshStatus()
+            withContext(Dispatchers.Main) {
+                _message.value = when {
+                    result == null -> "No se pudieron revisar los respaldos .bak."
+                    result.first == 0 -> "No había respaldos .bak huérfanos."
+                    else -> "Respaldos .bak borrados: ${result.first} (${DownloadsCleanup.formatBytes(result.second)} liberados). El juego y los DLCs instalados no se tocaron."
+                }
+            }
+        }
+    }
+
     private val _status = MutableStateFlow(GameStatus())
     val status: StateFlow<GameStatus> = _status.asStateFlow()
 
