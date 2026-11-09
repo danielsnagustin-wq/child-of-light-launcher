@@ -265,10 +265,10 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             item {
                 SectionTitle("Firmware")
                 PremiumCard {
-                    when (firmwareStatus) {
+                    when (val firmware = firmwareStatus) {
                         is FirmwareStatus.Ready -> {
                             Text(
-                                "✓ ${FirmwareResolver.label(firmwareStatus)}",
+                                "✓ ${FirmwareResolver.label(firmware)}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color.White,
@@ -278,7 +278,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             // anterior que falló): antes quedaba escondido
                             // detrás del "Instalado", sin botón. Se muestra
                             // como pendiente con su botón de instalar.
-                            if (firmwareStatus.savedPupPending) {
+                            if (firmware.savedPupPending) {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
                                     "Hay un PSVUPDAT.PUP guardado pendiente de instalar: puede ser otra versión que la instalada, o una instalación anterior que falló.",
@@ -305,7 +305,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                         }
                         is FirmwareStatus.Saved -> {
                             Text(
-                                "✓ ${FirmwareResolver.label(firmwareStatus)}",
+                                "✓ ${FirmwareResolver.label(firmware)}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color.White,
