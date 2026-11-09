@@ -19,7 +19,11 @@ private val ERROR_WORDS = listOf("fatal", "[e]", "error", "exception", "failed",
 
 // Marco de stack Java/Kotlin ("at com.foo.Bar.metodo(Archivo.kt:12)"):
 // un crash deja decenas seguidos y son una sola entrada de error, no N.
-private val STACK_FRAME = Regex("\\bat [\\w.$]+\\(")
+// \S+ y no [\w.$]+: en JDK 17+ los marcos llevan prefijo de módulo
+// ("at java.base/java.lang.Thread.run(...)") y con [\w.$]+ esos no
+// casaban, la cola de 8 quedaba llena de marcos y la cabecera con
+// "crash" se perdía (test CrashDiagnosticsTest, run #82).
+private val STACK_FRAME = Regex("\\bat \\S+\\(")
 
 fun extractRecentErrorLines(logText: String, maxLines: Int = 8): List<String> {
     if (logText.isBlank()) return emptyList()
