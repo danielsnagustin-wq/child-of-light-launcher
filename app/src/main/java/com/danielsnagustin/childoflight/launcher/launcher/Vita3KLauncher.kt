@@ -526,7 +526,7 @@ class Vita3KLauncher(private val context: Context) {
                 // arrancaría aunque loadGame lo viera. Un eboot bien
                 // instalado es un SELF en disco (el núcleo lo descifra
                 // en memoria al cargarlo), así que SELF también vale
-                // (GameLibraryRepository.isEbootDecrypted). Si el .pkg
+                // (GameLibraryRepository.ebootValidation). Si el .pkg
                 // sigue guardado, se reinstala antes de validar, por
                 // el mismo camino que UseEmbeddedPkg.
                 val ebootCheck = library.ebootValidation(titleId)
