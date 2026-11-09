@@ -157,7 +157,9 @@ fun decodeSettingsBackup(
         showTouchOverlayInGame = boolValue(map["showTouchOverlayInGame"], current.showTouchOverlayInGame),
         touchOverlayOpacity = SettingsRepository.clampOverlayOpacity(floatValue(map["touchOverlayOpacity"], current.touchOverlayOpacity)),
         touchOverlayNeonGlow = boolValue(map["touchOverlayNeonGlow"], current.touchOverlayNeonGlow),
-        touchOverlayHiddenProfileIds = SettingsRepository.decodeHiddenProfiles(map["touchOverlayHiddenProfileIds"] ?: ""),
+        touchOverlayHiddenProfileIds = map["touchOverlayHiddenProfileIds"]?.let {
+            SettingsRepository.decodeHiddenProfiles(it)
+        } ?: current.touchOverlayHiddenProfileIds,
     )
     val ui = currentUi.copy(
         theme = enumValue(map["theme"], ThemeMode.entries.toTypedArray(), currentUi.theme),
@@ -165,8 +167,12 @@ fun decodeSettingsBackup(
         homeBackground = enumValue(map["homeBackground"], HomeBackground.entries.toTypedArray(), currentUi.homeBackground),
         textSize = enumValue(map["textSize"], TextSize.entries.toTypedArray(), currentUi.textSize),
         language = enumValue(map["language"], AppLanguage.entries.toTypedArray(), currentUi.language),
-        sectionOrder = UiPreferencesRepository.decodeSectionOrder(map["sectionOrder"]),
-        hiddenPresets = UiPreferencesRepository.decodeHiddenPresets(map["hiddenPresets"] ?: ""),
+        // P2-36: si la clave NO está en el backup, se conserva el valor
+        // actual en vez de resetear el campo (una clave ausente antes
+        // dejaba sectionOrder en el orden por defecto y hiddenPresets
+        // vacío, borrando la personalización del usuario al importar).
+        sectionOrder = map["sectionOrder"]?.let { UiPreferencesRepository.decodeSectionOrder(it) } ?: currentUi.sectionOrder,
+        hiddenPresets = map["hiddenPresets"]?.let { UiPreferencesRepository.decodeHiddenPresets(it) } ?: currentUi.hiddenPresets,
         cardSize = enumValue(map["cardSize"], CardSize.entries.toTypedArray(), currentUi.cardSize),
         cardTransparency = enumValue(map["cardTransparency"], CardTransparency.entries.toTypedArray(), currentUi.cardTransparency),
         iconSize = enumValue(map["iconSize"], IconSize.entries.toTypedArray(), currentUi.iconSize),

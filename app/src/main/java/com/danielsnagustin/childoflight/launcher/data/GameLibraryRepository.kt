@@ -1892,6 +1892,18 @@ class GameLibraryRepository(private val context: Context) {
         }
     }
 
+    /**
+     * P2-34: olvida los tamaños cacheados de [dir] y de sus hijos
+     * directos (tras un borrado, el tamaño guardado quedaría viejo:
+     * scanStatus leería el tamaño de antes de borrar). Se llama en
+     * los borrados de juego y DLC, que son los tamaños que scanStatus
+     * lee de la caché.
+     */
+    private fun invalidateDirSizes(dir: File) {
+        dirSizeCache.invalidate(dir)
+        dir.listFiles()?.filter { it.isDirectory }?.forEach { dirSizeCache.invalidate(it) }
+    }
+
     /** Borra juego + update + DLCs + saves del Title ID. Requiere confirmación en la UI. */
     fun deleteGameData(titleId: String): List<String> {
         val deleted = mutableListOf<String>()
@@ -1946,6 +1958,12 @@ class GameLibraryRepository(private val context: Context) {
                 if (deleteTitleBackups(ux0, target.id) && "respaldos .bak$suffix" !in deleted) {
                     deleted.add("respaldos .bak$suffix")
                 }
+                // P2-34: los tamaños cacheados de estos directorios ya
+                // no valen: si no se invalidan, el próximo scanStatus
+                // mostraría el tamaño de antes de borrar.
+                invalidateDirSizes(File(ux0, "app/${target.id}"))
+                invalidateDirSizes(File(ux0, "patch/${target.id}"))
+                invalidateDirSizes(File(ux0, "addcont/${target.id}"))
             }
         }
         // DLCs en .pkg: se borra la carpeta entera en ambos ux0.
@@ -2122,6 +2140,8 @@ class GameLibraryRepository(private val context: Context) {
                     val size = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
                     if (dir.deleteRecursively()) {
                         deletedExtracted = true
+                        // P2-34: el tamaño cacheado de este DLC ya no vale.
+                        dirSizeCache.invalidate(dir)
                         LauncherLog.append(context, "delete", "DLC $dlcId borrado de $titleId ($size bytes, ${dir.path})")
                     } else {
                         failed = true

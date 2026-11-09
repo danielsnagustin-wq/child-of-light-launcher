@@ -5,6 +5,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Log propio del launcher (no es el log de Vita3K).
@@ -88,7 +89,10 @@ object LauncherLog {
      * (CrashDiagnosticsTest): la primera línea contiene "crash" y
      * "exception" para que extractRecentErrorLines lo recoja en el
      * reporte de bug, y el resto es el stack trace completo con sus
-     * causas encadenadas.
+     * causas encadenadas. P2-38: cada causa trae también SU stack
+     * trace (antes solo su clase y mensaje) y las excepciones
+     * suprimidas (suppressed) se listan con el suyo: un crash con
+     * causa encadenada ya no pierde la mitad del informe.
      */
     fun formatCrashReport(thread: Thread, throwable: Throwable): String {
         return buildString {
@@ -97,13 +101,35 @@ object LauncherLog {
             var cause = throwable.cause
             while (cause != null) {
                 appendLine("FATAL: Causado por ${cause.javaClass.name}: ${cause.message}")
+                cause.stackTrace.forEach { frame ->
+                    appendLine("FATAL:     at $frame")
+                }
+                cause.suppressed.forEach { suppressed ->
+                    appendLine("FATAL: Suprimida en la causa: ${suppressed.javaClass.name}: ${suppressed.message}")
+                    suppressed.stackTrace.forEach { frame ->
+                        appendLine("FATAL:     at $frame")
+                    }
+                }
                 cause = cause.cause
             }
             throwable.stackTrace.forEach { frame ->
                 appendLine("FATAL:     at $frame")
             }
+            throwable.suppressed.forEach { suppressed ->
+                appendLine("FATAL: Suprimida: ${suppressed.javaClass.name}: ${suppressed.message}")
+                suppressed.stackTrace.forEach { frame ->
+                    appendLine("FATAL:     at $frame")
+                }
+            }
         }
     }
+
+    // P2-35: el handler se instala UNA sola vez por proceso. Cada
+    // recreación de la actividad (p. ej. rotar) volvía a envolver el
+    // handler anterior y en el siguiente crash el informe se escribía
+    // N veces en launcher.log. AtomicBoolean: la instalación es
+    // atómica aunque dos hilos la pidan a la vez.
+    private val crashHandlerInstalled = AtomicBoolean(false)
 
     /**
      * Instala el handler de excepciones no capturadas (P3): el crash
@@ -119,6 +145,7 @@ object LauncherLog {
      * el ViewModel.
      */
     fun installCrashHandler(context: Context) {
+        if (!crashHandlerInstalled.compareAndSet(false, true)) return
         val appContext = context.applicationContext
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->

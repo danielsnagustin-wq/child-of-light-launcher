@@ -6,6 +6,7 @@ import com.danielsnagustin.childoflight.launcher.model.AccentColor
 import com.danielsnagustin.childoflight.launcher.model.CardSize
 import com.danielsnagustin.childoflight.launcher.model.CardTransparency
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
+import com.danielsnagustin.childoflight.launcher.model.HomeSection
 import com.danielsnagustin.childoflight.launcher.model.IconSize
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.UiPreferences
@@ -40,6 +41,27 @@ class SettingsBackupTest {
         val decoded = decodeSettingsBackup(json, LauncherSettings(), UiPreferences()).getOrThrow()
         assertEquals(settings, decoded.first)
         assertEquals(ui, decoded.second)
+    }
+
+    @Test
+    fun missingListKeysKeepCurrentValues() {
+        // P2-36: una clave ausente en el backup conserva el valor
+        // actual en vez de resetear el campo (antes, importar un
+        // backup viejo sin estas claves borraba los perfiles ocultos,
+        // el orden de secciones y los presets ocultos del usuario).
+        val json = encodeSettingsBackup(LauncherSettings(), UiPreferences())
+            .replace(Regex("\"touchOverlayHiddenProfileIds\":\"[^\"]*\",?"), "")
+            .replace(Regex("\"sectionOrder\":\"[^\"]*\",?"), "")
+            .replace(Regex("\"hiddenPresets\":\"[^\"]*\",?"), "")
+        val currentSettings = LauncherSettings(touchOverlayHiddenProfileIds = setOf("perfil-x"))
+        val currentUi = UiPreferences(
+            sectionOrder = listOf(HomeSection.LOGROS_CARD, HomeSection.GAME_CARD),
+            hiddenPresets = setOf(GpuProfileId.G99_QUALITY),
+        )
+        val decoded = decodeSettingsBackup(json, currentSettings, currentUi).getOrThrow()
+        assertEquals(setOf("perfil-x"), decoded.first.touchOverlayHiddenProfileIds)
+        assertEquals(listOf(HomeSection.LOGROS_CARD, HomeSection.GAME_CARD), decoded.second.sectionOrder)
+        assertEquals(setOf(GpuProfileId.G99_QUALITY), decoded.second.hiddenPresets)
     }
 
     @Test

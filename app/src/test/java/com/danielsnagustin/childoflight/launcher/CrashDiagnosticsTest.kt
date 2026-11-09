@@ -48,6 +48,31 @@ class CrashDiagnosticsTest {
     }
 
     @Test
+    fun crashReportIncludesCauseStackTrace() {
+        // P2-38: la causa trae SU stack trace, no solo su clase y su
+        // mensaje: sin él, un crash con causa encadenada pierde la
+        // mitad del informe.
+        val cause = IllegalStateException("causa raíz")
+        cause.stackTrace = arrayOf(StackTraceElement("com.ejemplo.ClaseCausa", "metodoCausa", "ClaseCausa.kt", 42))
+        val throwable = RuntimeException("fallo exterior", cause)
+        val report = LauncherLog.formatCrashReport(Thread.currentThread(), throwable)
+        assertTrue(report.contains("Causado por java.lang.IllegalStateException: causa raíz"))
+        assertTrue(report.contains("com.ejemplo.ClaseCausa.metodoCausa"))
+    }
+
+    @Test
+    fun crashReportIncludesSuppressed() {
+        // P2-38: las excepciones suprimidas se listan con su stack trace.
+        val suppressed = IllegalArgumentException("suprimida de prueba")
+        suppressed.stackTrace = arrayOf(StackTraceElement("com.ejemplo.ClaseSuprimida", "metodoSuprimido", "ClaseSuprimida.kt", 7))
+        val throwable = RuntimeException("fallo exterior")
+        throwable.addSuppressed(suppressed)
+        val report = LauncherLog.formatCrashReport(Thread.currentThread(), throwable)
+        assertTrue(report.contains("Suprimida: java.lang.IllegalArgumentException: suprimida de prueba"))
+        assertTrue(report.contains("com.ejemplo.ClaseSuprimida.metodoSuprimido"))
+    }
+
+    @Test
     fun launchAttemptLineContainsDecisionState() {
         val line = formatLaunchAttempt("PCSB00598", corePresent = true, firmwareInstalled = true)
         assertTrue(line.contains("PCSB00598"))
