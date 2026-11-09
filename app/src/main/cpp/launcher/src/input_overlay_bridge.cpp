@@ -110,6 +110,28 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeOverl
 #endif
 }
 
+// Nº de gamepads que ve SDL (R4-P0-3, readback para el reporte de bug).
+// -1 = sin dato (SDL gamepad no iniciado o lista nula). Reutiliza el
+// mismo SDL_GetGamepads que overlay_is_attached().
+extern "C" JNIEXPORT jint JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeOverlayGamepadCount(
+    JNIEnv * /* env */, jobject /* thiz */) {
+#ifdef LAUNCHER_HAS_VITA3K
+    if (!SDL_WasInit(SDL_INIT_GAMEPAD)) {
+        return -1;
+    }
+    int count = 0;
+    SDL_JoystickID *ids = SDL_GetGamepads(&count);
+    if (ids == nullptr) {
+        return -1;
+    }
+    SDL_free(ids);
+    return count;
+#else
+    return -1;
+#endif
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeOverlaySetButton(
     JNIEnv *env, jobject /* thiz */, jint button, jboolean pressed) {
