@@ -122,6 +122,10 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     entry("Transparencia de tarjetas", "tarjetas transparencia opaco suave translucido", SettingsCategory.PERSONALIZATION),
     entry("Tamaño de iconos", "iconos tamaño pequeño mediano grande", SettingsCategory.PERSONALIZATION),
     entry("Aplicar personalización", "aplicar descartar cambios personalizacion guardar borrador", SettingsCategory.PERSONALIZATION),
+    // P2-21: el botón "Descartar cambios" existe en la pantalla y
+    // buscarlo solo encontraba "Aplicar personalización" (su entrada
+    // lleva "descartar" en las palabras clave). Entrada propia.
+    entry("Descartar cambios", "descartar cambios personalizacion deshacer borrador", SettingsCategory.PERSONALIZATION),
     entry("Restablecer esta categoría", "restablecer reset categoria valores preset", SettingsCategory.PERSONALIZATION),
     entry("Orden de secciones en la portada", "orden secciones portada home", SettingsCategory.PERSONALIZATION),
     entry("Restablecer personalización y editor táctil", "restablecer personalizacion editor tactil reset tema", SettingsCategory.PERSONALIZATION),
@@ -136,6 +140,10 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     entry("Surface Sync activado", "surface sync sincronizacion superficie rapido", SettingsCategory.GPU),
     entry("Memory Mapping", "memory mapping double buffer page table native external off", SettingsCategory.GPU),
     entry("Driver GPU", "driver gpu turnip sistema adreno mali", SettingsCategory.GPU),
+    // P2-21: el chip de la pantalla GPU se llama "Driver
+    // personalizado": buscarlo por ese nombre no encontraba nada
+    // (la entrada "Driver GPU" no lleva "personalizado").
+    entry("Driver personalizado", "driver personalizado turnip sistema", SettingsCategory.GPU),
     entry("Instalar Turnip", "turnip instalar cambiar zip driver mesa", SettingsCategory.GPU),
     entry("Restablecer esta categoría", "restablecer reset categoria valores preset", SettingsCategory.GPU),
     // --- CPU ---

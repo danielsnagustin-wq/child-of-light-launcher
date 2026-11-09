@@ -2553,7 +2553,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun resetCategory(category: SettingsCategory) {
         viewModelScope.launch {
             if (!categoryHasResettableSettings(category)) {
-                _message.value = "Almacenamiento no tiene ajustes que restablecer: son archivos (copias en Descargas, juego, DLCs), no ajustes."
+                _message.value = when (category) {
+                    SettingsCategory.STORAGE -> "Almacenamiento no tiene ajustes que restablecer: son archivos (copias en Descargas, juego, DLCs), no ajustes."
+                    else -> "General no tiene ajustes de preset que restablecer: la sesión PSN y la app externa son interruptores tuyos, no valores del preset."
+                }
                 return@launch
             }
             val current = settingsRepo.settingsFlow.first()

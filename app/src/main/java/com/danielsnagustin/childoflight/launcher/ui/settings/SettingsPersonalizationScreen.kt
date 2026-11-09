@@ -148,7 +148,7 @@ fun SettingsPersonalizationScreen(vm: LauncherViewModel, onBack: () -> Unit, onN
                 EnumChips("Idioma", AppLanguage.entries, ui.language, { it.label }) {
                     update { prefs -> prefs.copy(language = it) }
                 }
-                NoteText("Idioma ES/EN: traduce la portada, la navegación y los títulos de sección. Las notas técnicas permanecen en español.")
+                NoteText("Idioma ES/EN: traduce la portada y la pantalla de importación. Las notas técnicas permanecen en español.")
                 EnumChips("Tamaño de tarjetas", CardSize.entries, ui.cardSize, { it.label }) {
                     update { prefs -> prefs.copy(cardSize = it) }
                 }

@@ -124,7 +124,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             }
             if (g.isUserVerifiedDevice) {
                 Text("✓ Procesador verificado por el usuario: Child of Light va muy bien en este procesador.", color = ColAccent, fontWeight = FontWeight.Bold)
-                NoteText("Por eso el preset por defecto es G99 Recomendado (1x, Frame Skip 0): se optimiza para mantener esa fluidez estable, no para recortar de más.")
+                NoteText("Por eso el preset por defecto es G99 Recomendado (1x): se optimiza para mantener esa fluidez estable, no para recortar de más.")
             } else if (g.vendor.name == "MALI") {
                 NoteText("Mali: hay cosas que definitivamente no funcionan y es posible que nunca funcionen, pero el núcleo trae arreglos para Mali (vertex fix, Double Buffer mejorado) y Child of Light, al ser 2D UbiArt, es más ligero que un juego 3D: a 1x tiene más chance. No se prometen 60 fps en Mali.")
             } else if (g.vendor.name == "ADRENO") {

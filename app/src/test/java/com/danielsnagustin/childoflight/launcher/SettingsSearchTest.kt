@@ -119,4 +119,18 @@ class SettingsSearchTest {
         val results = searchSettings("configuracion efectiva")
         assertTrue(results.any { it.title == "Configuración efectiva" && it.category == SettingsCategory.DIAGNOSTICS })
     }
+
+    // P2-21: "Driver personalizado" y "Descartar cambios" existen
+    // en sus pantallas y el buscador no los encontraba por su nombre.
+    @Test
+    fun findsDriverPersonalizado() {
+        val results = searchSettings("driver personalizado")
+        assertTrue(results.any { it.title == "Driver personalizado" && it.category == SettingsCategory.GPU })
+    }
+
+    @Test
+    fun findsDescartarCambios() {
+        val results = searchSettings("descartar cambios")
+        assertTrue(results.any { it.title == "Descartar cambios" && it.category == SettingsCategory.PERSONALIZATION })
+    }
 }

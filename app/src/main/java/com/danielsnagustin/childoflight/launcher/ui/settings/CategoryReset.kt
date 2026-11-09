@@ -22,15 +22,20 @@ import com.danielsnagustin.childoflight.launcher.model.presetSettings
  * son archivos (PUP guardado / instalado en el núcleo) y el
  * almacenamiento son archivos (copias en Descargas, juego, DLCs). No
  * hay nada que restablecer ahí: ambas funciones devuelven los valores
- * tal cual y el ViewModel lo dice en el mensaje.
+ * tal cual y el ViewModel lo dice en el mensaje. Lo mismo vale para
+ * General (P2-18): los presets no definen ningún campo de General.
  */
 fun resetCategorySettings(current: LauncherSettings, category: SettingsCategory): LauncherSettings {
     val preset = presetSettings(current.activeProfile)
     return when (category) {
-        SettingsCategory.GENERAL -> current.copy(
-            allowExternalVita3k = preset.allowExternalVita3k,
-            psnSignedIn = preset.psnSignedIn,
-        )
+        // P2-18: General NO tiene campos de preset. psnSignedIn y
+        // allowExternalVita3k son interruptores del usuario y los
+        // presets no los definen (al construir el preset toman el
+        // default). Restablecer General los pisaba con el default:
+        // reactivaba la PSN simulada aunque el usuario la hubiera
+        // apagado. Se conserva todo: categoryHasResettableSettings
+        // (GENERAL) es false y el ViewModel lo dice en el mensaje.
+        SettingsCategory.GENERAL -> current
         SettingsCategory.PERSONALIZATION -> current
         SettingsCategory.GPU -> current.copy(
             backend = preset.backend,
@@ -103,7 +108,7 @@ fun resetCategoryUiPrefs(current: UiPreferences, category: SettingsCategory): Ui
 
 /** true si la categoría tiene algún campo de ajustes que restablecer. */
 fun categoryHasResettableSettings(category: SettingsCategory): Boolean =
-    category != SettingsCategory.STORAGE
+    category != SettingsCategory.STORAGE && category != SettingsCategory.GENERAL
 
 /**
  * P1-8 (2026-11-09): Turnip solo vale en Adreno con el driver

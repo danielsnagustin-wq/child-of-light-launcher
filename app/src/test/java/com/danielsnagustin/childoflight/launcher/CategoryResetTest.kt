@@ -92,10 +92,15 @@ class CategoryResetTest {
     }
 
     @Test
-    fun generalResetRestoresOnlyMotorSwitch() {
+    fun generalResetKeepsUserSwitches() {
+        // P2-18: General NO tiene campos de preset: restablecerlo
+        // conservaba los interruptores del usuario. Antes los pisaba
+        // con el default del preset: reactivaba la PSN simulada
+        // aunque el usuario la hubiera apagado, y apagaba la app
+        // externa aunque estuviera permitida.
         val reset = resetCategorySettings(changed, SettingsCategory.GENERAL)
-        assertFalse(reset.allowExternalVita3k)
-        assertTrue(reset.psnSignedIn)
+        assertTrue(reset.allowExternalVita3k)
+        assertFalse(reset.psnSignedIn)
         assertEquals(GpuProfileId.G99_RECOMMENDED, reset.activeProfile)
         assertEquals(4f, reset.resolutionMultiplier, 0.001f)
     }
@@ -117,6 +122,8 @@ class CategoryResetTest {
         // Ajustes (vive en Importar, con el juego y los DLCs), así que
         // ya no hay rama FIRMWARE que probar aquí.
         assertFalse(categoryHasResettableSettings(SettingsCategory.STORAGE))
+        // P2-18: General tampoco tiene campos de preset que restablecer.
+        assertFalse(categoryHasResettableSettings(SettingsCategory.GENERAL))
         assertEquals(changed, resetCategorySettings(changed, SettingsCategory.STORAGE))
         assertTrue(categoryHasResettableSettings(SettingsCategory.GPU))
         assertTrue(categoryHasResettableSettings(SettingsCategory.PERSONALIZATION))

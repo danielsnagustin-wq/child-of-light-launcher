@@ -22,18 +22,26 @@ import com.danielsnagustin.childoflight.launcher.model.presetSettings
  * aplicara, el guard de applyPreset ya corrige el driver a Sistema y
  * avisa. La nota estática ("Turnip no funciona en Mali") sigue
  * diciendo lo mismo para quien la lea.
+ *
+ * P2-16: cada nota dice la diferencia REAL del preset con G99
+ * Recomendado, calculada campo a campo desde [presetSettings]
+ * (ningún preset tiene cero diferencias, así que ninguno se fusiona:
+ * MALI_PERFORMANCE solo apaga la caché de texturas, MALI_BALANCED
+ * solo cambia el filtro a FSR, ADRENO_PERFORMANCE solo cambia el
+ * mapeo a Page Table, G99_QUALITY cambia 3 ajustes y
+ * ADRENO_QUALITY_TURNIP cambia 6).
  */
 fun presetCompatibilityNote(profile: GpuProfileId): String = when (profile) {
     GpuProfileId.G99_RECOMMENDED ->
         "Recomendado en Helio G99 / Mali-G57: 1x estable, Double Buffer, sin Turnip."
     GpuProfileId.G99_QUALITY ->
-        "2x con FSR en Mali: prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado."
+        "2x con FSR en Mali y HUD de FPS activado: las únicas diferencias con Recomendado son la resolución 2x, el filtro FSR y el HUD. Prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado."
     GpuProfileId.MALI_PERFORMANCE ->
-        "Mali genérico (no G99): 1x siempre, Double Buffer forzado, sin caché de texturas (libera RAM). Sin Turnip: el driver Turnip no funciona en Mali."
+        "Mali genérico (no G99): la única diferencia con Recomendado es la caché de texturas OFF (libera RAM). 1x siempre, Double Buffer forzado. Sin Turnip: el driver Turnip no funciona en Mali."
     GpuProfileId.MALI_BALANCED ->
-        "Mali genérico: 1x con FSR si el FPS es estable. Sin Turnip: el driver Turnip no funciona en Mali."
+        "Mali genérico: la única diferencia con Recomendado es el filtro FSR a 1x, si el FPS es estable. Sin Turnip: el driver Turnip no funciona en Mali."
     GpuProfileId.ADRENO_PERFORMANCE ->
-        "Solo Snapdragon / Adreno: en Mali se usa el perfil G99 / Mali. Sin Turnip."
+        "Solo Snapdragon / Adreno: la única diferencia con Recomendado es el mapeo de memoria Page Table (recomendado en Android para Adreno). En Mali se usa el perfil G99 / Mali. Sin Turnip."
     GpuProfileId.ADRENO_QUALITY_TURNIP ->
-        "Solo Snapdragon / Adreno: Turnip no funciona en Mali. Vulkan + Turnip a 2x."
+        "Solo Snapdragon / Adreno: Vulkan + Turnip a 2x. Difiere de Recomendado en 6 ajustes: resolución 2x, filtro FXAA, anisotrópico 4x, VSync ON, Page Table y driver Turnip. Turnip no funciona en Mali."
 }

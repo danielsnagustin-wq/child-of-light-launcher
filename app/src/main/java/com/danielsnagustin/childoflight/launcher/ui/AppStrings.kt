@@ -4,11 +4,13 @@ import com.danielsnagustin.childoflight.launcher.model.AppLanguage
 
 /**
  * Cadenas de la interfaz principal del launcher en español e inglés.
- * Alcance honesto: traduce la portada, la navegación y los títulos de
- * sección. Las descripciones técnicas de los ajustes de Vita3K
- * (nombres de claves, notas de compatibilidad) permanecen en español
- * en Etapa 1; la traducción completa de esas notas es trabajo de
- * Etapa 2. El idioma elegido se guarda en DataStore (UiPreferences).
+ * Alcance honesto (P2-19): traduce la portada (Inicio) y la pantalla
+ * de importación. La navegación y los títulos de sección de Ajustes
+ * NO se traducen: solo se usan aquí (HomeScreen e ImportScreen).
+ * Las descripciones técnicas de los ajustes de Vita3K (nombres de
+ * claves, notas de compatibilidad) permanecen en español en Etapa 1;
+ * la traducción completa de esas notas es trabajo de Etapa 2. El
+ * idioma elegido se guarda en DataStore (UiPreferences).
  */
 data class AppStrings(
     val appSubtitle: String,
