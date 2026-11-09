@@ -297,6 +297,34 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /**
+     * Borra el .pkg de juego guardado cuando el juego ya está
+     * extraído: el .pkg es una copia redundante (1,14 GB) y el juego
+     * que corre es el extraído, así que la app ocupaba el doble
+     * (2,54 GB de datos con un juego de 1,14 GB). NUNCA se borra si
+     * el juego no está extraído (sería la única copia). El work.bin
+     * (licencia, 512 B) se conserva y el juego extraído no se toca.
+     * Con confirmación en la UI (CleanupScreen).
+     */
+    fun deleteInstalledGamePkgs() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val status = _status.value
+            val extractedId = status.extractedTitleId?.id
+            val freed = if (extractedId != null && status.pkgTitleId?.id == extractedId) {
+                val size = status.pkgSizeBytes
+                if (runCatching { library.deleteStoredGamePkg(extractedId) }.getOrDefault(false)) size else 0L
+            } else 0L
+            refreshStatus()
+            withContext(Dispatchers.Main) {
+                _message.value = if (freed > 0) {
+                    "Se borró el .pkg guardado (${DownloadsCleanup.formatBytes(freed)} liberados). El juego sigue instalado y la licencia no se tocó."
+                } else {
+                    "No había ningún .pkg guardado que borrar."
+                }
+            }
+        }
+    }
+
     private val _status = MutableStateFlow(GameStatus())
     val status: StateFlow<GameStatus> = _status.asStateFlow()
 
@@ -390,6 +418,20 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     private val _generatedConfig = MutableStateFlow("")
     val generatedConfig: StateFlow<String> = _generatedConfig.asStateFlow()
+
+    // ORDEN DE INICIALIZACIÓN (crash real 2026-11-08, runs #80/#82/#84):
+    // en Kotlin los inicializadores y los bloques init se ejecutan EN
+    // EL ORDEN EN QUE APARECEN en la clase. El init lanza corrutinas
+    // que tocan estos flows; si un flow se declara DESPUÉS del init,
+    // la corrutina puede correr antes de que su inicializador se
+    // ejecute y el campo aún es null -> NullPointerException en
+    // setValue y la app muere al abrir. A veces abre y a veces no:
+    // es una carrera entre el hilo IO y el hilo principal terminando
+    // el constructor. _audioFixSnapshot vivía 400 líneas después del
+    // init: por eso el crash era intermitente. TODOS los flows que
+    // toca el init deben declararse ANTES del init.
+    private val _audioFixSnapshot = MutableStateFlow<LauncherSettings?>(null)
+    val audioFixSnapshot: StateFlow<LauncherSettings?> = _audioFixSnapshot.asStateFlow()
 
     init {
         refreshStatus()
@@ -791,10 +833,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * El destino de los ajustes es audioFixTarget (misma fuente que
      * el diálogo de confirmación). No reinicia el juego solo: hay
      * que volver a lanzar el juego.
+     *
+     * La declaración de _audioFixSnapshot está antes del init (ver
+     * arriba): el init lanza una corrutina que la toca y los
+     * inicializadores se ejecutan en orden de aparición.
      */
-    private val _audioFixSnapshot = MutableStateFlow<LauncherSettings?>(null)
-    val audioFixSnapshot: StateFlow<LauncherSettings?> = _audioFixSnapshot.asStateFlow()
-
     /**
      * Snapshots persistentes de ajustes (auditoría de funcionalidad
      * 2026-11-08): el mismo JSON que la copia de seguridad
@@ -2620,7 +2663,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         val raw = buildString {
             appendLine("=== Reporte de bug — Child of Light Launcher ===")
             appendLine("Fecha: ${java.util.Date()}")
-            appendLine("App: Child of Light Launcher v0.1.0")
+            val versionName = runCatching {
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName
+            }.getOrNull() ?: "0.2.4"
+            appendLine("App: Child of Light Launcher v$versionName")
             appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
             // Modelo: solo en el informe de diagnóstico y en Ajustes →
             // Diagnóstico (ver SettingsDiagnosticsScreen).

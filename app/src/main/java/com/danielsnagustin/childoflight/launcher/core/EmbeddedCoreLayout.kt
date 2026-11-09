@@ -74,9 +74,29 @@ object EmbeddedCoreLayout {
      * migración recoloca el juego al lanzar, cuando decide() sí se
      * alcanza.
      */
+    /**
+     * ¿Hay un juego EXTRAÍDO (app/<TITLE>/eboot.bin) en este ux0?
+     * Es la señal inequívoca de "aquí vive el juego": un .pkg
+     * guardado puede ser un resto, pero un eboot extraído es el juego.
+     */
+    private fun hasExtractedGame(ux0Dir: File): Boolean {
+        return File(ux0Dir, "app").listFiles()
+            ?.filter { it.isDirectory }
+            ?.any { appDir ->
+                appDir.listFiles()?.any { it.isFile && it.name.equals("eboot.bin", ignoreCase = true) } == true
+            } == true
+    }
+
     fun resolveUx0Dir(storageRoot: File): File {
         val embedded = embeddedUx0Dir(storageRoot)
         val legacy = legacyUx0Dir(storageRoot)
+        // El juego extraído manda: si el embebido lo tiene, es ahí
+        // donde vive (aunque el antiguo tenga restos que gameTitles
+        // cuente como títulos, p. ej. un .pkg suelto). Sin esto, el
+        // launcher miraba el ux0 antiguo vacío y el juego "no estaba
+        // instalado" aunque corriera (reporte 2026-11-08 19:46).
+        if (hasExtractedGame(embedded)) return embedded
+        if (hasExtractedGame(legacy)) return legacy
         if (embedded.isDirectory && legacy.isDirectory &&
             isEmptyDir(embedded) && !isEmptyDir(legacy)
         ) {

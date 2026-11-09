@@ -33,6 +33,8 @@ import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
  * - Presets de GPU que no son el activo (se OCULTAN de la lista, no se
  *   borra código: los presets son predefinidos; "Mostrar todos" los recupera).
  * - Driver Turnip instalado pero sin usar (driver actual = Sistema).
+ * - .pkg de juego guardado cuyo juego ya está extraído (copia
+ *   redundante: el juego ocupa el doble, .pkg + extraído).
  * - DLCs instalados (borra de ux0/addcont/<TITLE>/<DLC>/).
  * - Saves (borra solo los saves, sin tocar juego/DLCs).
  * El borrado en lote pide confirmación y dice exactamente qué borra.
@@ -59,6 +61,7 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     // accidental borraba el .zip instalado sin aviso (el borrado en lote
     // ya tenía su propio diálogo).
     var showDeleteTurnipConfirm by rememberSaveable { mutableStateOf(false) }
+    var showDeleteInstalledPkgConfirm by rememberSaveable { mutableStateOf(false) }
 
     val hiddenButtons = layout.filter { !it.visible }
     val unusedProfiles = profiles.filter { it.id != activeProfileId }
@@ -120,6 +123,15 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         } else {
             Text("No hay driver Turnip instalado.")
         }
+
+        SectionTitle(".pkg guardado ya instalado")
+        val installedPkgRedundant = status.gameExtracted && status.pkgTitleId != null && status.pkgTitleId == status.extractedTitleId
+        if (!installedPkgRedundant) Text("Ninguno: no hay .pkg guardado del juego extraído.")
+        else {
+            Text("El juego ya está extraído y es el que corre; el .pkg guardado es una copia que ocupa lo mismo otra vez.", fontWeight = FontWeight.SemiBold)
+            OutlinedButton(onClick = { showDeleteInstalledPkgConfirm = true }, modifier = Modifier.fillMaxWidth()) { Text("🗑 Borrar .pkg guardado (${DownloadsCleanup.formatBytes(status.pkgSizeBytes)})") }
+        }
+        NoteText("Solo se borra el .pkg. La licencia (work.bin) no se borra y el juego extraído no se toca.")
 
         SectionTitle("DLCs instalados (${status.dlcCount})")
         if (status.dlcs.isEmpty()) Text("Ninguno.")
@@ -224,6 +236,17 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 TextButton(onClick = { vm.deleteDlc(dlcId); deleteDlcTarget = null }) { Text("Borrar DLC") }
             },
             dismissButton = { TextButton(onClick = { deleteDlcTarget = null }) { Text("Cancelar") } },
+        )
+    }
+    if (showDeleteInstalledPkgConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteInstalledPkgConfirm = false },
+            title = { Text("¿Borrar el .pkg guardado?") },
+            text = { Text("Se borra el .pkg guardado de ${status.pkgTitleId?.id} (${DownloadsCleanup.formatBytes(status.pkgSizeBytes)}). El juego extraído sigue instalado y la licencia no se toca. Solo vuelve si importas de nuevo tu copia del .pkg.") },
+            confirmButton = {
+                TextButton(onClick = { vm.deleteInstalledGamePkgs(); showDeleteInstalledPkgConfirm = false }) { Text("Borrar .pkg") }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteInstalledPkgConfirm = false }) { Text("Cancelar") } },
         )
     }
     if (showDeleteSavesConfirm) {

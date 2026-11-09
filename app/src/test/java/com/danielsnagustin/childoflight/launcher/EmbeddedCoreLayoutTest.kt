@@ -231,6 +231,26 @@ class EmbeddedCoreLayoutTest {
     }
 
     @Test
+    fun `resolveUx0Dir prefiere el embebido con el juego extraido aunque el antiguo tenga un pkg suelto`() {
+        val root = tempRoot()
+        try {
+            val migrated = File(root, "vita/ux0/app/PCSB00598/eboot.bin")
+            migrated.parentFile.mkdirs()
+            migrated.writeText("migrado")
+            // Resto en el antiguo: un .pkg de otra región que
+            // gameTitles cuenta como título y el embebido no tiene.
+            // Sin el arreglo, resolve devolvía el antiguo y el juego
+            // "no estaba instalado" aunque corriera (reporte 19:46).
+            val stray = File(root, "ux0/pkg/PCSE00480.pkg")
+            stray.parentFile.mkdirs()
+            stray.writeText("resto")
+            assertEquals(File(root, "vita/ux0"), EmbeddedCoreLayout.resolveUx0Dir(root))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `resolveUx0Dir usa el embebido aunque el antiguo exista vacio`() {
         val root = tempRoot()
         try {
