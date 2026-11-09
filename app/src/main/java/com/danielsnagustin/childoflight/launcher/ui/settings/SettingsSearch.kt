@@ -1,6 +1,7 @@
 package com.danielsnagustin.childoflight.launcher.ui.settings
 
 import com.danielsnagustin.childoflight.launcher.model.GpuVendor
+import com.danielsnagustin.childoflight.launcher.ui.Screen
 
 /**
  * Buscador de ajustes (Fase 2, Ola 2, Etapa 1).
@@ -16,10 +17,18 @@ import com.danielsnagustin.childoflight.launcher.model.GpuVendor
  * 60 FPS y "60fps" también. Una consulta vacía no devuelve nada: el
  * hub muestra entonces las 9 categorías.
  */
+/**
+ * Una entrada del buscador. La categoría es el grupo de ajustes al que
+ * pertenece (participa en la coincidencia y en el "En:" del resultado).
+ * `destination` (P2-12) es solo para destinos que NO son una categoría
+ * de ajustes — hoy solo la pantalla de Logros, que vive en el Inicio—:
+ * al tocar el resultado se navega ahí en vez de a la categoría.
+ */
 data class SearchableSetting(
     val title: String,
     val keywords: String,
     val category: SettingsCategory,
+    val destination: Screen? = null,
 )
 
 fun normalizeSearchText(text: String): String {
@@ -69,8 +78,8 @@ fun searchSettings(
         }
 }
 
-private fun entry(title: String, keywords: String, category: SettingsCategory) =
-    SearchableSetting(title, keywords, category)
+private fun entry(title: String, keywords: String, category: SettingsCategory, destination: Screen? = null) =
+    SearchableSetting(title, keywords, category, destination)
 
 /**
  * Registro de entradas buscables. Cubre TODOS los controles que
@@ -88,7 +97,13 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     // --- General ---
     entry("Perfil activo", "perfil rendimiento gpu preset activo", SettingsCategory.GENERAL),
     entry("Presets por GPU", "preset g99 mali adreno calidad rendimiento recomendado", SettingsCategory.GENERAL),
-    entry("Sesiones y guardados", "sesiones partidas guardados saves", SettingsCategory.GENERAL),
+    // P2-12: el buscador vuelve a encontrar "logros": la pantalla de
+    // Logros no es una categoría de ajustes, así que la entrada lleva
+    // destino propio (abre Logros, no General).
+    entry("Logros", "logros trofeos", SettingsCategory.GENERAL, Screen.ACHIEVEMENTS),
+    // P2-13: "Sesiones y guardados" vive en Almacenamiento, no en
+    // General (el plan de dedup lo decía así).
+    entry("Sesiones y guardados", "sesiones partidas guardados saves", SettingsCategory.STORAGE),
     entry("Controles táctiles", "controles tactiles editor botones mando", SettingsCategory.GENERAL),
     entry("Permitir app externa", "motor app externa casos especiales", SettingsCategory.GENERAL),
     entry("Sesión PSN (simulada)", "psn sesion simulada dlc activacion", SettingsCategory.GENERAL),

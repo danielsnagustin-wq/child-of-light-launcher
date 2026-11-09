@@ -35,7 +35,6 @@ import com.danielsnagustin.childoflight.launcher.ui.PrimaryButton
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
 import com.danielsnagustin.childoflight.launcher.ui.Screen
-import com.danielsnagustin.childoflight.launcher.ui.SettingSwitch
 
 /**
  * Categoría "Personalización" (Ola 2, Etapa 1; Ola 3, Etapa 6):

@@ -348,8 +348,12 @@ private fun InfoRow(
     strings: AppStrings,
     onNavigate: (Screen) -> Unit,
 ) {
-    val achievements by vm.achievementsFlow.collectAsState(initial = emptyList())
-    val unlocked = achievements.count { it.unlocked }
+    // P2-11: sin "0 de 27 · 0%" transitorio: antes de la primera emisión
+    // del flujo la tarjeta mentía (0 trofeos) aunque el usuario los
+    // tuviera. El total se deriva de la lista (no hardcodeado a 27).
+    val achievements by vm.achievementsFlow.collectAsState(initial = null)
+    val unlocked = achievements?.count { it.unlocked } ?: 0
+    val total = achievements?.size ?: 0
     val tap = rememberTapHaptic()
     // Personalización que funciona (0.2.15): textos según el tema
     // elegido por el usuario (el borde y el fondo los resuelve HalfCard).
@@ -373,12 +377,16 @@ private fun InfoRow(
                 Text(strings.achievementsShort, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = cardTextColor(dark))
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    "$unlocked de 27 · ${if (achievements.isEmpty()) 0 else unlocked * 100 / 27}%",
+                    if (achievements == null) {
+                        "…"
+                    } else {
+                        "$unlocked de $total · ${if (total == 0) 0 else unlocked * 100 / total}%"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = mutedTextColor(dark),
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                PrimaryProgressBar(progress = if (achievements.isEmpty()) 0f else unlocked / 27f)
+                PrimaryProgressBar(progress = if (total == 0) 0f else unlocked / total.toFloat())
             }
         }
 }

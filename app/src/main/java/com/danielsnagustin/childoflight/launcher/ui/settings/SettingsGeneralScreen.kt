@@ -158,8 +158,6 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                     cardSize = uiPrefs?.cardSize ?: CardSize.NORMAL,
                     cardTransparency = uiPrefs?.cardTransparency ?: CardTransparency.OPAQUE,
                 ) {
-                    SecondaryButton("Sesiones y guardados", onClick = { onNavigate(Screen.SAVES) })
-                    Spacer(modifier = Modifier.height(8.dp))
                     SecondaryButton("Controles táctiles", onClick = { onNavigate(Screen.TOUCH) })
                 }
             }

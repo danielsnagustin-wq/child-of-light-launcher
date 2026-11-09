@@ -123,7 +123,10 @@ private val TROPHY_ENGLISH_NAMES: Map<Int, String> = mapOf(
 
 @Composable
 fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
-    val progress by vm.achievementsFlow.collectAsState(initial = emptyList())
+    // P2-11: sin "0 / 27" transitorio: antes de la primera emisión del
+    // flujo la cabecera mentía (0 trofeos). El total se deriva de la
+    // lista (no hardcodeado a 27).
+    val progress by vm.achievementsFlow.collectAsState(initial = null)
     val scan by vm.trophyScan.collectAsState()
     val trpRead by vm.trpRead.collectAsState()
     var selected by remember { mutableStateOf<TrophyProgress?>(null) }
@@ -132,8 +135,9 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     // segundo deja explícito que borrará los trofeos ganados jugando.
     var showResetConfirm2 by rememberSaveable { mutableStateOf(false) }
 
-    val unlocked = progress.count { it.unlocked }
-    val percent = trophyProgressPercent(progress)
+    val unlocked = progress?.count { it.unlocked } ?: 0
+    val total = progress?.size ?: 0
+    val percent = progress?.let { trophyProgressPercent(it) } ?: 0
     val tap = rememberTapHaptic()
 
     Box(
@@ -165,13 +169,17 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "$unlocked / 27 desbloqueados ($percent%)",
+                            if (progress == null) {
+                                "…"
+                            } else {
+                                "$unlocked / $total desbloqueados ($percent%)"
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White,
                         )
                         Spacer(modifier = Modifier.height(6.dp))
-                        PrimaryProgressBar(progress = if (progress.isEmpty()) 0f else unlocked / 27f)
+                        PrimaryProgressBar(progress = if (total == 0) 0f else unlocked / total.toFloat())
                     }
                 }
             }

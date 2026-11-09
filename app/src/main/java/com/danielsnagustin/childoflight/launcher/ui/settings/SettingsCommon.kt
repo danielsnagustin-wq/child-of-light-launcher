@@ -117,7 +117,7 @@ fun CategoryRow(category: SettingsCategory, onClick: () -> Unit) {
     Spacer(modifier = Modifier.height(10.dp))
 }
 
-/** Fila de resultado del buscador: título del ajuste + categoría a la que lleva. */
+/** Fila de resultado del buscador: título del ajuste + categoría a la que lleva (sin "En:" cuando el destino no es una categoría de ajustes, como Logros, que vive en el Inicio). */
 @Composable
 fun SearchResultRow(result: SearchableSetting, onClick: () -> Unit) {
     PremiumCard(onClick = onClick) {
@@ -128,11 +128,13 @@ fun SearchResultRow(result: SearchableSetting, onClick: () -> Unit) {
                 fontWeight = FontWeight.Bold,
                 color = androidx.compose.ui.graphics.Color.White,
             )
-            Text(
-                "En: ${result.category.title}",
-                style = MaterialTheme.typography.bodySmall,
-                color = ColMutedText,
-            )
+            if (result.destination == null) {
+                Text(
+                    "En: ${result.category.title}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ColMutedText,
+                )
+            }
         }
     }
     Spacer(modifier = Modifier.height(10.dp))

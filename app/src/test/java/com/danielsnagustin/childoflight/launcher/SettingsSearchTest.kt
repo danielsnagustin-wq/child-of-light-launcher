@@ -16,6 +16,16 @@ import org.junit.Test
 class SettingsSearchTest {
 
     @Test
+    fun findsLogrosScreen() {
+        // P2-12: "logros" vuelve a encontrar algo, y lleva a la pantalla
+        // de Logros (no a General, que ya no tiene ese botón).
+        val results = searchSettings("logros")
+        assertTrue(results.any { it.title == "Logros" })
+        val entry = results.first { it.title == "Logros" }
+        assertEquals(Screen.ACHIEVEMENTS, entry.destination)
+    }
+
+    @Test
     fun emptyQueryReturnsNothing() {
         assertTrue(searchSettings("").isEmpty())
         assertTrue(searchSettings("   ").isEmpty())

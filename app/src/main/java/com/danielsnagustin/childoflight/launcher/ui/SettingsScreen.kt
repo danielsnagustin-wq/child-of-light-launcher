@@ -81,7 +81,7 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
             } else {
                 results.forEach { result ->
                     item {
-                        SearchResultRow(result) { onNavigate(result.category.screen) }
+                        SearchResultRow(result) { onNavigate(result.destination ?: result.category.screen) }
                     }
                 }
             }

@@ -385,46 +385,6 @@ fun PrimaryButtonWithSubtitle(
 }
 
 
-/**
- * Variante de tarjeta con borde azul hielo sutil (Fase 2, Ola 1):
- * mismo fondo que PremiumCard, con el acento ColBlue. Para tarjetas
- * informativas; JUGAR y lo importante usan el botón principal azul
- * hielo.
- */
-@Composable
-fun AquaCard(
-    modifier: Modifier = Modifier,
-    onClick: (() -> Unit)? = null,
-    content: @Composable () -> Unit,
-) {
-    val border = BorderStroke(1.dp, ColBlue.copy(alpha = 0.35f))
-    if (onClick != null) {
-        Card(
-            modifier = modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = ColCardElevated),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-            border = border,
-            onClick = onClick,
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                content()
-            }
-        }
-    } else {
-        Card(
-            modifier = modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = ColCardElevated),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-            border = border,
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                content()
-            }
-        }
-    }
-}
 
 /** Botón secundario: contorno claro, sin tonos cálidos. */
 @Composable

@@ -112,6 +112,15 @@ fun SettingsStorageScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
             NoteText("Botones ocultos, perfiles sin usar, presets sin usar, Turnip sin usar, DLCs y saves.")
         }
         item {
+            // P2-13: "Sesiones y guardados" vive aquí (Almacenamiento),
+            // no en General: son los guardados del juego. El plan de
+            // dedup lo decía así.
+            SectionTitle("Secciones")
+            PremiumCard {
+                SecondaryButton("Sesiones y guardados", onClick = { onNavigate(Screen.SAVES) })
+            }
+        }
+        item {
             // Ola 3, Etapa 7: los 6 estados, leídos del disco. Guardado
             // no es instalado: un .pkg guardado no es un juego
             // instalado, y un PUP guardado no es firmware instalado.
