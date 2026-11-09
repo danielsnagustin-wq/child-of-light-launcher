@@ -28,6 +28,7 @@ import com.danielsnagustin.childoflight.launcher.model.PerformanceOverlayPositio
 import com.danielsnagustin.childoflight.launcher.model.ScreenFilter
 import com.danielsnagustin.childoflight.launcher.model.applyLowRamDefaults
 import com.danielsnagustin.childoflight.launcher.model.defaultProfileFor
+import com.danielsnagustin.childoflight.launcher.model.preserveManualCacheChoices
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -287,7 +288,14 @@ class SettingsRepository(private val context: Context) {
         // conservan (antes se reseteaban en silencio al aplicar un preset).
         // El estado de entrega del .pkg también se conserva: un preset no
         // es importar un juego nuevo.
-        val merged = base.copy(
+        // R4-P1-13: las cachés y el overlay manuales también se
+        // conservan (textureCache, shaderCache, overlay FPS, caché sin
+        // hash, avisos de shaders; ver preserveManualCacheChoices).
+        // La divergencia que eso produce frente al preset queda
+        // visible en General como "Perfil modificado" (ver
+        // divergesFromPreset), con la caché de texturas nombrada
+        // explícitamente cuando difiere.
+        val fromPreset = base.copy(
             gpuDriver = driver,
             customDriverName = current?.customDriverName ?: "",
             turnipVersion = current?.turnipVersion ?: "",
@@ -306,6 +314,7 @@ class SettingsRepository(private val context: Context) {
             touchOverlayNeonGlow = current?.touchOverlayNeonGlow ?: false,
             touchOverlayHiddenProfileIds = current?.touchOverlayHiddenProfileIds ?: emptySet(),
         )
+        val merged = preserveManualCacheChoices(fromPreset, current, lowRam = lowRam)
         save(merged)
     }
 

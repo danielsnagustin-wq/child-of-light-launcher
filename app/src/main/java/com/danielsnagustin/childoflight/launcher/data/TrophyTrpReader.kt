@@ -170,13 +170,46 @@ object TrophyTrpReader {
         return read(bytes)
     }
 
+    // R4-P1-8: el TRP solo cambia si se reinstala el juego, pero se
+    // re-leía y re-decodificaba entero en cada refresco. Caché de UNA
+    // entrada (el launcher es de un solo juego) claveada por ruta
+    // absoluta + tamaño + última modificación: una reinstalación
+    // cambia el tamaño o la fecha y la caché se invalida sola; un TRP
+    // de otro título tiene otra ruta y nunca se devuelve como si fuera
+    // este. Un archivo que no existe no se cachea (readFile devuelve
+    // Unreadable sin tocar la caché). La caché vive en el objeto y se
+    // lee/escribe con Volatile: en el peor caso dos hilos re-leen el
+    // archivo a la vez, nunca se devuelve un resultado incorrecto.
+    private data class TrpCacheKey(val path: String, val length: Long, val lastModified: Long)
+
+    @Volatile
+    private var cachedTrpKey: TrpCacheKey? = null
+
+    @Volatile
+    private var cachedTrpResult: TrpReadResult? = null
+
+    fun readFileCached(file: File): TrpReadResult {
+        if (!file.isFile) return readFile(file)
+        val key = TrpCacheKey(file.absolutePath, file.length(), file.lastModified())
+        val hitKey = cachedTrpKey
+        val hitResult = cachedTrpResult
+        if (hitKey == key && hitResult != null) return hitResult
+        val result = readFile(file)
+        cachedTrpKey = key
+        cachedTrpResult = result
+        return result
+    }
+
     fun readBundledTrp(appDir: File): TrpReadResult {
         val trp = TrophyStoreReader.gameBundledTrp(appDir)
             ?: return TrpReadResult.Unreadable(
                 reason = "El juego no trae TROPHY.TRP en sce_sys/trophy/.",
                 detail = "Ruta buscada bajo: ${appDir.path}",
             )
-        return readFile(trp)
+        // R4-P1-8: lectura cacheada (ver readFileCached): el refresco
+        // no vuelve a leer ni decodificar el TRP si el archivo no
+        // cambió desde el último refresco.
+        return readFileCached(trp)
     }
 
     fun compareByName(

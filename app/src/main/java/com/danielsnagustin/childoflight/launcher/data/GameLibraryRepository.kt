@@ -1165,7 +1165,12 @@ class GameLibraryRepository(private val context: Context) {
         }
     }
 
-    fun scanStatus(): GameStatus {
+    // R4-P1-12: si el llamador ya resolvió el firmware en este mismo
+    // refresco, se reutiliza en vez de resolverlo otra vez dentro del
+    // escaneo (antes FirmwareResolver.resolve() corría 2 veces por
+    // refresco: una aquí y otra en el ViewModel). Sin argumento se
+    // resuelve aquí como siempre: los demás llamadores no cambian.
+    fun scanStatus(firmware: FirmwareStatus? = null): GameStatus {
         // P0-2: antes de leer nada, restaurar los respaldos .bak-* cuyo
         // destino ya no existe (la app murió a mitad de una importación
         // anterior y el juego/DLC viejo solo vive como .bak-*).
@@ -1291,7 +1296,7 @@ class GameLibraryRepository(private val context: Context) {
         // con versión); un PUP solo guardado NO es instalado (es
         // "guardado, no instalado"). Antes, cualquier marcador no
         // vacío o cualquier PUP con tamaño > 0 se daba por instalado.
-        val fwStatus = FirmwareResolver.resolve(vitaRoot)
+        val fwStatus = firmware ?: FirmwareResolver.resolve(vitaRoot)
         val firmwareInstalled = fwStatus.ready
         val firmwareName = when (fwStatus) {
             // P2-C11: null (no "") cuando Ready es solo por vs0 sin
