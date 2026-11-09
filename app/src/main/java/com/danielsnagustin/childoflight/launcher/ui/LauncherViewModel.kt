@@ -434,8 +434,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 .onSuccess { _firmwareStatus.value = it }
             _externalVita3k.value =
                 runCatching { launcher.externalVita3kVersion() }.getOrNull()
+            // Crash al abrir (#80/#82): NO cargar el .so aquí. `available`
+            // ejecuta System.loadLibrary y un fallo nativo en sus
+            // inicializadores mata el proceso sin stack trace Java antes
+            // del primer frame. Solo se comprueba que el archivo existe;
+            // la carga real es al lanzar el juego.
             _embeddedCore.value =
-                runCatching { Vita3kCoreBridge.available }.getOrNull()
+                runCatching { Vita3kCoreBridge.isLibraryFilePresent(context) }.getOrNull()
             _batteryOptDisabled.value =
                 runCatching { launcher.isBatteryOptimizationDisabled() }.getOrDefault(false)
             refreshDownloadsCopies()

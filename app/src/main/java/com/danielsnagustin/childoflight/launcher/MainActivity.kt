@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.danielsnagustin.childoflight.launcher.data.GameActivityState
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
@@ -90,35 +91,15 @@ class MainActivity : ComponentActivity() {
         // crash tampoco dejaría rastro. Se instala antes de crear el
         // ViewModel (la primera vez que se toca `vm`).
         LauncherLog.installCrashHandler(applicationContext)
-        setContent {
-            val uiPrefs by vm.uiFlow.collectAsState(initial = null)
-            val dark = when (uiPrefs?.theme) {
-                ThemeMode.LIGHT -> false
-                ThemeMode.DARK -> true
-                ThemeMode.SYSTEM, null -> isSystemInDarkTheme()
-            }
-            val accent = try {
-                Color(android.graphics.Color.parseColor(uiPrefs?.accent?.hex ?: "#8CCBEB"))
-            } catch (_: Exception) {
-                Color(0xFF8CCBEB)
-            }
-            val scale = uiPrefs?.textSize?.scale ?: 1.0f
-            val typography = Typography(
-                headlineMedium = TextStyle(fontSize = (28 * scale).sp),
-                titleLarge = TextStyle(fontSize = (22 * scale).sp),
-                titleMedium = TextStyle(fontSize = (16 * scale).sp),
-                bodyLarge = TextStyle(fontSize = (16 * scale).sp),
-                bodyMedium = TextStyle(fontSize = (14 * scale).sp),
-                bodySmall = TextStyle(fontSize = (12 * scale).sp),
-            )
-            val colorScheme = if (dark) {
-                darkColorScheme(primary = accent, secondary = accent)
-            } else {
-                lightColorScheme(primary = accent, secondary = accent)
-            }
-            MaterialTheme(colorScheme = colorScheme, typography = typography) {
-                LauncherApp(vm)
-            }
+        // Crash al abrir (#80/#82): si la primera composición falla, la
+        // app moría sin mostrar nada ("solo me vota y ya"). Ahora se
+        // muestra el error en pantalla para fotografiarlo y mandarlo,
+        // en vez de cerrar en silencio.
+        try {
+            setContent { LauncherContent(vm) }
+        } catch (t: Throwable) {
+            LauncherLog.append(applicationContext, "launch", "Fallo en la primera composición: ${t.javaClass.simpleName}: ${t.message}")
+            setContent { LaunchErrorScreen(t) }
         }
     }
 
@@ -156,6 +137,54 @@ class MainActivity : ComponentActivity() {
         Vita3KLauncher.takeEmbeddedLaunchFailure()?.let { reason ->
             LauncherLog.append(this, "launch", "El juego no llegó a arrancar: $reason")
             Toast.makeText(this, "El juego no llegó a arrancar. $reason", Toast.LENGTH_LONG).show()
+        }
+    }
+}
+
+@Composable
+private fun LauncherContent(vm: LauncherViewModel) {
+    val uiPrefs by vm.uiFlow.collectAsState(initial = null)
+    val dark = when (uiPrefs?.theme) {
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+        ThemeMode.SYSTEM, null -> isSystemInDarkTheme()
+    }
+    val accent = try {
+        Color(android.graphics.Color.parseColor(uiPrefs?.accent?.hex ?: "#8CCBEB"))
+    } catch (_: Exception) {
+        Color(0xFF8CCBEB)
+    }
+    val scale = uiPrefs?.textSize?.scale ?: 1.0f
+    val typography = Typography(
+        headlineMedium = TextStyle(fontSize = (28 * scale).sp),
+        titleLarge = TextStyle(fontSize = (22 * scale).sp),
+        titleMedium = TextStyle(fontSize = (16 * scale).sp),
+        bodyLarge = TextStyle(fontSize = (16 * scale).sp),
+        bodyMedium = TextStyle(fontSize = (14 * scale).sp),
+        bodySmall = TextStyle(fontSize = (12 * scale).sp),
+    )
+    val colorScheme = if (dark) {
+        darkColorScheme(primary = accent, secondary = accent)
+    } else {
+        lightColorScheme(primary = accent, secondary = accent)
+    }
+    MaterialTheme(colorScheme = colorScheme, typography = typography) {
+        LauncherApp(vm)
+    }
+}
+
+@Composable
+private fun LaunchErrorScreen(error: Throwable) {
+    // Pantalla mínima de emergencia: si el launcher no puede arrancar,
+    // esto es lo que ve el usuario en vez de un cierre en silencio.
+    // El texto es el diagnóstico: con una captura se sabe la causa.
+    MaterialTheme {
+        Box(modifier = Modifier.padding(24.dp)) {
+            Column {
+                Text("Child of Light no pudo arrancar.")
+                Text("Error: ${error.javaClass.simpleName}: ${error.message ?: "sin mensaje"}")
+                Text("Haz una captura de esta pantalla y mándala para arreglarlo.")
+            }
         }
     }
 }

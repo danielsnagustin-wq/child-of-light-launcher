@@ -1,5 +1,8 @@
 package com.danielsnagustin.childoflight.launcher.core
 
+import android.content.Context
+import java.io.File
+
 /**
  * Puente JNI con el núcleo Vita3K embebido (Etapa 2).
  *
@@ -66,6 +69,40 @@ object Vita3kCoreBridge {
     /** ¿Hay algún .so del núcleo cargable? En Etapa 1, no. */
     val available: Boolean by lazy {
         loadLibrary("Vita3K") || loadLibrary("vita3k-bridge")
+    }
+
+    /**
+     * ¿Está el archivo .so del núcleo en la instalación, SIN cargarlo?
+     * Solo comprueba que existe (directorio de libs nativas y, como
+     * respaldo, las entradas del APK). No ejecuta código nativo: un .so
+     * roto no puede tumbar la app aquí.
+     *
+     * Uso: la Home/Importar/Diagnóstico solo necesitan saber si el
+     * núcleo está presente, no cargarlo. Cargar 42 MB de .so solo para
+     * mostrar la pantalla principal es un desperdicio y, si sus
+     * inicializadores estáticos fallan, matan el proceso sin stack
+     * trace Java antes del primer frame (crash al abrir de los runs
+     * #80/#82, que el arreglo de DataStore no resolvió). La carga real
+     * sigue siendo [available] y solo se toca al lanzar el juego (JUGAR)
+     * o en diagnósticos GPU explícitos.
+     */
+    fun isLibraryFilePresent(context: Context): Boolean {
+        return runCatching {
+            val libDir = File(context.applicationInfo.nativeLibraryDir)
+            if (libDir.isDirectory) {
+                val names = libDir.list() ?: emptyArray()
+                if (names.any { it == "libVita3K.so" || it == "libvita3k-bridge.so" }) return true
+            }
+            // Respaldo (extractNativeLibs=false): el .so vive dentro del APK.
+            val apk = File(context.applicationInfo.sourceDir)
+            if (apk.isFile) {
+                java.util.zip.ZipFile(apk).use { zip ->
+                    if (zip.getEntry("lib/arm64-v8a/libVita3K.so") != null) return true
+                    if (zip.getEntry("lib/arm64-v8a/libvita3k-bridge.so") != null) return true
+                }
+            }
+            false
+        }.getOrDefault(false)
     }
 
     /**
