@@ -1572,7 +1572,22 @@ class GameLibraryRepository(private val context: Context) {
             // El nombre de la carpeta NO es obligatorio: si no es el
             // Title ID, se lee de sce_sys/param.sfo (igual que
             // importGameFolder). La carpeta del juego trae sce_sys/.
-            val title = TitleId.fromString(root.name) ?: titleIdFromFolderSfo(root)
+            // P1-6: si la carpeta SÍ se llama como un Title ID pero su
+            // param.sfo dice otro juego u otra región, el contenido
+            // manda y se rechaza (antes se confiaba en el nombre y una
+            // carpeta mal nombrada instalaba los DLCs bajo el Title ID
+            // equivocado). Mismo contraste que importGameFolder.
+            val folderTitle = TitleId.fromString(root.name)
+            val sfoRawTitle = sfoTitleIdRaw(root)
+            if (folderTitle != null && !sfoRawTitle.isNullOrEmpty() &&
+                TitleId.fromString(sfoRawTitle) != folderTitle
+            ) {
+                return ImportResult.Rejected(
+                    "La carpeta se llama ${folderTitle.id} pero su param.sfo dice $sfoRawTitle. " +
+                        "El contenido manda sobre el nombre de la carpeta.",
+                )
+            }
+            val title = folderTitle ?: titleIdFromFolderSfo(root)
                 ?: return ImportResult.Rejected(
                     "La carpeta elegida se llama \"${root.name ?: "?"}\". Debe llamarse " +
                         "PCSE00480 (US) o PCSB00598 (EU) y contener addcont/ dentro, o traer " +
