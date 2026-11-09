@@ -14,8 +14,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.abs
 
 // Crash al abrir (run #80): mismo arreglo que UiPreferencesRepository
 // (ver su comentario): archivo preferences_pb corrupto -> el
@@ -85,32 +88,40 @@ data class ControlProfile(
     val controls: List<TouchControl>,
 )
 
+/**
+ * Rombo estándar PlayStation/Vita, centrado en ~(0.80, 0.71):
+ * TRIANGLE arriba, CIRCLE derecha, CROSS abajo, SQUARE izquierda.
+ * R4-P0-1: el rombo anterior estaba transpuesto (TRIANGLE a la
+ * izquierda, SQUARE arriba, CIRCLE abajo, CROSS a la derecha), así
+ * que el botón de abajo — el que todo el mundo pulsa para confirmar
+ * en la pantalla de título — era CIRCLE (atrás), no CROSS.
+ */
 fun defaultTouchLayout(): List<TouchControl> = listOf(
     TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.18f, 0.72f, 140, 0.70f),
-    TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.70f, 0.70f, 64, 0.80f),
-    TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.78f, 0.62f, 64, 0.80f),
-    TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.78f, 0.80f, 64, 0.80f),
-    TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.87f, 0.71f, 64, 0.85f),
+    TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.80f, 0.62f, 64, 0.80f),
+    TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.73f, 0.71f, 64, 0.80f),
+    TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.87f, 0.71f, 64, 0.80f),
+    TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.80f, 0.80f, 64, 0.85f),
     TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.06f, 56, 0.70f),
     TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.50f, 0.35f, 220, 0.25f, colorHex = "#7FB3D5"),
 )
 
 fun oneHandLayout(): List<TouchControl> = listOf(
     TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.20f, 0.75f, 120, 0.75f),
-    TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.70f, 0.70f, 64, 0.80f, visible = false),
-    TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.78f, 0.62f, 64, 0.80f, visible = false),
-    TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.72f, 0.87f, 64, 0.80f),
-    TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.84f, 0.78f, 72, 0.85f),
+    TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.76f, 0.65f, 64, 0.80f, visible = false),
+    TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.69f, 0.74f, 64, 0.80f, visible = false),
+    TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.83f, 0.74f, 64, 0.80f),
+    TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.76f, 0.83f, 72, 0.85f),
     TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.06f, 56, 0.70f, visible = false),
     TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.55f, 0.28f, 160, 0.25f, colorHex = "#7FB3D5"),
 )
 
 fun externalGamepadLayout(): List<TouchControl> = listOf(
     TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.18f, 0.72f, 140, 0.70f, visible = false),
-    TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.70f, 0.70f, 64, 0.80f, visible = false),
-    TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.78f, 0.62f, 64, 0.80f, visible = false),
-    TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.78f, 0.80f, 64, 0.80f, visible = false),
-    TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.87f, 0.71f, 64, 0.85f, visible = false),
+    TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.80f, 0.62f, 64, 0.80f, visible = false),
+    TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.73f, 0.71f, 64, 0.80f, visible = false),
+    TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.87f, 0.71f, 64, 0.80f, visible = false),
+    TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.80f, 0.80f, 64, 0.85f, visible = false),
     TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.06f, 56, 0.70f),
     TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.50f, 0.35f, 220, 0.25f, colorHex = "#7FB3D5"),
 )
@@ -148,8 +159,22 @@ class TouchLayoutRepository(private val context: Context) {
     // por este mutex; los helpers privados asumen que ya se tiene.
     private val mutationMutex = Mutex()
 
+    // R4-P0-1: la migración del rombo se dispara una sola vez por
+    // instancia del repositorio, al cargar los perfiles por primera
+    // vez (onStart de los flujos). El guardado en sí es atómico en
+    // DataStore (ver migrateSavedBuiltInProfilesOnce): dos
+    // instancias que migren a la vez escriben lo mismo.
+    private val diamondMigrationStarted = AtomicBoolean(false)
+
     val profilesFlow: Flow<List<ControlProfile>> = context.touchDataStore.data.map { prefs ->
         decodeProfiles(prefs[Keys.PROFILES] ?: "") ?: builtInProfiles()
+    }.onStart {
+        migrateSavedBuiltInProfilesOnce()
+    }.map { profiles ->
+        // En memoria el rombo ya es el estándar aunque el guardado
+        // en DataStore aún no haya aterrizado: el juego y el editor
+        // nunca ven el rombo transpuesto.
+        migrateBuiltInProfiles(profiles)
     }.catch { e ->
         Log.w("ChildOfLight", "DataStore touch (perfiles) ilegible, usando fábrica: ${e.message}")
         emit(builtInProfiles())
@@ -166,10 +191,38 @@ class TouchLayoutRepository(private val context: Context) {
     val layoutFlow: Flow<List<TouchControl>> = context.touchDataStore.data.map { prefs ->
         val profiles = decodeProfiles(prefs[Keys.PROFILES] ?: "") ?: builtInProfiles()
         val activeId = prefs[Keys.ACTIVE_PROFILE] ?: "default-g99"
-        profiles.firstOrNull { it.id == activeId }?.controls ?: defaultTouchLayout()
+        val active = profiles.firstOrNull { it.id == activeId }
+        if (active != null) migrateBuiltInFaceDiamond(active).controls else defaultTouchLayout()
+    }.onStart {
+        migrateSavedBuiltInProfilesOnce()
     }.catch { e ->
         Log.w("ChildOfLight", "DataStore touch (layout) ilegible, usando default: ${e.message}")
         emit(defaultTouchLayout())
+    }
+
+    /**
+     * R4-P0-1: reescribe en DataStore los perfiles predefinidos
+     * guardados con el rombo transpuesto y los deja con el rombo
+     * estándar. Solo corre una vez por instancia; es idempotente
+     * (la segunda vez ya no hay nada que migrar y no escribe).
+     * La lectura, la migración y la escritura ocurren dentro de un
+     * solo edit de DataStore, así que dos migraciones concurrentes
+     * no pueden pisar una edición del usuario hecha entre medias.
+     * Los perfiles personalizados (isBuiltIn == false) no se tocan.
+     */
+    private suspend fun migrateSavedBuiltInProfilesOnce() {
+        if (!diamondMigrationStarted.compareAndSet(false, true)) return
+        mutationMutex.withLock {
+            safeEdit("migración rombo predefinido") { prefs ->
+                val raw = prefs[Keys.PROFILES] ?: return@safeEdit
+                val profiles = decodeProfiles(raw) ?: return@safeEdit
+                val migrated = migrateBuiltInProfiles(profiles)
+                if (migrated != profiles) {
+                    prefs[Keys.PROFILES] = migrated.joinToString("\n###\n") { encodeProfile(it) }
+                    Log.i("ChildOfLight", "R4-P0-1: rombo predefinido migrado al estándar en DataStore")
+                }
+            }
+        }
     }
 
     /**
@@ -344,7 +397,12 @@ class TouchLayoutRepository(private val context: Context) {
 
     private suspend fun currentProfiles(): List<ControlProfile> {
         val raw = context.touchDataStore.data.first()[Keys.PROFILES] ?: ""
-        return decodeProfiles(raw) ?: builtInProfiles()
+        val profiles = decodeProfiles(raw) ?: builtInProfiles()
+        // R4-P0-1: en memoria los predefinidos ya llevan el rombo
+        // estándar (el guardado lo hace migrateSavedBuiltInProfilesOnce
+        // al cargar, y saveProfiles al escribir). Así duplicar un
+        // predefinido aún sin migrar en disco no hereda el transpuesto.
+        return migrateBuiltInProfiles(profiles)
     }
 
     private suspend fun currentActiveId(): String {
@@ -352,8 +410,12 @@ class TouchLayoutRepository(private val context: Context) {
     }
 
     private suspend fun saveProfiles(profiles: List<ControlProfile>): Boolean {
+        // R4-P0-1: red de seguridad: cualquier guardado de perfiles
+        // deja los predefinidos con el rombo estándar (la migración
+        // en sí es pura e idempotente; los personalizados no se tocan).
+        val normalized = migrateBuiltInProfiles(profiles)
         return safeEdit("perfiles de controles") { prefs ->
-            prefs[Keys.PROFILES] = profiles.joinToString("\n###\n") { encodeProfile(it) }
+            prefs[Keys.PROFILES] = normalized.joinToString("\n###\n") { encodeProfile(it) }
         }
     }
 
@@ -362,6 +424,84 @@ class TouchLayoutRepository(private val context: Context) {
         // crean dos perfiles en el mismo milisegundo. Se añade nanoTime.
         private fun newProfileId(): String =
             "custom-${System.currentTimeMillis()}-${System.nanoTime() % 100000}"
+
+        /**
+         * R4-P0-1: un hueco del rombo de botones de cara: id del
+         * control, botón de Vita que lleva de fábrica, posición
+         * antigua (rombo transpuesto) y posición nueva (estándar).
+         */
+        private data class FaceSlot(
+            val id: String,
+            val button: VitaButton,
+            val oldX: Float,
+            val oldY: Float,
+            val newX: Float,
+            val newY: Float,
+        )
+
+        // Rombo transpuesto anterior (TRIANGLE izquierda, SQUARE
+        // arriba, CIRCLE abajo, CROSS derecha) y rombo estándar
+        // nuevo, centrados en (0.80, 0.71). Lo comparten el perfil
+        // por defecto y el de mando externo (mismas posiciones).
+        private val DEFAULT_FACE_SLOTS = listOf(
+            FaceSlot("btn_y", VitaButton.TRIANGLE, 0.70f, 0.70f, 0.80f, 0.62f),
+            FaceSlot("btn_x", VitaButton.SQUARE, 0.78f, 0.62f, 0.73f, 0.71f),
+            FaceSlot("btn_b", VitaButton.CIRCLE, 0.78f, 0.80f, 0.87f, 0.71f),
+            FaceSlot("btn_a", VitaButton.CROSS, 0.87f, 0.71f, 0.80f, 0.80f),
+        )
+
+        // "Una mano" tenía la misma transposición, con el rombo
+        // centrado en (0.76, 0.74) y el mismo radio (0.07 en X,
+        // 0.09 en Y): se conserva su carácter compacto.
+        private val ONE_HAND_FACE_SLOTS = listOf(
+            FaceSlot("btn_y", VitaButton.TRIANGLE, 0.70f, 0.70f, 0.76f, 0.65f),
+            FaceSlot("btn_x", VitaButton.SQUARE, 0.78f, 0.62f, 0.69f, 0.74f),
+            FaceSlot("btn_b", VitaButton.CIRCLE, 0.72f, 0.87f, 0.83f, 0.74f),
+            FaceSlot("btn_a", VitaButton.CROSS, 0.84f, 0.78f, 0.76f, 0.83f),
+        )
+
+        // Tolerancia al comparar posiciones guardadas: el formato
+        // escribe el Float con toString y lo relee exacto, pero un
+        // arrastre o un redondeo no debe impedir migrar por una
+        // milésima. Un botón movido de verdad se aleja mucho más.
+        private const val FACE_SLOT_EPSILON = 0.001f
+
+        /**
+         * R4-P0-1: migra UN perfil predefinido del rombo transpuesto
+         * al estándar. Solo actúa si el perfil es predefinido
+         * (isBuiltIn) Y los 4 botones de cara siguen en su hueco de
+         * fábrica (mismo id, mismo botón de Vita y misma posición
+         * antigua): si el usuario movió o remapeó aunque sea uno,
+         * el perfil es suyo y no se toca. Idempotente: un perfil ya
+         * migrado no coincide con las posiciones antiguas y se
+         * devuelve tal cual. Puro Kotlin, sin Context: testeable.
+         */
+        fun migrateBuiltInFaceDiamond(profile: ControlProfile): ControlProfile {
+            if (!profile.isBuiltIn) return profile
+            val slots = when (profile.id) {
+                "one-hand" -> ONE_HAND_FACE_SLOTS
+                else -> DEFAULT_FACE_SLOTS
+            }
+            val byId = profile.controls.associateBy { it.id }
+            for (slot in slots) {
+                val control = byId[slot.id] ?: return profile
+                if (control.vitaButton != slot.button) return profile
+                if (abs(control.xFraction - slot.oldX) > FACE_SLOT_EPSILON) return profile
+                if (abs(control.yFraction - slot.oldY) > FACE_SLOT_EPSILON) return profile
+            }
+            val newPositions = slots.associate { it.id to (it.newX to it.newY) }
+            return profile.copy(
+                controls = profile.controls.map { control ->
+                    val pos = newPositions[control.id]
+                    if (pos != null) control.copy(xFraction = pos.first, yFraction = pos.second) else control
+                },
+            )
+        }
+
+        /** R4-P0-1: migra todos los perfiles predefinidos de la lista. */
+        fun migrateBuiltInProfiles(profiles: List<ControlProfile>): List<ControlProfile> =
+            profiles.map { migrateBuiltInFaceDiamond(it) }
+
 
         fun sanitizeName(name: String): String =
             name.replace('|', ' ').replace(';', ' ').replace('#', ' ')

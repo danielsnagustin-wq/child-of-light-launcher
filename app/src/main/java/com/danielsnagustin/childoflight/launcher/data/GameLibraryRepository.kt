@@ -16,6 +16,7 @@ import com.danielsnagustin.childoflight.launcher.model.TitleId
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -274,14 +275,24 @@ class GameLibraryRepository(private val context: Context) {
         const val MIN_PUP_SIZE_BYTES = 100_000_000L
 
         /**
-         * Tamaño mínimo de un eboot.bin real (P0-1, 2026-11-09): el
-         * eboot de Child of Light mide varios MB. Un archivo menor de
-         * 1 MB es una instalación truncada o corrupta, aunque empiece
-         * por la magia correcta. La validación anterior solo leía 4
-         * bytes: un eboot de 4 bytes pasaba como válido y el auto-borrado
-         * del .pkg (1,14 GB) destruía la única vía de recuperación.
+         * Tamaño de la cabecera SCE de un SELF (R4-P0-5/R4-P0-6,
+         * 2026-11-09): 128 bytes. La cabecera trae magic u32 @0,
+         * version u32 @4, sdk_type u16 @8, header_type u16 @10,
+         * metadata_offset u32 @12, header_len u64 @16, elf_filesize
+         * u64 @24, self_filesize u64 @32, elf_offset u64 @64 y
+         * phdr_offset u64 @72 (struct SCE_header, vita-toolchain
+         * src/self.h; tabla SELF de psdevwiki). Hay que leer 128
+         * bytes para validar un SELF: con 64 no se ven elf_offset
+         * ni phdr_offset ni self_filesize (R4-P1-6).
+         *
+         * No hay piso de tamaño para el eboot: el mínimo de 1 MB
+         * anterior era inventado y rechazaba eboots válidos pequeños,
+         * y no protegía contra truncados de más de 1 MB porque
+         * self_filesize nunca se comprobaba. La protección real es
+         * estructural (ver isSelfFile): self_filesize debe ser el
+         * tamaño del archivo y los offsets deben caer dentro de él.
          */
-        const val MIN_EBOOT_SIZE_BYTES = 1_000_000L
+        private const val SELF_HEADER_SIZE_BYTES = 128
 
         /**
          * Lee los primeros [size] bytes de un archivo (bucle: un solo
@@ -318,45 +329,157 @@ class GameLibraryRepository(private val context: Context) {
             (bytes[offset].toInt() and 0xFF) or
                 ((bytes[offset + 1].toInt() and 0xFF) shl 8)
 
-        /**
-         * ¿El archivo es un ELF válido? Un eboot.bin de Vita descifrado
-         * empieza por 0x7F 'E' 'L' 'F'. Ya no basta la magia: se exige
-         * tamaño mínimo y la tabla de segmentos dentro del archivo
-         * (e_phoff + e_phnum * e_phentsize, cabecera ELF32: la Vita es
-         * ARM de 32 bits y el núcleo usa Elf32_Ehdr). Un ELF truncado
-         * no pasa. Puro (solo File) para poder probarlo en la JVM sin
-         * Context.
-         */
-        fun isElfFile(file: File): Boolean {
-            if (!file.isFile || file.length() < MIN_EBOOT_SIZE_BYTES) return false
-            val header = readHeaderBytes(file, 64) ?: return false
-            if (!(header[0] == 0x7F.toByte() && header[1] == 'E'.code.toByte() &&
-                    header[2] == 'L'.code.toByte() && header[3] == 'F'.code.toByte())) return false
-            if (header[4].toInt() != 1) return false
-            val phoff = u32Le(header, 28).toLong() and 0xFFFFFFFFL
-            val phentsize = u16Le(header, 42)
-            val phnum = u16Le(header, 44)
-            if (phnum <= 0 || phentsize < 32) return false
-            return phoff + phnum.toLong() * phentsize <= file.length()
+        /** Entero de 64 bits little-endian en [bytes] desde [offset]. */
+        private fun u64Le(bytes: ByteArray, offset: Int): Long {
+            var value = 0L
+            for (i in 0 until 8) {
+                value = value or ((bytes[offset + i].toLong() and 0xFFL) shl (i * 8))
+            }
+            return value
         }
 
         /**
-         * ¿El archivo es un SELF válido de Vita? Un eboot.bin instalado
-         * NO es un ELF: sigue siendo un SELF, que empieza por 'S' 'E'
-         * 'C' 0x00 (pin 3e43bc80, kernel/src/load_self.cpp:508-509:
-         * SCE_MAGIC = 0x00454353). Ya no basta la magia: se exige
-         * tamaño mínimo y los mismos campos que comprueba el núcleo
-         * al cargarlo (load_self.cpp:512-520: version == 3 y
-         * header_type == 1). El núcleo lo descifra EN MEMORIA al
-         * cargarlo (load_self), nunca en disco. Puro (solo File).
+         * Lee [size] bytes de [file] desde [offset] (bucle: un solo
+         * read puede devolver menos). null si no se puede leer el
+         * rango completo. Puro (solo File).
          */
-        fun isSelfFile(file: File): Boolean {
-            if (!file.isFile || file.length() < MIN_EBOOT_SIZE_BYTES) return false
-            val header = readHeaderBytes(file, 64) ?: return false
-            if (!(header[0] == 'S'.code.toByte() && header[1] == 'E'.code.toByte() &&
-                    header[2] == 'C'.code.toByte() && header[3] == 0.toByte())) return false
-            if (u32Le(header, 4) != 3) return false
-            return u16Le(header, 8) == 1
+        private fun readBytesAt(file: File, offset: Long, size: Int): ByteArray? {
+            if (!file.isFile || offset < 0) return null
+            return try {
+                RandomAccessFile(file, "r").use { raf ->
+                    raf.seek(offset)
+                    val buf = ByteArray(size)
+                    var read = 0
+                    while (read < size) {
+                        val n = raf.read(buf, read, size - read)
+                        if (n <= 0) return null
+                        read += n
+                    }
+                    buf
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        /** Magia SELF: 'S' 'E' 'C' 0x00. [header] debe tener al menos 4 bytes. */
+        private fun isSecMagic(header: ByteArray): Boolean =
+            header[0] == 'S'.code.toByte() && header[1] == 'E'.code.toByte() &&
+                header[2] == 'C'.code.toByte() && header[3] == 0.toByte()
+
+        /** Magia ELF: 0x7F 'E' 'L' 'F'. [header] debe tener al menos 4 bytes. */
+        private fun isElfMagic(header: ByteArray): Boolean =
+            header[0] == 0x7F.toByte() && header[1] == 'E'.code.toByte() &&
+                header[2] == 'L'.code.toByte() && header[3] == 'F'.code.toByte()
+
+        /**
+         * Motivo de una validación de eboot (R4-P1-5, 2026-11-09): la
+         * validación ya no devuelve solo un Boolean opaco, sino el
+         * motivo exacto, para que el log diga por qué un eboot no
+         * vale sin tener que adivinar entre tamaño y offset.
+         * FALTA: no hay eboot.bin. TAMANO: el archivo es más corto
+         * que su cabecera o que lo que su propia cabecera declara
+         * (truncado). MAGIA: ni magia SELF ni magia ELF, o el ELF
+         * interior del SELF no trae su magia. VERSION: SELF con
+         * version distinta de 3. HEADER_TYPE: SELF con header_type
+         * distinto de 1. PHDR_FUERA: la tabla de segmentos apunta
+         * fuera del archivo. OK: cargable por el núcleo.
+         */
+        enum class EbootInvalidReason(val logName: String) {
+            FALTA("falta"),
+            TAMANO("tamaño"),
+            MAGIA("magia"),
+            VERSION("version"),
+            HEADER_TYPE("header_type"),
+            PHDR_FUERA("phdr_fuera"),
+            OK("ok"),
+        }
+
+        /**
+         * Motivo por el que un ELF no es válido (o OK). Un eboot.bin
+         * de Vita descifrado empieza por 0x7F 'E' 'L' 'F'. Se exige
+         * la magia, EI_CLASS 1 (ELF32: la Vita es ARM de 32 bits y
+         * el núcleo usa Elf32_Ehdr) y la tabla de segmentos dentro
+         * del archivo (e_phoff + e_phnum * e_phentsize). Sin piso
+         * de tamaño: un archivo más corto que la cabecera es
+         * inválido por estructura (readHeaderBytes devuelve null).
+         * Puro (solo File) para poder probarlo en la JVM sin Context.
+         */
+        fun elfValidationReason(file: File): EbootInvalidReason {
+            if (!file.isFile) return EbootInvalidReason.FALTA
+            val header = readHeaderBytes(file, 64) ?: return EbootInvalidReason.TAMANO
+            if (!isElfMagic(header)) return EbootInvalidReason.MAGIA
+            if (header[4].toInt() != 1) return EbootInvalidReason.MAGIA
+            val phoff = u32Le(header, 28).toLong() and 0xFFFFFFFFL
+            val phentsize = u16Le(header, 42)
+            val phnum = u16Le(header, 44)
+            if (phnum <= 0 || phentsize < 32) return EbootInvalidReason.PHDR_FUERA
+            if (phoff + phnum.toLong() * phentsize > file.length()) return EbootInvalidReason.PHDR_FUERA
+            return EbootInvalidReason.OK
+        }
+
+        /**
+         * ¿El archivo es un ELF válido? Ver elfValidationReason.
+         * Puro (solo File).
+         */
+        fun isElfFile(file: File): Boolean = elfValidationReason(file) == EbootInvalidReason.OK
+
+        /**
+         * Motivo por el que un SELF no es válido (o OK). Un eboot.bin
+         * instalado NO es un ELF: sigue siendo un SELF, que empieza
+         * por 'S' 'E' 'C' 0x00 (pin 3e43bc80, kernel/src/load_self.cpp:
+         * 508-509: SCE_MAGIC = 0x00454353). Se comprueban los mismos
+         * campos que comprueba el núcleo al cargarlo (load_self.cpp:
+         * 512-520: version == 3 y header_type == 1), con header_type
+         * en su offset real, u16 @10 (R4-P0-5: el offset 8 es
+         * sdk_type, no header_type; un juego con sysver de 3.40 o
+         * más trae sdk_type distinto de 1 y antes se rechazaba
+         * aunque el SELF fuera perfecto). Además, chequeo
+         * estructural real en vez de piso de tamaño (R4-P0-6):
+         * self_filesize u64 @32 debe ser el tamaño del archivo
+         * (truncado si es mayor), elf_offset u64 @64 debe caer
+         * dentro del archivo y traer la magia ELF (0x7F 'E' 'L' 'F'
+         * + EI_CLASS 1) en ese offset, y phdr_offset u64 @72 debe
+         * caer dentro del archivo. El núcleo lo descifra EN MEMORIA
+         * al cargarlo (load_self), nunca en disco. Puro (solo File).
+         */
+        fun selfValidationReason(file: File): EbootInvalidReason {
+            if (!file.isFile) return EbootInvalidReason.FALTA
+            val header = readHeaderBytes(file, SELF_HEADER_SIZE_BYTES) ?: return EbootInvalidReason.TAMANO
+            if (!isSecMagic(header)) return EbootInvalidReason.MAGIA
+            if (u32Le(header, 4) != 3) return EbootInvalidReason.VERSION
+            if (u16Le(header, 10) != 1) return EbootInvalidReason.HEADER_TYPE
+            val length = file.length()
+            if (u64Le(header, 32) != length) return EbootInvalidReason.TAMANO
+            val elfOffset = u64Le(header, 64)
+            if (elfOffset < 0 || elfOffset > length - 5) return EbootInvalidReason.TAMANO
+            val elfHead = readBytesAt(file, elfOffset, 5) ?: return EbootInvalidReason.TAMANO
+            if (!isElfMagic(elfHead) || elfHead[4].toInt() != 1) return EbootInvalidReason.MAGIA
+            val phdrOffset = u64Le(header, 72)
+            if (phdrOffset < 0 || phdrOffset >= length) return EbootInvalidReason.PHDR_FUERA
+            return EbootInvalidReason.OK
+        }
+
+        /**
+         * ¿El archivo es un SELF válido de Vita? Ver
+         * selfValidationReason. Puro (solo File).
+         */
+        fun isSelfFile(file: File): Boolean = selfValidationReason(file) == EbootInvalidReason.OK
+
+        /**
+         * Motivo por el que un eboot.bin no es cargable por el núcleo
+         * (o OK). La magia decide qué validación manda: 'S' 'E' 'C'
+         * 0x00 va por la vía SELF y 0x7F 'E' 'L' 'F' por la vía ELF;
+         * sin ninguna de las dos magias el motivo es MAGIA, y sin
+         * archivo o con menos de 4 bytes, FALTA o TAMANO. Puro
+         * (solo File).
+         */
+        fun ebootValidationReason(file: File): EbootInvalidReason {
+            if (!file.isFile) return EbootInvalidReason.FALTA
+            val head = readHeaderBytes(file, 4) ?: return EbootInvalidReason.TAMANO
+            if (isSecMagic(head)) return selfValidationReason(file)
+            if (isElfMagic(head)) return elfValidationReason(file)
+            return EbootInvalidReason.MAGIA
         }
 
         /**
@@ -678,6 +801,50 @@ class GameLibraryRepository(private val context: Context) {
     fun pkgWorkBinFile(titleId: String): File = File(pkgDir(), "$titleId.work.bin")
 
     /**
+     * Resultado de validar el eboot.bin instalado (R4-P1-5,
+     * 2026-11-09): además del motivo, los campos que el log
+     * necesita para discriminar entre R4-P0-5 (sdk_type leído
+     * como header_type) y R4-P0-6 (tamaño). version, sdkType y
+     * headerType son "?" cuando el archivo no es un SELF legible.
+     */
+    data class EbootValidation(
+        val path: String,
+        val sizeBytes: Long,
+        val magic: String,
+        val version: String,
+        val sdkType: String,
+        val headerType: String,
+        val reason: EbootInvalidReason,
+    ) {
+        /** Una sola línea de log con todo el diagnóstico. */
+        fun logLine(): String =
+            "eboot=$path tamaño=$sizeBytes bytes magia=$magic version=$version " +
+                "sdk_type=$sdkType header_type=$headerType motivo=${reason.logName}"
+    }
+
+    /**
+     * Valida el eboot.bin instalado y devuelve el motivo, no solo
+     * un Boolean (R4-P1-5). No cambia ninguna decisión: el motivo
+     * OK es exactamente isValidEbootFile. FALTA si no hay eboot.bin.
+     */
+    fun ebootValidation(titleId: String): EbootValidation {
+        val expectedPath = File(appDir(titleId), "eboot.bin").absolutePath
+        val eboot = runCatching { ImportTreeSearch.findEboot(appDir(titleId)) }.getOrNull()
+            ?: return EbootValidation(expectedPath, 0, "?", "?", "?", "?", EbootInvalidReason.FALTA)
+        val reason = ebootValidationReason(eboot)
+        val header = readHeaderBytes(eboot, SELF_HEADER_SIZE_BYTES)
+        val magic = when {
+            header != null && isSecMagic(header) -> "SEC"
+            header != null && isElfMagic(header) -> "ELF"
+            else -> "?"
+        }
+        val version = if (header != null && magic == "SEC") u32Le(header, 4).toString() else "?"
+        val sdkType = if (header != null && magic == "SEC") u16Le(header, 8).toString() else "?"
+        val headerType = if (header != null && magic == "SEC") u16Le(header, 10).toString() else "?"
+        return EbootValidation(eboot.absolutePath, eboot.length(), magic, version, sdkType, headerType, reason)
+    }
+
+    /**
      * ¿El eboot.bin instalado es cargable por el núcleo? Un eboot bien
      * instalado es un SELF en disco ('S' 'E' 'C' 0x00; pin 3e43bc80,
      * kernel/src/load_self.cpp:508-509: SCE_MAGIC = 0x00454353) y el
@@ -690,8 +857,7 @@ class GameLibraryRepository(private val context: Context) {
      * si no hay eboot.bin.
      */
     fun isEbootDecrypted(titleId: String): Boolean {
-        val eboot = runCatching { ImportTreeSearch.findEboot(appDir(titleId)) }.getOrNull() ?: return false
-        return isValidEbootFile(eboot)
+        return ebootValidation(titleId).reason == EbootInvalidReason.OK
     }
 
     /**
@@ -2053,9 +2219,9 @@ class GameLibraryRepository(private val context: Context) {
     /**
      * Borra el .pkg guardado del juego cuando el juego ya está
      * extraído y el eboot es válido (P0-1, 2026-11-09: la validación
-     * es fuerte — tamaño mínimo + cabecera — y el borrado solo se
-     * llama después de que loadGame valide el juego). Cada decisión
-     * queda registrada en el log: en la 0.2.10 el .pkg no se borró
+     * es estructural — magia + campos SELF + offsets dentro del
+     * archivo — y el borrado solo se llama después de que loadGame
+     * valide el juego). Cada decisión queda registrada en el log: en la 0.2.10 el .pkg no se borró
      * y no había ni una línea de log que dijera por qué, así que el
      * fallo era invisible. El work.bin se conserva siempre.
      */
@@ -2064,8 +2230,9 @@ class GameLibraryRepository(private val context: Context) {
             LauncherLog.append(context, "delete", ".pkg no borrado: titleId no válido")
             return false
         }
-        if (!isEbootDecrypted(titleId)) {
-            LauncherLog.append(context, "delete", ".pkg no borrado: eboot no válido en $titleId (falta, truncado o corrupto)")
+        val ebootCheck = ebootValidation(titleId)
+        if (ebootCheck.reason != EbootInvalidReason.OK) {
+            LauncherLog.append(context, "delete", ".pkg no borrado: ${ebootCheck.logLine()}")
             return false
         }
         val pkg = findPkgGameFile(titleId)

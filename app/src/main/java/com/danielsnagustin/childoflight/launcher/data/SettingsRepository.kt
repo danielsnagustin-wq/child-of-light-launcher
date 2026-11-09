@@ -264,8 +264,10 @@ class SettingsRepository(private val context: Context) {
      * Aplica un preset completo (sobrescribe los ajustes actuales).
      * lowRam=true aplica además el perfil conservador de ≤ 4 GB
      * (applyLowRamDefaults) sobre el preset; solo lo pasa el primer
-     * arranque automático (detectGpu) y resetToDefaults, nunca la
-     * elección manual de un perfil por el usuario.
+     * arranque automático (detectGpu), nunca la elección manual de un
+     * perfil por el usuario ni resetToDefaults (R4-P0-9: el reseteo
+     * usa el preset canónico; la variante lowRam solo existe en el
+     * primer arranque y queda registrada como divergencia).
      */
     suspend fun applyPreset(profile: GpuProfileId, current: LauncherSettings? = null, lowRam: Boolean = false) {
         val base = if (lowRam) applyLowRamDefaults(presetSettings(profile)) else presetSettings(profile)
@@ -309,9 +311,13 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun resetToDefaults(gpu: GpuInfo?) {
         val profile = if (gpu != null) defaultProfileFor(gpu) else GpuProfileId.G99_RECOMMENDED
-        // RAM baja (≤ 4 GB): restablecer también vuelve al perfil
-        // conservador; el usuario puede subir a 2x después si quiere.
-        val base = if (DeviceMemory.isLowRamDevice(context)) applyLowRamDefaults(presetSettings(profile)) else presetSettings(profile)
+        // R4-P0-9: "Restablecer ajustes" usa el preset CANÓNICO, sin
+        // lowRam: la variante conservadora de ≤ 4 GB solo se aplica en
+        // el primer arranque (detectGpu) y queda registrada como
+        // divergencia (ver isLowRamConservativeVariant). Antes el
+        // reseteo aplicaba lowRam y el mismo preset daba
+        // textureCache=false aquí y true al aplicarlo a mano.
+        val base = presetSettings(profile)
         // El estado de entrega del .pkg NO es un ajuste: restablecer no
         // debe obligar a volver a copiar 1.1 GB a Descargas ni a
         // reconfirmar la instalación (igual que applyPreset, M21).

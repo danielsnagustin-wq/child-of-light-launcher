@@ -158,8 +158,24 @@ class SessionManager(
     // la savedata del launcher, y con un .pkg los saves viven en Vita3K.
     // Si se usara el título del .pkg, se crearía una "Partida 1" vacía
     // y se harían snapshots de una savedata que no existe.
-    private fun installedTitleId(): String? = try {
-        library.scanStatus().extractedTitleId?.id
+    private fun installedTitleId(): String? = lightExtractedTitleId()
+
+    /**
+     * R4-P0-8: Title ID del juego EXTRAÍDO por lectura LIGERA, sin
+     * scanStatus() completo. Antes cada llamada era un escaneo entero
+     * (tamaños, DLCs, saves, .pkg, MediaStore) solo para devolver un
+     * String, y se llama desde al menos 8 sitios. La lectura ligera
+     * es EXACTA para este dato: scanStatus decide "extraído" con esta
+     * misma comprobación (app/<TITLE>/ con eboot.bin, sin importar
+     * mayúsculas) en el ux0 efectivo; aquí se hace solo eso, sin medir
+     * nada. Pública para que el ViewModel (freshExtractedTitleId) use
+     * la misma lectura sin otro escaneo.
+     */
+    fun lightExtractedTitleId(): String? = try {
+        TitleId.entries.firstOrNull { candidate ->
+            val dir = library.appDir(candidate.id)
+            dir.exists() && ImportTreeSearch.findEboot(dir) != null
+        }?.id
     } catch (_: Exception) {
         null
     }

@@ -266,6 +266,14 @@ object Vita3kConfigGenerator {
     /**
      * Escribe config.yml en <vitaFs>/config.yml y devuelve el archivo.
      *
+     * R4-P0-7 + R4-P2-4: IDEMPOTENTE. Si el archivo ya tiene el mismo
+     * contenido, NO se reescribe (ni se registra la línea de log):
+     * JUGAR escribía el mismo config.yml 3 veces (play + firmware +
+     * launchImpl) y el log lo confirmaba 3 veces por segundo. La única
+     * escritura por JUGAR la hace play(); esto es la red de seguridad
+     * para cualquier otro camino que vuelva a llamar aquí con los
+     * mismos ajustes.
+     *
      * OJO (bug -3, 2026-11-08): pref-path NO es la raíz de
      * almacenamiento: upstream lo trata COMO el vita_fs (config.h:182
      * del pin 3e43bc80: pref-path es cfg.vita_fs_path; app_init.cpp
@@ -285,8 +293,25 @@ object Vita3kConfigGenerator {
         val content = generate(settings, vitaFs.absolutePath, gpu)
         if (!vitaRoot.exists()) vitaRoot.mkdirs()
         val file = File(vitaRoot, "config.yml")
-        file.writeText(content)
-        LauncherLog.append(context, "config", "config.yml escrito (${content.length} bytes, perfil ${settings.activeProfile.name})")
+        if (writeConfigIfChanged(file, content)) {
+            LauncherLog.append(context, "config", "config.yml escrito (${content.length} bytes, perfil ${settings.activeProfile.name})")
+        }
         return file
+    }
+
+    /**
+     * Escribe [content] en [file] SOLO si difiere del contenido actual
+     * del archivo; devuelve true si escribió y false si ya era idéntico
+     * (entonces no toca el archivo: ni bytes ni fecha). Si el archivo
+     * no existe, lo crea (con sus carpetas padre). Pura salvo File,
+     * para poder probarla en la JVM sin Android (el log vive en
+     * writeConfig, no aquí).
+     */
+    fun writeConfigIfChanged(file: File, content: String): Boolean {
+        val existing = runCatching { if (file.isFile) file.readText() else null }.getOrNull()
+        if (existing == content) return false
+        file.parentFile?.mkdirs()
+        file.writeText(content)
+        return true
     }
 }
