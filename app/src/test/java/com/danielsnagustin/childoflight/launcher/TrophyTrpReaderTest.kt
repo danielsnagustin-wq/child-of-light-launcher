@@ -212,13 +212,19 @@ class TrophyTrpReaderTest {
     }
 
     @Test
-    fun duplicateIds_isUnreadable() {
+    fun duplicateIds_areSkippedWithWarning() {
+        // P2-24: un id duplicado no invalida todo el diagnóstico: se
+        // ignora la repetición (con aviso) y la entrada válida se lee.
+        // El test viejo esperaba Unreadable, pero ese contrato cambió
+        // en P2-24 (ver malformedEntriesAreSkippedWithWarning).
         val xml = "<trophyconf version=\"1.1\">" +
             "<trophy id=\"000\" hidden=\"no\" ttype=\"B\" pid=\"000\"/>" +
             "<trophy id=\"000\" hidden=\"no\" ttype=\"B\" pid=\"000\"/>" +
             "</trophyconf>"
-        val result = unreadable(TrophyTrpReader.read(wrapInFakeContainer(xml)))
-        assertTrue(result.reason.contains("duplicados"))
+        val value = success(TrophyTrpReader.read(wrapInFakeContainer(xml)))
+        assertEquals(1, value.trophyCount)
+        assertEquals(listOf(0), value.trophies.map { it.id })
+        assertTrue(value.warnings.any { it.contains("duplicado") })
     }
 
     @Test
