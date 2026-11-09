@@ -75,12 +75,55 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /** Acción que puede ofrecer el diálogo de aviso importante. */
 enum class AlertAction { INSTALL_VITA3K, GO_IMPORT, DELIVER_PKG_TO_VITA3K, CONFIRM_PKG_INSTALLED, REPLACE_DUPLICATE, CONFIRM_DOWNLOADS_COPY, RETRY_LAUNCH, RESOLVE_LEGACY_CONFLICT }
 
 /** Caducidad de una prueba de 30 s pendiente (P2-A2): pasado este tiempo sin registrarse, se descarta. */
 internal const val BENCHMARK_PENDING_MAX_AGE_MILLIS = 15L * 60 * 1000
+
+/**
+ * R4-P1-9: ventana de recencia de refreshStatus(): si el último
+ * escaneo COMPLETADO terminó hace menos de esto, otro refresco no
+ * aporta nada nuevo y se salta. Al volver de una partida larga el
+ * último escaneo es viejo y el refresco ocurre igual.
+ */
+internal const val REFRESH_RECENCY_MILLIS = 2000L
+
+/**
+ * R4-P1-12: cuánto dura la caché de versión externa y batería en
+ * refreshStatusOnce(): 5 minutos. Las lecturas explícitas (pantalla
+ * de Diagnóstico, reporte de bug, diálogo de batería) siguen leyendo
+ * en vivo y refrescan la caché.
+ */
+internal const val EXTERNAL_INFO_CACHE_TTL_MILLIS = 5L * 60 * 1000
+
+/**
+ * Pura (JVM): true si un refresco puede saltarse porque otro escaneo
+ * acaba de terminar. No se salta nunca si hay un refresco pendiente:
+ * ese pendiente se marcó mientras corría un escaneo anterior y puede
+ * ser la única señal de que el disco cambió durante ese escaneo (por
+ * ejemplo, una importación que terminó a mitad del escaneo). Tampoco
+ * se salta si nunca se completó un escaneo (0) ni si el reloj va hacia
+ * atrás.
+ */
+internal fun shouldSkipRecentRefresh(
+    lastCompletedAtMillis: Long,
+    nowMillis: Long,
+    refreshPending: Boolean,
+): Boolean =
+    !refreshPending && lastCompletedAtMillis > 0L &&
+        nowMillis >= lastCompletedAtMillis &&
+        nowMillis - lastCompletedAtMillis < REFRESH_RECENCY_MILLIS
+
+/**
+ * Pura (JVM): true si una lectura cacheada de versión externa o
+ * batería sigue fresca. 0 (nunca leída) nunca es fresca.
+ */
+internal fun isExternalInfoCacheFresh(cachedAtMillis: Long, nowMillis: Long): Boolean =
+    cachedAtMillis > 0L && nowMillis >= cachedAtMillis &&
+        nowMillis - cachedAtMillis < EXTERNAL_INFO_CACHE_TTL_MILLIS
 
 /**
  * Pura (JVM): true si una prueba empezada en [startedAtMillis] ya caducó
@@ -336,7 +379,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 val size = status.pkgSizeBytes
                 if (runCatching { library.deleteStoredGamePkg(extractedId) }.getOrDefault(false)) size else 0L
             } else 0L
-            refreshStatus()
+            // R4-P1-10: el mensaje usa el status YA escaneado arriba
+            // (fresco de disco) y solo se re-escanea si el borrado
+            // cambió algo en disco (freed > 0): sin .pkg que borrar no
+            // cambió nada y otro escaneo completo sería el segundo en
+            // la misma función.
+            if (freed > 0) refreshStatus()
             withContext(Dispatchers.Main) {
                 _message.value = if (freed > 0) {
                     "Se borró el .pkg guardado (${DownloadsCleanup.formatBytes(freed)} liberados). El juego sigue instalado y la licencia no se tocó."
@@ -496,6 +544,42 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val refreshMutex = Mutex()
     private val refreshPending = AtomicBoolean(false)
 
+    // R4-P1-9: instante en que terminó el último escaneo completo.
+    // Lo escribe la corrutina de refreshStatus() (hilo IO) y lo lee la
+    // guarda de recencia: AtomicLong porque dos corrutinas IO pueden
+    // llegar a la vez. Se declara ANTES del init por la misma regla de
+    // arriba: refreshStatus() se llama desde el init.
+    private val lastRefreshCompletedAtMillis = AtomicLong(0L)
+
+    // R4-P1-12: caché de la versión externa y de la batería, para no
+    // repetir el IPC (getPackageInfo / PowerManager) en cada refresco.
+    // Solo las lee refreshStatusOnce() y las lecturas explícitas en
+    // vivo; los Volatile bastan (en el peor caso se repite una lectura,
+    // nunca se devuelve un valor incorrecto). También antes del init,
+    // por la misma regla: refreshStatusOnce() corre desde el init.
+    @Volatile
+    private var externalVersionCache: String? = null
+    @Volatile
+    private var externalVersionCacheAtMillis: Long = 0L
+    @Volatile
+    private var externalVersionCacheKnown: Boolean = false
+    @Volatile
+    private var batteryOptCache: Boolean = false
+    @Volatile
+    private var batteryOptCacheAtMillis: Long = 0L
+    @Volatile
+    private var batteryOptCacheKnown: Boolean = false
+
+    // R4-P1-12: la lista de Descargas solo se consulta en el refresco
+    // la primera vez (sucia al arrancar, para que Almacenamiento no
+    // nazca vacía). Después, cada refresco la salta: la entrega a
+    // Descargas y el borrado de copias la re-listan directamente, y
+    // Almacenamiento puede pedirla al entrar con
+    // refreshDownloadsCopiesNow(). Nada vuelve a marcarla sucia: el
+    // flag solo evita repetir la query de MediaStore en cada refresco.
+    @Volatile
+    private var downloadsCopiesDirty: Boolean = true
+
     init {
         refreshStatus()
         refreshLog()
@@ -547,13 +631,80 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 return@launch
             }
             try {
+                // R4-P1-9: guarda de recencia EN EL MISMO camino del
+                // mutex (no un segundo camino): con el candado ya en
+                // la mano, ningún escaneo corre en paralelo y el
+                // último completado es el dato fresco. Si terminó hace
+                // <2 s y nadie pidió otro mientras corría, se salta el
+                // escaneo: es el caso del arranque en frío (init +
+                // onResume) y de volver del selector SAF (onResume +
+                // endImport). El bucle de pendientes NO pasa por esta
+                // guarda: un pendiente marcado durante un escaneo es la
+                // señal de que el disco pudo cambiar a mitad del
+                // escaneo y su re-escaneo siempre corre. Al volver de
+                // una partida larga el último escaneo es viejo y el
+                // refresco ocurre igual.
+                if (shouldSkipRecentRefresh(
+                        lastRefreshCompletedAtMillis.get(),
+                        System.currentTimeMillis(),
+                        refreshPending.get(),
+                    )
+                ) {
+                    return@launch
+                }
                 do {
                     refreshPending.set(false)
                     refreshStatusOnce()
+                    lastRefreshCompletedAtMillis.set(System.currentTimeMillis())
                 } while (refreshPending.getAndSet(false))
             } finally {
                 refreshMutex.unlock()
             }
+        }
+    }
+
+    // R4-P1-12: versión externa cacheada (getPackageInfo es IPC por
+    // refresco). La caché dura EXTERNAL_INFO_CACHE_TTL_MILLIS; las
+    // lecturas explícitas en vivo (Diagnóstico, reporte de bug) la
+    // refrescan. Un null cacheado es válido (app externa no
+    // instalada): por eso existe externalVersionCacheKnown.
+    private fun cachedExternalVersion(): String? {
+        val now = System.currentTimeMillis()
+        if (externalVersionCacheKnown && isExternalInfoCacheFresh(externalVersionCacheAtMillis, now)) {
+            return externalVersionCache
+        }
+        val fresh = runCatching { launcher.externalVita3kVersion() }.getOrNull()
+        externalVersionCache = fresh
+        externalVersionCacheAtMillis = now
+        externalVersionCacheKnown = true
+        return fresh
+    }
+
+    // R4-P1-12: exención de batería cacheada (PowerManager es IPC por
+    // refresco). Misma TTL que la versión externa.
+    private fun cachedBatteryOptDisabled(): Boolean {
+        val now = System.currentTimeMillis()
+        if (batteryOptCacheKnown && isExternalInfoCacheFresh(batteryOptCacheAtMillis, now)) {
+            return batteryOptCache
+        }
+        val fresh = runCatching { launcher.isBatteryOptimizationDisabled() }.getOrDefault(false)
+        batteryOptCache = fresh
+        batteryOptCacheAtMillis = now
+        batteryOptCacheKnown = true
+        return fresh
+    }
+
+    /**
+     * R4-P1-12: re-lee la lista de Descargas/ChildOfLight/ AHORA, sin
+     * escanear nada más. Para que Almacenamiento la pida al entrar (la
+     * query de MediaStore ya no corre en cada refresco). La entrega a
+     * Descargas y el borrado de copias la refrescan directamente sin
+     * pasar por aquí.
+     */
+    fun refreshDownloadsCopiesNow() {
+        viewModelScope.launch(Dispatchers.IO) {
+            refreshDownloadsCopies()
+            downloadsCopiesDirty = false
         }
     }
 
@@ -569,16 +720,20 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     LauncherLog.append(context, "status", "Firmware migrado de la ruta antigua (vitaRoot/vs0) a vita/vs0.")
                 }
             }
+            // R4-P1-12: el firmware se resuelve UNA sola vez por
+            // refresco y se pasa a scanStatus(), que antes lo resolvía
+            // otra vez por dentro. Si la resolución falla (nunca
+            // debería: es lectura de archivos), scanStatus() resuelve
+            // por su cuenta y _firmwareStatus conserva su valor.
+            val firmware = runCatching { FirmwareResolver.resolve(library.vitaRoot) }.getOrNull()
             // BUG (auditoría): scanStatus() hace I/O y puede lanzar; se llama
             // desde init/onResume sin protección. Si falla, se conserva el
             // estado anterior en vez de tumbar la corrutina.
-            runCatching { library.scanStatus() }
+            runCatching { library.scanStatus(firmware) }
                 .onSuccess { _status.value = it }
                 .onFailure { LauncherLog.append(context, "status", "No se pudo escanear el estado: ${it.message}") }
-            runCatching { FirmwareResolver.resolve(library.vitaRoot) }
-                .onSuccess { _firmwareStatus.value = it }
-            _externalVita3k.value =
-                runCatching { launcher.externalVita3kVersion() }.getOrNull()
+            firmware?.let { _firmwareStatus.value = it }
+            _externalVita3k.value = cachedExternalVersion()
             // Crash al abrir (#80/#82): NO cargar el .so aquí. `available`
             // ejecuta System.loadLibrary y un fallo nativo en sus
             // inicializadores mata el proceso sin stack trace Java antes
@@ -586,9 +741,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // la carga real es al lanzar el juego.
             _embeddedCore.value =
                 runCatching { Vita3kCoreBridge.isLibraryFilePresent(context) }.getOrNull()
-            _batteryOptDisabled.value =
-                runCatching { launcher.isBatteryOptimizationDisabled() }.getOrDefault(false)
-            refreshDownloadsCopies()
+            _batteryOptDisabled.value = cachedBatteryOptDisabled()
+            // R4-P1-12: la query de MediaStore de Descargas solo corre
+            // en el primer refresco (downloadsCopiesDirty): la entrega
+            // y el borrado de copias re-listan directamente, y
+            // Almacenamiento puede pedirla al entrar con
+            // refreshDownloadsCopiesNow(). En cada refresco, no: el
+            // usuario casi nunca abre Almacenamiento.
+            if (downloadsCopiesDirty) {
+                refreshDownloadsCopies()
+                downloadsCopiesDirty = false
+            }
             val title = _status.value.titleId?.id
             _trophyScan.value = if (title != null) {
                 runCatching { TrophyStoreReader.scan(library.vitaRoot, title) }.getOrNull()
@@ -1680,7 +1843,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     _alert.value = AlertInfo("No se pudo entregar el .pkg a la app externa: ${e.message}")
                 }
             }
-            refreshStatus()
+            // R4-P1-10: la entrega solo toca Descargas: basta
+            // re-listar las copias. Un refreshStatus() completo aquí
+            // re-escaneaba juego, firmware y TRP por una copia a
+            // Descargas. La lista queda fresca para Almacenamiento.
+            refreshDownloadsCopies()
+            downloadsCopiesDirty = false
         }
     }
 
@@ -2173,7 +2341,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     onFailure = { "No se pudo crear la sesión: ${it.message}" },
                 )
             }
-            refreshStatus()
+            // R4-P1-10: sin refreshStatus(): crear una sesión no toca
+            // nada que GameStatus lea (las sesiones viven en DataStore
+            // y snapshots; los saves se leen de la savedata viva).
         }
     }
 
@@ -2223,7 +2393,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     onFailure = { "No se pudo borrar: ${it.message}" },
                 )
             }
-            refreshStatus()
+            // R4-P1-10: sin refreshStatus(), igual que createSession:
+            // borrar una sesión no toca nada que GameStatus lea.
         }
     }
 
@@ -2848,7 +3019,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val title = freshExtractedTitleId()
             if (title == null) {
                 withContext(Dispatchers.Main) {
-                    _message.value = if (freshTitleId() != null) {
+                    // R4-P1-11: el extraído ya se leyó arriba (null):
+                    // solo falta la parte .pkg, sin re-leer el extraído.
+                    _message.value = if (freshPkgTitleId() != null) {
                         "El juego está como .pkg: los saves viven dentro de la app externa, no en el launcher."
                     } else {
                         "No hay juego instalado: no hay saves que borrar."
@@ -2924,6 +3097,19 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      */
     private fun freshTitleId(): String? {
         freshExtractedTitleId()?.let { return it }
+        return freshPkgTitleId()
+    }
+
+    /**
+     * Title ID del .pkg guardado, fresco: solo la parte .pkg de
+     * freshTitleId() (header del .pkg, Content ID). R4-P1-11: los
+     * llamadores que YA leyeron el título extraído usan esto para el
+     * mensaje ".pkg" sin volver a leer el extraído: antes
+     * freshTitleId() re-llamaba a freshExtractedTitleId() y se pagaba
+     * la lectura ligera dos veces por cada exportar/importar/borrar
+     * saves sin juego extraído.
+     */
+    private fun freshPkgTitleId(): String? {
         for (candidate in TitleId.entries) {
             val pkg = runCatching { library.findPkgGameFile(candidate.id) }.getOrNull() ?: continue
             val headerTitle = runCatching {
@@ -2945,7 +3131,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val title = freshExtractedTitleId()
             if (title == null) {
                 withContext(Dispatchers.Main) {
-                    _message.value = if (freshTitleId() != null) {
+                    // R4-P1-11: el extraído ya se leyó arriba (null):
+                    // solo falta la parte .pkg, sin re-leer el extraído.
+                    _message.value = if (freshPkgTitleId() != null) {
                         "El juego está como .pkg: los saves viven dentro de la app externa, no en el launcher."
                     } else {
                         "No hay juego instalado: no hay saves que exportar."
@@ -2971,7 +3159,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val title = freshExtractedTitleId()
             if (title == null) {
                 withContext(Dispatchers.Main) {
-                    _message.value = if (freshTitleId() != null) {
+                    // R4-P1-11: el extraído ya se leyó arriba (null):
+                    // solo falta la parte .pkg, sin re-leer el extraído.
+                    _message.value = if (freshPkgTitleId() != null) {
                         "El juego está como .pkg: los saves viven dentro de la app externa, no en el launcher."
                     } else {
                         "Instala primero el juego para importar saves."
@@ -3023,9 +3213,24 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     // --- Diagnóstico / reporte de bug ---
 
-    fun externalVita3kVersion(): String? = launcher.externalVita3kVersion()
+    // R4-P1-12: lecturas en VIVO (las piden explícitamente Diagnóstico
+    // y el reporte de bug) que además refrescan la caché, para que el
+    // próximo refreshStatus() no repita el IPC si sigue fresca.
+    fun externalVita3kVersion(): String? {
+        val fresh = runCatching { launcher.externalVita3kVersion() }.getOrNull()
+        externalVersionCache = fresh
+        externalVersionCacheAtMillis = System.currentTimeMillis()
+        externalVersionCacheKnown = true
+        return fresh
+    }
     fun embeddedCorePresent(): Boolean = launcher.embeddedCorePresent()
-    fun isBatteryOptimizationDisabled(): Boolean = launcher.isBatteryOptimizationDisabled()
+    fun isBatteryOptimizationDisabled(): Boolean {
+        val fresh = runCatching { launcher.isBatteryOptimizationDisabled() }.getOrDefault(false)
+        batteryOptCache = fresh
+        batteryOptCacheAtMillis = System.currentTimeMillis()
+        batteryOptCacheKnown = true
+        return fresh
+    }
     fun batteryOptimizationIntent() = launcher.batteryOptimizationIntent()
 
     fun refreshBatteryOptimizationState() {
@@ -3034,8 +3239,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // del sistema, lo conceda el usuario o no. No se persiste
             // nada: el campo guardado no lo leía nadie y el valor vivo
             // es el del sistema (ronda de verificación 2026-11-08).
-            _batteryOptDisabled.value =
-                runCatching { launcher.isBatteryOptimizationDisabled() }.getOrDefault(false)
+            // R4-P1-12: la lectura en vivo refresca la caché, igual que
+            // isBatteryOptimizationDisabled().
+            val fresh = runCatching { launcher.isBatteryOptimizationDisabled() }.getOrDefault(false)
+            batteryOptCache = fresh
+            batteryOptCacheAtMillis = System.currentTimeMillis()
+            batteryOptCacheKnown = true
+            _batteryOptDisabled.value = fresh
         }
     }
 

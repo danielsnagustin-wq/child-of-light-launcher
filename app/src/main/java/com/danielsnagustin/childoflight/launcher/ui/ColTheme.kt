@@ -40,10 +40,12 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -52,10 +54,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import com.danielsnagustin.childoflight.launcher.data.UiPreferencesRepository
 import com.danielsnagustin.childoflight.launcher.model.CardSize
 import com.danielsnagustin.childoflight.launcher.model.CardTransparency
 import com.danielsnagustin.childoflight.launcher.model.ThemeMode
@@ -74,6 +79,50 @@ val ContentMaxWidth: Dp = 720.dp
  * tamaño no cambia la posición guardada.
  */
 fun previewHeightForScreen(maxHeight: Dp): Dp = if (maxHeight < 500.dp) 200.dp else 300.dp
+
+/**
+ * R4-P1-4: tamaño 16:9 real de la vista previa del editor, con el
+ * mismo aspecto que el juego (960x544). La previa cabe en el espacio
+ * disponible: el ancho es el menor entre el ancho disponible y el
+ * que permite la altura disponible sin pasarse de ella. Puro y
+ * testeable en JVM. previewHeightForScreen se conserva por
+ * compatibilidad con sus tests, pero el editor ya no la usa: una
+ * altura fija con fillMaxWidth no es 16:9.
+ */
+fun previewSizeForScreen(maxWidth: Dp, maxHeight: Dp): DpSize {
+    val aspect = 960f / 544f
+    val width = minOf(maxWidth, maxHeight * aspect)
+    return DpSize(width, width / aspect)
+}
+
+/**
+ * R4-P1-15: preferencias de interfaz para cualquier composable que
+ * las necesite sin recibirlas por parámetro. MainActivity puede
+ * proveerlas con CompositionLocalProvider cuando quiera (un solo
+ * punto de lectura); mientras no lo haga, el valor es null y
+ * rememberUiPreferences las lee directamente de DataStore, así que
+ * PremiumCard funciona en todas las pantallas sin tocar sus call
+ * sites. El valor del Local, si existe, siempre gana.
+ */
+val LocalUiPreferences = staticCompositionLocalOf<UiPreferences?> { null }
+
+@Composable
+fun rememberUiPreferences(): UiPreferences? {
+    val fromLocal = LocalUiPreferences.current
+    if (fromLocal != null) return fromLocal
+    val context = LocalContext.current
+    val repo = remember(context) { UiPreferencesRepository(context.applicationContext) }
+    val prefs by repo.uiFlow.collectAsState(initial = null)
+    return prefs
+}
+
+/** R4-P1-15: un tamaño explícito gana; sin él, la preferencia guardada; sin ella, Normal. */
+fun resolveCardSize(explicit: CardSize?, prefs: UiPreferences?): CardSize =
+    explicit ?: prefs?.cardSize ?: CardSize.NORMAL
+
+/** R4-P1-15: una transparencia explícita gana; sin ella, la preferencia guardada; sin ella, Opaco. */
+fun resolveCardTransparency(explicit: CardTransparency?, prefs: UiPreferences?): CardTransparency =
+    explicit ?: prefs?.cardTransparency ?: CardTransparency.OPAQUE
 
 // --- Paleta Dark Fantasy Premium (2026-11-08): AMOLED #10131D,
 // azul hielo como acento principal. Sustituye por completo a la
@@ -156,9 +205,41 @@ fun onAccentColor(accent: Color = MaterialTheme.colorScheme.primary): Color {
 }
 
 /** Fondo AMOLED #10131D (sustituye al negro puro #000000). */
-fun premiumBackgroundBrush(): Brush = Brush.verticalGradient(
-    listOf(ColNight, ColNight),
-)
+fun premiumBackgroundBrush(): Brush = premiumBackgroundBrush(dark = true)
+
+/**
+ * R4-P1-14: tinte claro del fondo elegido, para Tema Claro. Los
+ * fondos guardados son casi negros (AMOLED); aclararlos un 88 %
+ * hacia el blanco deja un tinte pálido que conserva el matiz del
+ * fondo elegido en vez de ignorarlo. Puro y testeable en JVM.
+ */
+fun lightBackgroundTint(baseHex: String?): Color {
+    val base = try {
+        Color(android.graphics.Color.parseColor(baseHex ?: "#10131D"))
+    } catch (_: Exception) {
+        ColNight
+    }
+    val mix = 0.88f
+    return Color(
+        red = base.red + (1f - base.red) * mix,
+        green = base.green + (1f - base.green) * mix,
+        blue = base.blue + (1f - base.blue) * mix,
+        alpha = 1f,
+    )
+}
+
+/**
+ * R4-P1-14: fondo de Ajustes según el tema. En oscuro, el AMOLED de
+ * siempre. En claro, gradiente del tinte claro del fondo elegido a
+ * plata claro: el fondo elegido se aplica (como tinte) en vez de
+ * ignorarse, y nada queda oscuro sobre claro.
+ */
+fun premiumBackgroundBrush(dark: Boolean, baseHex: String? = null): Brush {
+    if (!dark) {
+        return Brush.verticalGradient(listOf(lightBackgroundTint(baseHex), ColBackgroundLight))
+    }
+    return Brush.verticalGradient(listOf(ColNight, ColNight))
+}
 
 /** Fondo de la Home: el tinte elegido por el usuario (casi negro) arriba → AMOLED #10131D abajo. En tema claro, fondo claro (los tintes guardados son oscuros). */
 fun homeBackgroundBrush(baseHex: String?, dark: Boolean): Brush {
@@ -174,25 +255,34 @@ fun homeBackgroundBrush(baseHex: String?, dark: Boolean): Brush {
 fun homeBackgroundBrush(baseHex: String?): Brush = homeBackgroundBrush(baseHex, true)
 
 /**
- * Tarjeta premium: superficie azul noche (#1A2036) con borde azul hielo sutil. Sin sombra: sobre #10131D no se ve.
+ * Tarjeta premium: superficie según el tema (oscura #1A2036 o clara
+ * #F1F5FA) con borde azul hielo sutil. Sin sombra: sobre #10131D no se ve.
  *
  * Ola 3, Etapa 6: tamaño y transparencia reales desde UiPreferences.
- * Los defaults son el comportamiento actual (padding 16 dp, radio 20 dp,
- * opaco), así que los call sites que no pasan nada no cambian.
+ * R4-P1-15: cardSize y cardTransparency son opcionales (null = leer
+ * la preferencia guardada directamente, vía rememberUiPreferences):
+ * los call sites que no pasan nada ya no quedan en Normal/Opaco, y
+ * los que pasan un valor explícito (Home, General) siguen ganando.
+ * R4-P1-14: la superficie y el tema se resuelven con isDarkUi y
+ * cardElevatedColor; antes era siempre ColCardElevated oscuro.
  */
 @Composable
 fun PremiumCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
-    cardSize: CardSize = CardSize.NORMAL,
-    cardTransparency: CardTransparency = CardTransparency.OPAQUE,
+    cardSize: CardSize? = null,
+    cardTransparency: CardTransparency? = null,
     content: @Composable () -> Unit,
 ) {
     // Borde con el acento del usuario (0.2.15): antes ColAccent fijo.
+    val uiPrefs = rememberUiPreferences()
+    val dark = isDarkUi(uiPrefs)
+    val resolvedSize = resolveCardSize(cardSize, uiPrefs)
+    val resolvedTransparency = resolveCardTransparency(cardTransparency, uiPrefs)
     val border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.22f))
-    val shape = RoundedCornerShape(cardSize.cornerDp.dp)
-    val containerColor = ColCardElevated.copy(alpha = cardTransparency.alpha)
-    val innerPadding = cardSize.paddingDp.dp
+    val shape = RoundedCornerShape(resolvedSize.cornerDp.dp)
+    val containerColor = cardElevatedColor(dark).copy(alpha = resolvedTransparency.alpha)
+    val innerPadding = resolvedSize.paddingDp.dp
     if (onClick != null) {
         Card(
             modifier = modifier.fillMaxWidth(),
@@ -221,21 +311,22 @@ fun PremiumCard(
     }
 }
 
-/** Encabezado de pantalla: título grande + subtítulo pequeño en gris. */
+/** Encabezado de pantalla: título grande + subtítulo pequeño en gris. R4-P1-14: colores según el tema, no blancos fijos. */
 @Composable
 fun ScreenHeader(title: String, subtitle: String? = null) {
+    val dark = isDarkUi(rememberUiPreferences())
     Text(
         text = title,
         style = MaterialTheme.typography.headlineMedium,
         fontWeight = FontWeight.Bold,
-        color = Color.White,
+        color = cardTextColor(dark),
     )
     if (subtitle != null) {
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = subtitle,
             style = MaterialTheme.typography.bodyMedium,
-            color = ColMutedText,
+            color = mutedTextColor(dark),
         )
     }
     Spacer(modifier = Modifier.height(16.dp))
@@ -459,10 +550,12 @@ fun NoteText(text: String) {
     // fondo AMOLED #10131D fijo). Antes usaba
     // MaterialTheme.colorScheme.onSurfaceVariant, que con Tema Claro es
     // gris oscuro sobre fondo oscuro: ilegible.
+    // R4-P1-14: ahora según el tema (claro = gris oscuro sobre fondo
+    // claro), porque el fondo de Ajustes ya no es siempre oscuro.
     Text(
         text = text,
         style = MaterialTheme.typography.bodySmall,
-        color = ColMutedText,
+        color = mutedTextColor(isDarkUi(rememberUiPreferences())),
         modifier = Modifier.padding(vertical = 4.dp),
     )
 }
@@ -483,7 +576,8 @@ fun SettingSwitch(
             // R2-P1-07: mismo arreglo que NoteText: ColMutedText fijo en
             // vez de onSurfaceVariant (ilegible con Tema Claro sobre el
             // fondo AMOLED fijo).
-            Text(description, style = MaterialTheme.typography.bodySmall, color = ColMutedText)
+            // R4-P1-14: ahora según el tema, como NoteText.
+            Text(description, style = MaterialTheme.typography.bodySmall, color = mutedTextColor(isDarkUi(rememberUiPreferences())))
         }
         Spacer(modifier = Modifier.width(8.dp))
         Switch(checked = checked, onCheckedChange = onCheckedChange)
@@ -528,6 +622,7 @@ fun SettingSlider(
     value: Int,
     range: IntRange,
     onValueChange: (Int) -> Unit,
+    enabled: Boolean = true,
     valueLabel: (Int) -> String = { "$it" },
 ) {
     // B5 (auditoría UI): antes cada tick del slider escribía en DataStore
@@ -544,6 +639,7 @@ fun SettingSlider(
             onValueChangeFinished = { onValueChange(local) },
             valueRange = range.first.toFloat()..range.last.toFloat(),
             steps = (range.last - range.first - 1).coerceAtLeast(0),
+            enabled = enabled,
         )
     }
 }

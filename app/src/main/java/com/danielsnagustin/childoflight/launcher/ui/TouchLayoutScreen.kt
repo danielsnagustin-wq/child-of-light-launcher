@@ -3,7 +3,9 @@ package com.danielsnagustin.childoflight.launcher.ui
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -40,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -63,6 +67,22 @@ private fun parseHex(hex: String): Color = try {
 } catch (_: Exception) {
     Color(0xFF8CCBEB)
 }
+
+/**
+ * R4-P1-4: cristal del juego para la vista previa del editor, sin
+ * tocar el núcleo. Degradado radial plata en el centro, color del
+ * botón en el medio y azul profundo en el borde: el mismo aspecto
+ * que el overlay dibuja en el juego (GamepadOverlayView), en vez de
+ * un círculo plano de color. La zona Igniculus no lo usa: es una
+ * zona, no un botón.
+ */
+private fun touchPreviewGlassBrush(base: Color): Brush = Brush.radialGradient(
+    listOf(Color(0xFFDCE8F5), base.copy(alpha = 0.85f), Color(0xFF182644)),
+)
+
+/** R4-P1-4: texto del resultado de "probar mando": etiqueta del botón y a qué botón de Vita está asignado. Puro y testeable en JVM. */
+fun touchControlTestLabel(control: TouchControl): String =
+    "${control.label} → ${control.vitaButton.label}"
 
 /**
  * Editor COMPLETO de controles táctiles de Child of Light.
@@ -92,6 +112,14 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     // al girar el teléfono volvía al stick y perdía lo escrito.
     var selectedId by rememberSaveable { mutableStateOf("stick") }
     var previewSize by remember { mutableStateOf(IntSize.Zero) }
+    // R4-P1-4: modo "probar mando" del editor: tocar un botón en la
+    // vista previa lo resalta y muestra su etiqueta y su asignación,
+    // sin moverlo ni guardar nada. Sin juego en curso no hay SDL que
+    // leer, así que la prueba es del editor (botón + asignación), no
+    // una lectura del estado SDL en vivo; el texto lo dice.
+    var testMode by rememberSaveable { mutableStateOf(false) }
+    var lastTestedId by remember { mutableStateOf<String?>(null) }
+
     var deleteTarget by remember { mutableStateOf<TouchControl?>(null) }
     var deleteProfileTarget by remember { mutableStateOf<ControlProfile?>(null) }
     var showCreateProfile by rememberSaveable { mutableStateOf(false) }
@@ -160,10 +188,12 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         // La altura se adapta a la pantalla (BoxWithConstraints): en
         // horizontal la vista previa fija de 300 dp se comía casi toda
         // la altura y no cabían ni la cabecera ni los botones.
+        // R4-P1-4: previa 16:9 real (previewSizeForScreen, 960x544
+        // como el juego): cabe en ancho y alto, sin altura fija.
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val previewHeight = previewHeightForScreen(maxHeight)
+            val previewSizeDp = previewSizeForScreen(maxWidth, maxHeight)
             Box(
-                modifier = Modifier.fillMaxWidth().height(previewHeight).background(ColCard)
+                modifier = Modifier.width(previewSizeDp.width).height(previewSizeDp.height).align(Alignment.Center).background(ColCard)
                     .clipToBounds()
                     .onSizeChanged { previewSize = it },
             ) {
@@ -172,6 +202,7 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                         val shape = if (control.shape == ControlShape.CIRCLE) CircleShape else RoundedCornerShape(8.dp)
                         val density = LocalDensity.current
                         val sizePx = with(density) { size.toPx() }
+                        val isTested = testMode && lastTestedId == control.id
                         Box(
                             modifier = Modifier
                                 .offset {
@@ -187,9 +218,27 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                 }
                                 .size(size)
                                 .alpha(control.opacity)
-                                .background(parseHex(control.colorHex), shape)
-                                .pointerInput(control.id) {
-                                    detectDragGestures(
+                                .background(
+                                    if (control.kind == "igniculus") parseHex(control.colorHex)
+                                    else touchPreviewGlassBrush(parseHex(control.colorHex)),
+                                    shape,
+                                )
+                                .border(
+                                    width = if (isTested) 2.dp else 1.dp,
+                                    color = if (isTested) ColTurquoise else ColIceBlue.copy(alpha = 0.7f),
+                                    shape = shape,
+                                )
+                                .pointerInput(control.id, testMode) {
+                                    if (testMode) {
+                                        // R4-P1-4: en modo prueba el toque
+                                        // no arrastra: resalta el botón y
+                                        // lo selecciona para editarlo.
+                                        detectTapGestures(onTap = {
+                                            lastTestedId = control.id
+                                            selectedId = control.id
+                                        })
+                                    } else {
+                                        detectDragGestures(
                                         onDragStart = { isDragging = true },
                                         onDragEnd = {
                                             isDragging = false
@@ -226,6 +275,7 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                             }
                                         }
                                     }
+                                    }
                                 },
                             contentAlignment = Alignment.Center,
                         ) {
@@ -237,7 +287,32 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         if (hideAll) {
             NoteText("Mando conectado (${gamepads.firstOrNull() ?: ""}): en el juego el overlay táctil quedará oculto por tu ajuste. Aquí se sigue viendo para poder editarlo.")
         }
-        NoteText("Vista previa esquemática: las fracciones X/Y se aplican a la pantalla real en el juego.")
+        NoteText("Vista previa 16:9 (960x544, como el juego) con el estilo de cristal del overlay: lo que ves es lo que aparece sobre el juego.")
+
+        // --- Probar mando (R4-P1-4) ---
+        SectionTitle("Probar mando")
+        SettingSwitch(
+            "Probar botones en la vista previa",
+            "Activa el modo prueba: toca un botón en la vista previa y se resalta con su etiqueta y su asignación. No mueve el botón ni guarda nada.",
+            testMode,
+        ) {
+            testMode = it
+            if (!it) lastTestedId = null
+        }
+        if (testMode) {
+            val testedControl = displayLayout.firstOrNull { it.id == lastTestedId }
+            if (testedControl != null) {
+                Text(
+                    "Probado: ${touchControlTestLabel(testedControl)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = ColTurquoise,
+                )
+            } else {
+                NoteText("Toca un botón en la vista previa para comprobar su etiqueta y su asignación.")
+            }
+            NoteText("La prueba comprueba el botón en el editor (etiqueta y asignación). Que llegue al juego se comprueba jugando, con el mando virtual activo: sin juego en curso no hay estado SDL que leer.")
+        }
 
         // --- Perfiles ---
         SectionTitle("Perfiles de control")
@@ -305,13 +380,20 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             // P2-22: los sliders X/Y escribían la fracción directa
             // (0..100): un botón grande podía quedar medio fuera de
             // pantalla. El mismo clamp que el arrastre: el centro
-            // ENTERO dentro de la vista previa. Si la vista previa aún
-            // no se ha medido, half = 0 (clamp 0..1, como antes).
+            // ENTERO dentro de la vista previa.
+            // R4-P1-4: los sliders quedan DESHABILITADOS hasta que la
+            // vista previa se mide (previewSize distinto de cero). Si
+            // aún no se midió, half = 0 (clamp 0..1, como antes) y el
+            // slider y lo dibujado discreparían al guardar.
+            val previewMeasured = previewSize.width > 0 && previewSize.height > 0
+            if (!previewMeasured) {
+                NoteText("Midiendo la vista previa: los sliders de posición se activan al medirla.")
+            }
             val density = LocalDensity.current
             val halfXFrac = if (previewSize.width > 0) (with(density) { control.sizeDp.dp.toPx() } / 2f) / previewSize.width else 0f
             val halfYFrac = if (previewSize.height > 0) (with(density) { control.sizeDp.dp.toPx() } / 2f) / previewSize.height else 0f
-            SettingSlider("Posición X", (control.xFraction * 100).toInt(), 0..100, { updateControl(control.copy(xFraction = TouchLayoutRepository.clampCenterFraction(it / 100f, halfXFrac))) }) { "$it%" }
-            SettingSlider("Posición Y", (control.yFraction * 100).toInt(), 0..100, { updateControl(control.copy(yFraction = TouchLayoutRepository.clampCenterFraction(it / 100f, halfYFrac))) }) { "$it%" }
+            SettingSlider("Posición X", (control.xFraction * 100).toInt(), 0..100, { updateControl(control.copy(xFraction = TouchLayoutRepository.clampCenterFraction(it / 100f, halfXFrac))) }, enabled = previewMeasured) { "$it%" }
+            SettingSlider("Posición Y", (control.yFraction * 100).toInt(), 0..100, { updateControl(control.copy(yFraction = TouchLayoutRepository.clampCenterFraction(it / 100f, halfYFrac))) }, enabled = previewMeasured) { "$it%" }
             SettingSlider("Tamaño", control.sizeDp, 40..260, { updateControl(control.copy(sizeDp = it)) }) { "${it}dp" }
             SettingSlider("Opacidad", (control.opacity * 100).toInt(), 10..100, { updateControl(control.copy(opacity = it / 100f)) }) { "$it%" }
 
