@@ -12,13 +12,13 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
@@ -29,6 +29,10 @@ import com.danielsnagustin.childoflight.launcher.ui.PremiumCard
 import com.danielsnagustin.childoflight.launcher.ui.Screen
 import com.danielsnagustin.childoflight.launcher.ui.SecondaryButton
 import com.danielsnagustin.childoflight.launcher.ui.SectionTitle
+import com.danielsnagustin.childoflight.launcher.ui.cardTextColor
+import com.danielsnagustin.childoflight.launcher.ui.isDarkUi
+import com.danielsnagustin.childoflight.launcher.ui.mutedTextColor
+import com.danielsnagustin.childoflight.launcher.ui.rememberUiPreferences
 
 /**
  * Categoría "Almacenamiento" (Ola 2, Etapa 1): todo vive en la data
@@ -44,6 +48,14 @@ fun SettingsStorageScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
     val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
     val settings by vm.settingsFlow.collectAsState(initial = null)
     var showDeleteDownloadsConfirm by rememberSaveable { mutableStateOf(false) }
+    // R4-P1-14: textos segun el tema (en Claro, blanco sobre fondo claro no se lee).
+    val dark = isDarkUi(rememberUiPreferences())
+    // R4-P1-12: pedir la lista de Descargas/ChildOfLight/ al entrar:
+    // la query de MediaStore ya solo corre en el primer refresco, y sin
+    // esto los archivos metidos desde otra app no se verian hasta el
+    // proximo arranque. LaunchedEffect(Unit) corre una sola vez al
+    // entrar, no en cada recomposicion.
+    LaunchedEffect(Unit) { vm.refreshDownloadsCopiesNow() }
     SettingsCategoryScaffold(
         title = "Almacenamiento",
         subtitle = "Dónde vive cada cosa y qué se puede borrar.",
@@ -78,7 +90,7 @@ fun SettingsStorageScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                     "El juego, los DLCs, los updates y la licencia viven en el almacenamiento interno del launcher (privado, sin carpeta visible en Descargas ni en el almacenamiento compartido).",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
+                    color = cardTextColor(dark),
                 )
                 // R2-P2-18: sin "Cuando el núcleo embebido esté listo…":
                 // el núcleo YA está embebido. Estado real: con núcleo,
@@ -93,12 +105,12 @@ fun SettingsStorageScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                         "Copias en Descargas/ChildOfLight/:",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color.White,
+                        color = cardTextColor(dark),
                     )
                     Text(
                         DownloadsCleanup.summarize(downloadsCopies),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = com.danielsnagustin.childoflight.launcher.ui.ColMutedText,
+                        color = mutedTextColor(dark),
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     SecondaryButton("Borrar copias de Descargas", onClick = { showDeleteDownloadsConfirm = true })

@@ -27,10 +27,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.ui.BackButton
 import com.danielsnagustin.childoflight.launcher.ui.ContentMaxWidth
+import com.danielsnagustin.childoflight.launcher.ui.NoteText
 import com.danielsnagustin.childoflight.launcher.ui.PremiumCard
 import com.danielsnagustin.childoflight.launcher.ui.ScreenHeader
-import com.danielsnagustin.childoflight.launcher.ui.ColMutedText
+import com.danielsnagustin.childoflight.launcher.ui.cardTextColor
+import com.danielsnagustin.childoflight.launcher.ui.isDarkUi
+import com.danielsnagustin.childoflight.launcher.ui.mutedTextColor
 import com.danielsnagustin.childoflight.launcher.ui.premiumBackgroundBrush
+import com.danielsnagustin.childoflight.launcher.ui.rememberUiPreferences
 
 /**
  * Armazón común de las 9 pantallas de categoría de Ajustes (Ola 2).
@@ -59,14 +63,24 @@ fun SettingsCategoryScaffold(
     content: LazyListScope.() -> Unit,
 ) {
     var showResetCategoryConfirm by rememberSaveable { mutableStateOf(false) }
+    // R4-P1-14: fondo y textos según el tema. En claro, el fondo es el
+    // tinte claro del fondo elegido (premiumBackgroundBrush con tema);
+    // antes era siempre el AMOLED oscuro con textos blancos fijos.
+    val uiPrefs = rememberUiPreferences()
+    val dark = isDarkUi(uiPrefs)
     Box(
-        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
+        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush(dark, uiPrefs?.homeBackground?.hex)),
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
         ) {
             item {
                 ScreenHeader(title, subtitle)
+            }
+            if (!dark) {
+                item {
+                    NoteText("Tema claro: el fondo elegido se aplica como tinte claro.")
+                }
             }
             content()
             if (onResetCategory != null) {
@@ -97,42 +111,44 @@ fun SettingsCategoryScaffold(
     dialogs()
 }
 
-/** Fila de categoría en el hub: tarjeta con título + subtítulo, toca para entrar. */
+/** Fila de categoría en el hub: tarjeta con título + subtítulo, toca para entrar. R4-P1-14: colores de texto según el tema. */
 @Composable
 fun CategoryRow(category: SettingsCategory, onClick: () -> Unit) {
+    val dark = isDarkUi(rememberUiPreferences())
     PremiumCard(onClick = onClick) {
         Text(
             category.title,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
-            color = androidx.compose.ui.graphics.Color.White,
+            color = cardTextColor(dark),
         )
         Spacer(modifier = Modifier.height(2.dp))
         Text(
             category.subtitle,
             style = MaterialTheme.typography.bodySmall,
-            color = ColMutedText,
+            color = mutedTextColor(dark),
         )
     }
     Spacer(modifier = Modifier.height(10.dp))
 }
 
-/** Fila de resultado del buscador: título del ajuste + categoría a la que lleva (sin "En:" cuando el destino no es una categoría de ajustes, como Logros, que vive en el Inicio). */
+/** Fila de resultado del buscador: título del ajuste + categoría a la que lleva (sin "En:" cuando el destino no es una categoría de ajustes, como Logros, que vive en el Inicio). R4-P1-14: colores de texto según el tema. */
 @Composable
 fun SearchResultRow(result: SearchableSetting, onClick: () -> Unit) {
+    val dark = isDarkUi(rememberUiPreferences())
     PremiumCard(onClick = onClick) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Text(
                 result.title,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold,
-                color = androidx.compose.ui.graphics.Color.White,
+                color = cardTextColor(dark),
             )
             if (result.destination == null) {
                 Text(
                     "En: ${result.category.title}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = ColMutedText,
+                    color = mutedTextColor(dark),
                 )
             }
         }

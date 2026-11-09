@@ -21,13 +21,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.model.CardSize
 import com.danielsnagustin.childoflight.launcher.model.CardTransparency
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.GpuVendor
+import com.danielsnagustin.childoflight.launcher.model.divergesFromPreset
+import com.danielsnagustin.childoflight.launcher.model.isLowRamConservativeVariant
+import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import com.danielsnagustin.childoflight.launcher.ui.ColTurquoise
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
@@ -36,6 +38,8 @@ import com.danielsnagustin.childoflight.launcher.ui.Screen
 import com.danielsnagustin.childoflight.launcher.ui.SecondaryButton
 import com.danielsnagustin.childoflight.launcher.ui.SectionTitle
 import com.danielsnagustin.childoflight.launcher.ui.SettingSwitch
+import com.danielsnagustin.childoflight.launcher.ui.cardTextColor
+import com.danielsnagustin.childoflight.launcher.ui.isDarkUi
 
 /**
  * Categoría "General" (Ola 2, Etapa 1): tarjeta compacta del perfil
@@ -47,6 +51,8 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
     val settings by vm.settingsFlow.collectAsState(initial = null)
     val gpu by vm.gpuFlow.collectAsState(initial = null)
     val uiPrefs by vm.uiFlow.collectAsState(initial = null)
+    // R4-P1-14: textos segun el tema (en Claro, blanco sobre fondo claro no se lee).
+    val dark = isDarkUi(uiPrefs)
     val externalVita3k by vm.externalVita3k.collectAsState()
     val configText by vm.generatedConfig.collectAsState()
     var showConfig by rememberSaveable { mutableStateOf(false) }
@@ -96,6 +102,31 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
         } else {
             item {
                 SectionTitle("Perfil de rendimiento")
+                // R4-P0-9 / R4-P1-13: el estado del perfil deriva de
+                // los ajustes guardados reales frente al preset
+                // activo, nunca de etiquetas: "perfil conservador
+                // (poca RAM)" es la variante lowRam del primer
+                // arranque; "perfil modificado" es cualquier otra
+                // divergencia (p. ej. una caché manual conservada al
+                // aplicar un preset). Cuando la caché de texturas
+                // difiere del preset se dice explícitamente: es la
+                // única diferencia real entre G99 Recomendado y Mali
+                // Rendimiento, y conservarla al aplicar un preset la
+                // puede borrar (ver preserveManualCacheChoices).
+                val profileStatusText: String? = when {
+                    isLowRamConservativeVariant(s) -> "Perfil conservador (poca RAM)" +
+                        if (!s.textureCache) " — caché de texturas OFF para ahorrar memoria." else ""
+                    divergesFromPreset(s) -> {
+                        val presetCache = presetSettings(s.activeProfile).textureCache
+                        "Perfil modificado" +
+                            if (s.textureCache != presetCache) {
+                                " — caché de texturas ${if (s.textureCache) "ON" else "OFF"} (el preset la trae ${if (presetCache) "ON" else "OFF"})"
+                            } else {
+                                ""
+                            }
+                    }
+                    else -> null
+                }
                 PremiumCard(
                     cardSize = uiPrefs?.cardSize ?: CardSize.NORMAL,
                     cardTransparency = uiPrefs?.cardTransparency ?: CardTransparency.OPAQUE,
@@ -104,10 +135,19 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                         "Perfil activo: ${s.activeProfile.label}",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White,
+                        color = cardTextColor(dark),
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("GPU: ${gpu?.shortLabel ?: "no detectada"}", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+                    Text("GPU: ${gpu?.shortLabel ?: "no detectada"}", style = MaterialTheme.typography.bodyMedium, color = cardTextColor(dark))
+                    if (profileStatusText != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            profileStatusText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = ColTurquoise,
+                        )
+                    }
                 }
             }
             item {
@@ -118,7 +158,7 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                 // pensado para Adreno (el guard solo corregía el driver,
                 // el resto de valores quedaban aplicados).
                 if (gpu == null) {
-                    Text("Detectando GPU…", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+                    Text("Detectando GPU…", style = MaterialTheme.typography.bodyMedium, color = cardTextColor(dark))
                 } else {
                 val allProfiles = if (gpu?.vendor == GpuVendor.ADRENO) {
                     listOf(GpuProfileId.ADRENO_PERFORMANCE, GpuProfileId.ADRENO_QUALITY_TURNIP, GpuProfileId.G99_RECOMMENDED)
@@ -149,6 +189,7 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                     // corrige el driver al aplicar.
                     NoteText(presetCompatibilityNote(profile))
                 }
+                NoteText("Aplicar un preset conserva tus cambios manuales de cachés y overlay (caché de texturas, caché de shaders, overlay de FPS, caché sin hash y avisos de shaders): si alguno difiere del preset, arriba verás \"Perfil modificado\".")
                 NoteText("G99 Calidad (2x): prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado.")
                 }
             }
@@ -181,7 +222,7 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                 Text(
                     if (externalVita3k != null) "✓ App externa instalada ($externalVita3k)" else "✗ App externa no instalada",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (externalVita3k != null) ColTurquoise else Color.White,
+                    color = if (externalVita3k != null) ColTurquoise else cardTextColor(dark),
                 )
             }
             item {
@@ -194,7 +235,7 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                         "Proyecto independiente, sin afiliación con Ubisoft, Sony / PlayStation ni con los autores del emulador.",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color.White,
+                        color = cardTextColor(dark),
                     )
                     NoteText(
                         "Child of Light es marca registrada de Ubisoft. Este launcher no incluye el juego, " +

@@ -9,7 +9,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -18,7 +17,6 @@ import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 import com.danielsnagustin.childoflight.launcher.data.DeviceCompat
 import com.danielsnagustin.childoflight.launcher.data.DeviceMemory
 import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
-import com.danielsnagustin.childoflight.launcher.ui.ColMutedText
 import com.danielsnagustin.childoflight.launcher.ui.ColTurquoise
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
@@ -26,6 +24,10 @@ import com.danielsnagustin.childoflight.launcher.ui.Screen
 import com.danielsnagustin.childoflight.launcher.ui.SecondaryButton
 import com.danielsnagustin.childoflight.launcher.ui.SectionTitle
 import com.danielsnagustin.childoflight.launcher.ui.SettingSwitch
+import com.danielsnagustin.childoflight.launcher.ui.cardTextColor
+import com.danielsnagustin.childoflight.launcher.ui.isDarkUi
+import com.danielsnagustin.childoflight.launcher.ui.mutedTextColor
+import com.danielsnagustin.childoflight.launcher.ui.rememberUiPreferences
 
 /**
  * Categoría "Diagnóstico" (Ola 2, Etapa 1; Ola 3, Etapa 10): enlace a
@@ -60,6 +62,8 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
     val s = settings
     val lastFps = benchmarks.firstOrNull { it.fpsAvg != null }?.fpsAvg
     val recentErrors = extractRecentErrorLines(safeLogText)
+    // R4-P1-14: textos segun el tema (en Claro, blanco sobre fondo claro no se lee).
+    val dark = isDarkUi(rememberUiPreferences())
     SettingsCategoryScaffold(
         title = "Diagnóstico",
         subtitle = "Prueba de 30 s y corrección de errores.",
@@ -72,24 +76,24 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
             item {
                 SectionTitle("Resumen del dispositivo")
                 // Modelo: solo en diagnóstico (ver KDoc de arriba).
-                Text("Modelo: ${Build.MODEL ?: "no detectado"}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = Color.White)
-                Text("SoC: ${gpu?.socModel?.ifBlank { "no detectado" } ?: "no detectado"}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = Color.White)
-                Text("CPU: ${DeviceCompat.architectureLabel()}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = Color.White)
-                Text("GPU: ${gpu?.renderer ?: "no detectada"}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = Color.White)
+                Text("Modelo: ${Build.MODEL ?: "no detectado"}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = cardTextColor(dark))
+                Text("SoC: ${gpu?.socModel?.ifBlank { "no detectado" } ?: "no detectado"}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = cardTextColor(dark))
+                Text("CPU: ${DeviceCompat.architectureLabel()}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = cardTextColor(dark))
+                Text("GPU: ${gpu?.renderer ?: "no detectada"}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = cardTextColor(dark))
                 val context = LocalContext.current
                 val ramGb = remember { DeviceMemory.totalRamBytes(context)?.let { it / 1_073_741_824.0 } }
-                Text("RAM total: ${ramGb?.let { "%.1f GB".format(it) } ?: "no detectada"}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = Color.White)
+                Text("RAM total: ${ramGb?.let { "%.1f GB".format(it) } ?: "no detectada"}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = cardTextColor(dark))
                 Text(
                     "Último FPS (prueba de 30 s): ${lastFps?.let { "$it fps" } ?: "sin medir"}",
                     style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                    color = if (lastFps != null) ColTurquoise else ColMutedText,
+                    color = if (lastFps != null) ColTurquoise else mutedTextColor(dark),
                 )
                 Text(
                     "Núcleo embebido: ${if (embeddedCore == true) "presente" else "no presente"}",
                     style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                    color = Color.White,
+                    color = cardTextColor(dark),
                 )
-                Text("Firmware: ${FirmwareResolver.label(firmwareStatus)}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = Color.White)
+                Text("Firmware: ${FirmwareResolver.label(firmwareStatus)}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = cardTextColor(dark))
                 Spacer(modifier = Modifier.height(8.dp))
                 // R2-P2-19: "Configuración activa" muestra la EFECTIVA
                 // (la que emite el generador): effectiveSettings aplica
@@ -99,17 +103,17 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 // Antes se mostraban los valores guardados, que con
                 // Modo seguro o fallback no son los que corre el juego.
                 val effective = effectiveSettings(s)
-                Text("Configuración efectiva: perfil ${effective.activeProfile.label} · ${resolveBackend(effective, gpu).label} · ${effective.resolutionLabel} · filtro ${effective.screenFilter} · VSync ${if (effective.vSync) "ON" else "OFF"} · modo 60 FPS ${if (effective.fpsHack) "ON" else "OFF"}.", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = Color.White)
+                Text("Configuración efectiva: perfil ${effective.activeProfile.label} · ${resolveBackend(effective, gpu).label} · ${effective.resolutionLabel} · filtro ${effective.screenFilter} · VSync ${if (effective.vSync) "ON" else "OFF"} · modo 60 FPS ${if (effective.fpsHack) "ON" else "OFF"}.", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = cardTextColor(dark))
                 if (s.safeMode) {
                     NoteText("Modo seguro activado: los valores efectivos de arriba (1x, SDL, High Accuracy OFF) mandan sobre los guardados.")
                 }
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("Errores recientes del log:", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = Color.White)
+                Text("Errores recientes del log:", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = cardTextColor(dark))
                 if (recentErrors.isEmpty()) {
                     Text("Sin errores recientes en el log.", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = ColTurquoise)
                 } else {
                     recentErrors.forEach { line ->
-                        Text("• $line", style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = Color.White)
+                        Text("• $line", style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = cardTextColor(dark))
                     }
                 }
                 NoteText("El informe de diagnóstico (GPU y diagnóstico → Reportar bug) exporta solo este texto: dispositivo, ajustes, estado y errores recientes. No adjunta ningún archivo privado.")

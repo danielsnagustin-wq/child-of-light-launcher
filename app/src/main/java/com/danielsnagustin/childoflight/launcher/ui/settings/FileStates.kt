@@ -6,16 +6,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
 import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
 import com.danielsnagustin.childoflight.launcher.model.GameStatus
-import com.danielsnagustin.childoflight.launcher.ui.ColMutedText
 import com.danielsnagustin.childoflight.launcher.ui.ColTurquoise
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
 import com.danielsnagustin.childoflight.launcher.ui.SectionTitle
+import com.danielsnagustin.childoflight.launcher.ui.cardTextColor
+import com.danielsnagustin.childoflight.launcher.ui.isDarkUi
+import com.danielsnagustin.childoflight.launcher.ui.mutedTextColor
+import com.danielsnagustin.childoflight.launcher.ui.rememberUiPreferences
 
 /**
  * Estado de archivos (Ola 3, Etapa 7): los 6 estados, todos leídos del
@@ -37,6 +39,8 @@ fun FileStateSection(
     firmwareStatus: FirmwareStatus,
     pkgInstalledInVita3k: Boolean,
 ) {
+    // R4-P1-14: textos segun el tema (en Claro, blanco sobre fondo claro no se lee).
+    val dark = isDarkUi(rememberUiPreferences())
     SectionTitle("Estado de archivos")
     // 1. Firmware importado = PUP guardado.
     Text(
@@ -46,7 +50,7 @@ fun FileStateSection(
             FirmwareStatus.Missing -> "Sin PUP guardado"
         },
         style = MaterialTheme.typography.bodyMedium,
-        color = Color.White,
+        color = cardTextColor(dark),
     )
     // 2. Firmware instalado EN EL NÚCLEO = Ready (vs0 extraído o marcador con versión).
     Text(
@@ -56,7 +60,7 @@ fun FileStateSection(
             FirmwareStatus.Missing -> "No"
         },
         style = MaterialTheme.typography.bodyMedium,
-        color = if (firmwareStatus is FirmwareStatus.Ready) ColTurquoise else Color.White,
+        color = if (firmwareStatus is FirmwareStatus.Ready) ColTurquoise else cardTextColor(dark),
     )
     // 3. Juego importado = extraído (eboot.bin en ux0/app/) o .pkg guardado.
     Text(
@@ -66,7 +70,7 @@ fun FileStateSection(
             else -> "No importado"
         },
         style = MaterialTheme.typography.bodyMedium,
-        color = Color.White,
+        color = cardTextColor(dark),
     )
     // 4. Juego instalado en la app externa: confirmación honesta del usuario.
     Text(
@@ -76,24 +80,24 @@ fun FileStateSection(
             "No confirmado"
         },
         style = MaterialTheme.typography.bodyMedium,
-        color = Color.White,
+        color = cardTextColor(dark),
     )
     // 5. DLCs: id + tamaño + si es .pkg guardado o carpeta extraída.
     Text(
         "DLCs (${status.dlcCount}):",
         style = MaterialTheme.typography.bodyMedium,
         fontWeight = FontWeight.SemiBold,
-        color = Color.White,
+        color = cardTextColor(dark),
     )
     if (status.dlcs.isEmpty()) {
-        Text("Sin DLCs.", style = MaterialTheme.typography.bodyMedium, color = ColMutedText)
+        Text("Sin DLCs.", style = MaterialTheme.typography.bodyMedium, color = mutedTextColor(dark))
     } else {
         status.dlcs.forEach { dlc ->
             Text(
                 "• ${dlc.dlcId} — ${DownloadsCleanup.formatBytes(dlc.sizeBytes)}" +
                     if (dlc.isPkg) " (.pkg guardado, no instalado)" else " (extraído)",
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color.White,
+                color = cardTextColor(dark),
             )
         }
     }
@@ -101,7 +105,7 @@ fun FileStateSection(
     Text(
         "Actualización: " + if (status.updateInstalled) "Instalada" else "Sin update instalado",
         style = MaterialTheme.typography.bodyMedium,
-        color = Color.White,
+        color = cardTextColor(dark),
     )
     Spacer(modifier = Modifier.height(4.dp))
     NoteText("Guardado no es instalado: un .pkg guardado o un PUP guardado no cuentan como instalados hasta que el núcleo o la app externa los instala de verdad.")
