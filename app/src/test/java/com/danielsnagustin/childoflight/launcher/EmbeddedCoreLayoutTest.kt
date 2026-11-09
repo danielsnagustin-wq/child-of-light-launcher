@@ -308,12 +308,18 @@ class EmbeddedCoreLayoutTest {
     }
 
     @Test
-    fun `resolveUx0Dir prefiere el antiguo si el pkg vive ahi y el embebido no lo tiene`() {
+    fun `resolveUx0Dir prefiere el embebido si tiene un juego extraido aunque el pkg viva en el antiguo`() {
         val root = tempRoot()
         try {
-            // Caso del bug JUGAR (2026-11-08): el .pkg importado vive en
-            // el ux0 antiguo y el embebido tiene otro contenido, pero no
-            // ese juego. Devolver el embebido lo haría "desaparecer".
+            // Regla corregida en 0.2.4 (reporte 2026-11-08 19:46): un
+            // juego EXTRAÍDO manda sobre un .pkg guardado. Aquí el
+            // embebido tiene un juego instalado (PCSE00480) y el
+            // antiguo solo un .pkg guardado (PCSB00598): devolver el
+            // antiguo escondería el juego instalado. La expectativa
+            // anterior (antiguo) era la regla vieja que causó el bug
+            // del reporte: el juego corría desde el embebido y el
+            // launcher decía que no estaba instalado. El .pkg no se
+            // pierde: la migración lo recoloca en el embebido al lanzar.
             val pkg = File(root, "ux0/pkg/PCSB00598.pkg")
             pkg.parentFile.mkdirs()
             pkg.writeText("falso pkg")
@@ -321,7 +327,7 @@ class EmbeddedCoreLayoutTest {
             other.parentFile.mkdirs()
             other.writeText("otro juego")
 
-            assertEquals(File(root, "ux0"), EmbeddedCoreLayout.resolveUx0Dir(root))
+            assertEquals(File(root, "vita/ux0"), EmbeddedCoreLayout.resolveUx0Dir(root))
         } finally {
             root.deleteRecursively()
         }
