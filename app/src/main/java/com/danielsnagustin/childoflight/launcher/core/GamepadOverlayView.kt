@@ -1,6 +1,7 @@
 package com.danielsnagustin.childoflight.launcher.core
 
 import android.animation.ValueAnimator
+import android.app.Activity
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
@@ -9,6 +10,7 @@ import android.graphics.Path
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
@@ -20,6 +22,7 @@ import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.stickA
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.toSdlButton
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.visibleControls
 import com.danielsnagustin.childoflight.launcher.data.ControlShape
+import com.danielsnagustin.childoflight.launcher.data.IgniculusMode
 import com.danielsnagustin.childoflight.launcher.data.StickMode
 import com.danielsnagustin.childoflight.launcher.data.TouchControl
 import com.danielsnagustin.childoflight.launcher.data.VitaButton
@@ -38,8 +41,11 @@ import kotlin.math.sqrt
  * luciérnaga). Con una sola vista a pantalla completa, en cuanto un
  * dedo tocara un botón, el resto de dedos de ese gesto quedarían
  * atrapados en el overlay y la luciérnaga dejaría de responder
- * mientras se mueve el stick. La zona Igniculus se DIBUJA pero nunca
- * consume toques: el arrastre sobre ella es táctil directo del juego.
+ * mientras se mueve el stick. La zona Igniculus se DIBUJA y en modo
+ * Toque directo no consume toques: el arrastre sobre ella es táctil
+ * directo del juego. En modo Joystick sí los consume y los traduce
+ * (ancla + arrastre × sensibilidad) reenviándolos a la superficie
+ * SDL como toques sintéticos (P1-12).
  *
  * Dibujo: LA MISMA MATEMÁTICA que la vista previa del editor
  * (TouchOverlayMapping.controlRect): posición por fracción, tamaño en
@@ -68,6 +74,15 @@ class GamepadOverlayView @JvmOverloads constructor(
     }
 
     var listener: Listener? = null
+
+    /**
+     * Mientras se reenvía un toque sintético de Igniculus (modo
+     * Joystick), ningún control del overlay debe consumirlo: si el
+     * destino cae sobre un botón, lo pulsaría. dispatchTouchEvent
+     * devuelve false mientras vale true y el toque baja a la
+     * superficie SDL, que es su destino.
+     */
+    internal var forwardingSyntheticTouch: Boolean = false
 
     /** Opacidad general del overlay (0.1..1): multiplica la opacidad de cada botón. */
     var generalOpacity: Float = 1f
@@ -113,6 +128,11 @@ class GamepadOverlayView @JvmOverloads constructor(
         for (i in 0 until childCount) {
             (getChildAt(i) as? OverlayControlView)?.refreshStyle()
         }
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (forwardingSyntheticTouch) return false
+        return super.dispatchTouchEvent(event)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -625,17 +645,32 @@ class GamepadOverlayView @JvmOverloads constructor(
 
     /**
      * Zona Igniculus: se dibuja (translúcida, detrás de los botones)
-     * pero NUNCA consume toques. El toque directo y el arrastre sobre
-     * ella bajan a la superficie SDL y el juego los recibe como táctil
-     * frontal: la luciérnaga va donde toca el dedo, con la
-     * sensibilidad del perfil aplicada por el propio juego al leer el
-     * táctil (el overlay no reinterpreta ese gesto). Desde 0.2.14 se
-     * dibuja solo como orbe pequeño + anillo tenue: dibujar el cristal
-     * sobre todo el rect (220 dp) era una rueda oscura gigante en el
-     * centro de la pantalla.
+     * y su táctil depende del modo del perfil (P1-12):
+     * - Toque directo (por defecto): NO consume toques. El toque y el
+     *   arrastre bajan a la superficie SDL y el juego los recibe como
+     *   táctil frontal: la luciérnaga va donde toca el dedo, con la
+     *   sensibilidad del perfil aplicada por el propio juego al leer el
+     *   táctil (el overlay no reinterpreta ese gesto).
+     * - Joystick: SÍ consume el toque y lo traduce: el punto donde se
+     *   apoya el dedo es el ancla; el destino es ancla + arrastre ×
+     *   sensibilidad, reenviado a la superficie SDL como un toque
+     *   sintético en esa posición (el juego lo recibe como táctil
+     *   frontal y la luciérnaga vuela al destino). El orbe sigue al
+     *   destino mientras se arrastra.
+     * Desde 0.2.14 se dibuja solo como orbe pequeño + anillo tenue:
+     * dibujar el cristal sobre todo el rect (220 dp) era una rueda
+     * oscura gigante en el centro de la pantalla.
      */
     private inner class ZoneView(context: Context, control: TouchControl) :
         OverlayControlView(context, control) {
+
+        private var pointerId: Int = -1
+        private var anchorOverlayX: Float = 0f
+        private var anchorOverlayY: Float = 0f
+        private var targetOverlayX: Float = 0f
+        private var targetOverlayY: Float = 0f
+        private var downTime: Long = 0L
+        private var joystickActive: Boolean = false
 
         override fun onDraw(canvas: Canvas) {
             // Rueda de Igniculus (2026-11-09, 0.2.14): antes se
@@ -645,8 +680,6 @@ class GamepadOverlayView @JvmOverloads constructor(
             // (el icono a 0.30 × ancho) + un anillo tenue alrededor
             // (0.32 × ancho, fuera del halo del icono, que llega a
             // 0.255 × ancho). El resto del área queda transparente.
-            // El táctil NO cambia: onTouchEvent sigue devolviendo
-            // false y el área sigue siendo 220 dp.
             val cx = width / 2f
             val cy = height / 2f
             val alpha = effectiveAlpha()
@@ -654,9 +687,108 @@ class GamepadOverlayView @JvmOverloads constructor(
             strokePaint.alpha = (alpha * 0.5f * 255).toInt()
             strokePaint.strokeWidth = 1.5f * density
             canvas.drawCircle(cx, cy, width * 0.32f, strokePaint)
-            drawIcon(canvas, IconKind.IGNICULUS, cx, cy, width * 0.30f, alpha)
+            // En modo Joystick el orbe sigue al destino mientras se
+            // arrastra (recortado a la zona; fuera de ella el destino
+            // real está en el juego, no aquí).
+            val iconCx = if (joystickActive) {
+                (targetOverlayX - left).coerceIn(0f, width.toFloat())
+            } else {
+                cx
+            }
+            val iconCy = if (joystickActive) {
+                (targetOverlayY - top).coerceIn(0f, height.toFloat())
+            } else {
+                cy
+            }
+            drawIcon(canvas, IconKind.IGNICULUS, iconCx, iconCy, width * 0.30f, alpha)
         }
 
-        override fun onTouchEvent(event: MotionEvent): Boolean = false
+        override fun release() {
+            // Si el overlay se oculta o se reconstruye a mitad de un
+            // arrastre, el toque sintético debe terminar: si no, el
+            // juego seguiría creyendo que el dedo está apoyado.
+            if (joystickActive) endJoystickTouch()
+        }
+
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            // Un toque sintético reenviado nunca se vuelve a consumir:
+            // su destino es la superficie SDL (ver dispatchTouchEvent).
+            if (forwardingSyntheticTouch) return false
+            if (control.igniculusMode != IgniculusMode.JOYSTICK) return false
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    pointerId = event.getPointerId(0)
+                    anchorOverlayX = left + event.x
+                    anchorOverlayY = top + event.y
+                    targetOverlayX = anchorOverlayX
+                    targetOverlayY = anchorOverlayY
+                    downTime = event.downTime
+                    joystickActive = true
+                    forwardTouch(MotionEvent.ACTION_DOWN)
+                    invalidate()
+                    return true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val index = event.findPointerIndex(pointerId)
+                    if (index < 0) return joystickActive
+                    val overlayW = this@GamepadOverlayView.width.toFloat()
+                    val overlayH = this@GamepadOverlayView.height.toFloat()
+                    val dx = event.getX(index) + left - anchorOverlayX
+                    val dy = event.getY(index) + top - anchorOverlayY
+                    val s = control.sensitivity.coerceIn(0.5f, 2.0f)
+                    targetOverlayX = (anchorOverlayX + dx * s).coerceIn(0f, overlayW)
+                    targetOverlayY = (anchorOverlayY + dy * s).coerceIn(0f, overlayH)
+                    forwardTouch(MotionEvent.ACTION_MOVE)
+                    invalidate()
+                    return true
+                }
+                MotionEvent.ACTION_POINTER_UP -> {
+                    if (event.getPointerId(event.actionIndex) == pointerId) {
+                        endJoystickTouch()
+                    }
+                    return true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (joystickActive) endJoystickTouch()
+                    return true
+                }
+            }
+            return false
+        }
+
+        private fun endJoystickTouch() {
+            forwardTouch(MotionEvent.ACTION_UP)
+            pointerId = -1
+            joystickActive = false
+            invalidate()
+        }
+
+        /**
+         * Reenvía el toque (ya traducido a la posición destino, en
+         * coordenadas del overlay = de la superficie SDL, ambas a
+         * pantalla completa) a la Activity: baja por la jerarquía
+         * hasta la superficie SDL y el juego lo recibe como táctil
+         * frontal. Mientras se reenvía, dispatchTouchEvent devuelve
+         * false para que ningún botón del overlay consuma el toque
+         * sintético (si el destino cae sobre un botón, lo pulsaría).
+         */
+        private fun forwardTouch(action: Int) {
+            val activity = context as? Activity ?: return
+            val synthetic = MotionEvent.obtain(
+                downTime,
+                SystemClock.uptimeMillis(),
+                action,
+                targetOverlayX,
+                targetOverlayY,
+                0,
+            )
+            try {
+                forwardingSyntheticTouch = true
+                activity.dispatchTouchEvent(synthetic)
+            } finally {
+                forwardingSyntheticTouch = false
+                synthetic.recycle()
+            }
+        }
     }
 }
