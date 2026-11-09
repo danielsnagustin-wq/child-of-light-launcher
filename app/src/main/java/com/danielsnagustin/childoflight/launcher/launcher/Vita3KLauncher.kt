@@ -27,6 +27,7 @@ import com.danielsnagustin.childoflight.launcher.data.SessionManager
 import com.danielsnagustin.childoflight.launcher.data.formatLoadGameResult
 import com.danielsnagustin.childoflight.launcher.data.TurnipDriverRepository
 import com.danielsnagustin.childoflight.launcher.data.Vita3kConfigGenerator
+import com.danielsnagustin.childoflight.launcher.model.GameStatus
 import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
@@ -99,6 +100,19 @@ import java.io.FileOutputStream
  * interno y este paso desaparece.
  */
 class Vita3KLauncher(private val context: Context) {
+
+    /**
+     * R4-P0-8: último GameStatus escaneado por checkPrerequisites().
+     * Un solo lanzamiento a la vez (la guarda anti-doble-JUGAR del
+     * ViewModel lo garantiza), así que no hay carrera: play() lo lee
+     * tras launch() para reutilizar ese escaneo en vez de pedir otro
+     * refreshStatus() completo cuando el lanzamiento no instaló nada.
+     * En memoria: tras reiniciar el proceso es null y play() hace el
+     * refresco normal.
+     */
+    @Volatile
+    var lastScannedStatus: GameStatus? = null
+        private set
 
     companion object {
         const val VITA3K_PACKAGE = "org.vita3k.emulator"
@@ -220,6 +234,13 @@ class Vita3KLauncher(private val context: Context) {
         val gameExtracted: Boolean,
         val firmwareInstalled: Boolean,
         val firmwareStatus: FirmwareStatus,
+        /**
+         * R4-P0-8: el GameStatus completo que se escaneó para decidir
+         * esto. launchImpl() lo reutiliza para decide() en vez de
+         * hacer un segundo scanStatus() en el mismo lanzamiento.
+         * Default vacío por compatibilidad con quien lo construya a mano.
+         */
+        val status: GameStatus = GameStatus(),
         val missing: List<String>,
     ) {
         /** Solo el juego es obligatorio. El firmware es aviso, no bloqueo. */
@@ -230,6 +251,10 @@ class Vita3KLauncher(private val context: Context) {
 
     fun checkPrerequisites(library: GameLibraryRepository): Prerequisites {
         val status = library.scanStatus()
+        // R4-P0-8: el escaneo queda guardado para reutilizarlo (decide()
+        // en launchImpl y el refresco final de play()): un JUGAR ya no
+        // hace 3 escaneos completos del disco.
+        lastScannedStatus = status
         val firmwareStatus = FirmwareResolver.resolve(library.vitaRoot)
         val missing = mutableListOf<String>()
         if (!status.gameInstalled) {
@@ -242,12 +267,13 @@ class Vita3KLauncher(private val context: Context) {
             LauncherLog.append(context, "launch", "Prerrequisitos no cumplidos: ${missing.joinToString(" ")} (ux0=${library.ux0Dir.absolutePath})")
         }
         return Prerequisites(
-            status.gameInstalled,
-            status.titleId?.id,
-            status.gameExtracted,
-            firmwareStatus.ready,
-            firmwareStatus,
-            missing,
+            gameInstalled = status.gameInstalled,
+            titleId = status.titleId?.id,
+            gameExtracted = status.gameExtracted,
+            firmwareInstalled = firmwareStatus.ready,
+            firmwareStatus = firmwareStatus,
+            status = status,
+            missing = missing,
         )
     }
 
@@ -344,6 +370,14 @@ class Vita3KLauncher(private val context: Context) {
      * benchmark (opcional): true = prueba de 30 s; la Activity del
      * juego muestrea el FPS del núcleo y lo guarda al salir, para
      * registrar la prueba automáticamente al volver.
+     * configAlreadyWritten (opcional, R4-P0-7): true = el llamador ya
+     * escribió config.yml en este JUGAR (play/startBenchmark lo hacen
+     * antes del firmware); launchImpl NO lo reescribe. false por
+     * defecto: cualquier otro camino sigue escribiéndolo aquí.
+     * prerequisites (opcional, R4-P0-8): prerrequisitos ya comprobados
+     * por el llamador (startBenchmark); launchImpl reutiliza su
+     * GameStatus en vez de re-escanear. null por defecto: se comprueba
+     * aquí como antes.
      */
     suspend fun launch(
         library: GameLibraryRepository,
@@ -352,12 +386,14 @@ class Vita3KLauncher(private val context: Context) {
         gpu: GpuInfo? = null,
         onInstallProgress: EmbeddedPkgInstaller.ProgressListener? = null,
         benchmark: Boolean = false,
+        configAlreadyWritten: Boolean = false,
+        prerequisites: Prerequisites? = null,
     ): LaunchOutcome {
         // BUG (auditoría): writeConfig (file.writeText) y checkPrerequisites
         // pueden lanzar IOException y tumbar la corrutina del ViewModel en
         // play()/startBenchmark(). El lanzamiento nunca debe lanzar.
         return try {
-            launchImpl(library, settings, sessionManager, gpu, onInstallProgress, benchmark)
+            launchImpl(library, settings, sessionManager, gpu, onInstallProgress, benchmark, configAlreadyWritten, prerequisites)
         } catch (e: Throwable) {
             // Throwable (no solo Exception): en un teléfono de 4 GB, un
             // OutOfMemoryError durante la instalación del .pkg (1,14 GB)
@@ -409,8 +445,23 @@ class Vita3KLauncher(private val context: Context) {
         gpu: GpuInfo? = null,
         onInstallProgress: EmbeddedPkgInstaller.ProgressListener? = null,
         benchmark: Boolean = false,
+        configAlreadyWritten: Boolean = false,
+        prerequisites: Prerequisites? = null,
     ): LaunchOutcome {
-        val pre = checkPrerequisites(library)
+        // R4-P0-8: un solo escaneo del juego por lanzamiento. Si el
+        // llamador ya comprobó los prerrequisitos (startBenchmark), se
+        // reutiliza su GameStatus; si no, se comprueba aquí (play()).
+        // El firmware SÍ se re-resuelve cuando viene de fuera: entre el
+        // pre-chequeo y este launch() corre ensureFirmwareForEmbedded,
+        // que pudo instalarlo, y decide() debe verlo listo. Es solo
+        // una lectura del marcador, no un escaneo del juego.
+        val checked = prerequisites ?: checkPrerequisites(library)
+        val pre = if (prerequisites != null) {
+            val freshFirmware = FirmwareResolver.resolve(library.vitaRoot)
+            checked.copy(firmwareStatus = freshFirmware, firmwareInstalled = freshFirmware.ready)
+        } else {
+            checked
+        }
         if (!pre.ready) {
             return LaunchOutcome.Blocked(pre.missing.joinToString("\n"))
         }
@@ -432,7 +483,16 @@ class Vita3KLauncher(private val context: Context) {
             val killed = closeBackgroundApps()
             LauncherLog.append(context, "launch", "Apps en segundo plano cerradas (best-effort): $killed procesos")
         }
-        val configFile = Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu)
+        // R4-P0-7: config.yml se escribe UNA sola vez por JUGAR: el
+        // llamador ya lo escribió antes del firmware y pasa
+        // configAlreadyWritten=true. Con false (otros caminos) se
+        // escribe aquí como antes. Además writeConfig es idempotente:
+        // si el contenido es idéntico, no reescribe ni registra nada.
+        val configFile = if (configAlreadyWritten) {
+            File(library.vitaRoot, "config.yml")
+        } else {
+            Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu)
+        }
         // Turnip: el config.yml ya dice custom-driver-name, pero el
         // nombre solo vale si el driver está instalado en el núcleo
         // (<filesDir>/driver/<nombre>/). Si el zip se instaló cuando
@@ -450,8 +510,14 @@ class Vita3KLauncher(private val context: Context) {
         //    salta a la app externa por detrás. La vía externa solo se
         //    alcanza cuando decide() devolvió UseExternal (sin núcleo y
         //    con la opción avanzada activada en Ajustes).
-        val status = library.scanStatus()
-        when (val decision = EmbeddedGameLauncher.decide(status, Vita3kCoreBridge.available, pre.firmwareStatus.ready, settings.allowExternalVita3k)) {
+        // R4-P0-8: SIN segundo escaneo: decide() reutiliza el GameStatus
+        // que checkPrerequisites() ya escaneó al empezar este launch().
+        // Nada cambió en disco entre medias para lo que decide() lee
+        // (titleId, instalado, extraído, .pkg, licencia): la sesión se
+        // activó (savedata, no el juego), el config es solo config y
+        // Turnip es solo el driver; el juego se instala DESPUÉS de
+        // decide(), nunca antes.
+        when (val decision = EmbeddedGameLauncher.decide(pre.status, Vita3kCoreBridge.available, pre.firmwareStatus.ready, settings.allowExternalVita3k)) {
             is EmbeddedGameLauncher.Decision.UseEmbedded -> {
                 // Red de seguridad (bug -3, 2026-11-08): si el eboot
                 // instalado NO es un archivo válido (ni ELF ni SELF),
@@ -463,10 +529,11 @@ class Vita3KLauncher(private val context: Context) {
                 // (GameLibraryRepository.isEbootDecrypted). Si el .pkg
                 // sigue guardado, se reinstala antes de validar, por
                 // el mismo camino que UseEmbeddedPkg.
-                if (!library.isEbootDecrypted(titleId)) {
+                val ebootCheck = library.ebootValidation(titleId)
+                if (ebootCheck.reason != GameLibraryRepository.EbootInvalidReason.OK) {
                     val pkgFile = library.findPkgGameFile(titleId)
                     if (pkgFile != null) {
-                        LauncherLog.append(context, "pkg", "Eboot no válido en $titleId (ni ELF ni SELF): reinstalando el .pkg guardado.")
+                        LauncherLog.append(context, "pkg", "Eboot no válido en $titleId (ni ELF ni SELF): reinstalando el .pkg guardado. ${ebootCheck.logLine()}")
                         val reinstalled = reinstallGamePkg(library, titleId, pkgFile, onInstallProgress)
                         if (reinstalled.isFailure) {
                             // P1-12: instalado pero sin licencia (no es
@@ -477,7 +544,7 @@ class Vita3KLauncher(private val context: Context) {
                             return LaunchOutcome.EmbeddedFailed("No se pudo preparar el juego en el motor integrado: $reason")
                         }
                     } else {
-                        LauncherLog.append(context, "pkg", "Eboot sin descifrar en $titleId y no hay .pkg guardado para reinstalar.")
+                        LauncherLog.append(context, "pkg", "Eboot sin descifrar en $titleId y no hay .pkg guardado para reinstalar. ${ebootCheck.logLine()}")
                     }
                 }
                 // P0-1 (2026-11-09): el .pkg guardado ya NO se borra
