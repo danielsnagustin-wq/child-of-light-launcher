@@ -305,11 +305,29 @@ class GameLibraryRepository(private val context: Context) {
          * (la carpeta extraída manda; el .pkg es solo su copia de
          * respaldo). Sin esto, un solo DLC se veía como 2 (reporte
          * 2026-11-08 21:46: "DLCs: 2" con un solo DLC puesto).
-         * Puro (solo listas) para poder probarlo en la JVM.
+         * P1-2 (2026-11-09): la fusión compara la CLAVE DE CONTENIDO
+         * (contentKey), no el dlcId: el nombre del archivo del .pkg
+         * puede ser un hash o estar truncado, mientras la carpeta en
+         * addcont/ lleva el nombre corto del contenido. Puro (solo
+         * listas) para poder probarlo en la JVM.
          */
         fun mergeDlcLists(extracted: List<DlcInfo>, storedPkgs: List<DlcInfo>): List<DlcInfo> {
-            val extractedIds = extracted.map { it.dlcId }.toSet()
-            return extracted + storedPkgs.filter { it.dlcId !in extractedIds }
+            val extractedKeys = extracted.map { dlcMergeKey(it.contentKey) }.toSet()
+            return extracted + storedPkgs.filter { dlcMergeKey(it.contentKey) !in extractedKeys }
+        }
+
+        /**
+         * Clave de fusión de DLCs (P1-2): el nombre corto del contenido
+         * en mayúsculas. Si la clave trae el Content ID completo
+         * ("EP0001-PCSB00598_00-CHILDOFLIGHTDLC1", como puede llamarse
+         * la carpeta si el DLC vino de un .zip), se queda solo con lo
+         * que va tras "_00-". Así coinciden: carpeta extraída, .pkg
+         * guardado (contentKey del header) y nombres con distinta
+         * capitalización.
+         */
+        fun dlcMergeKey(raw: String): String {
+            val short = raw.substringAfter("_00-", raw)
+            return short.uppercase()
         }
     }
 
@@ -939,10 +957,18 @@ class GameLibraryRepository(private val context: Context) {
                 ?.filter { it.isFile && it.name.lowercase().endsWith(".pkg") }
                 ?.forEach { pkgFile ->
                     if (!seenDlcPkgs.add(pkgFile.nameWithoutExtension)) return@forEach
-                    val dlcTitle = runCatching {
+                    // P1-2: la clave de fusión es el nombre corto del
+                    // contenido, leído del header del .pkg (no del
+                    // nombre del archivo, que puede ser un hash o estar
+                    // truncado). Si el header no se lee, la clave es el
+                    // nombre del archivo (mejor esfuerzo).
+                    val header = runCatching {
                         pkgFile.inputStream().use { PkgHeaderParser.parse(it) }
-                    }.getOrNull()?.getOrNull()?.titleId ?: title
-                    storedDlcPkgs.add(DlcInfo(pkgFile.nameWithoutExtension, dlcTitle?.id ?: title?.id ?: "", pkgFile.length(), isPkg = true))
+                    }.getOrNull()?.getOrNull()
+                    val dlcTitle = header?.titleId ?: title
+                    val contentKey = header?.contentName?.takeIf { it.isNotBlank() }
+                        ?: pkgFile.nameWithoutExtension
+                    storedDlcPkgs.add(DlcInfo(pkgFile.nameWithoutExtension, dlcTitle?.id ?: title?.id ?: "", pkgFile.length(), isPkg = true, contentKey = contentKey))
                 }
         }
         // Un DLC instalado (carpeta) cuyo .pkg sigue guardado se cuenta

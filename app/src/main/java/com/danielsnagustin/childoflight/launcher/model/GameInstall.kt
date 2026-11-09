@@ -35,6 +35,18 @@ data class DlcInfo(
     val sizeBytes: Long = 0L,
     /** true si el DLC es un .pkg guardado (ux0/pkg/dlc/), no una carpeta extraída. */
     val isPkg: Boolean = false,
+    /**
+     * Clave de fusión (P1-2, 2026-11-09): el nombre corto del contenido
+     * ("CHILDOFLIGHTDLC1"). El núcleo nombra la carpeta en addcont/ con
+     * ese nombre (pin interface.cpp: el Content ID menos sus 20 primeros
+     * caracteres, o sea, lo que va tras "_00-"), y el .pkg guardado se
+     * identifica por el mismo nombre, leído de SU header (no del nombre
+     * del archivo, que puede ser un hash o estar truncado a 40
+     * caracteres por sanitizeContentName). Por defecto es dlcId.
+     * dlcId NO cambia: sigue siendo el nombre del archivo, que es lo
+     * que usan installDlcPkg/deleteDlc para localizar el .pkg.
+     */
+    val contentKey: String = dlcId,
 )
 
 data class SaveInfo(
