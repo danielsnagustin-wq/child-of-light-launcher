@@ -175,7 +175,7 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 TextButton(onClick = {
                     hiddenButtons.forEach { vm.deleteTouchControl(it.id) }
                     unusedProfiles.forEach { vm.deleteControlProfile(it.id) }
-                    unusedPresets.forEach { vm.hideGpuPreset(it) }
+                    vm.hideGpuPresets(unusedPresets.toSet())
                     if (turnipUnused) vm.deleteTurnipDriver()
                     showBatchConfirm = false
                 }) { Text("Borrar todo") }

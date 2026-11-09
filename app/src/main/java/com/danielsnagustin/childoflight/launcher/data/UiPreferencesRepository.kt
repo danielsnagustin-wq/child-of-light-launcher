@@ -89,6 +89,23 @@ class UiPreferencesRepository(private val context: Context) {
         }
     }
 
+    /**
+     * P1-17: oculta presets en UNA sola escritura atómica. Antes el
+     * ViewModel leía las prefs (uiFlow.first()), sumaba un preset y
+     * guardaba; en el lote, cada llamada corría en su propia corrutina,
+     * todas leían el mismo estado inicial y la última escritura ganaba:
+     * solo quedaba oculto un preset. Aquí la lectura y la escritura
+     * ocurren dentro del mismo edit{}: DataStore serializa los edit y
+     * cada llamada ve lo que escribió la anterior.
+     */
+    suspend fun hideGpuPresets(profiles: Set<GpuProfileId>) {
+        if (profiles.isEmpty()) return
+        context.uiDataStore.edit { p ->
+            val current = decodeHiddenPresets(p[Keys.HIDDEN_PRESETS] ?: "")
+            p[Keys.HIDDEN_PRESETS] = (current + profiles).joinToString(",") { it.name }
+        }
+    }
+
     suspend fun resetAll() {
         save(UiPreferences())
     }

@@ -2727,15 +2727,32 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun hideGpuPreset(profile: GpuProfileId) {
+        hideGpuPresets(setOf(profile))
+    }
+
+    /**
+     * P1-17: oculta varios presets en una sola escritura atómica (ver
+     * UiPreferencesRepository.hideGpuPresets). El lote de limpieza lo
+     * usa para que no se pierda ninguno; el preset activo nunca se
+     * oculta.
+     */
+    fun hideGpuPresets(profiles: Set<GpuProfileId>) {
         viewModelScope.launch {
-            val prefs = uiRepo.uiFlow.first()
             val current = settingsRepo.settingsFlow.first()
-            if (profile == current.activeProfile) {
+            val toHide = profiles.filter { it != current.activeProfile }
+            if (toHide.isEmpty()) {
                 _message.value = "No se puede ocultar el preset activo. Cambia primero a otro preset."
                 return@launch
             }
-            uiRepo.save(prefs.copy(hiddenPresets = prefs.hiddenPresets + profile))
-            _message.value = "Preset ${profile.label} oculto de la lista."
+            uiRepo.hideGpuPresets(toHide.toSet())
+            val skipped = profiles.size - toHide.size
+            _message.value = if (skipped > 0) {
+                "Presets ocultos: ${toHide.joinToString(", ") { it.label }}. El activo no se puede ocultar."
+            } else if (toHide.size == 1) {
+                "Preset ${toHide.single().label} oculto de la lista."
+            } else {
+                "${toHide.size} presets ocultos de la lista."
+            }
         }
     }
 
