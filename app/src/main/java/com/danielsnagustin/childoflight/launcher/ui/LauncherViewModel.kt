@@ -326,7 +326,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      */
     fun deleteInstalledGamePkgs() {
         viewModelScope.launch(Dispatchers.IO) {
-            val status = _status.value
+            // S11: no fiarse del _status guardado (puede ir
+            // desactualizado tras importar o borrar): escanear fresco
+            // de disco antes de decidir qué .pkg borrar.
+            val status = runCatching { library.scanStatus() }.getOrNull() ?: _status.value
             val extractedId = status.extractedTitleId?.id
             val freed = if (extractedId != null && status.pkgTitleId?.id == extractedId) {
                 val size = status.pkgSizeBytes

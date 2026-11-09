@@ -312,7 +312,11 @@ class SessionRepository(private val vitaRoot: File) {
      * fuera de la carpeta destino (zip-slip).
      */
     fun importSession(input: InputStream): GameSession {
-        val tmp = File(sessionsRoot, "import_tmp_${System.currentTimeMillis()}")
+        // S12: el temporal es único por importación (milisegundos +
+        // UUID): antes dos importaciones en el mismo milisegundo
+        // compartían la carpeta y el deleteRecursively inicial de una
+        // borraba los archivos de la otra a mitad de importar.
+        val tmp = File(sessionsRoot, "import_tmp_${System.currentTimeMillis()}_${UUID.randomUUID()}")
         tmp.deleteRecursively()
         tmp.mkdirs()
         try {

@@ -98,6 +98,13 @@ class MainActivity : ComponentActivity() {
         // app moría sin mostrar nada ("solo me vota y ya"). Ahora se
         // muestra el error en pantalla para fotografiarlo y mandarlo,
         // en vez de cerrar en silencio.
+        // S10: este try/catch cubre SOLO la primera composición
+        // (síncrona). Un fallo en una recomposición posterior no pasa
+        // por aquí: va al handler de excepciones no capturadas
+        // (installCrashHandler, que lo escribe en launcher.log) y el
+        // proceso se cierra como un crash normal. No hay un
+        // "catch global de Compose": el informe del crash queda en el
+        // log y en el próximo reporte de bug.
         try {
             setContent { LauncherContent(vm) }
         } catch (t: Throwable) {

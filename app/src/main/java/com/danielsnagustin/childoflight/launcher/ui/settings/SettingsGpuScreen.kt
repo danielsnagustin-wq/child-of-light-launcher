@@ -83,7 +83,7 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
                 NoteText(
                     when (gpu?.vendor) {
                         GpuVendor.ADRENO -> "Recomendado en Adreno: Page Table."
-                        GpuVendor.MALI -> "Recomendado en Mali: Double Buffer (forzado en los presets Mali). Mali suele hacer fallback a Double Buffer aunque se elija otro."
+                        GpuVendor.MALI -> "Recomendado en Mali: Double Buffer (forzado en los presets Mali)."
                         else -> "Recomendado: Double Buffer. Los 5 métodos están verificados contra el núcleo (pin 3e43bc80); \"off\" equivale a desactivado."
                     },
                 )

@@ -34,6 +34,26 @@ import java.io.File
  * - installArchive(zip/vpk, callback, force): instala .zip/.vpk.
  * - installFirmware(pup, callback): instala el firmware PUP.
  *
+ * Orden y destino, verificados en el pin (sospechas S7/S8/S9 de la
+ * ronda 3, resueltas):
+ * - Un .pkg corrupto NO deja un eboot a medias en el juego
+ *   instalado: el núcleo desencripta en copias temporales
+ *   (packages/src/pkg.cpp: install_pkg: execute(zRIF, src, _dec) y
+ *   si falla borra ambas y devuelve false) y solo después copia al
+ *   destino final (copy_path). La validación va antes de tocar el
+ *   juego vivo.
+ * - El destino lo decide el núcleo por la CATEGORY del param.sfo
+ *   (interface.cpp:114-145 set_content_path), no por el Title ID
+ *   que le pasemos: "ac" -> addcont/<TITLE>/<contenido corto>,
+ *   "gp" -> patch/<TITLE> (y exige que el juego ya esté instalado),
+ *   resto -> app/<TITLE>. Por eso un .pkg de DLC con el Title ID
+ *   del juego acaba en addcont/ y no en app/.
+ * - La instalación por CARPETA (install_content, interface.cpp:
+ *   369-403) sí borra el destino ANTES de copiar (remove_all y
+ *   luego copy): un carpeta corrupta puede dejar sin juego. Por eso
+ *   el launcher instala carpetas con installDirAtomic (respaldo
+ *   .bak-*, P0-2), nunca directo.
+ *
  * Sin núcleo embebido, TODO devuelve failure con el mensaje
  * "Núcleo embebido no presente": el llamador debe usar entonces
  * la vía de Etapa 1 (deliverPkgFiles a Vita3K externo). Nada de

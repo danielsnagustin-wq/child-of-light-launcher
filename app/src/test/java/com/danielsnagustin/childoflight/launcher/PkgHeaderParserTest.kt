@@ -289,6 +289,19 @@ class PkgHeaderParserTest {
     }
 
     @Test
+    fun contentIdWithoutSeparatorGivesEmptyContentName() {
+        // S6: un Content ID sin "_00-" (formato atípico; los reales de
+        // Vita siempre lo traen) deja contentName en "": el llamador
+        // (scanStatus) usa entonces el nombre del archivo como clave
+        // de mezcla, no revienta ni mezcla DLCs ajenos.
+        val result = PkgHeaderParser.parse(
+            pkgHeaderBytesWithInfo("EP0001-PCSB00598-CHILDOFLIGHT0000", 0x16),
+        )
+        assertTrue(result.isSuccess)
+        assertEquals("", result.getOrThrow().contentName)
+    }
+
+    @Test
     fun infoContentTypeDlcIsParsed() {
         val result = PkgHeaderParser.parse(
             pkgHeaderBytesWithInfo("EP0001-PCSB00598_00-CHILDOFLIGHTDLC1", 0x16),

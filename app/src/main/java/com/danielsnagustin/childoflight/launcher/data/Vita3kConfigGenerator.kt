@@ -37,22 +37,22 @@ import java.io.File
  *   fps-hack (bool), file-loading-delay (int),
  *   performance-overlay (bool), performance-overlay-detail (int,
  *   default MINIMUM = 0; enum MINIMUM/LOW/MEDIUM/MAXIMUM verificado
- *   en config.h:52-62,362), performance-overlay-position (int,
- *   default TOP_LEFT = 0; enum verificado en config.h:65-79,364),
+ *   en config.h:29-34, clave en :187), performance-overlay-position (int,
+ *   default TOP_LEFT = 0; enum verificado en config.h:36-43, clave en :188),
  *   hashless-texture-cache (bool, default false; consumo verificado
  *   en renderer/src/texture/cache.cpp: use_protect + protección de
  *   páginas para texturas grandes), show-compile-shaders (bool,
  *   default true en upstream; el launcher emite false por defecto =
  *   mensajes ocultos, pantalla limpia),
  *   show-welcome (bool, default true en upstream; verificado en
- *   config.h:380; su único consumo verificado es el diálogo de
+ *   config.h:196; su único consumo verificado es el diálogo de
  *   bienvenida de la GUI Qt (gui-qt/src/main_window.cpp:1031-1037):
  *   en el camino Android/SDL ese diálogo ni siquiera se ejecuta,
  *   pero la clave es real y se emite false siempre),
  *   psn-signed-in (int, default false en upstream; verificado en
- *   config.h:398; lo consumen sceNpCheckCallback y
+ *   config.h:205; lo consumen sceNpCheckCallback y
  *   sceNpGetServiceState en modules/SceNpManager/SceNpManager.cpp
- *   (:131 y :149): con 0 el núcleo responde siempre
+ *   (:73 y :83): con 0 el núcleo responde siempre
  *   SCE_NP_SERVICE_STATE_SIGNED_OUT y los juegos que piden el
  *   estado de sesión antes de activar sus DLC nunca los aplican.
  *   El launcher emite 1 o 0 según el ajuste psnSignedIn
@@ -66,10 +66,10 @@ import java.io.File
  *
  * NO verificadas (no se emiten):
  * - display-info-message: NO existe en config.h (lectura completa
- *   0-465, pin 3e43bc80) ni en Config::CurrentConfig
+ *   0-239, pin 3e43bc80) ni en Config::CurrentConfig
  *   (config/state.h:136-224). No hay ningún mecanismo de "mensajes
  *   informativos" en config; lo más cercano es warn-missing-firmware
- *   (config.h:382) y show-live-area-screen (:322), ninguno es un
+ *   (config.h:197) y show-live-area-screen (:167), ninguno es un
  *   aviso informativo general. Por eso NO se emite.
  * - frame limiter, frame skipping, accurate thread scheduling y
  *   audio buffer size: sin clave en config.h ni en config.cpp.
@@ -156,7 +156,7 @@ object Vita3kConfigGenerator {
         sb.appendLine("fps-hack: ${s.fpsHack}")
         sb.appendLine("file-loading-delay: ${s.fileLoadingDelay}")
         // --- Audio ---
-        // audio-backend VERIFICADO (audio.cpp, AudioState::set_backend):
+        // audio-backend VERIFICADO (audio.cpp:64-74, AudioState::set_backend):
         // el núcleo acepta exactamente "SDL" y "Cubeb" (case-sensitive);
         // cualquier otro valor deja el adapter a null y el audio no arranca.
         sb.appendLine("# Audio — audio-backend verificado (audio.cpp set_backend): \"SDL\" o \"Cubeb\".")
@@ -165,12 +165,12 @@ object Vita3kConfigGenerator {
         sb.appendLine("ngs-enable: ${s.ngsEnable}")
         // --- Overlay ---
         // performance-overlay-detail/position VERIFICADOS (pin 3e43bc80,
-        // config.h:362,364): ints con default MINIMUM = 0 y TOP_LEFT = 0.
+        // config.h:187,188): ints con default MINIMUM = 0 y TOP_LEFT = 0.
         // hashless-texture-cache VERIFICADO (pin 3e43bc80,
         // renderer/src/texture/cache.cpp): true = use_protect, las
         // texturas grandes se vigilan por protección de páginas en vez
         // de re-hashear en cada frame; las pequeñas siguen con hash.
-        // show-compile-shaders VERIFICADO (config.h:306): bool, default
+        // show-compile-shaders VERIFICADO (config.h:159): bool, default
         // true en upstream; el launcher emite false por defecto
         // (mensajes ocultos, pantalla limpia).
         sb.appendLine("performance-overlay: ${s.showFpsOverlay}")
@@ -179,7 +179,7 @@ object Vita3kConfigGenerator {
         sb.appendLine("hashless-texture-cache: ${s.hashlessTextureCache}")
         sb.appendLine("show-compile-shaders: ${s.showCompileShaders}")
         // --- Interfaz del núcleo ---
-        // show-welcome VERIFICADO (config.h:380): bool, default true.
+        // show-welcome VERIFICADO (config.h:196): bool, default true.
         // Su único consumo verificado es el diálogo de bienvenida de
         // la GUI Qt (gui-qt/src/main_window.cpp:1031-1037); en el
         // camino Android/SDL ese diálogo ni siquiera se ejecuta. Se
@@ -187,10 +187,10 @@ object Vita3kConfigGenerator {
         // bienvenida del emulador.
         sb.appendLine("show-welcome: false")
         // --- PSN emulado (DLC) ---
-        // psn-signed-in VERIFICADO (config.h:398): int, default false
+        // psn-signed-in VERIFICADO (config.h:205): int, default false
         // en upstream. Lo consumen sceNpCheckCallback y
         // sceNpGetServiceState (modules/SceNpManager/SceNpManager.cpp
-        // :131 y :149): con 0 el núcleo responde siempre
+        // :73 y :83): con 0 el núcleo responde siempre
         // SCE_NP_SERVICE_STATE_SIGNED_OUT. Los juegos que preguntan
         // el estado de sesión antes de activar sus DLC nunca los
         // aplican sin esta señal (reporte del usuario desde Vita3K:

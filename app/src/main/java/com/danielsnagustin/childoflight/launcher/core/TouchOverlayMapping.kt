@@ -43,8 +43,9 @@ data class ControlRect(val left: Float, val top: Float, val right: Float, val bo
  *   ejes LEFTX = 0, LEFTY = 1, RIGHTX = 2, RIGHTY = 3,
  *   LEFT_TRIGGER = 4, RIGHT_TRIGGER = 5).
  * - El núcleo traduce botón SDL -> botón Vita con los binds de
- *   config (vita3k/ctrl/src/ctrl.cpp: get_controller_bindings /
- *   get_controller_bindings_ext): SOUTH -> CROSS, EAST -> CIRCLE,
+ *   config (vita3k/ctrl/src/ctrl.cpp: get_controller_bindings
+ *   (:220-236) / get_controller_bindings_ext (:240-260), verificado
+ *   contra la tabla real del pin: SOUTH -> CROSS, EAST -> CIRCLE,
  *   WEST -> SQUARE, NORTH -> TRIANGLE, BACK -> SELECT, START -> START,
  *   LEFT_SHOULDER -> L1, RIGHT_SHOULDER -> R1, LEFT_STICK -> L3,
  *   RIGHT_STICK -> R3, DPAD_* -> D-Pad. Los binds por defecto son la
