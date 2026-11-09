@@ -51,6 +51,7 @@ import com.danielsnagustin.childoflight.launcher.model.ImportResult
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.TrophyProgress
 import com.danielsnagustin.childoflight.launcher.model.TrophyUnlockAnnouncer
+import com.danielsnagustin.childoflight.launcher.model.TitleId
 import com.danielsnagustin.childoflight.launcher.model.UiPreferences
 import com.danielsnagustin.childoflight.launcher.model.applySafeMode
 import com.danielsnagustin.childoflight.launcher.ui.settings.audioFixTarget
@@ -929,8 +930,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun importGame(uri: Uri, force: Boolean = false) = importWith(uri, "GAME") { name -> library.importGame(uri, name, force) }
-    fun importDlc(uri: Uri, force: Boolean = false) = importWith(uri, "DLC") { name -> library.importDlc(uri, name, force) }
-    fun importUpdate(uri: Uri, force: Boolean = false) = importWith(uri, "UPDATE") { name -> library.importUpdate(uri, name, force) }
+    fun importDlc(uri: Uri, force: Boolean = false) =
+        importWith(uri, "DLC", { name -> library.importDlc(uri, name, force) }, ::installImportedPkg)
+
+    fun importUpdate(uri: Uri, force: Boolean = false) =
+        importWith(uri, "UPDATE", { name -> library.importUpdate(uri, name, force) }, ::installImportedPkg)
     // --- Firmware (núcleo embebido, Etapa 2) ---
 
     /**
@@ -1267,12 +1271,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC -> "El DLC"
                 com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE -> "El update"
             }
-            // El motor integrado instala el .pkg al pulsar JUGAR
-            // (UseEmbeddedPkg): ya no hace falta la app externa.
+            // El motor integrado instala el .pkg del JUEGO al pulsar
+            // JUGAR (UseEmbeddedPkg). Para DLC/update, PkgStored ya
+            // solo ocurre cuando la instalación en el acto falló (con
+            // éxito se devuelve DlcSuccess/UpdateSuccess): el mensaje
+            // NO promete una instalación en JUGAR que no existe (P1-1).
             val installNote = when (result.kind) {
                 com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME ->
                     "Pulsa JUGAR: el motor integrado instalará el .pkg y arrancará el juego."
-                else -> "El motor integrado lo instalará al pulsar JUGAR, junto con el juego."
+                else -> "No se pudo instalar en el núcleo ahora mismo: el .pkg queda guardado. Comprueba que tienes instalada la versión con el motor (la APK nativa, no la pequeña) y vuelve a importarlo para reintentarlo. El motivo exacto queda en el reporte de bug."
             }
             "$what se guardó como .pkg (${result.titleId.id} · ${formatBytes(result.sizeBytes)}) en el almacenamiento interno del launcher.\n\n" +
                 installNote
@@ -1292,7 +1299,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         is ImportResult.Failed -> "No se pudo importar:\n\n${result.reason}\n\nSi el archivo es grande, espera sin cerrar la app: la copia puede tardar varios minutos."
     }
 
-    private fun importWith(uri: Uri, kind: String, block: (String) -> ImportResult) {
+    private fun importWith(
+        uri: Uri,
+        kind: String,
+        block: (String) -> ImportResult,
+        afterImport: (suspend (ImportResult) -> ImportResult)? = null,
+    ) {
         if (!beginImport()) return
         _pendingDuplicate.value = PendingDuplicate(uri, kind)
         viewModelScope.launch(Dispatchers.IO) {
@@ -1303,11 +1315,91 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 // el núcleo (installProgress con percent).
                 _installProgress.value = InstallProgress(null, "Importando… $name")
                 val result = block(name)
+                // P1-1 (2026-11-09): los .pkg de DLC/update se guardaban
+                // pero NUNCA se instalaban (installDlcPkg /
+                // installUpdatePkg no tenían ningún llamador) y el
+                // mensaje prometía una instalación en JUGAR que no
+                // existe. El paso afterImport los instala en el acto.
+                val finalResult = afterImport?.invoke(result) ?: result
                 withContext(Dispatchers.Main) {
-                    showImportResult(result)
+                    showImportResult(finalResult)
                 }
             } finally {
                 endImport()
+            }
+        }
+    }
+
+    /**
+     * P1-1 (2026-11-09): instala en el acto un .pkg de DLC o update
+     * recién importado. Antes solo se guardaba el archivo y el juego
+     * nunca veía el DLC/update. Solo actúa sobre PkgStored /
+     * PkgNeedsLicense de DLC/UPDATE (.zip/.vpk ya extraen directo a
+     * addcont/ y devuelven DlcSuccess/UpdateSuccess; el .pkg del juego
+     * se instala en JUGAR por su tamaño). Con éxito devuelve
+     * DlcSuccess/UpdateSuccess ("DLC X instalado"); si falla, devuelve
+     * el resultado original (el .pkg queda guardado) y el motivo exacto
+     * queda en el log para el reporte de bug. La licencia puede venir
+     * del work.bin recién guardado o de una ya registrada en el núcleo
+     * (findPkgZrif): installPkgFile lo resuelve.
+     */
+    private suspend fun installImportedPkg(result: ImportResult): ImportResult {
+        val kind = when (result) {
+            is ImportResult.PkgStored -> result.kind
+            is ImportResult.PkgNeedsLicense -> result.kind
+            else -> return result
+        }
+        if (kind != com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC &&
+            kind != com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE
+        ) return result
+        val titleId = when (result) {
+            is ImportResult.PkgStored -> result.titleId
+            is ImportResult.PkgNeedsLicense -> result.titleId
+            else -> return result
+        }
+        val dlcId = when (result) {
+            is ImportResult.PkgStored -> java.io.File(result.storedPath).nameWithoutExtension
+            is ImportResult.PkgNeedsLicense -> java.io.File(result.storedPath).nameWithoutExtension
+            else -> return result
+        }
+        _installProgress.value = InstallProgress(null, "Instalando en el núcleo…")
+        val installed = installStoredPkg(kind, titleId, dlcId)
+        return installed.fold(
+            onSuccess = {
+                LauncherLog.append(context, "import", "DLC/update instalado en el núcleo: $dlcId (${titleId.id}).")
+                if (kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC) {
+                    ImportResult.DlcSuccess(titleId, dlcId)
+                } else {
+                    ImportResult.UpdateSuccess(titleId)
+                }
+            },
+            onFailure = { e ->
+                LauncherLog.append(context, "import", "No se pudo instalar el DLC/update $dlcId en el núcleo: ${e.message} (el .pkg queda guardado).")
+                result
+            },
+        )
+    }
+
+    /**
+     * Instala un .pkg de DLC o update ya guardado (por DLC ID o por
+     * Title ID). Lo usan la importación (installImportedPkg) y el
+     * guardado del work.bin: en ambos casos la licencia puede venir
+     * del work.bin o de una ya registrada en el núcleo (findPkgZrif).
+     */
+    private suspend fun installStoredPkg(
+        kind: com.danielsnagustin.childoflight.launcher.model.PkgKind,
+        titleId: TitleId,
+        dlcId: String,
+    ): Result<Unit> {
+        _installProgress.value = InstallProgress(null, "Instalando en el núcleo…")
+        val installer = EmbeddedPkgInstaller(library)
+        return if (kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC) {
+            installer.installDlcPkg(dlcId) { percent, status ->
+                _installProgress.value = InstallProgress(percent, status)
+            }
+        } else {
+            installer.installUpdatePkg(titleId) { percent, status ->
+                _installProgress.value = InstallProgress(percent, status)
             }
         }
     }
@@ -1342,20 +1434,37 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 }
                 val licenseDest = library.findPkgWorkBinFile(pkgReal)
                 val result = library.importWorkBin(uri, licenseDest, pending.contentId)
+                // P1-1: con la licencia ya guardada, el DLC/update se
+                // instala en el acto (antes el mensaje prometía una
+                // instalación en JUGAR que no existe).
+                var installed: Boolean? = null
+                if (result.isSuccess && pending.kind != com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME) {
+                    val title = TitleId.fromString(pending.titleId)
+                    val dlcId = pending.dlcId ?: java.io.File(pending.storedPath).nameWithoutExtension
+                    installed = if (title != null) {
+                        installStoredPkg(pending.kind, title, dlcId).fold(
+                            onSuccess = {
+                                LauncherLog.append(context, "import", "DLC/update instalado en el núcleo tras guardar la licencia: $dlcId (${title.id}).")
+                                true
+                            },
+                            onFailure = { e ->
+                                LauncherLog.append(context, "import", "No se pudo instalar el DLC/update $dlcId tras guardar la licencia: ${e.message} (el .pkg queda guardado).")
+                                false
+                            },
+                        )
+                    } else false
+                }
                 withContext(Dispatchers.Main) {
                     result.onSuccess {
                         _pendingPkgLicense.value = null
-                        // La licencia ya está: el motor integrado instala el
-                        // .pkg al pulsar JUGAR (UseEmbeddedPkg).
-                        val installNote = if (pending.kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME) {
-                            "Pulsa JUGAR: el motor integrado instalará el .pkg y arrancará el juego."
+                        val message = if (pending.kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME) {
+                            "Licencia guardada: el .pkg ya tiene su work.bin.\n\nPulsa JUGAR: el motor integrado instalará el .pkg y arrancará el juego."
+                        } else if (installed == true) {
+                            "Licencia guardada y DLC/update instalado en el núcleo."
                         } else {
-                            "El motor integrado lo instalará al pulsar JUGAR, junto con el juego."
+                            "Licencia guardada: el .pkg ya tiene su work.bin.\n\nLa instalación no se pudo hacer ahora: vuelve a importar el .pkg para reintentarla."
                         }
-                        _alert.value = AlertInfo(
-                            "Licencia guardada: el .pkg ya tiene su work.bin.\n\n" + installNote,
-                            null,
-                        )
+                        _alert.value = AlertInfo(message, null)
                     }.onFailure { e ->
                         _alert.value = AlertInfo("Ese archivo no es un work.bin válido: ${e.message}")
                     }

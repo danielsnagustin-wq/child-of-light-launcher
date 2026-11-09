@@ -948,10 +948,13 @@ class GameLibraryRepository(private val context: Context) {
         // Un DLC instalado (carpeta) cuyo .pkg sigue guardado se cuenta
         // UNA vez, no dos (mergeDlcLists).
         val dlcs = mergeDlcLists(extractedDlcs, storedDlcPkgs)
+        // P1-1 (2026-11-09): "Update instalado" exige contenido REAL
+        // en ux0/patch/. Antes bastaba con que existiera el .pkg
+        // guardado (findPkgPatchFile != null) y el informe mentía:
+        // un update solo guardado, sin instalar, salía como instalado.
         val updateInstalled = TitleId.entries.any { candidate ->
-            (patchDir(candidate.id).exists() &&
-                (patchDir(candidate.id).listFiles()?.isNotEmpty() == true)) ||
-                findPkgPatchFile(candidate.id) != null
+            patchDir(candidate.id).exists() &&
+                (patchDir(candidate.id).listFiles()?.isNotEmpty() == true)
         }
         // Firmware: criterio ÚNICO con FirmwareResolver. "Instalado"
         // significa instalado EN EL NÚCLEO (vs0 extraído o marcador
