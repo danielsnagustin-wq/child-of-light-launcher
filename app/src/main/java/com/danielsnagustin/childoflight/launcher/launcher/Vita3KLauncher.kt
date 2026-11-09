@@ -474,14 +474,13 @@ class Vita3KLauncher(private val context: Context) {
                     } else {
                         LauncherLog.append(context, "pkg", "Eboot sin descifrar en $titleId y no hay .pkg guardado para reinstalar.")
                     }
-                } else {
-                    // Juego instalado y eboot válido: el .pkg guardado
-                    // (1,14 GB) es redundante y el usuario no quiere
-                    // borrarlo a mano (2026-11-08) — se borra solo en
-                    // el lanzamiento. El work.bin se conserva.
-                    // Best-effort: si no hay .pkg, no pasa nada.
-                    runCatching { library.deleteStoredGamePkg(titleId) }
                 }
+                // P0-1 (2026-11-09): el .pkg guardado ya NO se borra
+                // aquí. Se borra después de que loadGame valide el
+                // juego, en tryLaunchEmbedded: borrar antes de saber
+                // si el juego arranca destruía la única vía de
+                // recuperación si el eboot quedó truncado. El
+                // work.bin se conserva siempre.
                 return when (val attempt = tryLaunchEmbedded(library, titleId, configFile.absolutePath, benchmark)) {
                     is EmbeddedAttempt.Ok -> attempt.outcome
                     is EmbeddedAttempt.Failed -> {
@@ -663,6 +662,14 @@ class Vita3KLauncher(private val context: Context) {
                     "El motor integrado no pudo arrancar el juego: $detail. Vuelve a intentarlo; si sigue igual, repórtalo.",
                 )
             }
+            // P0-1 (2026-11-09): el núcleo validó el juego
+            // (loadGame == 0) y el eboot pasó la validación fuerte
+            // (tamaño + cabecera): el .pkg guardado (1,14 GB) ya es
+            // redundante y se borra solo. Es el ÚNICO punto donde se
+            // borra: antes se borraba en el install, antes de saber
+            // si el juego arranca. deleteStoredGamePkg registra
+            // siempre su decisión en el log.
+            runCatching { library.deleteStoredGamePkg(titleId) }
             val intent = EmbeddedGameActivity.createLaunchIntent(context, titleId, "Child of Light", benchmark)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             // P2-A4a: un fallo anterior ya consumido o no no debe
@@ -701,12 +708,10 @@ class Vita3KLauncher(private val context: Context) {
         result.onFailure {
             LauncherLog.append(context, "pkg", "Reinstalación .pkg embebida falló: ${it.message}")
         }
-        // Reinstalación con éxito y eboot ya válido: el .pkg guardado
-        // es redundante (1,14 GB) y el usuario no quiere borrarlo a
-        // mano — se borra solo. El work.bin se conserva.
-        result.onSuccess {
-            runCatching { library.deleteStoredGamePkg(titleId) }
-        }
+        // P0-1 (2026-11-09): el .pkg ya NO se borra aquí. Se borra
+        // después de que loadGame valide el juego, en
+        // tryLaunchEmbedded (al que llega el flujo tras reinstalar).
+        // El work.bin se conserva siempre.
         return result
     }
 
@@ -743,12 +748,10 @@ class Vita3KLauncher(private val context: Context) {
             LauncherLog.append(context, "pkg", "Instalación .pkg embebida falló: ${it.message}")
             return Result.failure(it)
         }
-        // Juego instalado y verificado: el .pkg guardado (1,14 GB) es
-        // redundante y el usuario no quiere borrarlo a mano
-        // (2026-11-08) — se borra solo tras instalar. El work.bin
-        // se conserva. Best-effort: si el eboot no quedó válido, el
-        // .pkg se queda como respaldo para reinstalar.
-        runCatching { library.deleteStoredGamePkg(titleId.id) }
+        // P0-1 (2026-11-09): el .pkg ya NO se borra aquí. Se borra
+        // después de que loadGame valide el juego, en
+        // tryLaunchEmbedded (al que llega el flujo tras instalar).
+        // El work.bin se conserva siempre.
         val patchPkg = library.findPkgPatchFile(titleId.id)
         if (patchPkg != null) {
             installer.installPkgFile(patchPkg, library.findPkgWorkBinFile(patchPkg), progress)

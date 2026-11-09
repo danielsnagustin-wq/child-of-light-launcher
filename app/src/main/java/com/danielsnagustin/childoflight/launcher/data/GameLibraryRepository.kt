@@ -207,43 +207,89 @@ class GameLibraryRepository(private val context: Context) {
         const val MIN_PUP_SIZE_BYTES = 100_000_000L
 
         /**
-         * ¿El archivo es un ELF válido? Un eboot.bin de Vita descifrado
-         * empieza por 0x7F 'E' 'L' 'F'. Puro (solo File) para poder
-         * probarlo en la JVM sin Context.
+         * Tamaño mínimo de un eboot.bin real (P0-1, 2026-11-09): el
+         * eboot de Child of Light mide varios MB. Un archivo menor de
+         * 1 MB es una instalación truncada o corrupta, aunque empiece
+         * por la magia correcta. La validación anterior solo leía 4
+         * bytes: un eboot de 4 bytes pasaba como válido y el auto-borrado
+         * del .pkg (1,14 GB) destruía la única vía de recuperación.
          */
-        fun isElfFile(file: File): Boolean {
-            if (!file.isFile) return false
+        const val MIN_EBOOT_SIZE_BYTES = 1_000_000L
+
+        /**
+         * Lee los primeros [size] bytes de un archivo (bucle: un solo
+         * read puede devolver menos). null si el archivo es más corto
+         * o no se puede leer. Puro (solo File).
+         */
+        private fun readHeaderBytes(file: File, size: Int): ByteArray? {
+            if (!file.isFile) return null
             return try {
                 file.inputStream().use { input ->
-                    val magic = ByteArray(4)
-                    if (input.read(magic) != 4) return false
-                    magic[0] == 0x7F.toByte() && magic[1] == 'E'.code.toByte() &&
-                        magic[2] == 'L'.code.toByte() && magic[3] == 'F'.code.toByte()
+                    val buf = ByteArray(size)
+                    var read = 0
+                    while (read < size) {
+                        val n = input.read(buf, read, size - read)
+                        if (n <= 0) return null
+                        read += n
+                    }
+                    buf
                 }
             } catch (_: Exception) {
-                false
+                null
             }
+        }
+
+        /** Entero de 32 bits little-endian en [bytes] desde [offset]. */
+        private fun u32Le(bytes: ByteArray, offset: Int): Int =
+            (bytes[offset].toInt() and 0xFF) or
+                ((bytes[offset + 1].toInt() and 0xFF) shl 8) or
+                ((bytes[offset + 2].toInt() and 0xFF) shl 16) or
+                ((bytes[offset + 3].toInt() and 0xFF) shl 24)
+
+        /** Entero de 16 bits little-endian en [bytes] desde [offset]. */
+        private fun u16Le(bytes: ByteArray, offset: Int): Int =
+            (bytes[offset].toInt() and 0xFF) or
+                ((bytes[offset + 1].toInt() and 0xFF) shl 8)
+
+        /**
+         * ¿El archivo es un ELF válido? Un eboot.bin de Vita descifrado
+         * empieza por 0x7F 'E' 'L' 'F'. Ya no basta la magia: se exige
+         * tamaño mínimo y la tabla de segmentos dentro del archivo
+         * (e_phoff + e_phnum * e_phentsize, cabecera ELF32: la Vita es
+         * ARM de 32 bits y el núcleo usa Elf32_Ehdr). Un ELF truncado
+         * no pasa. Puro (solo File) para poder probarlo en la JVM sin
+         * Context.
+         */
+        fun isElfFile(file: File): Boolean {
+            if (!file.isFile || file.length() < MIN_EBOOT_SIZE_BYTES) return false
+            val header = readHeaderBytes(file, 64) ?: return false
+            if (!(header[0] == 0x7F.toByte() && header[1] == 'E'.code.toByte() &&
+                    header[2] == 'L'.code.toByte() && header[3] == 'F'.code.toByte())) return false
+            if (header[4].toInt() != 1) return false
+            val phoff = u32Le(header, 28).toLong() and 0xFFFFFFFFL
+            val phentsize = u16Le(header, 42)
+            val phnum = u16Le(header, 44)
+            if (phnum <= 0 || phentsize < 32) return false
+            return phoff + phnum.toLong() * phentsize <= file.length()
         }
 
         /**
          * ¿El archivo es un SELF válido de Vita? Un eboot.bin instalado
          * NO es un ELF: sigue siendo un SELF, que empieza por 'S' 'E'
          * 'C' 0x00 (pin 3e43bc80, kernel/src/load_self.cpp:508-509:
-         * SCE_MAGIC = 0x00454353). El núcleo lo descifra EN MEMORIA al
+         * SCE_MAGIC = 0x00454353). Ya no basta la magia: se exige
+         * tamaño mínimo y los mismos campos que comprueba el núcleo
+         * al cargarlo (load_self.cpp:512-520: version == 3 y
+         * header_type == 1). El núcleo lo descifra EN MEMORIA al
          * cargarlo (load_self), nunca en disco. Puro (solo File).
          */
         fun isSelfFile(file: File): Boolean {
-            if (!file.isFile) return false
-            return try {
-                file.inputStream().use { input ->
-                    val magic = ByteArray(4)
-                    if (input.read(magic) != 4) return false
-                    magic[0] == 'S'.code.toByte() && magic[1] == 'E'.code.toByte() &&
-                        magic[2] == 'C'.code.toByte() && magic[3] == 0.toByte()
-                }
-            } catch (_: Exception) {
-                false
-            }
+            if (!file.isFile || file.length() < MIN_EBOOT_SIZE_BYTES) return false
+            val header = readHeaderBytes(file, 64) ?: return false
+            if (!(header[0] == 'S'.code.toByte() && header[1] == 'E'.code.toByte() &&
+                    header[2] == 'C'.code.toByte() && header[3] == 0.toByte())) return false
+            if (u32Le(header, 4) != 3) return false
+            return u16Le(header, 8) == 1
         }
 
         /**
@@ -1711,13 +1757,36 @@ class GameLibraryRepository(private val context: Context) {
      * manual (Ajustes → Limpiar no usados) y el borrado automático
      * tras instalar (el usuario no quiere borrarlo a mano, 2026-11-08).
      */
+    /**
+     * Borra el .pkg guardado del juego cuando el juego ya está
+     * extraído y el eboot es válido (P0-1, 2026-11-09: la validación
+     * es fuerte — tamaño mínimo + cabecera — y el borrado solo se
+     * llama después de que loadGame valide el juego). Cada decisión
+     * queda registrada en el log: en la 0.2.10 el .pkg no se borró
+     * y no había ni una línea de log que dijera por qué, así que el
+     * fallo era invisible. El work.bin se conserva siempre.
+     */
     fun deleteStoredGamePkg(titleId: String): Boolean {
-        if (titleId.isBlank() || titleId == "." || titleId == ".." || '/' in titleId || '\\' in titleId) return false
-        if (!isEbootDecrypted(titleId)) return false
-        val pkg = findPkgGameFile(titleId) ?: return false
+        if (titleId.isBlank() || titleId == "." || titleId == ".." || '/' in titleId || '\\' in titleId) {
+            LauncherLog.append(context, "delete", ".pkg no borrado: titleId no válido")
+            return false
+        }
+        if (!isEbootDecrypted(titleId)) {
+            LauncherLog.append(context, "delete", ".pkg no borrado: eboot no válido en $titleId (falta, truncado o corrupto)")
+            return false
+        }
+        val pkg = findPkgGameFile(titleId)
+        if (pkg == null) {
+            LauncherLog.append(context, "delete", ".pkg no borrado: no hay .pkg guardado de $titleId")
+            return false
+        }
         val size = pkg.length()
         val ok = pkg.delete()
-        if (ok) LauncherLog.append(context, "delete", ".pkg guardado $titleId borrado ($size bytes): el juego ya está extraído")
+        if (ok) {
+            LauncherLog.append(context, "delete", ".pkg guardado $titleId borrado ($size bytes): el juego ya está extraído")
+        } else {
+            LauncherLog.append(context, "delete", ".pkg NO se pudo borrar: ${pkg.name} ($size bytes)")
+        }
         return ok
     }
 
