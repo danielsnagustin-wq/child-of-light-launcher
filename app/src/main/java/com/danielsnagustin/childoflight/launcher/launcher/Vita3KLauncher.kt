@@ -670,6 +670,16 @@ class Vita3KLauncher(private val context: Context) {
             // si el juego arranca. deleteStoredGamePkg registra
             // siempre su decisión en el log.
             runCatching { library.deleteStoredGamePkg(titleId) }
+            // Peso del juego (2026-11-09): el PUP guardado (133 MB)
+            // también es redundante cuando el firmware ya está
+            // instalado en el núcleo (hay marcador): solo hace falta
+            // para instalar. Se borra en el mismo punto, tras validar
+            // el juego. El marcador se conserva.
+            runCatching {
+                if (FirmwareResolver.deleteSavedPupIfInstalled(library.vitaRoot)) {
+                    LauncherLog.append(context, "firmware", "PUP guardado borrado: firmware ya instalado en el núcleo")
+                }
+            }
             val intent = EmbeddedGameActivity.createLaunchIntent(context, titleId, "Child of Light", benchmark)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             // P2-A4a: un fallo anterior ya consumido o no no debe

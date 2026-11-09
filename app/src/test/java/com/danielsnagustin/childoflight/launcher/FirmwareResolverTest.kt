@@ -168,24 +168,32 @@ class FirmwareResolverTest {
     }
 
     @Test
-    fun `PUP guardado no habilita el nucleo embebido`() {
-        // Saved.ready == false -> con núcleo presente, decide() BLOQUEA
-        // con el motivo exacto (pasos 1-2): el núcleo no puede arrancar
-        // sin firmware y ya no se salta a la app externa por detrás.
-        // El PUP guardado solo habilita el núcleo cuando su instalación
-        // en el núcleo tiene éxito (saved.ready == true).
-        val status = GameStatus(
-            titleId = TitleId.EU,
-            extractedTitleId = TitleId.EU,
-            gameInstalled = true,
-            gameExtracted = true,
-        )
-        val saved = FirmwareStatus.Saved("PSVUPDAT.PUP guardado")
-        assertFalse(saved.ready)
-        val decision = EmbeddedGameLauncher.decide(status, coreAvailable = true, firmwareReady = saved.ready)
-        assertTrue(decision is EmbeddedGameLauncher.Decision.Blocked)
-        val reason = (decision as EmbeddedGameLauncher.Decision.Blocked).reason
-        assertTrue(reason.contains("Importar → Firmware"))
-        assertFalse(reason.contains("Vita3K"))
+    fun `PUP guardado se borra cuando el firmware ya esta instalado`() {
+        // Peso del juego (2026-11-09): PUP guardado (133 MB) + vs0
+        // instalado = firmware por duplicado. Con marcador (instalado),
+        // el PUP sobra: se borra y el marcador se conserva.
+        val root = tmp.newFolder("vitaRoot")
+        writePup(root)
+        assertTrue(FirmwareResolver.markInstalled(root, "3.74"))
+        assertTrue(FirmwareResolver.deleteSavedPupIfInstalled(root))
+        assertFalse(File(File(root, "firmware"), "PSVUPDAT.PUP").exists())
+        assertTrue(File(File(root, "firmware"), "installed.json").exists())
+    }
+
+    @Test
+    fun `PUP guardado NO se borra sin marcador de instalado`() {
+        // Sin marcador el firmware solo está guardado, sin instalar:
+        // el PUP es la única vía para instalarlo y debe quedarse.
+        val root = tmp.newFolder("vitaRoot")
+        writePup(root)
+        assertFalse(FirmwareResolver.deleteSavedPupIfInstalled(root))
+        assertTrue(File(File(root, "firmware"), "PSVUPDAT.PUP").exists())
+    }
+
+    @Test
+    fun `sin PUP guardado no hay nada que borrar`() {
+        val root = tmp.newFolder("vitaRoot")
+        assertTrue(FirmwareResolver.markInstalled(root, "3.74"))
+        assertFalse(FirmwareResolver.deleteSavedPupIfInstalled(root))
     }
 }

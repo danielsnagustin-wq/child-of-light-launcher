@@ -205,6 +205,30 @@ object FirmwareResolver {
     }
 
     /**
+     * Borra el PUP guardado cuando el firmware YA está instalado en
+     * el núcleo (hay marcador con versión, escrito por
+     * markInstalled tras un installFirmware con éxito). El PUP
+     * (133 MB) solo hace falta para instalar; una vez instalado, es
+     * peso redundante: el usuario solo quiere lo que pesa el juego y
+     * la APK (2026-11-09). Sin marcador (firmware solo guardado, sin
+     * instalar) NO se borra nada: el PUP es la única vía para
+     * instalarlo. Si el firmware se borra alguna vez con
+     * deleteFirmware, habrá que volver a importar el PUP. El marcador
+     * se conserva: es lo que dice que el firmware está instalado.
+     * Puro (solo File). Devuelve true si borró el PUP.
+     */
+    fun deleteSavedPupIfInstalled(vitaRoot: File): Boolean {
+        if (!installedMarkerFile(vitaRoot).isFile) return false
+        val pup = pupFile(vitaRoot)
+        if (!pup.isFile) return false
+        return try {
+            pup.delete()
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
      * Borra TODO el firmware local: PUP guardado, marcador y vs0
      * extraído (núcleo y ruta antigua). No toca juego, DLCs ni saves.
      * Devuelve true si se borró algo.
