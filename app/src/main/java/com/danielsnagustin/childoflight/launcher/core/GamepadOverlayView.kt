@@ -590,15 +590,32 @@ class GamepadOverlayView @JvmOverloads constructor(
      * ella bajan a la superficie SDL y el juego los recibe como táctil
      * frontal: la luciérnaga va donde toca el dedo, con la
      * sensibilidad del perfil aplicada por el propio juego al leer el
-     * táctil (el overlay no reinterpreta ese gesto).
+     * táctil (el overlay no reinterpreta ese gesto). Desde 0.2.14 se
+     * dibuja solo como orbe pequeño + anillo tenue: dibujar el cristal
+     * sobre todo el rect (220 dp) era una rueda oscura gigante en el
+     * centro de la pantalla.
      */
     private inner class ZoneView(context: Context, control: TouchControl) :
         OverlayControlView(context, control) {
 
         override fun onDraw(canvas: Canvas) {
-            val rect = RectF(0f, 0f, width.toFloat(), height.toFloat())
-            drawGlassBody(canvas, rect, effectiveAlpha())
-            drawIcon(canvas, IconKind.IGNICULUS, rect.centerX(), rect.centerY(), rect.width() * 0.18f, effectiveAlpha())
+            // Rueda de Igniculus (2026-11-09, 0.2.14): antes se
+            // llamaba drawGlassBody sobre TODO el rect de 220 dp y
+            // el degradado con el borde azul oscuro salía como un
+            // disco gigante en el centro. Ahora solo un orbe pequeño
+            // (el icono a 0.30 × ancho) + un anillo tenue alrededor
+            // (0.32 × ancho, fuera del halo del icono, que llega a
+            // 0.255 × ancho). El resto del área queda transparente.
+            // El táctil NO cambia: onTouchEvent sigue devolviendo
+            // false y el área sigue siendo 220 dp.
+            val cx = width / 2f
+            val cy = height / 2f
+            val alpha = effectiveAlpha()
+            strokePaint.color = Color.parseColor("#BFE6F7")
+            strokePaint.alpha = (alpha * 0.5f * 255).toInt()
+            strokePaint.strokeWidth = 1.5f * density
+            canvas.drawCircle(cx, cy, width * 0.32f, strokePaint)
+            drawIcon(canvas, IconKind.IGNICULUS, cx, cy, width * 0.30f, alpha)
         }
 
         override fun onTouchEvent(event: MotionEvent): Boolean = false
