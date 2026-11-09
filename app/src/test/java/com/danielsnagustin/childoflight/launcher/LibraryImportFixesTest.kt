@@ -298,6 +298,12 @@ class LibraryImportFixesTest {
         val root = Files.createTempDirectory("col-fw-legacy-").toFile()
         try {
             File(File(root, "vs0"), "sys").mkdirs()
+            // P2-33: resolve() es solo lectura y ya no migra: sin
+            // migrar, la ruta antigua NO es Ready (el núcleo solo lee
+            // vita/vs0). La migración es explícita y la hace
+            // refreshStatus antes de leer el estado.
+            assertEquals(FirmwareStatus.Missing, FirmwareResolver.resolve(root))
+            assertTrue(FirmwareResolver.migrateLegacyVs0(root))
             val status = FirmwareResolver.resolve(root)
             assertTrue(status is FirmwareStatus.Ready)
             assertTrue(status.ready)
