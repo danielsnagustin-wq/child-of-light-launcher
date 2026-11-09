@@ -13,6 +13,7 @@ import com.danielsnagustin.childoflight.launcher.model.PerformanceOverlayDetail
 import com.danielsnagustin.childoflight.launcher.model.PerformanceOverlayPosition
 import com.danielsnagustin.childoflight.launcher.model.ScreenFilter
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -305,5 +306,51 @@ class Vita3kConfigGeneratorTest {
         // (con comillas de cierre): es prefijo de la buena, así que
         // se comprueba con el cierre de comillas.
         assertFalse(yaml.contains("pref-path: \"${root.absolutePath}\"\n"))
+    }
+
+    // R4-P0-7 + R4-P2-4: writeConfig() idempotente. JUGAR escribía el
+    // mismo config.yml 3 veces por segundo; la red de seguridad es no
+    // reescribir si el contenido es idéntico.
+
+    private fun tempConfigFile(): java.io.File {
+        val dir = java.io.File(System.getProperty("java.io.tmpdir"), "col-r4p07-${System.nanoTime()}")
+        dir.mkdirs()
+        return java.io.File(dir, "config.yml")
+    }
+
+    @Test
+    fun writeConfigIfChangedWritesWhenFileIsMissing() {
+        val file = tempConfigFile()
+        assertFalse(file.exists())
+        assertTrue(Vita3kConfigGenerator.writeConfigIfChanged(file, "v-sync: false\n"))
+        assertEquals("v-sync: false\n", file.readText())
+    }
+
+    @Test
+    fun writeConfigIfChangedSkipsIdenticalContent() {
+        val file = tempConfigFile()
+        assertTrue(Vita3kConfigGenerator.writeConfigIfChanged(file, "v-sync: false\n"))
+        val firstModified = file.lastModified()
+        Thread.sleep(5)
+        assertFalse(Vita3kConfigGenerator.writeConfigIfChanged(file, "v-sync: false\n"))
+        assertEquals("v-sync: false\n", file.readText())
+        assertEquals(firstModified, file.lastModified())
+    }
+
+    @Test
+    fun writeConfigIfChangedRewritesWhenContentDiffers() {
+        val file = tempConfigFile()
+        assertTrue(Vita3kConfigGenerator.writeConfigIfChanged(file, "v-sync: false\n"))
+        assertTrue(Vita3kConfigGenerator.writeConfigIfChanged(file, "v-sync: true\n"))
+        assertEquals("v-sync: true\n", file.readText())
+    }
+
+    @Test
+    fun writeConfigIfChangedCreatesMissingParentDirs() {
+        val dir = java.io.File(System.getProperty("java.io.tmpdir"), "col-r4p07-nested-${System.nanoTime()}/a/b")
+        val file = java.io.File(dir, "config.yml")
+        assertFalse(dir.exists())
+        assertTrue(Vita3kConfigGenerator.writeConfigIfChanged(file, "v-sync: false\n"))
+        assertEquals("v-sync: false\n", file.readText())
     }
 }

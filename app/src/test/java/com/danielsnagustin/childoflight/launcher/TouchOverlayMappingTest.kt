@@ -1,8 +1,13 @@
 package com.danielsnagustin.childoflight.launcher
 
+import com.danielsnagustin.childoflight.launcher.core.FaceGlyph
+import com.danielsnagustin.childoflight.launcher.core.GameRect
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.controlRect
+import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.controlRectInGameRect
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.dpadForStick
+import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.faceGlyphFor
+import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.gameRect
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.stickAxes
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.toSdlButton
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayVisibility
@@ -92,16 +97,110 @@ class TouchOverlayMappingTest {
     }
 
     @Test
+    fun faceGlyphsAreDistinctAndDpadHasNone() {
+        // R4-P0-2: cada botón de cara tiene su glifo propio; CROSS
+        // ya no comparte icono con DPAD_UP (que no tiene glifo: se
+        // dibuja con flecha). START tampoco tiene glifo (pausa).
+        assertEquals(FaceGlyph.CROSS, faceGlyphFor(VitaButton.CROSS))
+        assertEquals(FaceGlyph.CIRCLE, faceGlyphFor(VitaButton.CIRCLE))
+        assertEquals(FaceGlyph.SQUARE, faceGlyphFor(VitaButton.SQUARE))
+        assertEquals(FaceGlyph.TRIANGLE, faceGlyphFor(VitaButton.TRIANGLE))
+        assertNull(faceGlyphFor(VitaButton.DPAD_UP))
+        assertNull(faceGlyphFor(VitaButton.DPAD_DOWN))
+        assertNull(faceGlyphFor(VitaButton.START))
+        assertNull(faceGlyphFor(VitaButton.L1))
+        assertNull(faceGlyphFor(VitaButton.NONE))
+        val glyphs = listOf(
+            faceGlyphFor(VitaButton.CROSS),
+            faceGlyphFor(VitaButton.CIRCLE),
+            faceGlyphFor(VitaButton.SQUARE),
+            faceGlyphFor(VitaButton.TRIANGLE),
+        )
+        assertEquals(4, glyphs.distinct().size)
+    }
+
+    @Test
+    fun gameRectMatchesMeasuredPillarbox() {
+        // R4-P1-1: captura 2048x945 del teléfono: el juego ocupa
+        // x 190-1857 (1667 px, aspecto 960x544 exacto), centrado.
+        val rect = gameRect(2048f, 945f)
+        assertEquals(190.18f, rect.left, 0.5f)
+        assertEquals(0f, rect.top, 0.01f)
+        assertEquals(1667.65f, rect.width(), 0.5f)
+        assertEquals(945f, rect.height(), 0.01f)
+        assertEquals(1857.82f, rect.right, 0.5f)
+    }
+
+    @Test
+    fun gameRectLetterboxesTallView() {
+        // Vista vertical 1080x2400: manda el ancho; el juego es una
+        // franja 1080x612 centrada verticalmente.
+        val rect = gameRect(1080f, 2400f)
+        assertEquals(0f, rect.left, 0.01f)
+        assertEquals(894f, rect.top, 0.01f)
+        assertEquals(1080f, rect.width(), 0.01f)
+        assertEquals(612f, rect.height(), 0.01f)
+    }
+
+    @Test
+    fun gameRectIsWholeViewAtExactAspect() {
+        // Vista exactamente 960:544 (1920x1088): sin barras, el rect
+        // del juego es la vista entera y controlRect coincide con la
+        // fórmula antigua de fracción de ventana.
+        val rect = gameRect(1920f, 1088f)
+        assertEquals(0f, rect.left, 0.01f)
+        assertEquals(0f, rect.top, 0.01f)
+        assertEquals(1920f, rect.width(), 0.01f)
+        assertEquals(1088f, rect.height(), 0.01f)
+    }
+
+    @Test
+    fun controlRectMapsFractionsInsideGameRect() {
+        // R4-P1-1: CROSS en (0.80, 0.80) en la captura 2048x945 ya
+        // no se centra en 0.80 x 2048 = 1638 (0.959 del juego, con
+        // parte del botón sobre la barra negra), sino en 0.80 del
+        // rect del juego, entero dentro de él.
+        val density = 2.5f
+        val control = TouchControl("a", "A", "button", VitaButton.CROSS, 0.80f, 0.80f, 64, 0.85f)
+        val rect = controlRect(control, 2048f, 945f, density)
+        assertEquals(1444.29f, rect.left, 1f)
+        assertEquals(676f, rect.top, 1f)
+        assertEquals(160f, rect.width(), 0.01f)
+        assertEquals(160f, rect.height(), 0.01f)
+        val game = gameRect(2048f, 945f)
+        assertTrue("botón entero dentro del juego", rect.left >= game.left && rect.right <= game.right + 0.01f)
+        assertTrue("centro a la izquierda del mapeo viejo de ventana", rect.left + 80f < 0.80f * 2048f)
+    }
+
+    @Test
+    fun controlRectInGameRectMapsStickInsidePillarbox() {
+        // El stick (0.18, 0.72) también se mide desde el rect del
+        // juego: en 2048x945 su centro pasa de 0.18 x 2048 = 369
+        // (0.109 del juego) a 190 + 0.18 x 1668 = 490.
+        val game = GameRect(190f, 0f, 1858f, 945f)
+        val stick = TouchControl("s", "Stick", "stick", VitaButton.LEFT_STICK, 0.18f, 0.72f, 140, 0.70f)
+        val rect = controlRectInGameRect(stick, game, 2.5f)
+        assertEquals(315.24f, rect.left, 1f)
+        assertEquals(505.4f, rect.top, 1f)
+        assertEquals(350f, rect.width(), 0.01f)
+    }
+
+    @Test
     fun controlRectMatchesEditorPreview() {
         // La fórmula del editor (TouchLayoutScreen.kt): offset =
         // ((fracción * tamañoVista) - tamañoPx/2).toInt(), limitado a
         // [0, tamañoVista - tamañoPx]. El overlay del juego usa la
-        // misma: si una cambia sin la otra, la vista previa miente.
+        // misma SOLO cuando la vista es exactamente 960:544 (aquí
+        // 1920x1088, donde el rect del juego ES la vista): en ese
+        // caso lo que se ve en el editor es lo que aparece en el
+        // juego. Con otra vista, las fracciones se miden dentro del
+        // rect del juego (R4-P1-1) y la previa solo coincide si es
+        // 16:9 (R4-P1-4).
         val density = 2.5f
-        val viewW = 1080f
-        val viewH = 2400f
+        val viewW = 1920f
+        val viewH = 1088f
         val cases = listOf(
-            TouchControl("a", "A", "button", VitaButton.CROSS, 0.87f, 0.71f, 64, 0.85f),
+            TouchControl("a", "A", "button", VitaButton.CROSS, 0.80f, 0.80f, 64, 0.85f),
             TouchControl("s", "Stick", "stick", VitaButton.LEFT_STICK, 0.18f, 0.72f, 140, 0.70f),
             TouchControl("edge", "Borde", "button", VitaButton.CIRCLE, 0.0f, 1.0f, 64, 0.8f),
             TouchControl("big", "Grande", "igniculus", VitaButton.NONE, 0.5f, 0.35f, 220, 0.25f),

@@ -92,6 +92,26 @@ class CategoryResetTest {
     }
 
     @Test
+    fun performanceResetUsesCanonicalPresetTextureCache() {
+        // R4-P0-9: "Restablecer esta categoría" en Rendimiento daba
+        // textureCache=true (del preset) mientras el primer arranque
+        // daba false (lowRam). El valor canónico del preset G99 es
+        // true explícito y lowRam solo existe en el primer arranque:
+        // el reseteo de categoría, el preset a mano y el auto-revert
+        // coinciden ahora en true.
+        val withCacheOff = changed.copy(textureCache = false, shaderCache = false, showFpsOverlay = true)
+        val reset = resetCategorySettings(withCacheOff, SettingsCategory.PERFORMANCE)
+        val preset = presetSettings(GpuProfileId.G99_RECOMMENDED)
+        assertTrue(preset.textureCache)
+        assertEquals(preset.textureCache, reset.textureCache)
+        assertEquals(preset.shaderCache, reset.shaderCache)
+        assertEquals(preset.showFpsOverlay, reset.showFpsOverlay)
+        // El resto se conserva (la categoría no toca GPU ni audio).
+        assertEquals(4f, reset.resolutionMultiplier, 0.001f)
+        assertEquals(10, reset.audioVolume)
+    }
+
+    @Test
     fun generalResetKeepsUserSwitches() {
         // P2-18: General NO tiene campos de preset: restablecerlo
         // conservaba los interruptores del usuario. Antes los pisaba

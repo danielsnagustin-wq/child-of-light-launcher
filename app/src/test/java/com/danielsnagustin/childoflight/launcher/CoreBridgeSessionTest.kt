@@ -27,6 +27,21 @@ class CoreBridgeSessionTest {
     }
 
     @Test
+    fun overlayGamepadCountWithoutNativeReturnsMinusOne() {
+        // R4-P0-3: sin .so no hay dato de gamepads SDL (-1, no 0:
+        // 0 significaría "SDL no ve ningún mando").
+        assertEquals(-1, Vita3kCoreBridge.overlayGamepadCount())
+    }
+
+    @Test
+    fun overlayIsAttachedAndIsAppPausedWithoutNativeReturnFalse() {
+        // R4-P0-4: sin núcleo la verificación de pausa lee false; el
+        // clear con verificación no hace nada sin available.
+        assertFalse(Vita3kCoreBridge.overlayIsAttached())
+        assertFalse(Vita3kCoreBridge.isAppPaused())
+    }
+
+    @Test
     fun sessionActiveCodeIsDistinctFromOtherCodes() {
         assertEquals(-4, Vita3kCoreBridge.SESSION_ACTIVE)
         assertEquals(0, Vita3kCoreBridge.OK)
