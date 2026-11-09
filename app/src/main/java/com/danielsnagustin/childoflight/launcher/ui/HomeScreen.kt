@@ -50,9 +50,6 @@ import com.danielsnagustin.childoflight.launcher.model.CardSize
 import com.danielsnagustin.childoflight.launcher.model.CardTransparency
 import com.danielsnagustin.childoflight.launcher.model.HomeSection
 import com.danielsnagustin.childoflight.launcher.model.IconSize
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 
@@ -74,10 +71,11 @@ import kotlinx.coroutines.flow.StateFlow
  *   resolución) e icono vectorial si está importado, IMPORTAR JUEGO
  *   si no (va a la pantalla de Importación, no a Configuración).
  * - Tarjeta Logros (X de 27 + porcentaje real + barra), a todo lo
- *   ancho, PULSABLE: abre la pantalla de Logros. Es la única tarjeta
- *   del Inicio: el estado (juego/DLCs/firmware) vive en Importar y
- *   en Diagnóstico, Rendimiento en Ajustes, y las sesiones en
- *   Ajustes → General → "Sesiones y guardados". Sin duplicados.
+ *   ancho, PULSABLE: abre la pantalla de Logros. Es la segunda tarjeta
+ *   del Inicio (la primera es la del juego): el estado (juego/DLCs/
+ *   firmware) vive en Importar y en Diagnóstico, Rendimiento en
+ *   Ajustes, y las sesiones en Ajustes → General → "Sesiones y
+ *   guardados". Sin duplicados.
  * - Fila "Configuración avanzada" que abre Configuración. El estado
  *   del juego y su importación viven solo en la tarjeta superior:
  *   sin duplicados.
@@ -177,7 +175,7 @@ private fun GameCard(
         cardSize = uiPrefs?.cardSize ?: CardSize.NORMAL,
         cardTransparency = uiPrefs?.cardTransparency ?: CardTransparency.OPAQUE,
     ) {
-            // Portada 4:3 sin logo: entra con zoom suave + fundido (una vez).
+            // Portada 1.4:1 sin logo: entra con zoom suave + fundido (una vez).
             // col_cover_clean.jpg (1024x734) es el arte oficial con los
             // 290 px superiores recortados (ahí estaba el logo
             // "CHILD OF LIGHT" incrustado). El título va solo como
@@ -340,9 +338,9 @@ private fun LaunchProgressCard(
 }
 
 // Tarjeta Logros (X/27 + porcentaje real + barra), a todo lo ancho:
-// es la única tarjeta del Inicio y siempre se muestra (2026-11-08:
-// los trofeos se quedan en el inicio; Rendimiento vive en Ajustes y
-// en Diagnóstico). PULSABLE: abre la pantalla de Logros.
+// siempre se muestra (2026-11-08: los trofeos se quedan en el inicio;
+// Rendimiento vive en Ajustes y en Diagnóstico). PULSABLE: abre la
+// pantalla de Logros.
 @Composable
 private fun InfoRow(
     vm: LauncherViewModel,
@@ -445,10 +443,10 @@ private fun CoverEntrance(play: Boolean = true, content: @Composable () -> Unit)
 }
 
 /**
- * Media tarjeta premium (la mitad de una fila de dos): mismo estilo que
- * PremiumCard (superficie #1A2036, borde azul hielo sutil) pero con ancho por
- * peso, no a todo lo ancho. Borde con el acento del usuario y superficie
- * según el tema (0.2.15).
+ * Tarjeta premium (ancho por peso en su fila; hoy es la única hija y
+ * ocupa todo el ancho): mismo estilo que PremiumCard (superficie
+ * #1A2036, borde azul hielo sutil). Borde con el acento del usuario y
+ * superficie según el tema (0.2.15).
  */
 @Composable
 private fun HalfCard(
