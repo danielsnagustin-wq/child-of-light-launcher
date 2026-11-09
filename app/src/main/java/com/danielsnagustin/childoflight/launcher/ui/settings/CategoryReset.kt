@@ -1,5 +1,7 @@
 package com.danielsnagustin.childoflight.launcher.ui.settings
 
+import com.danielsnagustin.childoflight.launcher.model.GpuDriver
+import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.UiPreferences
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
@@ -102,3 +104,23 @@ fun resetCategoryUiPrefs(current: UiPreferences, category: SettingsCategory): Ui
 /** true si la categoría tiene algún campo de ajustes que restablecer. */
 fun categoryHasResettableSettings(category: SettingsCategory): Boolean =
     category != SettingsCategory.STORAGE
+
+/**
+ * P1-8 (2026-11-09): Turnip solo vale en Adreno con el driver
+ * instalado. Si los ajustes traen gpuDriver=TURNIP en un teléfono
+ * donde no puede funcionar (Mali, otro vendor, vendor desconocido, o
+ * Adreno sin Turnip instalado), se vuelve al driver del sistema. Sin
+ * esto, restablecer la categoría GPU con el perfil "Calidad / Turnip"
+ * activo dejaba TURNIP en Mali sin forma de revertirlo: la UI de Mali
+ * ni siquiera muestra los chips de driver (SettingsGpuScreen solo
+ * muestra texto). También se aplica al restablecer todo y al importar
+ * una copia de seguridad de otro teléfono. Pura, testeable en JVM.
+ */
+fun guardTurnipDriver(settings: LauncherSettings, gpuVendor: GpuVendor?): LauncherSettings =
+    if (settings.gpuDriver == GpuDriver.TURNIP &&
+        (gpuVendor != GpuVendor.ADRENO || !settings.turnipInstalled)
+    ) {
+        settings.copy(gpuDriver = GpuDriver.SYSTEM)
+    } else {
+        settings
+    }

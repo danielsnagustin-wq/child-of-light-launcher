@@ -2,12 +2,15 @@ package com.danielsnagustin.childoflight.launcher
 
 import com.danielsnagustin.childoflight.launcher.model.AccentColor
 import com.danielsnagustin.childoflight.launcher.model.CardSize
+import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
+import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.UiPreferences
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsCategory
 import com.danielsnagustin.childoflight.launcher.ui.settings.categoryHasResettableSettings
+import com.danielsnagustin.childoflight.launcher.ui.settings.guardTurnipDriver
 import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategorySettings
 import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategoryUiPrefs
 import org.junit.Assert.assertEquals
@@ -117,5 +120,40 @@ class CategoryResetTest {
         assertEquals(changed, resetCategorySettings(changed, SettingsCategory.STORAGE))
         assertTrue(categoryHasResettableSettings(SettingsCategory.GPU))
         assertTrue(categoryHasResettableSettings(SettingsCategory.PERSONALIZATION))
+    }
+
+    @Test
+    fun guardTurnipDriverOnMaliFallsBackToSystem() {
+        // P1-8: en Mali, TURNIP no tiene forma de revertirse desde la
+        // UI (no hay chips de driver), así que el reseteo vuelve a Sistema.
+        val turnip = changed.copy(gpuDriver = GpuDriver.TURNIP, turnipInstalled = true)
+        val guarded = guardTurnipDriver(turnip, GpuVendor.MALI)
+        assertEquals(GpuDriver.SYSTEM, guarded.gpuDriver)
+        // Solo cambia el driver: el resto se conserva.
+        assertEquals(changed.audioVolume, guarded.audioVolume)
+        assertEquals(GpuProfileId.G99_RECOMMENDED, guarded.activeProfile)
+    }
+
+    @Test
+    fun guardTurnipDriverOnAdrenoWithTurnipKeepsIt() {
+        val turnip = changed.copy(gpuDriver = GpuDriver.TURNIP, turnipInstalled = true)
+        assertEquals(GpuDriver.TURNIP, guardTurnipDriver(turnip, GpuVendor.ADRENO).gpuDriver)
+    }
+
+    @Test
+    fun guardTurnipDriverOnAdrenoWithoutTurnipFallsBack() {
+        val turnip = changed.copy(gpuDriver = GpuDriver.TURNIP, turnipInstalled = false)
+        assertEquals(GpuDriver.SYSTEM, guardTurnipDriver(turnip, GpuVendor.ADRENO).gpuDriver)
+    }
+
+    @Test
+    fun guardTurnipDriverWithUnknownVendorFallsBack() {
+        val turnip = changed.copy(gpuDriver = GpuDriver.TURNIP, turnipInstalled = true)
+        assertEquals(GpuDriver.SYSTEM, guardTurnipDriver(turnip, null).gpuDriver)
+    }
+
+    @Test
+    fun guardTurnipDriverLeavesSystemAlone() {
+        assertEquals(GpuDriver.SYSTEM, guardTurnipDriver(changed, GpuVendor.MALI).gpuDriver)
     }
 }

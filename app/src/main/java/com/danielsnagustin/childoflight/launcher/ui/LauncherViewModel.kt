@@ -58,6 +58,7 @@ import com.danielsnagustin.childoflight.launcher.ui.settings.audioFixTarget
 import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsCategory
 import com.danielsnagustin.childoflight.launcher.ui.settings.categoryHasResettableSettings
 import com.danielsnagustin.childoflight.launcher.ui.settings.extractRecentErrorLines
+import com.danielsnagustin.childoflight.launcher.ui.settings.guardTurnipDriver
 import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategorySettings
 import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategoryUiPrefs
 import com.danielsnagustin.childoflight.launcher.model.defaultProfileFor
@@ -812,7 +813,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     turnipInstalled = current.turnipInstalled,
                     turnipVersion = current.turnipVersion,
                     customDriverName = current.customDriverName,
-                    gpuDriver = if (current.gpuDriver == com.danielsnagustin.childoflight.launcher.model.GpuDriver.TURNIP) {
+                    // P1-8: el TURNIP activo solo se conserva si el
+                    // teléfono puede usarlo (Adreno con el driver
+                    // instalado). En Mali (o sin Turnip instalado) el
+                    // reseteo volvía a dejar un TURNIP huérfano sin
+                    // forma de revertirlo desde la UI.
+                    gpuDriver = if (current.gpuDriver == com.danielsnagustin.childoflight.launcher.model.GpuDriver.TURNIP &&
+                        gpu?.vendor == com.danielsnagustin.childoflight.launcher.model.GpuVendor.ADRENO &&
+                        current.turnipInstalled
+                    ) {
                         com.danielsnagustin.childoflight.launcher.model.GpuDriver.TURNIP
                     } else {
                         reset.gpuDriver
@@ -2511,12 +2520,26 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             } else {
                 current
             }
-            settingsRepo.save(resetCategorySettings(base, category))
+            val reset = resetCategorySettings(base, category)
+            // P1-8: en Mali (o sin Turnip instalado) el reseteo de GPU
+            // con el perfil "Calidad / Turnip" activo podía dejar
+            // gpuDriver=TURNIP sin forma de revertirlo desde la UI
+            // (Mali no muestra los chips de driver). La guarda vuelve
+            // al driver del sistema; también repara un TURNIP huérfano
+            // previo aunque se restablezca otra categoría.
+            val gpu = settingsRepo.gpuInfoFlow.first()
+            val guarded = guardTurnipDriver(reset, gpu?.vendor)
+            settingsRepo.save(guarded)
             uiRepo.save(resetCategoryUiPrefs(currentUi, category))
+            val turnipNote = if (guarded.gpuDriver != reset.gpuDriver) {
+                " Turnip no está disponible en este teléfono: se usa el driver del sistema."
+            } else {
+                ""
+            }
             _message.value = if (category == SettingsCategory.PERSONALIZATION) {
                 "Personalización restablecida a los valores por defecto."
             } else {
-                "Categoría ${category.title} restablecida a los valores del preset ${current.activeProfile.label}."
+                "Categoría ${category.title} restablecida a los valores del preset ${current.activeProfile.label}.$turnipNote"
             }
         }
     }
@@ -2566,9 +2589,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 return@launch
             }
             val (settings, ui) = decoded.getOrThrow()
-            settingsRepo.save(settings)
+            // P1-8: una copia de otro teléfono (o de un estado huérfano)
+            // puede traer gpuDriver=TURNIP; en este teléfono no tendría
+            // forma de revertirse desde la UI.
+            val gpu = settingsRepo.gpuInfoFlow.first()
+            val guarded = guardTurnipDriver(settings, gpu?.vendor)
+            settingsRepo.save(guarded)
             uiRepo.save(ui)
-            withContext(Dispatchers.Main) { _message.value = "Copia de seguridad importada: ajustes y personalización restaurados." }
+            withContext(Dispatchers.Main) {
+                _message.value = "Copia de seguridad importada: ajustes y personalización restaurados." +
+                    if (guarded.gpuDriver != settings.gpuDriver) {
+                        " Turnip no está disponible en este teléfono: se usa el driver del sistema."
+                    } else {
+                        ""
+                    }
+            }
         }
     }
 
