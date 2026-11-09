@@ -373,29 +373,6 @@ class GameLibraryRepository(private val context: Context) {
                 header[2] == 'L'.code.toByte() && header[3] == 'F'.code.toByte()
 
         /**
-         * Motivo de una validación de eboot (R4-P1-5, 2026-11-09): la
-         * validación ya no devuelve solo un Boolean opaco, sino el
-         * motivo exacto, para que el log diga por qué un eboot no
-         * vale sin tener que adivinar entre tamaño y offset.
-         * FALTA: no hay eboot.bin. TAMANO: el archivo es más corto
-         * que su cabecera o que lo que su propia cabecera declara
-         * (truncado). MAGIA: ni magia SELF ni magia ELF, o el ELF
-         * interior del SELF no trae su magia. VERSION: SELF con
-         * version distinta de 3. HEADER_TYPE: SELF con header_type
-         * distinto de 1. PHDR_FUERA: la tabla de segmentos apunta
-         * fuera del archivo. OK: cargable por el núcleo.
-         */
-        enum class EbootInvalidReason(val logName: String) {
-            FALTA("falta"),
-            TAMANO("tamaño"),
-            MAGIA("magia"),
-            VERSION("version"),
-            HEADER_TYPE("header_type"),
-            PHDR_FUERA("phdr_fuera"),
-            OK("ok"),
-        }
-
-        /**
          * Motivo por el que un ELF no es válido (o OK). Un eboot.bin
          * de Vita descifrado empieza por 0x7F 'E' 'L' 'F'. Se exige
          * la magia, EI_CLASS 1 (ELF32: la Vita es ARM de 32 bits y
@@ -799,6 +776,29 @@ class GameLibraryRepository(private val context: Context) {
     fun pkgDir(): File = File(ux0Dir, "pkg")
     fun pkgGameFile(titleId: String): File = File(pkgDir(), "$titleId.pkg")
     fun pkgWorkBinFile(titleId: String): File = File(pkgDir(), "$titleId.work.bin")
+
+    /**
+     * Motivo de una validación de eboot (R4-P1-5, 2026-11-09): la
+     * validación ya no devuelve solo un Boolean opaco, sino el
+     * motivo exacto, para que el log diga por qué un eboot no
+     * vale sin tener que adivinar entre tamaño y offset.
+     * FALTA: no hay eboot.bin. TAMANO: el archivo es más corto
+     * que su cabecera o que lo que su propia cabecera declara
+     * (truncado). MAGIA: ni magia SELF ni magia ELF, o el ELF
+     * interior del SELF no trae su magia. VERSION: SELF con
+     * version distinta de 3. HEADER_TYPE: SELF con header_type
+     * distinto de 1. PHDR_FUERA: la tabla de segmentos apunta
+     * fuera del archivo. OK: cargable por el núcleo.
+     */
+    enum class EbootInvalidReason(val logName: String) {
+        FALTA("falta"),
+        TAMANO("tamaño"),
+        MAGIA("magia"),
+        VERSION("version"),
+        HEADER_TYPE("header_type"),
+        PHDR_FUERA("phdr_fuera"),
+        OK("ok"),
+    }
 
     /**
      * Resultado de validar el eboot.bin instalado (R4-P1-5,
