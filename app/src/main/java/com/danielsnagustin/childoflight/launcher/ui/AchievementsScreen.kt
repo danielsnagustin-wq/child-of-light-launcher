@@ -253,7 +253,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             Spacer(modifier = Modifier.height(8.dp))
         }
 
-        items(progress, key = { it.trophy.number }) { item ->
+        items(progress ?: emptyList(), key = { it.trophy.number }) { item ->
             Card(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 colors = CardDefaults.cardColors(
