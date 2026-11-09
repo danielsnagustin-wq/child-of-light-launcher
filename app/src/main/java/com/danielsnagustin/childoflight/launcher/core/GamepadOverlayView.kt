@@ -471,6 +471,14 @@ class GamepadOverlayView @JvmOverloads constructor(
 
         override fun onDraw(canvas: Canvas) {
             val rect = RectF(0f, 0f, width.toFloat(), height.toFloat())
+            if (sdlButton == null) {
+                // P2-23: botón "Sin asignar": no es pulsable (su toque
+                // pasa a la superficie SDL, ver onTouchEvent) y no debe
+                // dibujarse como si lo fuera: fantasma atenuado, sin
+                // icono ni etiqueta, solo para localizarlo.
+                drawGlassBody(canvas, rect, effectiveAlpha() * 0.25f)
+                return
+            }
             drawGlassBody(canvas, rect, effectiveAlpha())
             drawIconOrLabel(canvas, rect, effectiveAlpha())
         }

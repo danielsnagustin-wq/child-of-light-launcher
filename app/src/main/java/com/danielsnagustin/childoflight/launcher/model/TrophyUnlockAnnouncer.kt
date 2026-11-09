@@ -26,6 +26,12 @@ package com.danielsnagustin.childoflight.launcher.model
  *
  * Puro Kotlin (sin Android ni corrutinas) para poder probarlo en
  * tests unitarios JVM: ver TrophyUnlockAnnouncerTest.
+ *
+ * RESERVADO para el auto-desbloqueo (aprobado 2026-11-08, bloqueado
+ * hasta que JUGAR funcione + R2-S01): hoy announce() no tiene
+ * llamadores porque el marcado manual se eliminó y la sincronización
+ * automática aún no existe. No borrar: es trabajo aprobado pendiente
+ * (P2-25).
  */
 class TrophyUnlockAnnouncer {
 

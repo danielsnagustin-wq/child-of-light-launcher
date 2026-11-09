@@ -238,6 +238,12 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                     },
                             )
                         }
+                        // P2-24: las entradas malformadas se saltan con
+                        // aviso (no invalidan el diagnóstico): se muestran
+                        // para que el conteo no se tome por exacto a ciegas.
+                        if (result.value.warnings.isNotEmpty()) {
+                            NoteText("Avisos del TRP: ${result.value.warnings.joinToString(" ")}")
+                        }
                     }
                     is TrpReadResult.Unreadable -> {
                         NoteText("TRP real del juego: no se pudo leer. ${result.reason}")

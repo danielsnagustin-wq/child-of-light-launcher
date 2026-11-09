@@ -302,8 +302,16 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             SettingSwitch("Visible en el overlay", "Oculto = no aparece ni estorba en el juego.", control.visible) {
                 updateControl(control.copy(visible = it))
             }
-            SettingSlider("Posición X", (control.xFraction * 100).toInt(), 0..100, { updateControl(control.copy(xFraction = it / 100f)) }) { "$it%" }
-            SettingSlider("Posición Y", (control.yFraction * 100).toInt(), 0..100, { updateControl(control.copy(yFraction = it / 100f)) }) { "$it%" }
+            // P2-22: los sliders X/Y escribían la fracción directa
+            // (0..100): un botón grande podía quedar medio fuera de
+            // pantalla. El mismo clamp que el arrastre: el centro
+            // ENTERO dentro de la vista previa. Si la vista previa aún
+            // no se ha medido, half = 0 (clamp 0..1, como antes).
+            val density = LocalDensity.current
+            val halfXFrac = if (previewSize.width > 0) (with(density) { control.sizeDp.dp.toPx() } / 2f) / previewSize.width else 0f
+            val halfYFrac = if (previewSize.height > 0) (with(density) { control.sizeDp.dp.toPx() } / 2f) / previewSize.height else 0f
+            SettingSlider("Posición X", (control.xFraction * 100).toInt(), 0..100, { updateControl(control.copy(xFraction = TouchLayoutRepository.clampCenterFraction(it / 100f, halfXFrac))) }) { "$it%" }
+            SettingSlider("Posición Y", (control.yFraction * 100).toInt(), 0..100, { updateControl(control.copy(yFraction = TouchLayoutRepository.clampCenterFraction(it / 100f, halfYFrac))) }) { "$it%" }
             SettingSlider("Tamaño", control.sizeDp, 40..260, { updateControl(control.copy(sizeDp = it)) }) { "${it}dp" }
             SettingSlider("Opacidad", (control.opacity * 100).toInt(), 10..100, { updateControl(control.copy(opacity = it / 100f)) }) { "$it%" }
 

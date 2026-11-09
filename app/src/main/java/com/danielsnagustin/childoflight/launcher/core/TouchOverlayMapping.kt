@@ -108,9 +108,10 @@ object TouchOverlayMapping {
      * SDL para esa asignación: NONE (sin asignar) y LEFT_STICK /
      * RIGHT_STICK como *botón* (son ejes; el stick usa
      * [stickAxesFor] y no pasa por aquí). Un botón mapeado a null no
-     * se dibuja como pulsable en el juego: el toque lo recibe la
-     * superficie SDL (táctil frontal del juego) en vez de quedarse
-     * en un botón que no hace nada.
+     * se dibuja como pulsable en el juego: se dibuja atenuado
+     * (fantasma, sin icono) y el toque lo recibe la superficie SDL
+     * (táctil frontal del juego) en vez de quedarse en un botón que
+     * no hace nada (P2-23).
      */
     fun VitaButton.toSdlButton(): Int? = when (this) {
         VitaButton.CROSS -> SDL_BUTTON_SOUTH

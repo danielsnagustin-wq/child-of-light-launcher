@@ -2493,6 +2493,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun deleteControlProfile(id: String) {
         viewModelScope.launch {
             val ok = touchRepo.deleteProfile(id)
+            if (ok) {
+                // P2-26: el id del perfil borrado quedaba para siempre en
+                // touchOverlayHiddenProfileIds (la lista de perfiles
+                // ocultos) y se acumulaba. Se purga al borrar.
+                val current = settingsRepo.settingsFlow.first()
+                if (id in current.touchOverlayHiddenProfileIds) {
+                    settingsRepo.save(
+                        current.copy(touchOverlayHiddenProfileIds = current.touchOverlayHiddenProfileIds - id),
+                    )
+                }
+            }
             _message.value = if (ok) "Perfil borrado." else "No se puede borrar: es el último perfil que queda."
         }
     }

@@ -231,6 +231,28 @@ class TrophyTrpReaderTest {
     }
 
     @Test
+    fun malformedEntriesAreSkippedWithWarning() {
+        // P2-24: una entrada mala no invalida todo el diagnóstico:
+        // se ignora solo ella y las válidas se leen igual.
+        val xml = "<trophyconf version=\"1.1\">" +
+            "<trophy id=\"000\" hidden=\"no\" ttype=\"B\" pid=\"000\"/>" +
+            "<trophy hidden=\"no\" ttype=\"B\" pid=\"000\"/>" +
+            "<trophy id=\"abc\" hidden=\"no\" ttype=\"B\" pid=\"000\"/>" +
+            "<trophy id=\"001\" hidden=\"no\" ttype=\"B\" pid=\"000\"/>" +
+            "<trophy id=\"001\" hidden=\"no\" ttype=\"B\" pid=\"000\"/>" +
+            "<trophy id=\"1000\" hidden=\"no\" ttype=\"B\" pid=\"000\"/>" +
+            "</trophyconf>"
+        val value = success(TrophyTrpReader.read(wrapInFakeContainer(xml)))
+        assertEquals(2, value.trophyCount)
+        assertEquals(listOf(0, 1), value.trophies.map { it.id })
+        assertEquals(4, value.warnings.size)
+        assertTrue(value.warnings.any { it.contains("sin atributo id") })
+        assertTrue(value.warnings.any { it.contains("no numérico") })
+        assertTrue(value.warnings.any { it.contains("duplicado") })
+        assertTrue(value.warnings.any { it.contains("fuera de rango") })
+    }
+
+    @Test
     fun nonSequentialIds_produceWarningButStillParse() {
         val xml = "<trophyconf version=\"1.1\">" +
             "<trophy id=\"000\" hidden=\"no\" ttype=\"B\" pid=\"000\"/>" +

@@ -246,15 +246,28 @@ object TrophyTrpReader {
         for (match in trophyTags) {
             val attrs = match.groupValues[1]
             val selfClosing = match.groupValues[2] == "/"
+            // P2-24: una entrada malformada invalidaba TODO el
+            // diagnóstico. Ahora se ignora solo esa entrada (con aviso)
+            // y se sigue con las demás; si no queda ninguna válida, el
+            // diagnóstico sigue siendo "no se puede leer" (ver el
+            // chequeo de vacío de abajo).
             val idText = readAttr(attrs, "id")
-                ?: return SpanParse.Invalid("Entrada <trophy> sin atributo id.")
+            if (idText == null) {
+                warnings.add("Entrada <trophy> sin atributo id (se ignora).")
+                continue
+            }
             val id = idText.toIntOrNull()
-                ?: return SpanParse.Invalid("Entrada <trophy> con id no numérico: \"$idText\".")
+            if (id == null) {
+                warnings.add("Entrada <trophy> con id no numérico: \"$idText\" (se ignora).")
+                continue
+            }
             if (id < 0 || id > 999) {
-                return SpanParse.Invalid("Entrada <trophy> con id fuera de rango: $id.")
+                warnings.add("Entrada <trophy> con id fuera de rango: $id (se ignora).")
+                continue
             }
             if (!seenIds.add(id)) {
-                return SpanParse.Invalid("Ids de trofeo duplicados en el XML (id $id repetido).")
+                warnings.add("Id de trofeo duplicado en el XML (id $id repetido; se ignora la repetición).")
+                continue
             }
             val hidden = readAttr(attrs, "hidden")?.lowercase() == "yes"
             val tier = readAttr(attrs, "ttype")?.uppercase()
@@ -275,7 +288,15 @@ object TrophyTrpReader {
             trophies.add(TrpTrophy(id, hidden, tier, name, detail))
         }
         if (trophies.isEmpty()) {
-            return SpanParse.Invalid("El XML <trophyconf> no contiene entradas <trophy>.")
+            return SpanParse.Invalid(
+                if (warnings.isEmpty()) {
+                    "El XML <trophyconf> no contiene entradas <trophy>."
+                } else {
+                    // P2-24: había entradas, pero todas eran inválidas:
+                    // el motivo lista por qué se ignoró cada una.
+                    "Ninguna entrada <trophy> válida: ${warnings.joinToString(" ")}"
+                },
+            )
         }
         if (trophies.size > MAX_TROPHIES) {
             return SpanParse.Invalid(
