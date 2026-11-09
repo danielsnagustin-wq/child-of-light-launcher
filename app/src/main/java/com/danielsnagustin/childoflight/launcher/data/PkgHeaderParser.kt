@@ -65,6 +65,14 @@ data class PkgHeader(
     val totalSizeBytes: Long = 0L,
     /** Offset de los datos según el header (offset 0x20). 0 = no informado. */
     val dataOffsetBytes: Long = 0L,
+    /**
+     * content_type de la tabla INFO del .pkg (pin packages/src/pkg.cpp:
+     * 0x15 = juego, 0x16 = DLC, 0x1F = tema; el núcleo rechaza
+     * cualquier otro). Es lo que distingue un DLC con certeza (P1-4).
+     * Null si la tabla INFO no se pudo leer: entonces el llamador usa
+     * la regla vieja (solo el nombre del contenido).
+     */
+    val pkgContentType: Int? = null,
 ) {
     /** Nombre del contenido (tras "_00-"), p. ej. "CHILDOFLIGHT0000". */
     val contentName: String get() = contentId.substringAfter("_00-", "")
@@ -89,6 +97,17 @@ object PkgHeaderParser {
     const val HEADER_MIN_BYTES = 0x54
     /** Bytes que se leen del .pkg para parsear (el header son 0x80). */
     const val HEADER_READ_BYTES = 0x80
+    /**
+     * Bytes que se leen del .pkg en el parseo por stream: el header
+     * (0x80) + la tabla INFO que sigue (content_type, P1-4). La tabla
+     * vive tras los dos headers (~0x100) y tiene pocas entradas: 4 KB
+     * sobran y no se lee el .pkg entero.
+     */
+    const val INFO_READ_BYTES = 4096
+    /** content_type de la tabla INFO (pin packages/src/pkg.cpp). */
+    const val CONTENT_TYPE_APP = 0x15
+    const val CONTENT_TYPE_DLC = 0x16
+    const val CONTENT_TYPE_THEME = 0x1F
 
     /**
      * Longitud mínima de un texto zRIF válido. Un zRIF real es un .rif
@@ -267,12 +286,13 @@ object PkgHeaderParser {
         val dataSize = readU64BE(bytes, 0x28)
         val totalSize = readU64BE(bytes, 0x18)
         val dataOffset = readU64BE(bytes, 0x20)
-        return Result.success(PkgHeader(contentId, titleId, region, pkgType, dataSize, totalSize, dataOffset))
+        val contentType = readInfoContentType(bytes)
+        return Result.success(PkgHeader(contentId, titleId, region, pkgType, dataSize, totalSize, dataOffset, contentType))
     }
 
     /** Parsea el header leyendo solo los primeros bytes del stream (no lo consume entero). */
     fun parse(input: InputStream): Result<PkgHeader> {
-        val buf = ByteArray(HEADER_READ_BYTES)
+        val buf = ByteArray(INFO_READ_BYTES)
         var read = 0
         return try {
             while (read < buf.size) {
@@ -425,6 +445,45 @@ object PkgHeaderParser {
 
     private fun readU16BE(bytes: ByteArray, offset: Int): Int =
         ((bytes[offset].toInt() and 0xFF) shl 8) or (bytes[offset + 1].toInt() and 0xFF)
+
+    private fun readU32BE(bytes: ByteArray, offset: Int): Int {
+        if (offset < 0 || offset + 4 > bytes.size) return 0
+        return ((bytes[offset].toInt() and 0xFF) shl 24) or
+            ((bytes[offset + 1].toInt() and 0xFF) shl 16) or
+            ((bytes[offset + 2].toInt() and 0xFF) shl 8) or
+            (bytes[offset + 3].toInt() and 0xFF)
+    }
+
+    /**
+     * content_type de la tabla INFO del .pkg (pin packages/src/pkg.cpp:
+     * tras el header (0xC0) y el ext header, la tabla en info_offset
+     * (u32 BE en 0x08) con info_count entradas (u32 BE en 0x0C); cada
+     * entrada es tipo (u32) + tamaño (u32) + datos. La de tipo 2 trae
+     * el content_type (0x15 juego, 0x16 DLC, 0x1F tema) en su tercer
+     * u32. La tabla es texto plano: se lee sin descifrar nada. Null si
+     * no se puede leer (header corto, offsets absurdos, sin entrada
+     * tipo 2): entonces el llamador usa la regla vieja (solo el
+     * nombre del contenido).
+     */
+    private fun readInfoContentType(bytes: ByteArray): Int? {
+        if (bytes.size < 0x10) return null
+        val infoOffset = readU32BE(bytes, 0x08)
+        val infoCount = readU32BE(bytes, 0x0C)
+        if (infoOffset < 0x80 || infoCount <= 0 || infoCount > 64) return null
+        var pos = infoOffset
+        repeat(infoCount) {
+            if (pos < 0 || pos + 8 > bytes.size) return null
+            val type = readU32BE(bytes, pos)
+            val size = readU32BE(bytes, pos + 4)
+            if (type == 2) {
+                if (pos + 12 > bytes.size) return null
+                return readU32BE(bytes, pos + 8)
+            }
+            if (size < 0 || size > 4096) return null
+            pos += 8 + size
+        }
+        return null
+    }
 
     private fun readU64BE(bytes: ByteArray, offset: Int): Long {
         var value = 0L

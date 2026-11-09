@@ -199,6 +199,73 @@ class GameLibraryRepository(private val context: Context) {
         const val GAME_CONTENT_NAME = "CHILDOFLIGHT0000"
 
         /**
+         * ¿El .pkg cuadra con el botón pulsado? Pura (testeable sin
+         * Context). El tipo del .pkg se lee de su propia tabla INFO
+         * (pin packages/src/pkg.cpp: content_type 0x15 = juego,
+         * 0x16 = DLC, 0x1F = tema; el núcleo rechaza cualquier otro).
+         * El DLC ya se distingue con certeza. Límite conocido: juego y
+         * update comparten content_type 0x15 y el update comparte el
+         * Content ID del juego (por eso su licencia es la del juego):
+         * el núcleo los separa por la CATEGORY del param.sfo, cifrada
+         * dentro del .pkg, así que entre esos dos botones no se
+         * bloquea por tipo: GAME se acepta solo con el nombre del
+         * juego y UPDATE se acepta siempre (el núcleo decide por el
+         * SFO al instalar). Si la tabla INFO no se puede leer
+         * (pkgContentType null), se usa la regla vieja (solo el
+         * nombre) para no romper importaciones que funcionaban.
+         * Null si cuadra; si no, el mensaje de rechazo.
+         */
+        fun pkgKindMismatch(
+            header: PkgHeader,
+            requested: com.danielsnagustin.childoflight.launcher.model.PkgKind,
+        ): String? {
+            val contentType = header.pkgContentType
+            val isGameContent = header.contentName == GAME_CONTENT_NAME
+            if (contentType == PkgHeaderParser.CONTENT_TYPE_THEME) {
+                return "Este .pkg es un tema de PS Vita, no contenido de Child of Light. " +
+                    "No se puede importar como ${requested.label}."
+            }
+            if (contentType != null &&
+                contentType != PkgHeaderParser.CONTENT_TYPE_APP &&
+                contentType != PkgHeaderParser.CONTENT_TYPE_DLC
+            ) {
+                return "Este .pkg trae un tipo de contenido no compatible " +
+                    "(0x${contentType.toString(16)}): el núcleo solo instala juego y DLC. " +
+                    "No se puede importar como ${requested.label}."
+            }
+            if (contentType == PkgHeaderParser.CONTENT_TYPE_DLC) {
+                return when (requested) {
+                    com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC -> null
+                    com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME ->
+                        "Este .pkg es un DLC, no el juego: usa Importar DLC."
+                    com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE ->
+                        "Este .pkg es un DLC, no un update: usa Importar DLC."
+                }
+            }
+            if (contentType == PkgHeaderParser.CONTENT_TYPE_APP) {
+                if (requested == com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC) {
+                    return "Este .pkg no es un DLC (es el juego o un update): " +
+                        "usa Importar juego o Importar update."
+                }
+                if (requested == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME && !isGameContent) {
+                    return "Este .pkg no es el juego (trae ${header.contentName}): " +
+                        "no se puede importar como juego. Usa Importar DLC o Importar update según lo que sea."
+                }
+                return null
+            }
+            // Sin tabla INFO legible: regla vieja (solo el nombre).
+            return when {
+                requested == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME && !isGameContent ->
+                    "Este .pkg no es el juego (trae ${header.contentName}): " +
+                        "no se puede importar como juego. Usa Importar DLC o Importar update según lo que sea."
+                requested != com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME && isGameContent ->
+                    "Este .pkg es del juego, no un ${requested.label}: usa Importar juego. " +
+                        "Si se guardara como ${requested.label}, sobrescribiría el juego."
+                else -> null
+            }
+        }
+
+        /**
          * Tamaño mínimo de un PSVUPDAT.PUP real: el PUP de Vita 3.74
          * ronda los ~300 MB. Por debajo de 100 MB no es un PUP
          * completo: se rechaza en vez de guardarlo y reintentar
@@ -733,31 +800,6 @@ class GameLibraryRepository(private val context: Context) {
         return deleted
     }
 
-    /**
-     * ¿El .pkg cuadra con el botón pulsado (P1-9)? El .pkg del juego
-     * trae contentName [GAME_CONTENT_NAME]; DLC y update traen otros
-     * nombres. Si no cuadra, mensaje de rechazo; null si cuadra.
-     * Límite conocido: DLC y update NO se distinguen entre sí solo por
-     * el Content ID (ambos traen un nombre distinto del juego), así
-     * que entre esos dos botones no se bloquea: solo se impide que un
-     * .pkg de juego se guarde como DLC/update (sobrescribiría el
-     * juego) y que un DLC/update se guarde como juego.
-     */
-    private fun pkgKindMismatchMessage(
-        header: PkgHeader,
-        requested: com.danielsnagustin.childoflight.launcher.model.PkgKind,
-    ): String? {
-        val isGameContent = header.contentName == GAME_CONTENT_NAME
-        return when {
-            requested == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME && !isGameContent ->
-                "Este .pkg no es el juego (trae ${header.contentName}): no se puede importar como juego. " +
-                    "Usa Importar DLC o Importar update según lo que sea."
-            requested != com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME && isGameContent ->
-                "Este .pkg es del juego, no un ${requested.label}: usa Importar juego. " +
-                    "Si se guardara como ${requested.label}, sobrescribiría el juego."
-            else -> null
-        }
-    }
 
     /**
      * Dónde se guarda un .pkg según su tipo. El DLC se guarda por el
@@ -1145,10 +1187,12 @@ class GameLibraryRepository(private val context: Context) {
                 ImportKind.DLC -> com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC
                 ImportKind.UPDATE -> com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE
             }
-            // P1-9: el tipo de .pkg lo decide su Content ID, no solo el
-            // botón pulsado. Un .pkg de juego importado como DLC
-            // sobrescribía el juego (y viceversa) sin avisar.
-            pkgKindMismatchMessage(parsed, pkgKind)?.let { return ImportResult.Rejected(it) }
+            // P1-9/P1-4: el tipo de .pkg lo decide su Content ID y su
+            // tabla INFO (content_type), no solo el botón pulsado. Un
+            // .pkg de juego importado como DLC sobrescribía el juego
+            // (y viceversa) sin avisar; un DLC importado como update
+            // se guardaba en la ranura equivocada.
+            pkgKindMismatch(parsed, pkgKind)?.let { return ImportResult.Rejected(it) }
             // Duplicado: si ya está subido, NO se vuelve a copiar en
             // silencio (eso era lo que hacía "engordar" al launcher).
             // Se avisa y el usuario elige Reemplazar o Cancelar.

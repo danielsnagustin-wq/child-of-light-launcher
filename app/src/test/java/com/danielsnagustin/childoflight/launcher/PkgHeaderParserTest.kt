@@ -267,4 +267,69 @@ class PkgHeaderParserTest {
         val short = full.copyOfRange(0, end)
         assertTrue(PkgHeaderParser.validateWorkBin(ByteArrayInputStream(short)).isSuccess)
     }
+
+    // --- tabla INFO (content_type, P1-4) ---
+
+    /** Header .pkg sintético con tabla INFO (content_type dado). */
+    private fun pkgHeaderBytesWithInfo(contentId: String, contentType: Int): ByteArray {
+        val bytes = ByteArray(0x100 + 16)
+        pkgHeaderBytes(contentId).copyInto(bytes)
+        fun putU32BE(offset: Int, value: Int) {
+            bytes[offset] = ((value ushr 24) and 0xFF).toByte()
+            bytes[offset + 1] = ((value ushr 16) and 0xFF).toByte()
+            bytes[offset + 2] = ((value ushr 8) and 0xFF).toByte()
+            bytes[offset + 3] = (value and 0xFF).toByte()
+        }
+        putU32BE(0x08, 0x100) // info_offset
+        putU32BE(0x0C, 1) // info_count
+        putU32BE(0x100, 2) // entrada tipo 2
+        putU32BE(0x104, 4) // tamaño
+        putU32BE(0x108, contentType)
+        return bytes
+    }
+
+    @Test
+    fun infoContentTypeDlcIsParsed() {
+        val result = PkgHeaderParser.parse(
+            pkgHeaderBytesWithInfo("EP0001-PCSB00598_00-CHILDOFLIGHTDLC1", 0x16),
+        )
+        assertTrue(result.isSuccess)
+        assertEquals(0x16, result.getOrThrow().pkgContentType)
+    }
+
+    @Test
+    fun infoContentTypeAppIsParsed() {
+        val result = PkgHeaderParser.parse(
+            pkgHeaderBytesWithInfo("EP0001-PCSB00598_00-CHILDOFLIGHT0000", 0x15),
+        )
+        assertTrue(result.isSuccess)
+        assertEquals(0x15, result.getOrThrow().pkgContentType)
+    }
+
+    @Test
+    fun infoContentTypeThemeIsParsed() {
+        val result = PkgHeaderParser.parse(
+            pkgHeaderBytesWithInfo("EP0001-PCSB00598_00-CHILDOFLIGHT0000", 0x1F),
+        )
+        assertTrue(result.isSuccess)
+        assertEquals(0x1F, result.getOrThrow().pkgContentType)
+    }
+
+    @Test
+    fun infoContentTypeIsParsedFromStream() {
+        val result = PkgHeaderParser.parse(
+            ByteArrayInputStream(
+                pkgHeaderBytesWithInfo("EP0001-PCSB00598_00-CHILDOFLIGHTDLC1", 0x16),
+            ),
+        )
+        assertTrue(result.isSuccess)
+        assertEquals(0x16, result.getOrThrow().pkgContentType)
+    }
+
+    @Test
+    fun headerWithoutInfoTableHasNullContentType() {
+        val result = PkgHeaderParser.parse(pkgHeaderBytes("EP0001-PCSB00598_00-CHILDOFLIGHT0000"))
+        assertTrue(result.isSuccess)
+        assertEquals(null, result.getOrThrow().pkgContentType)
+    }
 }
