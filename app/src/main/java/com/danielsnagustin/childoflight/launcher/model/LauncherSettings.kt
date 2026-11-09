@@ -500,6 +500,56 @@ fun isLowRamConservativeVariant(settings: LauncherSettings): Boolean {
         lowRamVariantFields(settings) != lowRamVariantFields(preset)
 }
 
+/**
+ * R4-P1-13: al aplicar un preset se CONSERVAN los cambios manuales
+ * de cachés y overlay del usuario, igual que ya se conservaban
+ * audio, modo seguro, cerrar apps, PSN, entrega del .pkg y overlay
+ * táctil (ver SettingsRepository.applyPreset). Campos conservados:
+ * textureCache, shaderCache, showFpsOverlay, hashlessTextureCache
+ * y showCompileShaders. Antes, apagar la caché de texturas a mano
+ * y tocar cualquier preset la volvía a ON en silencio.
+ *
+ * DECISIÓN (verificada campo a campo en presetSettings):
+ * G99_RECOMMENDED y MALI_PERFORMANCE solo se diferencian en
+ * textureCache (true frente a false): mismo backend, 1x, Bilinear,
+ * anisotrópico 1, VSync OFF, async ON, High Accuracy OFF, Surface
+ * Sync OFF, Double Buffer, cpuOpt, fpsHack OFF, fileLoadingDelay 0,
+ * showFpsOverlay OFF, driver Sistema, shaderCache ON y
+ * performanceMode ON por defecto. Por eso conservar la caché manual
+ * puede borrar esa diferencia real: aplicar Mali Rendimiento sobre
+ * un estado G99 deja textureCache ON y el resultado es idéntico al
+ * preset G99 salvo la etiqueta. Eso NO se esconde: la divergencia
+ * queda registrada (textureCache forma parte de
+ * presetProfileFields, así que divergesFromPreset da true) y la
+ * pantalla General muestra "Perfil modificado" nombrando la caché
+ * de texturas explícitamente. El aviso es obligatorio precisamente
+ * en este caso; sin él, conservar sería tan silencioso como
+ * restablecer.
+ *
+ * EXCEPCIÓN lowRam: en el primer arranque (lowRam = true) NO se
+ * conserva nada de esto: la variante conservadora ES el valor del
+ * preset en ese camino (textureCache OFF) y el current que llega
+ * son los defaults de fábrica (textureCache ON), así que conservar
+ * desharía la variante y rompería la cadena R4-P0-9 (la variante
+ * lowRam solo existe en el primer arranque y queda registrada como
+ * divergencia conservadora, ver isLowRamConservativeVariant).
+ * Sin current tampoco se conserva nada: el preset queda tal cual
+ * (así MALI_PERFORMANCE mantiene textureCache OFF cuando no hay
+ * ajustes guardados).
+ *
+ * Puro y testeable en JVM (GpuProfileTest).
+ */
+fun preserveManualCacheChoices(preset: LauncherSettings, current: LauncherSettings?, lowRam: Boolean = false): LauncherSettings {
+    if (current == null || lowRam) return preset
+    return preset.copy(
+        textureCache = current.textureCache,
+        shaderCache = current.shaderCache,
+        showFpsOverlay = current.showFpsOverlay,
+        hashlessTextureCache = current.hashlessTextureCache,
+        showCompileShaders = current.showCompileShaders,
+    )
+}
+
 /** Regla de la prueba de 30 s: menos de 28 fps con Calidad 2x -> volver a 1x. */
 fun shouldAutoRevertTo1x(fpsAvg: Float?, profile: GpuProfileId, autoRevertEnabled: Boolean): Boolean {
     if (!autoRevertEnabled) return false
