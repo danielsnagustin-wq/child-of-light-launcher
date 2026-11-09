@@ -515,6 +515,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     /** Un escaneo completo del estado (disco + firmware + TRP). Solo lo llama refreshStatus(), bajo el mutex. */
     private fun refreshStatusOnce() {
+            // P2-33: la migración del vs0 antiguo (vitaRoot/vs0) a la
+            // ruta del núcleo (vita/vs0) es EXPLÍCITA y se hace aquí,
+            // antes de leer el estado — resolve() es una lectura y ya
+            // no mueve directorios como efecto secundario. Idempotente:
+            // si no hay nada que migrar, devuelve false sin tocar nada.
+            runCatching {
+                if (FirmwareResolver.migrateLegacyVs0(library.vitaRoot)) {
+                    LauncherLog.append(context, "status", "Firmware migrado de la ruta antigua (vitaRoot/vs0) a vita/vs0.")
+                }
+            }
             // BUG (auditoría): scanStatus() hace I/O y puede lanzar; se llama
             // desde init/onResume sin protección. Si falla, se conserva el
             // estado anterior en vez de tumbar la corrutina.

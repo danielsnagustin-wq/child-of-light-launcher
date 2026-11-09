@@ -55,8 +55,13 @@ import java.io.File
  *   su propia copia con el selector de archivos del sistema.
  */
 sealed class FirmwareStatus {
-    /** Firmware instalado EN EL NÚCLEO (vs0 extraído o marcador con versión). `source` describe dónde se encontró. */
-    data class Ready(val source: String) : FirmwareStatus()
+    /**
+     * Firmware instalado EN EL NÚCLEO (vs0 extraído o marcador con versión). `source` describe dónde se encontró.
+     * `savedPupPending` (P2-29): hay un PSVUPDAT.PUP guardado que NO es el que se instaló (otro tamaño que el
+     * registrado en el marcador, o marcador antiguo sin tamaño): una instalación pendiente que antes quedaba
+     * escondida detrás del "Instalado". La pantalla de Importar muestra entonces su botón de instalar.
+     */
+    data class Ready(val source: String, val savedPupPending: Boolean = false) : FirmwareStatus()
     /** PUP guardado en el launcher, pendiente de instalar en el núcleo. NO es `ready`. */
     data class Saved(val source: String) : FirmwareStatus()
     /** No hay firmware local. No se distribuye ni se descarga. */
@@ -96,19 +101,17 @@ object FirmwareResolver {
         //    existe, es directorio y no está vacío).
         val vs0 = coreVs0Dir(vitaRoot)
         if (vs0.isDirectory && (vs0.listFiles()?.isNotEmpty() == true)) {
-            return FirmwareStatus.Ready("extraído en el núcleo (vita/vs0${versionSuffix(vitaRoot)})")
+            return FirmwareStatus.Ready(
+                "extraído en el núcleo (vita/vs0${versionSuffix(vitaRoot)})",
+                savedPupPending = savedPupPendingInstall(vitaRoot),
+            )
         }
-        // 1b. Ruta antigua (vitaRoot/vs0, sin "vita/"): el núcleo nunca
-        // escribe ahí, pero alguien pudo dejar firmware a mano. Se
-        // migra a vita/vs0 (P2-A1); si la migración tiene éxito, el
-        // firmware ya es el del núcleo. Si falla, no se da por
-        // instalado y se sigue con el marcador/PUP.
-        val legacyVs0 = File(vitaRoot, "vs0")
-        if (legacyVs0.isDirectory && (legacyVs0.listFiles()?.isNotEmpty() == true)) {
-            if (migrateLegacyVs0(vitaRoot)) {
-                return FirmwareStatus.Ready("extraído en el núcleo (vita/vs0, migrado desde la ruta antigua${versionSuffix(vitaRoot)})")
-            }
-        }
+        // P2-33: resolve() es una LECTURA y ya no migra nada como
+        // efecto secundario (antes migra el vs0 antiguo de
+        // vitaRoot/vs0 a vita/vs0 aquí). La migración es explícita y
+        // la hace el ViewModel al refrescar el estado (refreshStatus),
+        // con su log. Un vs0 en la ruta antigua, sin migrar, NO es
+        // Ready: el núcleo solo lee vita/vs0.
         // 2. Marcador con versión: solo lo escribe una instalación en
         //    el núcleo con éxito (ver markInstalled). Un marcador
         //    antiguo con solo el nombre del archivo no vale: cae al
@@ -117,7 +120,10 @@ object FirmwareResolver {
         //    si vs0 desapareció, el marcador miente y no es Ready.
         val version = installedVersion(vitaRoot)
         if (version != null && vs0.isDirectory && (vs0.listFiles()?.isNotEmpty() == true)) {
-            return FirmwareStatus.Ready("instalado (versión $version)")
+            return FirmwareStatus.Ready(
+                "instalado (versión $version)",
+                savedPupPending = savedPupPendingInstall(vitaRoot),
+            )
         }
         // 3. PUP guardado, pendiente de instalar en el núcleo.
         val pup = pupFile(vitaRoot)
@@ -184,10 +190,42 @@ object FirmwareResolver {
     }
 
     /**
+     * Tamaño del PUP instalado según el marcador (bytes), o null si el
+     * marcador no lo trae (marcadores antiguos, anteriores a P2-29).
+     * Acepta el JSON de [markInstalled] (`{...,"size":133834240}`).
+     */
+    fun installedPupSize(vitaRoot: File): Long? {
+        val marker = installedMarkerFile(vitaRoot)
+        val text = runCatching { marker.takeIf { it.isFile }?.readText()?.trim() }.getOrNull()
+        if (text.isNullOrBlank()) return null
+        return Regex("\"size\"\\s*:\\s*(\\d+)").find(text)?.groupValues?.getOrNull(1)?.toLongOrNull()
+    }
+
+    /**
+     * ¿Hay un PUP guardado que NO es el instalado? (P2-29). El PUP
+     * existe y su tamaño difiere del registrado al instalar, o el
+     * marcador no registra tamaño (antiguo): en ambos casos no se
+     * puede asegurar que el guardado sea el instalado, así que se
+     * muestra como pendiente con su botón de instalar en vez de
+     * esconderlo detrás del "Instalado". Reinstalar la misma versión
+     * es inofensivo; esconder una instalación pendiente, no.
+     * Puro (solo File). false si no hay PUP guardado.
+     */
+    fun savedPupPendingInstall(vitaRoot: File): Boolean {
+        val pup = pupFile(vitaRoot)
+        if (!pup.isFile || pup.length() <= 0) return false
+        val installedSize = installedPupSize(vitaRoot) ?: return true
+        return pup.length() != installedSize
+    }
+
+    /**
      * Registra que el núcleo instaló el firmware con éxito. Solo lo
      * llama el flujo de instalación tras un `installFirmware` que
      * devolvió versión (nunca al guardar el PUP: guardar no es
      * instalar). Devuelve false si no se pudo escribir el marcador.
+     * P2-29: el marcador registra también el tamaño del PUP instalado
+     * (`"size"`), para saber después si un PUP guardado es el mismo
+     * que se instaló o uno distinto pendiente de instalar.
      */
     fun markInstalled(vitaRoot: File, version: String, fileName: String = "PSVUPDAT.PUP"): Boolean {
         val cleanVersion = version.trim().replace("\"", "").replace("\n", "").replace("\r", "")
@@ -195,8 +233,10 @@ object FirmwareResolver {
         return try {
             val dir = File(vitaRoot, "firmware")
             if (!dir.exists()) dir.mkdirs()
+            val pupSize = pupFile(vitaRoot).takeIf { it.isFile }?.length()
+            val sizeField = if (pupSize != null) ",\"size\":$pupSize" else ""
             installedMarkerFile(vitaRoot).writeText(
-                "{\"version\":\"$cleanVersion\",\"file\":\"${fileName.replace("\"", "")}\"}",
+                "{\"version\":\"$cleanVersion\",\"file\":\"${fileName.replace("\"", "")}\"$sizeField}",
             )
             true
         } catch (_: Exception) {

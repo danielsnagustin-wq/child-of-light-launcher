@@ -51,17 +51,66 @@ class FirmwareResolverTest {
     }
 
     @Test
-    fun `vs0 en la ruta antigua se migra a vita vs0 y es Ready`() {
-        // P2-A1 (2026-11-08): la ruta vieja (vitaRoot/vs0) ya no se
-        // ignora: resolve() la migra a vita/vs0 y entonces sí es el
-        // firmware que el núcleo ve. Antes este test exigía Missing.
+    fun `resolve no migra la ruta antigua, la migracion es explicita`() {
+        // P2-33: resolve() es una lectura: un vs0 en la ruta antigua
+        // ya no se migra como efecto secundario ni es Ready. La
+        // migración la hace el ViewModel al refrescar el estado (aquí
+        // se llama directamente a migrateLegacyVs0) y entonces sí es
+        // el firmware que el núcleo ve.
         val root = tmp.newFolder("vitaRoot")
         File(File(root, "vs0"), "sys").mkdirs()
+        assertEquals(FirmwareStatus.Missing, FirmwareResolver.resolve(root))
+        assertTrue(File(root, "vs0").exists())
+        assertTrue(FirmwareResolver.migrateLegacyVs0(root))
+        assertFalse(File(root, "vs0").exists())
+        assertTrue(File(File(root, "vita"), "vs0/sys").isDirectory)
         val status = FirmwareResolver.resolve(root)
         assertTrue(status is FirmwareStatus.Ready)
         assertTrue(status.ready)
-        assertFalse(File(root, "vs0").exists())
-        assertTrue(File(File(root, "vita"), "vs0/sys").isDirectory)
+    }
+
+    @Test
+    fun `PUP guardado igual al instalado no es pendiente`() {
+        // P2-29: el PUP guardado es el mismo que se instaló (mismo
+        // tamaño que el registrado en el marcador): no hay nada
+        // pendiente, no se muestra el botón de instalar.
+        val root = tmp.newFolder("vitaRoot")
+        File(File(root, "vita"), "vs0/sys").mkdirs()
+        writePup(root)
+        assertTrue(FirmwareResolver.markInstalled(root, "3.74"))
+        assertEquals(8L, FirmwareResolver.installedPupSize(root))
+        val status = FirmwareResolver.resolve(root)
+        assertTrue(status is FirmwareStatus.Ready)
+        assertFalse((status as FirmwareStatus.Ready).savedPupPending)
+    }
+
+    @Test
+    fun `PUP guardado distinto al instalado es pendiente`() {
+        // P2-29: llega otro PUP (distinto tamaño que el instalado):
+        // es una instalación pendiente y debe verse su botón.
+        val root = tmp.newFolder("vitaRoot")
+        File(File(root, "vita"), "vs0/sys").mkdirs()
+        writePup(root)
+        assertTrue(FirmwareResolver.markInstalled(root, "3.74"))
+        File(File(root, "firmware"), "PSVUPDAT.PUP").writeBytes(ByteArray(9) { 0x41 })
+        val status = FirmwareResolver.resolve(root)
+        assertTrue(status is FirmwareStatus.Ready)
+        assertTrue((status as FirmwareStatus.Ready).savedPupPending)
+    }
+
+    @Test
+    fun `PUP guardado con marcador antiguo sin tamano es pendiente`() {
+        // P2-29: el marcador antiguo no registra el tamaño del PUP:
+        // no se puede asegurar que el guardado sea el instalado, así
+        // que se muestra como pendiente (reinstalar la misma versión
+        // es inofensivo; esconder una instalación pendiente, no).
+        val root = tmp.newFolder("vitaRoot")
+        File(File(root, "vita"), "vs0/sys").mkdirs()
+        writePup(root)
+        File(File(root, "firmware"), "installed.json").writeText("{\"version\":\"3.74\",\"file\":\"PSVUPDAT.PUP\"}")
+        val status = FirmwareResolver.resolve(root)
+        assertTrue(status is FirmwareStatus.Ready)
+        assertTrue((status as FirmwareStatus.Ready).savedPupPending)
     }
 
     @Test

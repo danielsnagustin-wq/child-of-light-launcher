@@ -273,6 +273,31 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color.White,
                             )
+                            // P2-29: hay un PUP guardado que no es el
+                            // instalado (u otra versión, o una instalación
+                            // anterior que falló): antes quedaba escondido
+                            // detrás del "Instalado", sin botón. Se muestra
+                            // como pendiente con su botón de instalar.
+                            if (firmwareStatus.savedPupPending) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    "Hay un PSVUPDAT.PUP guardado pendiente de instalar: puede ser otra versión que la instalada, o una instalación anterior que falló.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = ColMutedText,
+                                )
+                                if (firmwareInstalling) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                    Text(
+                                        "Instalando firmware…",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = ColMutedText,
+                                    )
+                                } else if (embeddedCore == true) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    SecondaryButton("Instalar en el núcleo embebido", onClick = { vm.installSavedFirmwareInCore() }, enabled = !importing)
+                                }
+                            }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 TextButton(onClick = { pickFirmware.launch("*/*") }, enabled = !importing) { Text("Reemplazar") }
                                 TextButton(onClick = { showDeleteFirmwareConfirm = true }, enabled = !importing) { Text("Borrar firmware") }
