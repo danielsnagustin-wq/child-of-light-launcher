@@ -353,7 +353,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         memoryMapping = MemoryMapping.DOUBLE_BUFFER,
         cpuOpt = true, fpsHack = false, fileLoadingDelay = 0,
         showFpsOverlay = false,
-        gpuDriver = GpuDriver.SYSTEM, shaderCache = true, performanceMode = true,
+        gpuDriver = GpuDriver.SYSTEM, shaderCache = true, textureCache = true, performanceMode = true,
     )
     GpuProfileId.G99_QUALITY -> LauncherSettings(
         activeProfile = profile,
@@ -368,7 +368,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         memoryMapping = MemoryMapping.DOUBLE_BUFFER,
         cpuOpt = true, fpsHack = false, fileLoadingDelay = 0,
         showFpsOverlay = true,
-        gpuDriver = GpuDriver.SYSTEM, shaderCache = true, performanceMode = true,
+        gpuDriver = GpuDriver.SYSTEM, shaderCache = true, textureCache = true, performanceMode = true,
     )
     GpuProfileId.MALI_PERFORMANCE -> LauncherSettings(
         activeProfile = profile,
@@ -396,7 +396,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         surfaceSyncEnabled = false,
         memoryMapping = MemoryMapping.DOUBLE_BUFFER,
         cpuOpt = true, fpsHack = false,
-        shaderCache = true,
+        textureCache = true, shaderCache = true,
     )
     GpuProfileId.ADRENO_PERFORMANCE -> LauncherSettings(
         activeProfile = profile,
@@ -411,6 +411,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         memoryMapping = MemoryMapping.PAGE_TABLE, // recomendado en Android para Adreno
         cpuOpt = true, fpsHack = false,
         gpuDriver = GpuDriver.SYSTEM,
+        textureCache = true,
     )
     GpuProfileId.ADRENO_QUALITY_TURNIP -> LauncherSettings(
         activeProfile = profile,
@@ -425,7 +426,78 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         memoryMapping = MemoryMapping.PAGE_TABLE,
         cpuOpt = true, fpsHack = false,
         gpuDriver = GpuDriver.TURNIP,
+        textureCache = true,
     )
+}
+
+/**
+ * R4-P0-9: campos que definen el perfil activo (los que applyPreset
+ * toma del preset; los conservados por el usuario — audio, modo seguro,
+ * cerrar apps, PSN, entrega del .pkg, overlay táctil — y los que el
+ * ViewModel restaura encima — performanceMode, autoRevert — NO entran:
+ * que difieran no es divergir del preset). Puro y testeable en JVM.
+ */
+private fun presetProfileFields(s: LauncherSettings): List<Any> = listOf(
+    s.backend,
+    s.resolutionMultiplier,
+    s.screenFilter,
+    s.anisotropicFiltering,
+    s.vSync,
+    s.asyncPipelineCompilation,
+    s.highAccuracy,
+    s.surfaceSyncEnabled,
+    s.memoryMapping,
+    s.textureCache,
+    s.shaderCache,
+    s.cpuOpt,
+    s.fpsHack,
+    s.fileLoadingDelay,
+    s.showFpsOverlay,
+    s.performanceOverlayDetail,
+    s.performanceOverlayPosition,
+    s.hashlessTextureCache,
+    s.showCompileShaders,
+    s.gpuDriver,
+)
+
+/**
+ * R4-P0-9: true si los ajustes guardados difieren del preset de su
+ * perfil activo en algún campo del perfil. Es lo que la UI muestra
+ * como "perfil modificado": el usuario ve "G99 Recomendado" pero corre
+ * otra cosa. Un preset recién aplicado (o un reseteo) da false.
+ * Puro y testeable en JVM (LowRamProfileTest).
+ */
+fun divergesFromPreset(settings: LauncherSettings): Boolean {
+    val preset = presetSettings(settings.activeProfile)
+    return presetProfileFields(settings) != presetProfileFields(preset)
+}
+
+/** Campos que toca applyLowRamDefaults (la variante conservadora). */
+private fun lowRamVariantFields(s: LauncherSettings): List<Any> = listOf(
+    s.resolutionMultiplier,
+    s.screenFilter,
+    s.anisotropicFiltering,
+    s.vSync,
+    s.highAccuracy,
+    s.surfaceSyncEnabled,
+    s.memoryMapping,
+    s.textureCache,
+    s.shaderCache,
+)
+
+/**
+ * R4-P0-9: true si los ajustes son EXACTAMENTE el preset activo con
+ * la variante conservadora de memoria baja encima (y esa variante
+ * cambia algo respecto al preset: si el preset ya es conservador de
+ * por sí, como MALI_PERFORMANCE, no hay divergencia que registrar).
+ * Es la divergencia "conservadora" del primer arranque en un teléfono
+ * de 4 GB o menos: en G99_RECOMMENDED solo cambia textureCache
+ * (true del preset canónico a false). Puro y testeable en JVM.
+ */
+fun isLowRamConservativeVariant(settings: LauncherSettings): Boolean {
+    val preset = presetSettings(settings.activeProfile)
+    return lowRamVariantFields(settings) == lowRamVariantFields(applyLowRamDefaults(preset)) &&
+        lowRamVariantFields(settings) != lowRamVariantFields(preset)
 }
 
 /** Regla de la prueba de 30 s: menos de 28 fps con Calidad 2x -> volver a 1x. */
@@ -496,8 +568,16 @@ fun apply60FpsMode(settings: LauncherSettings): LauncherSettings = settings.copy
 
 /**
  * Perfil conservador para teléfonos con ≤ 4 GB de RAM (ver DeviceMemory).
- * Se aplica SOLO por defecto en el primer arranque y al restablecer
- * ajustes; nunca sobrescribe un perfil que el usuario eligió a mano
+ * R4-P0-9, REGLA COHERENTE: se aplica SOLO en el primer arranque
+ * (detectGpu). Es una variante VISIBLE, no silenciosa: los ajustes
+ * guardados quedan como divergencia conservadora del preset (ver
+ * isLowRamConservativeVariant y divergesFromPreset) y el mensaje de
+ * detección dice que la caché de texturas quedó OFF. "Restablecer
+ * ajustes", aplicar un preset a mano, "Restablecer esta categoría" y
+ * el auto-revert de la prueba de 30 s usan el preset CANÓNICO
+ * (textureCache explícito en presetSettings), nunca lowRam: el mismo
+ * preset da siempre el mismo valor de texture-cache. Nunca sobrescribe
+ * un perfil que el usuario eligió a mano
  * (p. ej. G99 Calidad 2x sigue disponible si el usuario lo elige, y
  * el auto-revert a 1x por debajo de 28 fps sigue activo).
  *
