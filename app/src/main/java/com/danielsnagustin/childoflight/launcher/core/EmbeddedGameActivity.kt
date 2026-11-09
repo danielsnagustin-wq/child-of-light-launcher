@@ -248,11 +248,11 @@ class EmbeddedGameActivity : SDLActivity() {
             visibility = View.GONE
             listener = object : GamepadOverlayView.Listener {
                 override fun onButton(sdlButton: Int, pressed: Boolean) {
-                    Vita3kCoreBridge.overlaySetButton(sdlButton, pressed)
+                    forwardOverlayButton(sdlButton, pressed)
                 }
 
                 override fun onAxis(sdlAxis: Int, value: Short) {
-                    Vita3kCoreBridge.overlaySetAxis(sdlAxis, value)
+                    forwardOverlayAxis(sdlAxis, value)
                 }
             }
         }
@@ -352,6 +352,52 @@ class EmbeddedGameActivity : SDLActivity() {
         if (!overlayAttached) return
         overlayAttached = false
         Vita3kCoreBridge.overlayDetach()
+    }
+
+    /**
+     * P1-14 (ronda 3): si el mando virtual deja de existir a mitad de
+     * partida (el núcleo lo suelta, se recrea la sesión), cada pulsación
+     * devolvía false y se descartaba en silencio: los botones morían
+     * sin ningún aviso y parecía que el juego se había colgado. Ahora
+     * un false reintenta el attach UNA vez, reenvía la entrada que se
+     * perdió, y si sigue sin mando avisa con un Toast (como mucho uno
+     * cada 5 s) y lo deja en el log. El reenvío no reintenta de nuevo:
+     * un false ahí solo se registra.
+     */
+    private var lastOverlayLostToastMillis: Long = 0L
+
+    private fun forwardOverlayButton(sdlButton: Int, pressed: Boolean) {
+        if (Vita3kCoreBridge.overlaySetButton(sdlButton, pressed)) return
+        if (!recoverOverlayController()) return
+        if (!Vita3kCoreBridge.overlaySetButton(sdlButton, pressed)) {
+            LauncherLog.append(this, "overlay", "botón $sdlButton perdido tras reintentar el attach")
+        }
+    }
+
+    private fun forwardOverlayAxis(sdlAxis: Int, value: Short) {
+        if (Vita3kCoreBridge.overlaySetAxis(sdlAxis, value)) return
+        if (!recoverOverlayController()) return
+        if (!Vita3kCoreBridge.overlaySetAxis(sdlAxis, value)) {
+            LauncherLog.append(this, "overlay", "eje $sdlAxis perdido tras reintentar el attach")
+        }
+    }
+
+    /** Marca el mando como perdido y reintenta el attach. Devuelve true si el mando vuelve a existir. */
+    private fun recoverOverlayController(): Boolean {
+        overlayAttached = false
+        LauncherLog.append(this, "overlay", "mando virtual perdido a mitad de partida: reintentando el attach")
+        maybeAttachOverlayController()
+        if (overlayAttached) return true
+        val now = SystemClock.uptimeMillis()
+        if (now - lastOverlayLostToastMillis > 5_000L) {
+            lastOverlayLostToastMillis = now
+            Toast.makeText(
+                this,
+                "El mando táctil se ha perdido. Si los botones no responden, sal y vuelve a entrar al juego.",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+        return false
     }
 
     // Al irse a segundo plano (Inicio, Recientes, llamada), pausar el
