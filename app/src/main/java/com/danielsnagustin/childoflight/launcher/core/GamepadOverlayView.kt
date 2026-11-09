@@ -122,6 +122,12 @@ class GamepadOverlayView @JvmOverloads constructor(
 
     private fun rebuild() {
         if (width <= 0 || height <= 0) return
+        // P1-11: al girar el teléfono onSizeChanged reconstruye los
+        // controles (la Activity no se recrea: configChanges incluye
+        // orientation|screenSize). Sin soltar antes, un botón pulsado
+        // o un stick desplazado quedaban atascados en el núcleo: las
+        // Views viejas se descartan con removeAllViews() sin release().
+        releaseAll()
         removeAllViews()
         val density = resources.displayMetrics.density
         // La zona Igniculus PRIMERO (detrás), como en el editor (B14):
@@ -436,6 +442,12 @@ class GamepadOverlayView @JvmOverloads constructor(
 
         private val sdlButton: Int? = control.vitaButton.toSdlButton()
         private var pressed = false
+        // P1-10 (2026-11-09): el dedo que pulsó el botón. Sin él, el
+        // botón solo se soltaba con ACTION_UP (el ÚLTIMO dedo en
+        // pantalla): si el dedo del botón se levantaba mientras otro
+        // seguía pulsado, el botón quedaba atascado. Y ACTION_MOVE
+        // leía event.x/event.y (puntero 0), no el dedo del botón.
+        private var pointerId: Int = -1
 
         override fun onDraw(canvas: Canvas) {
             val rect = RectF(0f, 0f, width.toFloat(), height.toFloat())
@@ -446,6 +458,7 @@ class GamepadOverlayView @JvmOverloads constructor(
         override fun release() {
             if (pressed) {
                 pressed = false
+                pointerId = -1
                 sdlButton?.let { listener?.onButton(it, false) }
                 animatePress(0f)
                 invalidate()
@@ -456,17 +469,33 @@ class GamepadOverlayView @JvmOverloads constructor(
             val sdl = sdlButton ?: return false
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    pointerId = event.getPointerId(0)
                     pressed = true
                     listener?.onButton(sdl, true)
                     animatePress(1f)
                     invalidate()
                     return true
                 }
+                MotionEvent.ACTION_POINTER_UP -> {
+                    // El dedo de ESTE botón se levanta mientras otro
+                    // sigue en pantalla: soltarlo ahora, no al levantar
+                    // el último dedo.
+                    if (event.getPointerId(event.actionIndex) == pointerId) {
+                        release()
+                    }
+                    return true
+                }
                 MotionEvent.ACTION_MOVE -> {
                     // El dedo se salió del botón: soltar (no queda atascado).
+                    // Se usan las coordenadas del dedo que pulsó el botón,
+                    // no las del puntero 0.
+                    val index = event.findPointerIndex(pointerId)
+                    if (index < 0) return pressed
                     val margin = 8f * density
-                    if (pressed && (event.x < -margin || event.x > width + margin ||
-                            event.y < -margin || event.y > height + margin)
+                    val x = event.getX(index)
+                    val y = event.getY(index)
+                    if (pressed && (x < -margin || x > width + margin ||
+                            y < -margin || y > height + margin)
                     ) {
                         release()
                     }
@@ -567,6 +596,16 @@ class GamepadOverlayView @JvmOverloads constructor(
                 MotionEvent.ACTION_DOWN -> {
                     pointerId = event.getPointerId(0)
                     updateFromPoint(event.x, event.y)
+                    return true
+                }
+                MotionEvent.ACTION_POINTER_UP -> {
+                    // P1-9: el dedo del stick se levanta mientras otro
+                    // sigue en pantalla: sin esta rama el stick quedaba
+                    // pegado (ejes y pomo desplazados) hasta que se
+                    // levantaba el ÚLTIMO dedo.
+                    if (event.getPointerId(event.actionIndex) == pointerId) {
+                        release()
+                    }
                     return true
                 }
                 MotionEvent.ACTION_MOVE -> {
