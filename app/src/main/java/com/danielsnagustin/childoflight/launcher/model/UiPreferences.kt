@@ -89,8 +89,6 @@ data class UiPreferences(
     val homeBackground: HomeBackground = HomeBackground.NIGHT,
     val textSize: TextSize = TextSize.MEDIUM,
     val language: AppLanguage = AppLanguage.SPANISH,
-    val showFpsOnHome: Boolean = true,
-    val showAchievementsOnHome: Boolean = true,
     val sectionOrder: List<HomeSection> = HomeSection.entries.toList(),
     /** Presets de GPU ocultos por "Limpiar no usados" (siguen existiendo, no se listan). */
     val hiddenPresets: Set<GpuProfileId> = emptySet(),

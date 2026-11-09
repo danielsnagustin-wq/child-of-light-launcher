@@ -67,8 +67,6 @@ private val uiPreferencesDraftSaver = Saver<UiPreferences?, Map<String, Any>>(
                 "homeBackground" to it.homeBackground.name,
                 "textSize" to it.textSize.name,
                 "language" to it.language.name,
-                "showFpsOnHome" to it.showFpsOnHome,
-                "showAchievementsOnHome" to it.showAchievementsOnHome,
                 "sectionOrder" to it.sectionOrder.map { section -> section.name },
                 "hiddenPresets" to it.hiddenPresets.map { preset -> preset.name },
                 "cardSize" to it.cardSize.name,
@@ -86,8 +84,6 @@ private val uiPreferencesDraftSaver = Saver<UiPreferences?, Map<String, Any>>(
             homeBackground = enumOrDefault(HomeBackground.entries.toTypedArray(), map["homeBackground"], HomeBackground.NIGHT),
             textSize = enumOrDefault(TextSize.entries.toTypedArray(), map["textSize"], TextSize.MEDIUM),
             language = enumOrDefault(AppLanguage.entries.toTypedArray(), map["language"], AppLanguage.SPANISH),
-            showFpsOnHome = map["showFpsOnHome"] as? Boolean ?: true,
-            showAchievementsOnHome = map["showAchievementsOnHome"] as? Boolean ?: true,
             sectionOrder = (map["sectionOrder"] as? List<*>)?.mapNotNull { item ->
                 (item as? String)?.let { n -> HomeSection.entries.firstOrNull { it.name == n } }
             }?.takeIf { it.isNotEmpty() } ?: HomeSection.entries.toList(),
@@ -164,12 +160,6 @@ fun SettingsPersonalizationScreen(vm: LauncherViewModel, onBack: () -> Unit, onN
                     update { prefs -> prefs.copy(iconSize = it) }
                 }
                 NoteText("Iconos: hay un solo juego de iconos vectoriales. Este ajuste cambia su tamaño en la portada, no el diseño: no hay otro pack de iconos que elegir.")
-                SettingSwitch("Mostrar FPS en la pantalla principal", "Muestra el FPS medio de la última prueba de 30 s en la portada.", ui.showFpsOnHome) {
-                    update { prefs -> prefs.copy(showFpsOnHome = it) }
-                }
-                SettingSwitch("Mostrar logros en la pantalla principal", "Muestra el progreso X/27 en la portada.", ui.showAchievementsOnHome) {
-                    update { prefs -> prefs.copy(showAchievementsOnHome = it) }
-                }
                 Text("Orden de secciones en la portada", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                 // R2-P2-04: la ruta real es Ajustes → General →
                 // Secciones (no "Configuración → Secciones").

@@ -324,39 +324,6 @@ fun PrimaryButtonWithSubtitle(
     }
 }
 
-/**
- * Chip de estado (Fase 2, Ola 1; rediseño 2026-11-08): punto de color
- * + etiqueta + estado REAL en palabras + detalle real.
- * Turquesa = instalado / listo, lavanda = pendiente (a medias),
- * gris azulado = ausente. El nivel viene de la función pura
- * homeStatusChips; la palabra de estado viene de AppStrings
- * (traducida) y se pasa desde la Home. No hay nivel de error: los
- * datos reales (GameStatus / FirmwareStatus) no expresan errores.
- */
-@Composable
-fun StatusChip(chip: StatusChipData, label: String, stateWord: String) {
-    val dotColor = when (chip.level) {
-        StatusLevel.OK -> ColTurquoise
-        StatusLevel.PENDING -> ColLavender
-        StatusLevel.MISSING -> ColMutedText
-    }
-    Row(
-        modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(ColCard)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier.size(8.dp).clip(CircleShape).background(dotColor),
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = label + " · " + stateWord + if (chip.detail.isNotEmpty()) " · ${chip.detail}" else "",
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.SemiBold,
-            color = Color.White,
-        )
-    }
-}
 
 /**
  * Variante de tarjeta con borde azul hielo sutil (Fase 2, Ola 1):

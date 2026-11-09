@@ -47,8 +47,6 @@ class UiPreferencesRepository(private val context: Context) {
         val BACKGROUND = stringPreferencesKey("ui_background")
         val TEXT_SIZE = stringPreferencesKey("ui_text_size")
         val LANGUAGE = stringPreferencesKey("ui_language")
-        val SHOW_FPS_HOME = booleanPreferencesKey("ui_show_fps_home")
-        val SHOW_ACHIEVEMENTS_HOME = booleanPreferencesKey("ui_show_achievements_home")
         val SECTION_ORDER = stringPreferencesKey("ui_section_order")
         val HIDDEN_PRESETS = stringPreferencesKey("ui_hidden_presets")
         val CARD_SIZE = stringPreferencesKey("ui_card_size")
@@ -63,8 +61,6 @@ class UiPreferencesRepository(private val context: Context) {
             homeBackground = runCatching { HomeBackground.valueOf(p[Keys.BACKGROUND] ?: "NIGHT") }.getOrDefault(HomeBackground.NIGHT),
             textSize = runCatching { TextSize.valueOf(p[Keys.TEXT_SIZE] ?: "MEDIUM") }.getOrDefault(TextSize.MEDIUM),
             language = runCatching { AppLanguage.valueOf(p[Keys.LANGUAGE] ?: "SPANISH") }.getOrDefault(AppLanguage.SPANISH),
-            showFpsOnHome = p[Keys.SHOW_FPS_HOME] ?: true,
-            showAchievementsOnHome = p[Keys.SHOW_ACHIEVEMENTS_HOME] ?: true,
             sectionOrder = decodeSectionOrder(p[Keys.SECTION_ORDER]),
             hiddenPresets = decodeHiddenPresets(p[Keys.HIDDEN_PRESETS] ?: ""),
             // Claves nuevas (Etapa 6): un valor guardado desconocido o
@@ -85,8 +81,6 @@ class UiPreferencesRepository(private val context: Context) {
             p[Keys.BACKGROUND] = prefs.homeBackground.name
             p[Keys.TEXT_SIZE] = prefs.textSize.name
             p[Keys.LANGUAGE] = prefs.language.name
-            p[Keys.SHOW_FPS_HOME] = prefs.showFpsOnHome
-            p[Keys.SHOW_ACHIEVEMENTS_HOME] = prefs.showAchievementsOnHome
             p[Keys.SECTION_ORDER] = prefs.sectionOrder.joinToString(",") { it.name }
             p[Keys.HIDDEN_PRESETS] = prefs.hiddenPresets.joinToString(",") { it.name }
             p[Keys.CARD_SIZE] = prefs.cardSize.name

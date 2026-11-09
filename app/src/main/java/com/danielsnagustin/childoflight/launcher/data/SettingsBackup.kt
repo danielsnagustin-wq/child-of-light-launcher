@@ -91,8 +91,6 @@ fun encodeSettingsBackup(settings: LauncherSettings, ui: UiPreferences): String 
     str("homeBackground", ui.homeBackground.name)
     str("textSize", ui.textSize.name)
     str("language", ui.language.name)
-    bool("showFpsOnHome", ui.showFpsOnHome)
-    bool("showAchievementsOnHome", ui.showAchievementsOnHome)
     str("sectionOrder", ui.sectionOrder.joinToString(",") { it.name })
     str("hiddenPresets", ui.hiddenPresets.joinToString(",") { it.name })
     str("cardSize", ui.cardSize.name)
@@ -167,8 +165,6 @@ fun decodeSettingsBackup(
         homeBackground = enumValue(map["homeBackground"], HomeBackground.entries.toTypedArray(), currentUi.homeBackground),
         textSize = enumValue(map["textSize"], TextSize.entries.toTypedArray(), currentUi.textSize),
         language = enumValue(map["language"], AppLanguage.entries.toTypedArray(), currentUi.language),
-        showFpsOnHome = boolValue(map["showFpsOnHome"], currentUi.showFpsOnHome),
-        showAchievementsOnHome = boolValue(map["showAchievementsOnHome"], currentUi.showAchievementsOnHome),
         sectionOrder = UiPreferencesRepository.decodeSectionOrder(map["sectionOrder"]),
         hiddenPresets = UiPreferencesRepository.decodeHiddenPresets(map["hiddenPresets"] ?: ""),
         cardSize = enumValue(map["cardSize"], CardSize.entries.toTypedArray(), currentUi.cardSize),

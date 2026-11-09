@@ -1,7 +1,5 @@
 package com.danielsnagustin.childoflight.launcher.ui
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -12,8 +10,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,7 +27,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -74,24 +69,14 @@ import kotlinx.coroutines.delay
  *   ContentScale.Fit, sin recorte ni bandas. Gradiente inferior
  *   mejorado (transparente → #10131D) y luz ambiental muy sutil
  *   (tinte azul hielo al 8% arriba).
- * - Chips de estado (Juego, DLCs, Update, Firmware) con el estado
- *   REAL en palabras (instalado / pendiente / ausente) + detalle
- *   real (Title ID, cantidad de DLCs, versión de firmware instalada
- *   o "importado" si el PUP solo está guardado), derivados del
- *   estado real con la función pura homeStatusChips. Punto turquesa
- *   = instalado, lavanda = pendiente, gris azulado = ausente.
  * - Botón principal azul hielo: JUGAR con subtítulo (Title ID ·
  *   resolución) e icono vectorial si está importado, IMPORTAR JUEGO
  *   si no (va a la pantalla de Importación, no a Configuración).
- * - Fila de dos tarjetas de DIMENSIONES IDÉNTICAS: Rendimiento (GPU
- *   + perfil compacto) y Logros (X de 27 + porcentaje real + barra).
- *   Las dos son PULSABLES: Rendimiento → GPU y diagnóstico,
- *   Logros → pantalla de Logros.
- * - Sección "Sesiones y guardados": última sesión real (nombre,
- *   última vez, tiempo jugado, saves), exportar copia (respaldo
- *   .zip real) e importar sesión, y enlace a "Ver todas". Si no
- *   hay sesiones, estado vacío honesto ("Sin sesiones todavía").
- *   Nada simulado: todo sale de SessionManager.
+ * - Tarjeta Logros (X de 27 + porcentaje real + barra), a todo lo
+ *   ancho, PULSABLE: abre la pantalla de Logros. Es la única tarjeta
+ *   del Inicio: el estado (juego/DLCs/firmware) vive en Importar y
+ *   en Diagnóstico, Rendimiento en Ajustes, y las sesiones en
+ *   Ajustes → General → "Sesiones y guardados". Sin duplicados.
  * - Fila "Configuración avanzada" que abre Configuración. El estado
  *   del juego y su importación viven solo en la tarjeta superior:
  *   sin duplicados.
@@ -144,9 +129,8 @@ fun HomeScreen(
         ) {
             // El orden de secciones lo elige el usuario (GAME_CARD / GPU_CARD).
             // Aparición progresiva: cada bloque entra con fundido + subida,
-            // con ~90 ms entre ellos. Solo la primera vez por sesión. La fila
-            // de Logros vive dentro de la sección GPU_CARD (fila de dos
-            // tarjetas: Rendimiento + Logros).
+            // con ~90 ms entre ellos. Solo la primera vez por sesión. La
+            // tarjeta de Logros vive dentro de la sección GPU_CARD.
             val order = uiPrefs?.sectionOrder ?: HomeSection.entries.toList()
             order.forEach { section ->
                 when (section) {
@@ -154,10 +138,6 @@ fun HomeScreen(
                     HomeSection.GPU_CARD -> { FadeSlideIn(90, play = !introDone) { InfoRow(vm, uiPrefs, strings, onNavigate) }; Spacer(modifier = Modifier.height(8.dp)) }
                 }
             }
-            // Sección fija "Sesiones y guardados" (rediseño 2026-11-08):
-            // no es reordenable como las tarjetas; vive siempre aquí,
-            // entre las tarjetas y la fila de ajustes.
-            FadeSlideIn(135, play = !introDone) { SessionsRow(vm, uiPrefs, strings, onNavigate) }
             Spacer(modifier = Modifier.height(16.dp))
             FadeSlideIn(180, play = !introDone) { AdvancedRow(strings, onNavigate, iconSize = uiPrefs?.iconSize ?: IconSize.MEDIUM) }
             Spacer(modifier = Modifier.height(24.dp))
@@ -165,9 +145,8 @@ fun HomeScreen(
     }
 }
 
-// Tarjeta superior del juego (portada + estado + JUGAR/IMPORTAR). Recoge
-// solo sus flujos: estado, ajustes, benchmarks, firmware y lanzamiento.
-@OptIn(ExperimentalLayoutApi::class)
+// Tarjeta superior del juego (portada + JUGAR/IMPORTAR). Recoge
+// solo sus flujos: estado, ajustes y lanzamiento.
 @Composable
 private fun GameCard(
     vm: LauncherViewModel,
@@ -178,8 +157,6 @@ private fun GameCard(
 ) {
     val status by vm.status.collectAsState()
     val settings by vm.settingsFlow.collectAsState(initial = null)
-    val benchmarks by vm.benchmarksFlow.collectAsState(initial = emptyList())
-    val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
     // Deshabilitar JUGAR mientras hay un lanzamiento en curso (doble
     // toque = dos launch() a la vez); la guarda vive en el ViewModel.
     val launching by vm.launchingFlow.collectAsState()
@@ -191,9 +168,7 @@ private fun GameCard(
     val installProgress by vm.installProgress.collectAsState()
     val cover by vm.coverBitmap.collectAsState()
 
-    val lastFps = benchmarks.firstOrNull()?.fpsAvg
     val gameOk = status.gameInstalled
-    val chips = homeStatusChips(status, firmwareStatus)
 
     PremiumCard(
         cardSize = uiPrefs?.cardSize ?: CardSize.NORMAL,
@@ -272,29 +247,6 @@ private fun GameCard(
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                chips.forEach { chip ->
-                    val label = when (chip.key) {
-                        HomeStatusKey.GAME -> strings.game
-                        HomeStatusKey.DLCS -> strings.dlcs
-                        HomeStatusKey.UPDATE -> strings.update
-                        HomeStatusKey.FIRMWARE -> strings.firmware
-                    }
-                    val stateWord = when (chip.level) {
-                        StatusLevel.OK -> strings.installed
-                        StatusLevel.PENDING -> strings.pending
-                        StatusLevel.MISSING -> strings.absent
-                    }
-                    StatusChip(chip, label, stateWord)
-                }
-            }
-            if (uiPrefs?.showFpsOnHome != false && lastFps != null) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Text("FPS (última prueba): $lastFps", style = MaterialTheme.typography.bodySmall, color = ColMutedText)
-            }
             if (!gameOk) {
                 Spacer(modifier = Modifier.height(10.dp))
                 Text(
@@ -367,12 +319,10 @@ private fun LaunchProgressCard(installProgress: InstallProgress?) {
     }
 }
 
-// Fila de dos tarjetas: Rendimiento (GPU + perfil) y Logros (X/27).
-// La de Logros respeta "Mostrar logros en la pantalla principal": si
-// está oculta, Rendimiento ocupa todo el ancho. Recoge solo sus flujos.
-// Las dos tarjetas son PULSABLES y tienen DIMENSIONES IDÉNTICAS
-// (IntrinsicSize.Max + fillMaxHeight): Rendimiento → GPU y
-// diagnóstico (prueba de 30 s), Logros → pantalla de Logros.
+// Tarjeta Logros (X/27 + porcentaje real + barra), a todo lo ancho:
+// es la única tarjeta del Inicio y siempre se muestra (2026-11-08:
+// los trofeos se quedan en el inicio; Rendimiento vive en Ajustes y
+// en Diagnóstico). PULSABLE: abre la pantalla de Logros.
 @Composable
 private fun InfoRow(
     vm: LauncherViewModel,
@@ -380,184 +330,35 @@ private fun InfoRow(
     strings: AppStrings,
     onNavigate: (Screen) -> Unit,
 ) {
-    val gpu by vm.gpuFlow.collectAsState(initial = null)
-    val settings by vm.settingsFlow.collectAsState(initial = null)
     val achievements by vm.achievementsFlow.collectAsState(initial = emptyList())
     val unlocked = achievements.count { it.unlocked }
     val tap = rememberTapHaptic()
-    val showAchievements = uiPrefs?.showAchievementsOnHome != false
     // Los iconos vectoriales dibujan a 24 dp fijos: se escalan por
     // graphicsLayer (vectorial, sin pérdida) según el ajuste de tamaño.
     val iconScale = (uiPrefs?.iconSize ?: IconSize.MEDIUM).sizeDp / 24f
-    // Misma altura en las dos tarjetas: la fila mide lo que mide la
-    // más alta y cada tarjeta llena ese alto.
     Row(
             modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             HalfCard(
                 modifier = Modifier.weight(1f).fillMaxHeight(),
-                onClick = { tap(); onNavigate(Screen.GPU) },
+                onClick = { tap(); onNavigate(Screen.ACHIEVEMENTS) },
                 cardSize = uiPrefs?.cardSize ?: CardSize.NORMAL,
                 cardTransparency = uiPrefs?.cardTransparency ?: CardTransparency.OPAQUE,
             ) {
-                PerformanceIcon(modifier = Modifier.graphicsLayer(scaleX = iconScale, scaleY = iconScale))
+                TrophyIcon(modifier = Modifier.graphicsLayer(scaleX = iconScale, scaleY = iconScale))
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("Rendimiento", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
+                Text(strings.achievementsShort, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    gpu?.shortLabel ?: "GPU no detectada",
+                    "$unlocked de 27 · ${if (achievements.isEmpty()) 0 else unlocked * 100 / 27}%",
                     style = MaterialTheme.typography.bodySmall,
                     color = ColMutedText,
                 )
-                Text(
-                    "${settings?.activeProfile?.label ?: "—"} · ${settings?.resolutionLabel ?: ""}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ColMutedText,
-                )
-            }
-            if (showAchievements) {
-                HalfCard(
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                    onClick = { tap(); onNavigate(Screen.ACHIEVEMENTS) },
-                    cardSize = uiPrefs?.cardSize ?: CardSize.NORMAL,
-                    cardTransparency = uiPrefs?.cardTransparency ?: CardTransparency.OPAQUE,
-                ) {
-                    TrophyIcon(modifier = Modifier.graphicsLayer(scaleX = iconScale, scaleY = iconScale))
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(strings.achievementsShort, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        "$unlocked de 27 · ${if (achievements.isEmpty()) 0 else unlocked * 100 / 27}%",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = ColMutedText,
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    PrimaryProgressBar(progress = if (achievements.isEmpty()) 0f else unlocked / 27f)
-                }
+                Spacer(modifier = Modifier.height(8.dp))
+                PrimaryProgressBar(progress = if (achievements.isEmpty()) 0f else unlocked / 27f)
             }
         }
-}
-
-/**
- * Sección "Sesiones y guardados" (rediseño 2026-11-08): última sesión
- * REAL (nombre, última vez, tiempo jugado, saves), exportar copia
- * (respaldo .zip real por SAF) e importar sesión, y enlace a ver
- * todas. Si no hay sesiones, estado vacío honesto. Nada simulado:
- * todo sale de SessionManager (vm.sessionsFlow). La copia de
- * seguridad y la restauración ya existen como funciones reales
- * (vm.exportSession / vm.importSession, las mismas de la pantalla
- * de Sesiones); aquí solo se exponen en la Home para la sesión
- * activa. El capítulo es manual (el usuario lo escribe en Sesiones);
- * aquí no se muestra si está vacío.
- */
-@Composable
-private fun SessionsRow(
-    vm: LauncherViewModel,
-    uiPrefs: com.danielsnagustin.childoflight.launcher.model.UiPreferences?,
-    strings: AppStrings,
-    onNavigate: (Screen) -> Unit,
-) {
-    val sessions by vm.sessionsFlow.collectAsState(initial = emptyList())
-    val activeId by vm.activeSessionIdFlow.collectAsState(initial = null)
-    val tap = rememberTapHaptic()
-    val active = sessions.firstOrNull { it.id == activeId } ?: sessions.maxByOrNull { it.lastPlayedAtMillis }
-    // Respaldo de la sesión activa (exportar .zip por SAF) y
-    // restauración (importar .zip): las mismas funciones reales de
-    // la pantalla de Sesiones (SessionManager.export/importSession).
-    var exportTarget by remember { mutableStateOf<com.danielsnagustin.childoflight.launcher.model.GameSession?>(null) }
-    val exportSession = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
-        val target = exportTarget
-        if (uri != null && target != null) vm.exportSession(uri, target)
-        exportTarget = null
-    }
-    val importSession = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) vm.importSession(uri)
-    }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        SectionTitle("Sesiones y guardados")
-        PremiumCard(
-            cardSize = uiPrefs?.cardSize ?: CardSize.NORMAL,
-            cardTransparency = uiPrefs?.cardTransparency ?: CardTransparency.OPAQUE,
-        ) {
-            if (active == null) {
-                Text(
-                    "Sin sesiones todavía",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    "Juega una partida y aquí verás tu última sesión, el tiempo jugado y tus saves.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ColMutedText,
-                )
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        active.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (active.id == activeId) {
-                        Text(
-                            "ACTIVA",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Bold,
-                            color = ColTurquoise,
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    "Última vez: ${formatSessionDate(active.lastPlayedAtMillis)} · Tiempo jugado: ${active.playTimeLabel()}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ColMutedText,
-                )
-                Text(
-                    "Saves: ${active.savedataFiles} archivos · Logros: ${active.unlockedTrophies}/27",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ColMutedText,
-                )
-                if (active.chapter.isNotBlank()) {
-                    Text(
-                        "Capítulo: ${active.chapter}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = ColMutedText,
-                    )
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedButton(
-                        onClick = { exportTarget = active; exportSession.launch("col-sesion-${active.name.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.take(30).ifBlank { "sesion" }}.zip") },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Exportar copia") }
-                    OutlinedButton(
-                        onClick = { importSession.launch("*/*") },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Importar") }
-                }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            SecondaryButton("Ver todas las sesiones", onClick = { tap(); onNavigate(Screen.SAVES) })
-        }
-    }
-}
-
-private fun formatSessionDate(millis: Long): String {
-    if (millis <= 0L) return "nunca"
-    return try {
-        SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(millis))
-    } catch (_: Exception) {
-        "—"
-    }
 }
 
 @Composable

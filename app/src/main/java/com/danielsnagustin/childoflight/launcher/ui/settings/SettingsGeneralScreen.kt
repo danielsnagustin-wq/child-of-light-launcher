@@ -160,8 +160,6 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                 ) {
                     SecondaryButton("Sesiones y guardados", onClick = { onNavigate(Screen.SAVES) })
                     Spacer(modifier = Modifier.height(8.dp))
-                    SecondaryButton("Logros (27)", onClick = { onNavigate(Screen.ACHIEVEMENTS) })
-                    Spacer(modifier = Modifier.height(8.dp))
                     SecondaryButton("Controles táctiles", onClick = { onNavigate(Screen.TOUCH) })
                 }
             }

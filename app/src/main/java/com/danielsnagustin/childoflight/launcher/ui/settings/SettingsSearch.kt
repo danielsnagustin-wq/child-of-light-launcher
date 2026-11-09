@@ -89,7 +89,6 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     entry("Perfil activo", "perfil rendimiento gpu preset activo", SettingsCategory.GENERAL),
     entry("Presets por GPU", "preset g99 mali adreno calidad rendimiento recomendado", SettingsCategory.GENERAL),
     entry("Sesiones y guardados", "sesiones partidas guardados saves", SettingsCategory.GENERAL),
-    entry("Logros", "logros trofeos 27 achievements", SettingsCategory.GENERAL),
     entry("Controles táctiles", "controles tactiles editor botones mando", SettingsCategory.GENERAL),
     entry("Permitir app externa", "motor app externa casos especiales", SettingsCategory.GENERAL),
     entry("Sesión PSN (simulada)", "psn sesion simulada dlc activacion", SettingsCategory.GENERAL),
@@ -109,8 +108,6 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     entry("Tamaño de iconos", "iconos tamaño pequeño mediano grande", SettingsCategory.PERSONALIZATION),
     entry("Aplicar personalización", "aplicar descartar cambios personalizacion guardar borrador", SettingsCategory.PERSONALIZATION),
     entry("Restablecer esta categoría", "restablecer reset categoria valores preset", SettingsCategory.PERSONALIZATION),
-    entry("Mostrar FPS en la pantalla principal", "fps portada home mostrar", SettingsCategory.PERSONALIZATION),
-    entry("Mostrar logros en la pantalla principal", "logros portada home mostrar", SettingsCategory.PERSONALIZATION),
     entry("Orden de secciones en la portada", "orden secciones portada home", SettingsCategory.PERSONALIZATION),
     entry("Restablecer personalización y editor táctil", "restablecer personalizacion editor tactil reset tema", SettingsCategory.PERSONALIZATION),
     // --- GPU y gráficos ---
