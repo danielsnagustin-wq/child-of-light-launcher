@@ -30,6 +30,7 @@ import com.danielsnagustin.childoflight.launcher.data.Vita3kConfigGenerator
 import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
+import org.libsdl.app.SDLActivity
 import com.danielsnagustin.childoflight.launcher.model.TitleId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -683,6 +684,18 @@ class Vita3KLauncher(private val context: Context) {
                 if (FirmwareResolver.deleteSavedPupIfInstalled(library.vitaRoot)) {
                     LauncherLog.append(context, "firmware", "PUP guardado borrado: firmware ya instalado en el núcleo")
                 }
+            }
+            // REA 0.2.1 oficial (0.2.49): SDL_ANDROID_ALLOW_RECREATE_ACTIVITY=1
+            // evita que SDL mate el proceso con System.exit(0) al recrear
+            // la Activity en el mismo proceso (2º JUGAR). Se pone aquí,
+            // con el .so ya cargado (init OK) y antes de crear la
+            // Activity, que es cuando SDLActivity.onCreate lee la
+            // variable. nativeSetenv es public static en SDLActivity
+            // (vendorizada). Best-effort: si falla, el lanzamiento sigue.
+            // (El intento en C++ con SDL_setenv no compila: el símbolo
+            // no está declarado en los headers SDL de esta build.)
+            runCatching {
+                SDLActivity.nativeSetenv("SDL_ANDROID_ALLOW_RECREATE_ACTIVITY", "1")
             }
             val intent = EmbeddedGameActivity.createLaunchIntent(context, titleId, "Child of Light", benchmark)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
