@@ -225,13 +225,7 @@ class EmbeddedGameActivity : SDLActivity() {
             attrs.layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             window.attributes = attrs
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                window.insetsController?.let {
-                    it.hide(WindowInsets.Type.systemBars())
-                    it.systemBarsBehavior =
-                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                }
-            }
+            hideSystemBars()
         }
 
         val titleId = intent.getStringExtra(EXTRA_TITLE_ID).orEmpty()
@@ -277,6 +271,33 @@ class EmbeddedGameActivity : SDLActivity() {
         // SDL_main). Si el crash fuera aquí, esta sería la última línea.
         LauncherLog.append(this, "launch", "EmbeddedGameActivity creada: $titleId (init OK)")
         setupTouchOverlay()
+    }
+
+    /**
+     * R4-P1-3: ocultar las barras del sistema (inmersivo). Antes solo
+     * se hacía en onCreate y SDLActivity.setWindowStyle es asíncrono,
+     * así que cualquier swipe de borde (BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE)
+     * las traía de vuelta y se quedaban visibles en la captura del
+     * título. Se re-oculta en onResume y al recuperar el foco: el
+     * menú de pausa es otra Activity, así que al volver de él onResume
+     * y onWindowFocusChanged vuelven a ocultarlas sin tocar su
+     * comportamiento. Best-effort y sin núcleo es no-op.
+     */
+    private fun hideSystemBars() {
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                window.insetsController?.let {
+                    it.hide(WindowInsets.Type.systemBars())
+                    it.systemBarsBehavior =
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                }
+            }
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideSystemBars()
     }
 
     /**
@@ -566,6 +587,10 @@ class EmbeddedGameActivity : SDLActivity() {
     // núcleo es no-op (el puente devuelve false).
     override fun onResume() {
         super.onResume()
+        // R4-P1-3: re-ocultar las barras del sistema al volver a primer
+        // plano (del menú de pausa, de Inicio/Recientes o de un swipe
+        // que las mostró): en onCreate solo no basta.
+        hideSystemBars()
         // R2-P1-11: el juego sigue vivo al volver de Inicio/Recientes
         // o del menú de pausa; MainActivity lo comprueba para no
         // cerrar la medición de tiempo en esos casos.

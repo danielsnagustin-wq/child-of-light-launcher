@@ -12,6 +12,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.os.SystemClock
 import android.util.AttributeSet
+import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
@@ -28,6 +29,7 @@ import com.danielsnagustin.childoflight.launcher.data.IgniculusMode
 import com.danielsnagustin.childoflight.launcher.data.StickMode
 import com.danielsnagustin.childoflight.launcher.data.TouchControl
 import com.danielsnagustin.childoflight.launcher.data.VitaButton
+import org.libsdl.app.SDLSurface
 import kotlin.math.sqrt
 
 /**
@@ -40,14 +42,31 @@ import kotlin.math.sqrt
  * contenedor no es clicable y cada vista hija devuelve false si el
  * toque no es suyo), así que baja a la SDLSurface y llega al juego
  * como táctil frontal de Vita (Igniculus: tocar la pantalla mueve la
- * luciérnaga). Con una sola vista a pantalla completa, en cuanto un
- * dedo tocara un botón, el resto de dedos de ese gesto quedarían
- * atrapados en el overlay y la luciérnaga dejaría de responder
- * mientras se mueve el stick. La zona Igniculus se DIBUJA y en modo
- * Toque directo no consume toques: el arrastre sobre ella es táctil
+ * luciérnaga). Eso cubre el PRIMER dedo. R4-P1-16: NO cubre el
+ * segundo dedo. En cuanto un hijo consume ACTION_DOWN, el ViewGroup
+ * es dueño del gesto completo: un ACTION_POINTER_DOWN posterior que
+ * no cae en ningún botón se entrega solo al hijo que ya es destino
+ * del gesto (si el punto cae en sus límites) y, si ningún hijo lo
+ * consume, el framework lo descarta: el padre nunca lo reintenta en
+ * la superficie SDL. Devolver false no basta. Por eso
+ * dispatchTouchEvent reenvía ACTIVAMENTE cada puntero no consumido
+ * a la superficie SDL como su propio toque de un solo dedo
+ * (MultiTouchRouter decide, el reenvío es sintético): el segundo
+ * dedo en zona vacía llega al juego aunque otro dedo mantenga el
+ * stick o un botón. Sin esto, Igniculus mientras se mueve el stick
+ * — el gameplay central de Child of Light — queda roto por diseño.
+ * La zona Igniculus se DIBUJA y en modo Toque directo no consume toques: el arrastre sobre ella es táctil
  * directo del juego. En modo Joystick sí los consume y los traduce
  * (ancla + arrastre × sensibilidad) reenviándolos a la superficie
  * SDL como toques sintéticos (P1-12).
+ *
+ * PROBAR EN EL TELÉFONO (R4-P1-16): con el juego en marcha,
+ * mantener el stick izquierdo con un dedo y tocar una zona vacía
+ * con otro: la luciérnaga (Igniculus) debe moverse al segundo toque
+ * mientras el stick sigue moviendo al personaje. Repetir con un
+ * botón de acción mantenido en vez del stick, y con dos dedos en
+ * zona vacía a la vez. Si el segundo toque no llega, el sospechoso
+ * es el reenvío de dispatchTouchEvent, no el táctil de un solo dedo.
  *
  * Dibujo: LA MISMA MATEMÁTICA que la vista previa del editor
  * (TouchOverlayMapping.controlRect): posición por fracción DEL RECT
@@ -104,6 +123,21 @@ class GamepadOverlayView @JvmOverloads constructor(
     private var controls: List<TouchControl> = emptyList()
     private var builtForSize: Pair<Int, Int>? = null
 
+    /**
+     * R4-P1-16: decide qué punteros no consumidos por ningún control
+     * se reenvían a la superficie SDL (lógica pura, sin Android:
+     * MultiTouchRouter, probada en MultiTouchRouterTest).
+     */
+    private val multiTouchRouter = MultiTouchRouter()
+
+    /**
+     * Superficie SDL (EmuSurface) buscada entre los hermanos del
+     * overlay: el overlay y la superficie son hijos del mismo
+     * contenedor de contenido, ambos a pantalla completa, así que
+     * comparten coordenadas. Se cachea mientras siga conectada.
+     */
+    private var sdlSurfaceCache: View? = null
+
     init {
         // Sin fondo y sin interceptar: los toques que no son de ningún
         // botón bajan a la vista SDL de debajo.
@@ -122,6 +156,11 @@ class GamepadOverlayView @JvmOverloads constructor(
 
     /** Suelta todos los botones y centra todos los sticks (sin botones atascados al pausar/ocultar/salir). */
     fun releaseAll() {
+        // R4-P1-16: un dedo reenviado a SDL es un toque del juego:
+        // si el overlay se reconstruye u oculta a mitad de ese
+        // toque, el juego seguiría creyendo que el dedo está
+        // apoyado. Terminarlo aquí, antes de soltar los controles.
+        endForwardedTouchesToSdl()
         for (i in 0 until childCount) {
             (getChildAt(i) as? OverlayControlView)?.release()
         }
@@ -133,9 +172,242 @@ class GamepadOverlayView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * R4-P1-16: el multi-toque que el framework no entrega solo.
+     *
+     * El primer dedo (ACTION_DOWN) no se toca: si ningún hijo lo
+     * consume, este método devuelve false y el padre lo reintenta en
+     * la superficie SDL; reenviarlo aquí lo duplicaría. El problema
+     * es el SEGUNDO dedo en adelante: una vez que un hijo consume el
+     * DOWN, el gesto es de este ViewGroup y el padre ya no prueba
+     * otros hijos para los ACTION_POINTER_DOWN. Si ningún hijo
+     * consume el puntero nuevo, se reenvía a la superficie SDL como
+     * un toque propio de un solo dedo (ACTION_DOWN sintético con el
+     * pointerId real) y sus MOVE/UP posteriores se reenvían igual;
+     * devolver true deja al overlay como destino del gesto para
+     * seguir recibiendo esos eventos. No se toca el multi-toque que
+     * ya funciona (P1-9/10/11): un puntero que un hijo consume sigue
+     * su camino normal (el framework lo entrega al hijo como
+     * ACTION_DOWN al dividir el evento), y el modo JOYSTICK de
+     * ZoneView sigue reenviando lo suyo vía activity.dispatchTouchEvent.
+     */
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if (forwardingSyntheticTouch) return false
-        return super.dispatchTouchEvent(event)
+        when (event.actionMasked) {
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                val handled = super.dispatchTouchEvent(event)
+                if (handled) return true
+                val index = event.actionIndex
+                val pointerId = event.getPointerId(index)
+                val x = event.getX(index)
+                val y = event.getY(index)
+                val decision = multiTouchRouter.onPointerDown(
+                    pointerId = pointerId,
+                    downTime = event.downTime,
+                    x = x,
+                    y = y,
+                    handledByChild = false,
+                    insideActiveControl = isPointInsideActiveControl(x, y),
+                )
+                if (decision != MultiTouchRouter.PointerAction.FORWARD_DOWN) return false
+                if (!forwardPointerDownToSdl(event, index, pointerId)) {
+                    // Sin superficie a la que reenviar, no reclamar
+                    // el puntero: se descarta como antes del arreglo.
+                    multiTouchRouter.onPointerUp(pointerId)
+                    Log.w("GamepadOverlayView", "R4-P1-16: sin superficie SDL para reenviar el puntero $pointerId")
+                    return false
+                }
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val handled = super.dispatchTouchEvent(event)
+                val forwarded = forwardPointerMovesToSdl(event)
+                return handled || forwarded
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                val handled = super.dispatchTouchEvent(event)
+                val index = event.actionIndex
+                val pointerId = event.getPointerId(index)
+                val downTime = multiTouchRouter.downTimeOf(pointerId)
+                val decision = multiTouchRouter.onPointerUp(pointerId)
+                var forwarded = false
+                if (decision == MultiTouchRouter.PointerAction.FORWARD_UP && downTime != null) {
+                    forwarded = forwardPointerUpToSdl(event, index, pointerId, downTime)
+                }
+                return handled || forwarded
+            }
+            MotionEvent.ACTION_UP -> {
+                val handled = super.dispatchTouchEvent(event)
+                val index = event.actionIndex
+                val pointerId = event.getPointerId(index)
+                val downTime = multiTouchRouter.downTimeOf(pointerId)
+                val decision = multiTouchRouter.onPointerUp(pointerId)
+                var forwarded = false
+                if (decision == MultiTouchRouter.PointerAction.FORWARD_UP && downTime != null) {
+                    forwarded = forwardPointerUpToSdl(event, index, pointerId, downTime)
+                }
+                return handled || forwarded
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                val handled = super.dispatchTouchEvent(event)
+                endForwardedTouchesToSdl()
+                return handled
+            }
+            else -> return super.dispatchTouchEvent(event)
+        }
+    }
+
+    /**
+     * R4-P1-16: un puntero que cae dentro de un control que YA tiene
+     * un dedo (stick mantenido, botón pulsado, arrastre Joystick en
+     * curso) no se reenvía a SDL aunque el control no consuma el
+     * ACTION_POINTER_DOWN (ButtonView/StickView no gestionan
+     * POINTER_DOWN: el framework ya les dio el puntero por ser
+     * destino del gesto). Reenviarlo crearía un dedo fantasma en el
+     * juego justo sobre ese control. En cambio, un puntero dentro de
+     * la zona Igniculus en modo Toque directo SÍ se reenvía: esa zona
+     * nunca tiene un dedo activo y su toque es táctil del juego.
+     */
+    private fun isPointInsideActiveControl(x: Float, y: Float): Boolean {
+        for (i in 0 until childCount) {
+            val child = getChildAt(i) as? OverlayControlView ?: continue
+            if (!child.hasActivePointer) continue
+            if (x >= child.left && x < child.left + child.width &&
+                y >= child.top && y < child.top + child.height
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun findSdlSurface(): View? {
+        val cached = sdlSurfaceCache
+        if (cached != null && cached.isAttachedToWindow) return cached
+        val parentGroup = parent as? android.view.ViewGroup ?: return null
+        val found = findSdlSurfaceIn(parentGroup)
+        sdlSurfaceCache = found
+        return found
+    }
+
+    private fun findSdlSurfaceIn(root: android.view.ViewGroup): View? {
+        for (i in 0 until root.childCount) {
+            val child = root.getChildAt(i)
+            if (child is SDLSurface) return child
+            if (child === this) continue
+            if (child is android.view.ViewGroup) {
+                val found = findSdlSurfaceIn(child)
+                if (found != null) return found
+            }
+        }
+        return null
+    }
+
+    /**
+     * Evento sintético de UN SOLO puntero, con el pointerId real del
+     * dedo. No se reenvía el MotionEvent original tal cual: el
+     * onTouch de SDLSurface recorre TODOS los punteros en ACTION_MOVE
+     * (SDLSurface.java:258-322), así que un MOVE con varios dedos
+     * mandaría al juego también el movimiento del dedo del stick o
+     * del botón como si fuera un dedo táctil. Con un evento por dedo,
+     * SDL solo ve ese dedo. Coordenadas en el overlay = en la
+     * superficie: ambas a pantalla completa en el mismo contenedor.
+     */
+    private fun obtainSinglePointerEvent(
+        downTime: Long,
+        eventTime: Long,
+        action: Int,
+        pointerId: Int,
+        x: Float,
+        y: Float,
+    ): MotionEvent {
+        val properties = MotionEvent.PointerProperties().apply {
+            id = pointerId
+            toolType = MotionEvent.TOOL_TYPE_FINGER
+        }
+        val coords = MotionEvent.PointerCoords().apply {
+            this.x = x
+            this.y = y
+            pressure = 1f
+            size = 1f
+        }
+        return MotionEvent.obtain(
+            downTime, eventTime, action, 1,
+            arrayOf(properties), arrayOf(coords),
+            0, 0, 1f, 1f, 0, 0,
+        )
+    }
+
+    /**
+     * Envía un toque sintético a la superficie SDL con la misma
+     * protección que ZoneView.forwardTouch: mientras dura el envío,
+     * forwardingSyntheticTouch hace que dispatchTouchEvent devuelva
+     * false, así que si el destino cae sobre un botón del overlay el
+     * sintético no lo pulsa (y EmuSurface tampoco lo re-ofrece al
+     * overlay: R4-P1-17).
+     */
+    private fun dispatchSyntheticToSdl(surface: View, synthetic: MotionEvent): Boolean {
+        var handled = false
+        try {
+            forwardingSyntheticTouch = true
+            handled = surface.dispatchTouchEvent(synthetic)
+        } finally {
+            forwardingSyntheticTouch = false
+            synthetic.recycle()
+        }
+        return handled
+    }
+
+    private fun forwardPointerDownToSdl(event: MotionEvent, index: Int, pointerId: Int): Boolean {
+        val surface = findSdlSurface() ?: return false
+        val synthetic = obtainSinglePointerEvent(
+            event.downTime, event.eventTime, MotionEvent.ACTION_DOWN,
+            pointerId, event.getX(index), event.getY(index),
+        )
+        return dispatchSyntheticToSdl(surface, synthetic)
+    }
+
+    private fun forwardPointerMovesToSdl(event: MotionEvent): Boolean {
+        if (multiTouchRouter.forwardedPointerIds.isEmpty()) return false
+        val surface = findSdlSurface() ?: return false
+        var forwarded = false
+        for (i in 0 until event.pointerCount) {
+            val pointerId = event.getPointerId(i)
+            val decision = multiTouchRouter.onMove(pointerId, event.getX(i), event.getY(i))
+            if (decision != MultiTouchRouter.PointerAction.FORWARD_MOVE) continue
+            val downTime = multiTouchRouter.downTimeOf(pointerId) ?: continue
+            val synthetic = obtainSinglePointerEvent(
+                downTime, event.eventTime, MotionEvent.ACTION_MOVE,
+                pointerId, event.getX(i), event.getY(i),
+            )
+            if (dispatchSyntheticToSdl(surface, synthetic)) forwarded = true
+        }
+        return forwarded
+    }
+
+    private fun forwardPointerUpToSdl(event: MotionEvent, index: Int, pointerId: Int, downTime: Long): Boolean {
+        val surface = findSdlSurface() ?: return false
+        val x = if (index >= 0) event.getX(index) else 0f
+        val y = if (index >= 0) event.getY(index) else 0f
+        val synthetic = obtainSinglePointerEvent(
+            downTime, event.eventTime, MotionEvent.ACTION_UP,
+            pointerId, x, y,
+        )
+        return dispatchSyntheticToSdl(surface, synthetic)
+    }
+
+    private fun endForwardedTouchesToSdl() {
+        val forwarded = multiTouchRouter.endAll()
+        if (forwarded.isEmpty()) return
+        val surface = findSdlSurface() ?: return
+        val now = SystemClock.uptimeMillis()
+        for (touch in forwarded) {
+            val synthetic = obtainSinglePointerEvent(
+                touch.downTime, now, MotionEvent.ACTION_UP,
+                touch.pointerId, touch.x, touch.y,
+            )
+            dispatchSyntheticToSdl(surface, synthetic)
+        }
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -255,6 +527,15 @@ class GamepadOverlayView @JvmOverloads constructor(
 
         /** Soltar lo que este control tenga pulsado (botón o stick). Por defecto nada. */
         open fun release() {}
+
+        /**
+         * R4-P1-16: true mientras este control tiene un dedo asignado
+         * (el framework le dio el puntero del gesto). dispatchTouchEvent
+         * lo usa para no reenviar a SDL un segundo dedo que caiga
+         * sobre un control ya activo (sería un dedo fantasma en el
+         * juego justo sobre ese control).
+         */
+        open val hasActivePointer: Boolean get() = false
 
         /**
          * Cuerpo de cristal: degradado radial (centro plata luminosa,
@@ -485,6 +766,8 @@ class GamepadOverlayView @JvmOverloads constructor(
         // leía event.x/event.y (puntero 0), no el dedo del botón.
         private var pointerId: Int = -1
 
+        override val hasActivePointer: Boolean get() = pointerId != -1
+
         override fun onDraw(canvas: Canvas) {
             val rect = RectF(0f, 0f, width.toFloat(), height.toFloat())
             if (sdlButton == null) {
@@ -565,6 +848,8 @@ class GamepadOverlayView @JvmOverloads constructor(
         private var knobNy: Float = 0f
         private var lastAxes: Pair<Short, Short> = 0.toShort() to 0.toShort()
         private var lastDpad: Set<VitaButton> = emptySet()
+
+        override val hasActivePointer: Boolean get() = pointerId != -1
 
         init {
             val axes = stickAxesFor(rightStick)
@@ -696,6 +981,8 @@ class GamepadOverlayView @JvmOverloads constructor(
         private var downTime: Long = 0L
         private var joystickActive: Boolean = false
 
+        override val hasActivePointer: Boolean get() = joystickActive
+
         override fun onDraw(canvas: Canvas) {
             // Rueda de Igniculus (2026-11-09, 0.2.14): antes se
             // llamaba drawGlassBody sobre TODO el rect de 220 dp y
@@ -814,5 +1101,91 @@ class GamepadOverlayView @JvmOverloads constructor(
                 synthetic.recycle()
             }
         }
+    }
+}
+
+/**
+ * R4-P1-16: qué hacer con cada puntero de un gesto multi-toque.
+ *
+ * Lógica PURA (sin MotionEvent ni Views): GamepadOverlayView le pasa
+ * los hechos (qué acción, qué pointerId, si algún hijo consumió el
+ * puntero, si el punto cae dentro de un control ya activo) y el
+ * router decide si ese puntero se reenvía a la superficie SDL como
+ * toque propio o se descarta. La vista ejecuta la decisión (crea el
+ * evento sintético de un solo dedo y lo despacha a la superficie).
+ * Al ser pura, se prueba en JVM sin Robolectric (MultiTouchRouterTest).
+ *
+ * Reglas:
+ * - Un puntero consumido por un hijo nunca se reenvía (es un botón
+ *   o un stick, no táctil del juego).
+ * - Un puntero dentro de un control ya activo tampoco: el framework
+ *   ya se lo dio a ese control por ser destino del gesto y
+ *   reenviarlo crearía un dedo fantasma en el juego sobre el control.
+ * - Un puntero reenviado se sigue (downTime + última posición) hasta
+ *   su UP: sus MOVE se reenvían y su UP lo termina en SDL. Si el
+ *   overlay se reconstruye u oculta, endAll() devuelve los que
+ *   quedan para terminarlos con un UP sintético (sin dedo atascado
+ *   en el juego).
+ */
+internal class MultiTouchRouter {
+
+    enum class PointerAction {
+        FORWARD_DOWN, FORWARD_MOVE, FORWARD_UP, DROP
+    }
+
+    /** Un dedo reenviado a SDL: cuándo empezó y dónde está ahora. */
+    data class ForwardedTouch(
+        val pointerId: Int,
+        val downTime: Long,
+        val x: Float,
+        val y: Float,
+    )
+
+    private data class TrackedPointer(val downTime: Long, var x: Float, var y: Float)
+
+    private val forwarded = LinkedHashMap<Int, TrackedPointer>()
+
+    /** Punteros que ahora mismo son toques del juego (no de botones). */
+    val forwardedPointerIds: Set<Int> get() = forwarded.keys.toSet()
+
+    fun onPointerDown(
+        pointerId: Int,
+        downTime: Long,
+        x: Float,
+        y: Float,
+        handledByChild: Boolean,
+        insideActiveControl: Boolean,
+    ): PointerAction {
+        if (handledByChild || insideActiveControl) return PointerAction.DROP
+        forwarded[pointerId] = TrackedPointer(downTime, x, y)
+        return PointerAction.FORWARD_DOWN
+    }
+
+    fun onMove(pointerId: Int, x: Float, y: Float): PointerAction {
+        val pointer = forwarded[pointerId] ?: return PointerAction.DROP
+        pointer.x = x
+        pointer.y = y
+        return PointerAction.FORWARD_MOVE
+    }
+
+    fun downTimeOf(pointerId: Int): Long? {
+        return forwarded[pointerId]?.downTime
+    }
+
+    fun onPointerUp(pointerId: Int): PointerAction {
+        return if (forwarded.remove(pointerId) != null) {
+            PointerAction.FORWARD_UP
+        } else {
+            PointerAction.DROP
+        }
+    }
+
+    /** Termina el seguimiento de todos los reenviados (gesto cancelado, overlay oculto o reconstruido). */
+    fun endAll(): List<ForwardedTouch> {
+        val result = forwarded.map { (pointerId, pointer) ->
+            ForwardedTouch(pointerId, pointer.downTime, pointer.x, pointer.y)
+        }
+        forwarded.clear()
+        return result
     }
 }
