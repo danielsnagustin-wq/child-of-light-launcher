@@ -2,6 +2,7 @@ package com.danielsnagustin.childoflight.launcher.core
 
 import com.danielsnagustin.childoflight.launcher.data.TouchControl
 import com.danielsnagustin.childoflight.launcher.data.VitaButton
+import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
@@ -19,6 +20,27 @@ data class ControlRect(val left: Float, val top: Float, val right: Float, val bo
     fun width(): Float = right - left
     fun height(): Float = bottom - top
 }
+
+/**
+ * Rectángulo del juego 960x544 dentro de la ventana, en píxeles.
+ * El juego no llena la ventana: se encaja centrado con pillarbox
+ * (barras a los lados, en horizontal) o letterbox (barras arriba y
+ * abajo, en vertical). Ver [TouchOverlayMapping.gameRect].
+ */
+data class GameRect(val left: Float, val top: Float, val right: Float, val bottom: Float) {
+    fun width(): Float = right - left
+    fun height(): Float = bottom - top
+}
+
+/**
+ * Glifo PlayStation de un botón de cara: la forma que se dibuja
+ * dentro del botón de cristal (X, círculo, cuadrado, triángulo).
+ * R4-P0-2: antes CROSS se dibujaba como una flecha arriba, el mismo
+ * icono que D-Pad arriba, y los demás botones llevaban iconos
+ * temáticos (espada, espiral, estrella). El D-Pad y START no tienen
+ * glifo: siguen con flechas y pausa.
+ */
+enum class FaceGlyph { CROSS, CIRCLE, SQUARE, TRIANGLE }
 
 /**
  * Mapeo del overlay táctil del launcher al mando virtual SDL del núcleo.
@@ -104,6 +126,45 @@ object TouchOverlayMapping {
     /** Umbral de dirección para el modo D-Pad del stick (fracción del recorrido). */
     const val STICK_DPAD_THRESHOLD = 0.5f
 
+    /** Resolución interna del juego: 960x544 (16:9 Vita). */
+    const val GAME_ASPECT_WIDTH = 960f
+    const val GAME_ASPECT_HEIGHT = 544f
+
+    /**
+     * R4-P0-2: glifo PlayStation del botón, o null si no es un botón
+     * de cara (D-Pad, START, L1/R1, sticks y NONE se dibujan con
+     * flechas, pausa o etiqueta, no con un glifo). CROSS tiene su
+     * glifo propio y ya no comparte icono con DPAD_UP.
+     */
+    fun faceGlyphFor(button: VitaButton): FaceGlyph? = when (button) {
+        VitaButton.CROSS -> FaceGlyph.CROSS
+        VitaButton.CIRCLE -> FaceGlyph.CIRCLE
+        VitaButton.SQUARE -> FaceGlyph.SQUARE
+        VitaButton.TRIANGLE -> FaceGlyph.TRIANGLE
+        else -> null
+    }
+
+    /**
+     * R4-P1-1: rectángulo del juego 960x544 encajado y centrado
+     * dentro de una vista de [viewWidthPx] x [viewHeightPx]. Si la
+     * vista es más ancha que 16:9, sobran barras a los lados
+     * (pillarbox: en la captura 2048x945 el juego ocupa x 190-1857);
+     * si es más alta, sobran barras arriba y abajo (letterbox). Si
+     * la vista es exactamente 960:544, el rect es la vista entera.
+     * Con una vista vacía o invertida se devuelve la vista tal cual.
+     */
+    fun gameRect(viewWidthPx: Float, viewHeightPx: Float): GameRect {
+        if (viewWidthPx <= 0f || viewHeightPx <= 0f) {
+            return GameRect(0f, 0f, viewWidthPx.coerceAtLeast(0f), viewHeightPx.coerceAtLeast(0f))
+        }
+        val scale = min(viewWidthPx / GAME_ASPECT_WIDTH, viewHeightPx / GAME_ASPECT_HEIGHT)
+        val gameW = GAME_ASPECT_WIDTH * scale
+        val gameH = GAME_ASPECT_HEIGHT * scale
+        val left = (viewWidthPx - gameW) / 2f
+        val top = (viewHeightPx - gameH) / 2f
+        return GameRect(left, top, left + gameW, top + gameH)
+    }
+
     /**
      * Botón de Vita -> botón SDL del mando virtual. null = no hay botón
      * SDL para esa asignación: NONE (sin asignar) y LEFT_STICK /
@@ -178,24 +239,39 @@ object TouchOverlayMapping {
      * Rectángulo en píxeles de un control dentro de una vista de
      * [viewWidthPx] x [viewHeightPx] (densidad [density]).
      *
-     * ES LA MISMA MATEMÁTICA que la vista previa del editor
-     * (ui/TouchLayoutScreen.kt): centro en (xFraction * ancho,
-     * yFraction * alto), tamaño sizeDp, y el control ENTERO dentro
-     * de la vista (el centro se limita a [mitad, tamaño - mitad]).
-     * Por eso lo que se ve en el editor es lo que aparece en el
-     * juego, al mismo tamaño y en la misma posición relativa: la
-     * única diferencia es que la vista previa es más pequeña que la
-     * pantalla real. Si la fórmula del editor cambia, este test
-     * (TouchOverlayMappingTest.controlRectMatchesEditorPreview) debe
-     * actualizarse a la vez; si esta cambia, igual.
+     * R4-P1-1: las fracciones x/y son fracciones del RECT DEL JUEGO
+     * 960x544 ([gameRect]), NO de la ventana completa. Antes se
+     * multiplicaban por el ancho/alto de la ventana y, con el juego
+     * pillarboxed, un botón en 0.87 de ventana caía en 0.959 del
+     * juego, con parte del botón sobre la barra negra. Ahora el
+     * centro es (gameLeft + xFraction * gameW, gameTop + yFraction
+     * * gameH) y el control ENTERO queda dentro del rect del juego
+     * (el centro se limita a [mitad, tamaño - mitad] del rect).
+     *
+     * Coherencia con el editor (ui/TouchLayoutScreen.kt): la
+     * fracción significa lo mismo en el juego y en la vista previa
+     * SOLO si la previa tiene el mismo aspecto 16:9 que el juego.
+     * Hoy la previa es fillMaxWidth x 200/300 dp (no 16:9), así que
+     * el mismo valor numérico se ve con otro espaciado en el
+     * editor que en el juego; eso lo arregla la previa 16:9 real
+     * (R4-P1-4, fuera de este lote) y no se toca aquí.
      */
-    fun controlRect(control: TouchControl, viewWidthPx: Float, viewHeightPx: Float, density: Float): ControlRect {
+    fun controlRect(control: TouchControl, viewWidthPx: Float, viewHeightPx: Float, density: Float): ControlRect =
+        controlRectInGameRect(control, gameRect(viewWidthPx, viewHeightPx), density)
+
+    /**
+     * Rectángulo en píxeles de un control dentro del rect del juego
+     * [gameRect] (densidad [density]). Es la misma matemática que
+     * [controlRect], con el rect ya calculado: útil para tests y
+     * para no recalcular el rect por control.
+     */
+    fun controlRectInGameRect(control: TouchControl, gameRect: GameRect, density: Float): ControlRect {
         val sizePx = control.sizeDp * density
         val half = sizePx / 2f
-        val left = (control.xFraction * viewWidthPx - half)
-            .coerceIn(0f, (viewWidthPx - sizePx).coerceAtLeast(0f))
-        val top = (control.yFraction * viewHeightPx - half)
-            .coerceIn(0f, (viewHeightPx - sizePx).coerceAtLeast(0f))
+        val left = (gameRect.left + control.xFraction * gameRect.width() - half)
+            .coerceIn(gameRect.left, (gameRect.right - sizePx).coerceAtLeast(gameRect.left))
+        val top = (gameRect.top + control.yFraction * gameRect.height() - half)
+            .coerceIn(gameRect.top, (gameRect.bottom - sizePx).coerceAtLeast(gameRect.top))
         return ControlRect(left, top, left + sizePx, top + sizePx)
     }
 

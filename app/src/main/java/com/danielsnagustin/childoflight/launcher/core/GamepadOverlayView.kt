@@ -15,8 +15,10 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
+import com.danielsnagustin.childoflight.launcher.core.FaceGlyph
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.controlRect
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.dpadForStick
+import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.faceGlyphFor
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.stickAxes
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.stickAxesFor
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.toSdlButton
@@ -48,13 +50,14 @@ import kotlin.math.sqrt
  * SDL como toques sintéticos (P1-12).
  *
  * Dibujo: LA MISMA MATEMÁTICA que la vista previa del editor
- * (TouchOverlayMapping.controlRect): posición por fracción, tamaño en
- * dp, opacidad por botón multiplicada por la opacidad general. El
- * estilo es cristal premium (degradado radial, borde luminoso azul
- * hielo, ornamentos florales, icono del botón en vez de letra,
- * brillo turquesa al pulsar): la vista previa del editor sigue
- * siendo esquemática y no refleja este estilo, solo la posición y
- * el tamaño.
+ * (TouchOverlayMapping.controlRect): posición por fracción DEL RECT
+ * DEL JUEGO 960x544 (R4-P1-1), tamaño en dp, opacidad por botón
+ * multiplicada por la opacidad general. El estilo es cristal
+ * premium (degradado radial, borde luminoso azul hielo, ornamentos
+ * florales, glifo PlayStation del botón — X, círculo, cuadrado,
+ * triángulo —, brillo turquesa al pulsar): la vista previa del
+ * editor sigue siendo esquemática y no refleja este estilo, solo
+ * la posición y el tamaño.
  *
  * Entrada: cada botón manda su botón SDL al mando virtual del núcleo
  * (Vita3kCoreBridge.overlaySetButton) y cada stick sus ejes
@@ -184,7 +187,7 @@ class GamepadOverlayView @JvmOverloads constructor(
      * OverlayControlView.
      */
     private enum class IconKind {
-        ARROW_UP, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, SWORD, SPIRAL, STAR, PAUSE, IGNICULUS
+        ARROW_UP, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, GLYPH_CROSS, GLYPH_CIRCLE, GLYPH_SQUARE, GLYPH_TRIANGLE, PAUSE, IGNICULUS
     }
 
     private abstract inner class OverlayControlView(
@@ -322,18 +325,30 @@ class GamepadOverlayView @JvmOverloads constructor(
             }
         }
 
-        /** Icono del botón según su VitaButton. null = sin icono: se dibuja la etiqueta en plata. */
-        protected fun iconFor(button: VitaButton): IconKind? = when (button) {
-            VitaButton.CROSS -> IconKind.ARROW_UP
-            VitaButton.SQUARE -> IconKind.SWORD
-            VitaButton.CIRCLE -> IconKind.SPIRAL
-            VitaButton.TRIANGLE -> IconKind.STAR
-            VitaButton.START -> IconKind.PAUSE
-            VitaButton.DPAD_UP -> IconKind.ARROW_UP
-            VitaButton.DPAD_DOWN -> IconKind.ARROW_DOWN
-            VitaButton.DPAD_LEFT -> IconKind.ARROW_LEFT
-            VitaButton.DPAD_RIGHT -> IconKind.ARROW_RIGHT
-            else -> null
+        /**
+         * Icono del botón según su VitaButton. null = sin icono: se dibuja la etiqueta en plata.
+         * R4-P0-2: los 4 botones de cara llevan su glifo PlayStation
+         * (X, círculo, cuadrado, triángulo) en vez de iconos
+         * temáticos. CROSS ya no comparte icono con DPAD_UP: CROSS
+         * es GLYPH_CROSS y DPAD_UP sigue siendo ARROW_UP. El D-Pad
+         * sigue con flechas y START con barras de pausa.
+         */
+        protected fun iconFor(button: VitaButton): IconKind? {
+            when (faceGlyphFor(button)) {
+                FaceGlyph.CROSS -> return IconKind.GLYPH_CROSS
+                FaceGlyph.CIRCLE -> return IconKind.GLYPH_CIRCLE
+                FaceGlyph.SQUARE -> return IconKind.GLYPH_SQUARE
+                FaceGlyph.TRIANGLE -> return IconKind.GLYPH_TRIANGLE
+                null -> { }
+            }
+            return when (button) {
+                VitaButton.START -> IconKind.PAUSE
+                VitaButton.DPAD_UP -> IconKind.ARROW_UP
+                VitaButton.DPAD_DOWN -> IconKind.ARROW_DOWN
+                VitaButton.DPAD_LEFT -> IconKind.ARROW_LEFT
+                VitaButton.DPAD_RIGHT -> IconKind.ARROW_RIGHT
+                else -> null
+            }
         }
 
         /** Dibuja el icono centrado en (cx, cy) con radio r. La escala crece un poco al pulsar. */
@@ -346,9 +361,10 @@ class GamepadOverlayView @JvmOverloads constructor(
                 IconKind.ARROW_DOWN -> drawArrowIcon(canvas, cx, cy, rr, 180f)
                 IconKind.ARROW_LEFT -> drawArrowIcon(canvas, cx, cy, rr, -90f)
                 IconKind.ARROW_RIGHT -> drawArrowIcon(canvas, cx, cy, rr, 90f)
-                IconKind.SWORD -> drawSwordIcon(canvas, cx, cy, rr)
-                IconKind.SPIRAL -> drawSpiralIcon(canvas, cx, cy, rr)
-                IconKind.STAR -> drawStarIcon(canvas, cx, cy, rr)
+                IconKind.GLYPH_CROSS -> drawGlyphCross(canvas, cx, cy, rr)
+                IconKind.GLYPH_CIRCLE -> drawGlyphCircle(canvas, cx, cy, rr)
+                IconKind.GLYPH_SQUARE -> drawGlyphSquare(canvas, cx, cy, rr)
+                IconKind.GLYPH_TRIANGLE -> drawGlyphTriangle(canvas, cx, cy, rr)
                 IconKind.PAUSE -> drawPauseIcon(canvas, cx, cy, rr)
                 IconKind.IGNICULUS -> drawIgniculusIcon(canvas, cx, cy, rr, alpha)
             }
@@ -371,39 +387,39 @@ class GamepadOverlayView @JvmOverloads constructor(
             canvas.restore()
         }
 
-        private fun drawSwordIcon(canvas: Canvas, cx: Float, cy: Float, r: Float) {
+        /**
+         * Glifos PlayStation dibujados como formas (no como texto:
+         * no dependen de la fuente del sistema). R4-P0-2: son los
+         * símbolos que el jugador busca — X para confirmar, círculo
+         * para atrás — en vez de iconos temáticos.
+         */
+        private fun drawGlyphCross(canvas: Canvas, cx: Float, cy: Float, r: Float) {
             iconStrokePaint.strokeWidth = 0.13f * r
-            // Hoja: diagonal de abajo-izquierda a arriba-derecha.
-            canvas.drawLine(cx - 0.30f * r, cy + 0.30f * r, cx + 0.42f * r, cy - 0.42f * r, iconStrokePaint)
-            // Guarda: perpendicular a la hoja.
-            iconStrokePaint.strokeWidth = 0.10f * r
-            canvas.drawLine(cx - 0.42f * r, cy + 0.12f * r, cx - 0.12f * r, cy + 0.42f * r, iconStrokePaint)
-            // Empuñadura.
-            canvas.drawLine(cx - 0.30f * r, cy + 0.30f * r, cx - 0.48f * r, cy + 0.48f * r, iconStrokePaint)
-            // Destello en la punta.
-            drawStarIcon(canvas, cx + 0.48f * r, cy - 0.48f * r, r * 0.22f)
+            val a = 0.42f * r
+            canvas.drawLine(cx - a, cy - a, cx + a, cy + a, iconStrokePaint)
+            canvas.drawLine(cx - a, cy + a, cx + a, cy - a, iconStrokePaint)
         }
 
-        private fun drawSpiralIcon(canvas: Canvas, cx: Float, cy: Float, r: Float) {
-            iconStrokePaint.strokeWidth = 0.09f * r
-            for (i in 0..2) {
-                val inset = r * (0.15f + i * 0.22f)
-                val rect = RectF(cx - r + inset, cy - r + inset, cx + r - inset, cy + r - inset)
-                canvas.drawArc(rect, i * 40f, 250f, false, iconStrokePaint)
-            }
-            canvas.drawCircle(cx, cy, r * 0.10f, iconPaint)
+        private fun drawGlyphCircle(canvas: Canvas, cx: Float, cy: Float, r: Float) {
+            iconStrokePaint.strokeWidth = 0.12f * r
+            canvas.drawCircle(cx, cy, 0.45f * r, iconStrokePaint)
         }
 
-        private fun drawStarIcon(canvas: Canvas, cx: Float, cy: Float, r: Float) {
+        private fun drawGlyphSquare(canvas: Canvas, cx: Float, cy: Float, r: Float) {
+            iconStrokePaint.strokeWidth = 0.12f * r
+            val a = 0.42f * r
+            canvas.drawRoundRect(RectF(cx - a, cy - a, cx + a, cy + a), 0.08f * r, 0.08f * r, iconStrokePaint)
+        }
+
+        private fun drawGlyphTriangle(canvas: Canvas, cx: Float, cy: Float, r: Float) {
+            iconStrokePaint.strokeWidth = 0.12f * r
             val path = Path().apply {
-                moveTo(cx, cy - r)
-                quadTo(cx + 0.10f * r, cy - 0.10f * r, cx + r, cy)
-                quadTo(cx + 0.10f * r, cy + 0.10f * r, cx, cy + r)
-                quadTo(cx - 0.10f * r, cy + 0.10f * r, cx - r, cy)
-                quadTo(cx - 0.10f * r, cy - 0.10f * r, cx, cy - r)
+                moveTo(cx, cy - 0.48f * r)
+                lineTo(cx + 0.45f * r, cy + 0.36f * r)
+                lineTo(cx - 0.45f * r, cy + 0.36f * r)
                 close()
             }
-            canvas.drawPath(path, iconPaint)
+            canvas.drawPath(path, iconStrokePaint)
         }
 
         private fun drawPauseIcon(canvas: Canvas, cx: Float, cy: Float, r: Float) {

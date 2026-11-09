@@ -124,6 +124,20 @@ class EmbeddedGameActivity : SDLActivity() {
          */
         const val BENCHMARK_START_MARGIN_MS = 5_000L
 
+        /**
+         * R4-P0-3: intentos de re-crear el mando virtual en on_launch
+         * (detach + attach + verificación), con 500 ms entre intentos.
+         */
+        private const val OVERLAY_REBIND_MAX_ATTEMPTS = 3
+        private const val OVERLAY_REBIND_RETRY_DELAY_MS = 500L
+        /**
+         * R4-P0-4: intentos de quitar la pausa de fondo, con 500 ms
+         * entre intentos (el núcleo descarta el clear si la fase aún
+         * no es Running).
+         */
+        private const val PAUSE_CLEAR_MAX_ATTEMPTS = 3
+        private const val PAUSE_CLEAR_RETRY_DELAY_MS = 500L
+
         fun createLaunchIntent(context: Context, titleId: String, gameTitle: String, benchmark: Boolean = false): Intent {
             return Intent(context, EmbeddedGameActivity::class.java).apply {
                 putExtra(EXTRA_TITLE_ID, titleId)
@@ -367,8 +381,22 @@ class EmbeddedGameActivity : SDLActivity() {
      * (false): es lo que usa Child of Light para Igniculus.
      */
     private fun maybeAttachOverlayController() {
-        if (!overlayShouldShow || overlayAttached) return
-        if (!Vita3kCoreBridge.isAppRunning()) return
+        // R4-P1-2: cada early-return deja su motivo en el log. Antes
+        // el primer intento (en onCreate, sin partida en curso) se
+        // saltaba en silencio y el reporte no distinguía "no se
+        // intentó" de "se intentó y falló".
+        if (!overlayShouldShow) {
+            LauncherLog.append(this, "overlay", "attach omitido: overlay oculto por ajustes")
+            return
+        }
+        if (overlayAttached) {
+            LauncherLog.append(this, "overlay", "attach omitido: mando virtual ya activo; el rebind solo ocurre al arrancar el juego (on_launch)")
+            return
+        }
+        if (!Vita3kCoreBridge.isAppRunning()) {
+            LauncherLog.append(this, "overlay", "attach omitido: sin partida en curso; se reintentará al arrancar el juego")
+            return
+        }
         if (!Vita3kCoreBridge.overlayAttach()) {
             LauncherLog.append(this, "overlay", "attach del mando virtual falló (sin núcleo o sin SDL)")
             return
@@ -389,6 +417,67 @@ class EmbeddedGameActivity : SDLActivity() {
     }
 
     /**
+     * R4-P0-3 + R4-P0-4 (on_launch): el juego arrancó (hook
+     * on_launch): SDL está arriba y la sesión activa. Se re-carga el
+     * perfil táctil, se RE-CREA el mando virtual (el attach previo
+     * pudo ocurrir antes de que el núcleo pudiera registrarlo) y se
+     * quita la pausa de fondo con verificación (el clear de onResume
+     * pudo descartarse durante la carga). Una sola corrutina para que
+     * el rebind corra DESPUÉS de que el refresco decida si el overlay
+     * se muestra (overlayShouldShow fresco).
+     */
+    private fun refreshOverlayRebindAndUnpauseOnLaunch() {
+        overlayScope.launch {
+            refreshOverlayState()
+            rebindOverlayControllerOnLaunch()
+            clearBackgroundPauseNow("on_launch")
+        }
+    }
+
+    /**
+     * R4-P0-3: re-crea el mando virtual del overlay al arrancar el
+     * juego. Espejo de rebindController del oficial (releaseAllInputs
+     * + detachVirtualController + updateVirtualControllerState):
+     * soltar lo pulsado, soltar el mando, crearlo de nuevo y verificar
+     * que existe en SDL. Sin esto, un attach anterior a on_launch
+     * (p. ej. en un onResume durante la carga) dejaba overlayAttached
+     * en true y maybeAttach no hacía nada, aunque el núcleo nunca
+     * hubiera registrado el mando en state.controllers. 3 intentos
+     * con 500 ms entre ellos; cada intento queda en el log.
+     */
+    private suspend fun rebindOverlayControllerOnLaunch() {
+        if (!Vita3kCoreBridge.available) return
+        if (!overlayShouldShow) {
+            LauncherLog.append(this, "overlay", "on_launch: overlay oculto por ajustes; no se re-crea el mando virtual")
+            return
+        }
+        // Soltar lo pulsado ANTES de soltar el mando (releaseAllInputs
+        // del oficial): cada botón envía su "soltado" al mando viejo,
+        // aún activo, y ningún botón queda atascado en el mando nuevo.
+        overlayView?.releaseAll()
+        var attached = false
+        for (attempt in 1..OVERLAY_REBIND_MAX_ATTEMPTS) {
+            overlayAttached = false
+            Vita3kCoreBridge.overlayDetach()
+            val attachOk = Vita3kCoreBridge.overlayAttach()
+            val existsInSdl = Vita3kCoreBridge.overlayIsAttached()
+            if (attachOk && existsInSdl) {
+                overlayAttached = true
+                Vita3kCoreBridge.overlaySetTouchState(false)
+                LauncherLog.append(this, "overlay", "on_launch: mando virtual re-creado (intento $attempt/$OVERLAY_REBIND_MAX_ATTEMPTS)")
+                attached = true
+                break
+            }
+            val retryNote = if (attempt < OVERLAY_REBIND_MAX_ATTEMPTS) "; reintentando en 500 ms" else ""
+            LauncherLog.append(this, "overlay", "on_launch: rebind intento $attempt/$OVERLAY_REBIND_MAX_ATTEMPTS falló (attach=$attachOk, existeEnSdl=$existsInSdl)$retryNote")
+            if (attempt < OVERLAY_REBIND_MAX_ATTEMPTS) delay(OVERLAY_REBIND_RETRY_DELAY_MS)
+        }
+        if (!attached) {
+            LauncherLog.append(this, "overlay", "on_launch: no se pudo re-crear el mando virtual tras $OVERLAY_REBIND_MAX_ATTEMPTS intentos; los botones táctiles no llegarán al juego")
+        }
+    }
+
+    /**
      * P1-14 (ronda 3): si el mando virtual deja de existir a mitad de
      * partida (el núcleo lo suelta, se recrea la sesión), cada pulsación
      * devolvía false y se descartaba en silencio: los botones morían
@@ -400,20 +489,53 @@ class EmbeddedGameActivity : SDLActivity() {
      */
     private var lastOverlayLostToastMillis: Long = 0L
 
+    /**
+     * R4-P1-2: cada pulsación queda contada (éxito/fracaso) en
+     * OverlayInputStats — el reporte de bug la lee — y el éxito deja
+     * una línea de depuración con throttle (como mucho una por botón
+     * y segundo). El fracaso nunca se throttlea: la línea "perdido"
+     * sale siempre.
+     */
     private fun forwardOverlayButton(sdlButton: Int, pressed: Boolean) {
-        if (Vita3kCoreBridge.overlaySetButton(sdlButton, pressed)) return
-        if (!recoverOverlayController()) return
-        if (!Vita3kCoreBridge.overlaySetButton(sdlButton, pressed)) {
-            LauncherLog.append(this, "overlay", "botón $sdlButton perdido tras reintentar el attach")
+        if (Vita3kCoreBridge.overlaySetButton(sdlButton, pressed)) {
+            if (OverlayInputStats.recordButton(sdlButton, pressed, delivered = true)) {
+                LauncherLog.append(this, "overlay", "botón SDL $sdlButton pressed=$pressed")
+            }
+            return
         }
+        if (!recoverOverlayController()) {
+            OverlayInputStats.recordButton(sdlButton, pressed, delivered = false)
+            return
+        }
+        if (Vita3kCoreBridge.overlaySetButton(sdlButton, pressed)) {
+            if (OverlayInputStats.recordButton(sdlButton, pressed, delivered = true)) {
+                LauncherLog.append(this, "overlay", "botón SDL $sdlButton pressed=$pressed (tras reintentar el attach)")
+            }
+            return
+        }
+        OverlayInputStats.recordButton(sdlButton, pressed, delivered = false)
+        LauncherLog.append(this, "overlay", "botón $sdlButton perdido tras reintentar el attach")
     }
 
     private fun forwardOverlayAxis(sdlAxis: Int, value: Short) {
-        if (Vita3kCoreBridge.overlaySetAxis(sdlAxis, value)) return
-        if (!recoverOverlayController()) return
-        if (!Vita3kCoreBridge.overlaySetAxis(sdlAxis, value)) {
-            LauncherLog.append(this, "overlay", "eje $sdlAxis perdido tras reintentar el attach")
+        if (Vita3kCoreBridge.overlaySetAxis(sdlAxis, value)) {
+            if (OverlayInputStats.recordAxis(sdlAxis, value, delivered = true)) {
+                LauncherLog.append(this, "overlay", "eje SDL $sdlAxis valor=$value")
+            }
+            return
         }
+        if (!recoverOverlayController()) {
+            OverlayInputStats.recordAxis(sdlAxis, value, delivered = false)
+            return
+        }
+        if (Vita3kCoreBridge.overlaySetAxis(sdlAxis, value)) {
+            if (OverlayInputStats.recordAxis(sdlAxis, value, delivered = true)) {
+                LauncherLog.append(this, "overlay", "eje SDL $sdlAxis valor=$value (tras reintentar el attach)")
+            }
+            return
+        }
+        OverlayInputStats.recordAxis(sdlAxis, value, delivered = false)
+        LauncherLog.append(this, "overlay", "eje $sdlAxis perdido tras reintentar el attach")
     }
 
     /** Marca el mando como perdido y reintenta el attach. Devuelve true si el mando vuelve a existir. */
@@ -448,12 +570,13 @@ class EmbeddedGameActivity : SDLActivity() {
         // o del menú de pausa; MainActivity lo comprueba para no
         // cerrar la medición de tiempo en esos casos.
         GameActivityState.gameActivityAlive = true
-        runCatching {
-            Vita3kCoreBridge.setPauseReasonEnabled(
-                Vita3kCoreBridge.PAUSE_REASON_BACKGROUND,
-                false,
-            )
-        }
+        // R4-P0-4: quitar la pausa de fondo CON verificación (antes se
+        // ignoraba el Boolean de setPauseReasonEnabled: el núcleo
+        // descarta el clear si la fase aún no es Running y el juego
+        // quedaba sordo a los botones). Si sigue pausado, se reintenta
+        // con pausa y se registra; el reintento definitivo ocurre en
+        // on_launch (setCurrentGameId).
+        clearBackgroundPause("onResume")
         refreshOverlay()
         applyPerformanceScreenFlag()
         maybeStartBenchmarkSampling()
@@ -475,6 +598,59 @@ class EmbeddedGameActivity : SDLActivity() {
                 Vita3kCoreBridge.PAUSE_REASON_BACKGROUND,
                 true,
             )
+        }
+    }
+
+    /**
+     * R4-P0-4: quita la pausa de fondo CON verificación. El núcleo
+     * descarta el clear si la fase aún no es Running
+     * (session_controller.cpp: set_pause_reason devuelve false sin
+     * tocar nada), así que un clear sin verificar deja el juego
+     * sordo a los botones (drop_inputs) con imagen y sonido intactos.
+     * Lanza la corrutina que hace los intentos; el primer intento
+     * corre en el acto (Main.immediate, ya en el hilo UI).
+     */
+    private fun clearBackgroundPause(tag: String) {
+        overlayScope.launch { clearBackgroundPauseNow(tag) }
+    }
+
+    /**
+     * R4-P0-4: intentos de quitar la pausa de fondo con verificación
+     * (isAppPaused()==false). Si no hay nada que quitar, silencio:
+     * onResume corre a cada vuelta a primer plano y no se ensucia el
+     * log. Si el clear se rechaza (fase distinta de Running), se
+     * reintenta hasta 3 veces con 500 ms; si el juego sigue pausado
+     * por OTRO motivo (usuario/menú), se registra y no se toca ese
+     * motivo: no pertenece a este camino.
+     */
+    private suspend fun clearBackgroundPauseNow(tag: String) {
+        if (!Vita3kCoreBridge.available) return
+        if (!Vita3kCoreBridge.isAppPaused()) return
+        for (attempt in 1..PAUSE_CLEAR_MAX_ATTEMPTS) {
+            val setOk = runCatching {
+                Vita3kCoreBridge.setPauseReasonEnabled(
+                    Vita3kCoreBridge.PAUSE_REASON_BACKGROUND,
+                    false,
+                )
+            }.getOrDefault(false)
+            val stillPaused = Vita3kCoreBridge.isAppPaused()
+            when (decidePauseClearAttempt(setOk, stillPaused, attempt, PAUSE_CLEAR_MAX_ATTEMPTS)) {
+                PauseClearOutcome.CLEARED -> {
+                    LauncherLog.append(this, "pause", "[$tag] pausa de fondo quitada (intento $attempt/$PAUSE_CLEAR_MAX_ATTEMPTS)")
+                    return
+                }
+                PauseClearOutcome.STILL_PAUSED_OTHER_REASON -> {
+                    LauncherLog.append(this, "pause", "[$tag] pausa de fondo quitada, pero el juego sigue pausado por otro motivo (usuario/menú); no se toca ese motivo")
+                    return
+                }
+                PauseClearOutcome.CLEAR_REJECTED_RETRY -> {
+                    LauncherLog.append(this, "pause", "[$tag] el núcleo rechazó quitar la pausa de fondo (intento $attempt/$PAUSE_CLEAR_MAX_ATTEMPTS, fase distinta de Running); reintentando en 500 ms")
+                    delay(PAUSE_CLEAR_RETRY_DELAY_MS)
+                }
+                PauseClearOutcome.CLEAR_REJECTED_FAILED -> {
+                    LauncherLog.append(this, "pause", "[$tag] no se pudo quitar la pausa de fondo tras $PAUSE_CLEAR_MAX_ATTEMPTS intentos (fase distinta de Running); el juego puede quedar sordo a los botones hasta el próximo arranque")
+                }
+            }
         }
     }
 
@@ -603,8 +779,13 @@ class EmbeddedGameActivity : SDLActivity() {
             // El juego arrancó: SDL está arriba y la sesión activa, así
             // que es el momento de crear el mando virtual del overlay
             // (antes, attach no crea nada). También re-carga el perfil
-            // por si cambió desde el último lanzamiento.
-            refreshOverlay()
+            // por si cambió desde el último lanzamiento. R4-P0-3: el
+            // attach normal no basta si el mando ya se creó antes de
+            // on_launch: se RE-CREA (detach + attach + verificación,
+            // con reintentos). R4-P0-4: se quita la pausa de fondo con
+            // verificación (el clear de onResume pudo descartarse
+            // durante la carga).
+            refreshOverlayRebindAndUnpauseOnLaunch()
         }
     }
 

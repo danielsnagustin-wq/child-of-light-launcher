@@ -435,6 +435,25 @@ object Vita3kCoreBridge {
     }
 
     /**
+     * Número de gamepads que ve SDL en este momento (R4-P0-3: readback
+     * real para el reporte de bug). -1 = sin dato: sin núcleo, sin
+     * SDL gamepad iniciado, o la función nativa aún no existe en el
+     * puente C++ (el C++ usa SDL_GetGamepads, igual que
+     * overlay_is_attached() en input_overlay_bridge.cpp). Un 0 con el
+     * juego en curso significa que SDL no ve ningún mando; si el
+     * mando virtual del overlay existe se comprueba aparte con
+     * overlayIsAttached().
+     */
+    fun overlayGamepadCount(): Int {
+        if (!available) return -1
+        return try {
+            nativeOverlayGamepadCount()
+        } catch (_: UnsatisfiedLinkError) {
+            -1
+        }
+    }
+
+    /**
      * Pulsa/suelta un botón SDL del mando virtual (ver TouchOverlayMapping).
      * Devuelve false si el mando virtual no existe en SDL (P2-B11):
      * en ese caso el botón no llegó al juego y hay que reintentar el
@@ -544,6 +563,7 @@ object Vita3kCoreBridge {
     private external fun nativeOverlayAttach(): Boolean
     private external fun nativeOverlayDetach(): Boolean
     private external fun nativeOverlayIsAttached(): Boolean
+    private external fun nativeOverlayGamepadCount(): Int
     private external fun nativeOverlaySetButton(sdlButton: Int, pressed: Boolean): Boolean
     private external fun nativeOverlaySetAxis(sdlAxis: Int, value: Short): Boolean
     private external fun nativeOverlaySetTouchState(isBack: Boolean): Boolean
