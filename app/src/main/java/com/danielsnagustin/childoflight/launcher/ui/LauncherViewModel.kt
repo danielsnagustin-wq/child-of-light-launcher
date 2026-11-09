@@ -1035,7 +1035,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun importGame(uri: Uri, force: Boolean = false) = importWith(uri, "GAME") { name -> library.importGame(uri, name, force) }
+    fun importGame(uri: Uri, force: Boolean = false) = importWith(uri, "GAME", { name -> library.importGame(uri, name, force) })
     fun importDlc(uri: Uri, force: Boolean = false) =
         importWith(uri, "DLC", { name -> library.importDlc(uri, name, force) }, ::installImportedPkg)
 

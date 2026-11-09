@@ -190,7 +190,7 @@ class TouchLayoutRepository(private val context: Context) {
     }
 
     suspend fun save(layout: List<TouchControl>): Boolean {
-        mutationMutex.withLock { saveLocked(layout) }
+        return mutationMutex.withLock { saveLocked(layout) }
     }
 
     /**
@@ -245,7 +245,7 @@ class TouchLayoutRepository(private val context: Context) {
     }
 
     private suspend fun setActiveProfileLocked(id: String): Boolean {
-        safeEdit("perfil activo") { prefs -> prefs[Keys.ACTIVE_PROFILE] = id }
+        return safeEdit("perfil activo") { prefs -> prefs[Keys.ACTIVE_PROFILE] = id }
     }
 
     suspend fun reset() {
@@ -352,7 +352,7 @@ class TouchLayoutRepository(private val context: Context) {
     }
 
     private suspend fun saveProfiles(profiles: List<ControlProfile>): Boolean {
-        safeEdit("perfiles de controles") { prefs ->
+        return safeEdit("perfiles de controles") { prefs ->
             prefs[Keys.PROFILES] = profiles.joinToString("\n###\n") { encodeProfile(it) }
         }
     }

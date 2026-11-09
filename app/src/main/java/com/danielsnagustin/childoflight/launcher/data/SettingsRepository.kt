@@ -206,7 +206,7 @@ class SettingsRepository(private val context: Context) {
 
     /** Guarda el estado completo. La UI siempre pasa el estado actual modificado. */
     suspend fun save(settings: LauncherSettings): Boolean {
-        safeEdit("ajustes") { p ->
+        return safeEdit("ajustes") { p ->
             p[Keys.BACKEND] = settings.backend.name
             // M22: mismo clamp que en lectura, antes de escribir.
             p[Keys.RESOLUTION] = clampResolution(settings.resolutionMultiplier)
@@ -325,7 +325,7 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun saveGpuInfo(gpu: GpuInfo): Boolean {
-        safeEdit("info GPU") { p ->
+        return safeEdit("info GPU") { p ->
             p[Keys.GPU_DETECTED] = true
             p[Keys.GPU_VENDOR] = gpu.vendor.name
             p[Keys.GPU_RENDERER] = gpu.renderer
@@ -339,7 +339,7 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun recordBenchmark(run: BenchmarkRun): Boolean {
-        safeEdit("benchmarks") { p ->
+        return safeEdit("benchmarks") { p ->
             val existing = decodeBenchmarks(p[Keys.BENCHMARKS] ?: "")
             val updated = (listOf(run) + existing).take(5)
             p[Keys.BENCHMARKS] = updated.joinToString(";;") { encodeBenchmark(it) }
@@ -351,7 +351,7 @@ class SettingsRepository(private val context: Context) {
      * 30 s. Lo escribe EmbeddedGameActivity al salir del juego.
      */
     suspend fun saveAutoBenchmarkFps(fps: Float): Boolean {
-        safeEdit("fps automático") { p ->
+        return safeEdit("fps automático") { p ->
             p[Keys.BENCHMARK_AUTO_FPS] = fps
             p[Keys.BENCHMARK_AUTO_FPS_AT] = System.currentTimeMillis()
         }

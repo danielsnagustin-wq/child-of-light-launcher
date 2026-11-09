@@ -92,7 +92,7 @@ class UiPreferencesRepository(private val context: Context) {
     }
 
     suspend fun save(prefs: UiPreferences): Boolean {
-        safeEdit("preferencias de interfaz") { p ->
+        return safeEdit("preferencias de interfaz") { p ->
             p[Keys.THEME] = prefs.theme.name
             p[Keys.ACCENT] = prefs.accent.name
             p[Keys.BACKGROUND] = prefs.homeBackground.name
@@ -117,7 +117,7 @@ class UiPreferencesRepository(private val context: Context) {
      */
     suspend fun hideGpuPresets(profiles: Set<GpuProfileId>): Boolean {
         if (profiles.isEmpty()) return true
-        safeEdit("presets ocultos") { p ->
+        return safeEdit("presets ocultos") { p ->
             val current = decodeHiddenPresets(p[Keys.HIDDEN_PRESETS] ?: "")
             p[Keys.HIDDEN_PRESETS] = (current + profiles).joinToString(",") { it.name }
         }
