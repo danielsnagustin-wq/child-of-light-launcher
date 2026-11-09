@@ -45,6 +45,41 @@ object LauncherLog {
         }
     }
 
+    /**
+     * Cola del log NATIVO del núcleo (vita3k.log, Fase 2, 2026-11-09):
+     * el log del launcher no distingue si el juego sigue cargando
+     * (H1) o si el núcleo no presenta nada (H3); el log nativo sí
+     * ("Game started", errores del renderer, avisos de
+     * superficie/swapchain). Lee por BYTES (el log nativo puede pesar
+     * MB): RandomAccessFile, seek a max(0, len - 32 KB), descarta la
+     * primera línea parcial, takeLast(40). Puro sobre un File
+     * (testeable en JVM, patrón CrashDiagnosticsTest). Nunca lanza:
+     * si no existe o no se puede leer, devuelve el mensaje entre
+     * paréntesis. El reporte nunca debe fallar por esto.
+     */
+    fun readNativeLogTail(file: File, maxLines: Int = 40): String {
+        return try {
+            if (!file.isFile) return "(sin registro del núcleo todavía.)"
+            val bytes = java.io.RandomAccessFile(file, "r").use { raf ->
+                val len = raf.length()
+                val start = maxOf(0L, len - 32 * 1024)
+                raf.seek(start)
+                val buf = ByteArray((len - start).toInt())
+                raf.readFully(buf)
+                buf
+            }
+            val text = String(bytes, Charsets.UTF_8)
+            val lines = text.lines()
+            // La primera línea puede estar cortada por el seek: se
+            // descarta solo si empezamos a mitad del archivo.
+            val usable = if (bytes.size >= 32 * 1024 && lines.size > 1) lines.drop(1) else lines
+            val tail = usable.filter { it.isNotBlank() }.takeLast(maxLines)
+            if (tail.isEmpty()) "(sin registro del núcleo todavía.)" else tail.joinToString("\n")
+        } catch (_: Exception) {
+            "(sin registro del núcleo todavía.)"
+        }
+    }
+
     fun file(context: Context): File = logFile(context)
 
     /**

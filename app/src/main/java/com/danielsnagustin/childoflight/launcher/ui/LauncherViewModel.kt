@@ -70,6 +70,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -2719,6 +2720,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             }
             appendLine("--- Log del launcher (últimas líneas) ---")
             appendLine(recentLog)
+            // Fase 2 (2026-11-09): la cola del log NATIVO del núcleo.
+            // El log del launcher no distingue si el juego sigue
+            // cargando (H1) o si el núcleo no presenta nada (H3); el
+            // log nativo sí ("Game started", errores del renderer,
+            // avisos de superficie/swapchain). El archivo vive en
+            // <filesDir>/vita3k/vita3k.log, junto a launcher.log; el
+            // núcleo lo escribe siempre (pin util/src/logging.cpp).
+            // El .replace() de privacidad del final también cubre
+            // esta sección (las rutas del directorio privado).
+            appendLine("--- Log del núcleo (vita3k.log, últimas líneas) ---")
+            appendLine(LauncherLog.readNativeLogTail(File(library.vitaRoot, "vita3k.log")))
         }
         // Privacidad: el nombre del paquete no sale en el reporte
         // (ni en la cabecera ni en las rutas del log/config): se
