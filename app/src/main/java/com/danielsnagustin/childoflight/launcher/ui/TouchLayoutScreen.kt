@@ -280,6 +280,15 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             }
         }
         OutlinedButton(onClick = { vm.addTouchControl() }, modifier = Modifier.fillMaxWidth()) { Text("+ Añadir botón nuevo") }
+        // P1-13: el stick y la zona Igniculus se pueden borrar, pero
+        // antes no se podían volver a crear (solo se creaban botones).
+        // Se ofrecen aquí solo cuando faltan en el perfil activo.
+        if (layout.none { it.kind == "stick" }) {
+            OutlinedButton(onClick = { vm.restoreMissingTouchControl("stick") }, modifier = Modifier.fillMaxWidth()) { Text("+ Añadir stick") }
+        }
+        if (layout.none { it.kind == "igniculus" }) {
+            OutlinedButton(onClick = { vm.restoreMissingTouchControl("igniculus") }, modifier = Modifier.fillMaxWidth()) { Text("+ Añadir zona Igniculus") }
+        }
 
         // --- Editar el seleccionado ---
         selected?.let { control ->
@@ -376,7 +385,15 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
             title = { Text("¿Borrar el botón ${control.label}?") },
-            text = { Text("Desaparecerá del layout en juego y no estorbará. Puedes añadir otro botón nuevo después.") },
+            text = {
+                Text(
+                    if (control.kind == "stick" || control.kind == "igniculus") {
+                        "Desaparecerá del layout en juego y no estorbará. Puedes volver a añadirlo después con el botón \"+ Añadir stick\" o \"+ Añadir zona Igniculus\" de esta pantalla."
+                    } else {
+                        "Desaparecerá del layout en juego y no estorbará. Puedes añadir otro botón nuevo después."
+                    }
+                )
+            },
             confirmButton = {
                 TextButton(onClick = { vm.deleteTouchControl(control.id); deleteTarget = null }) { Text("Borrar") }
             },

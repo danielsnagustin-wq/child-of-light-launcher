@@ -2410,6 +2410,34 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /**
+     * P1-13 (ronda 3): repone el stick o la zona Igniculus en el perfil
+     * activo si faltan, con sus valores por defecto. Antes, borrar el
+     * stick o la zona era irreversible salvo restablecer todo el layout
+     * y perder los perfiles y posiciones: addTouchControl() solo creaba
+     * botones. Ahora la recuperación es un toque: el editor muestra el
+     * botón solo cuando falta ese kind.
+     */
+    fun restoreMissingTouchControl(kind: String) {
+        viewModelScope.launch {
+            val layout = touchRepo.layoutFlow.first()
+            if (layout.any { it.kind == kind }) {
+                _message.value = "Ya existe en este perfil."
+                return@launch
+            }
+            val defaults = com.danielsnagustin.childoflight.launcher.data.defaultTouchLayout()
+            val control = defaults.firstOrNull { it.kind == kind }
+            if (control == null) {
+                _message.value = "No hay un control por defecto para ese tipo."
+                return@launch
+            }
+            touchRepo.addControl(control)
+            val what = if (kind == "stick") "Stick" else "Zona Igniculus"
+            _message.value = "$what añadido con sus valores por defecto. Muévelo y ajústalo."
+            LauncherLog.append(context, "touch", "$what repuesto en el perfil activo (P1-13)")
+        }
+    }
+
     fun setActiveControlProfile(id: String) {
         viewModelScope.launch {
             touchRepo.setActiveProfile(id)
