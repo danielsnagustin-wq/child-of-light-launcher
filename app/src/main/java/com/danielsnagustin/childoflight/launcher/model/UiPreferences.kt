@@ -80,7 +80,7 @@ enum class IconSize(val label: String, val sizeDp: Int) {
 /** Secciones de la pantalla principal, en el orden que elija el usuario. */
 enum class HomeSection(val label: String) {
     GAME_CARD("Tarjeta del juego"),
-    GPU_CARD("Tarjeta GPU"),
+    LOGROS_CARD("Tarjeta Logros"),
 }
 
 data class UiPreferences(

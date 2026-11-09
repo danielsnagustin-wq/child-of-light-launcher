@@ -12,6 +12,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -58,6 +59,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.model.CardSize
 import com.danielsnagustin.childoflight.launcher.model.CardTransparency
+import com.danielsnagustin.childoflight.launcher.model.ThemeMode
+import com.danielsnagustin.childoflight.launcher.model.UiPreferences
 import kotlinx.coroutines.delay
 
 /** Ancho máximo del contenido en pantallas grandes (tablet / horizontal): las tarjetas y botones no se estiran a todo el ancho. En teléfonos (< 720 dp) no hace nada. */
@@ -100,13 +103,67 @@ val ColCard = Color(0xFF232A44)
 val ColCardElevated = Color(0xFF1A2036)
 val ColMutedText = Color(0xFFB8C2D4)
 
+// Paleta clara (Tema Claro): fondo y tarjetas claras, texto oscuro.
+val ColBackgroundLight = Color(0xFFE9EFF6)
+val ColCardLight = Color(0xFFFFFFFF)
+val ColCardElevatedLight = Color(0xFFF1F5FA)
+val ColMutedTextLight = Color(0xFF54657E)
+val ColTextLight = Color(0xFF1B2436)
+
+/**
+ * Personalización que funciona (2026-11-09, 0.2.15): el acento y el
+ * tema elegidos por el usuario NO se veían en el inicio porque
+ * HomeScreen pintaba colores fijos (ColAccent/ColNight/ColCard) y el
+ * MaterialTheme solo tiñía los interruptores. Estos helpers son el
+ * único sitio donde se resuelven: el acento viene de UiPreferences
+ * (o azul hielo por defecto) y el tema sigue la misma regla que
+ * LauncherContent en MainActivity (Claro/Oscuro/Sistema).
+ */
+fun userAccent(uiPrefs: UiPreferences?): Color = try {
+    Color(android.graphics.Color.parseColor(uiPrefs?.accent?.hex ?: "#8CCBEB"))
+} catch (_: Exception) {
+    ColIceBlue
+}
+
+@Composable
+fun isDarkUi(uiPrefs: UiPreferences?): Boolean = when (uiPrefs?.theme) {
+    ThemeMode.LIGHT -> false
+    ThemeMode.DARK -> true
+    ThemeMode.SYSTEM, null -> isSystemInDarkTheme()
+}
+
+/** Texto secundario según el tema (legible en ambos fondos). */
+fun mutedTextColor(dark: Boolean): Color = if (dark) ColMutedText else ColMutedTextLight
+
+/** Texto principal sobre tarjeta según el tema. */
+fun cardTextColor(dark: Boolean): Color = if (dark) Color.White else ColTextLight
+
+/** Superficie de tarjeta según el tema. */
+fun cardColor(dark: Boolean): Color = if (dark) ColCard else ColCardLight
+
+/** Superficie elevada de tarjeta según el tema. */
+fun cardElevatedColor(dark: Boolean): Color = if (dark) ColCardElevated else ColCardElevatedLight
+
+/**
+ * Texto sobre el acento: oscuro si el acento es claro (azul hielo,
+ * lavanda, turquesa, plata), blanco si es oscuro (azul lavanda).
+ * Brillo simple 0.299/0.587/0.114; el umbral 0.6 deja blanco solo
+ * para el azul lavanda #6578B8.
+ */
+@Composable
+fun onAccentColor(accent: Color = MaterialTheme.colorScheme.primary): Color {
+    val lum = 0.299f * accent.red + 0.587f * accent.green + 0.114f * accent.blue
+    return if (lum > 0.6f) ColNight else Color.White
+}
+
 /** Fondo AMOLED #10131D (sustituye al negro puro #000000). */
 fun premiumBackgroundBrush(): Brush = Brush.verticalGradient(
     listOf(ColNight, ColNight),
 )
 
-/** Fondo de la Home: el tinte elegido por el usuario (casi negro) arriba → AMOLED #10131D abajo. */
-fun homeBackgroundBrush(baseHex: String?): Brush {
+/** Fondo de la Home: el tinte elegido por el usuario (casi negro) arriba → AMOLED #10131D abajo. En tema claro, fondo claro (los tintes guardados son oscuros). */
+fun homeBackgroundBrush(baseHex: String?, dark: Boolean): Brush {
+    if (!dark) return Brush.verticalGradient(listOf(ColBackgroundLight, Color(0xFFDCE8F5)))
     val base = try {
         Color(android.graphics.Color.parseColor(baseHex ?: "#10131D"))
     } catch (_: Exception) {
@@ -114,6 +171,8 @@ fun homeBackgroundBrush(baseHex: String?): Brush {
     }
     return Brush.verticalGradient(listOf(base, ColNight))
 }
+
+fun homeBackgroundBrush(baseHex: String?): Brush = homeBackgroundBrush(baseHex, true)
 
 /**
  * Tarjeta premium: superficie azul noche (#1A2036) con borde azul hielo sutil. Sin sombra: sobre #10131D no se ve.
@@ -130,7 +189,8 @@ fun PremiumCard(
     cardTransparency: CardTransparency = CardTransparency.OPAQUE,
     content: @Composable () -> Unit,
 ) {
-    val border = BorderStroke(1.dp, ColAccent.copy(alpha = 0.22f))
+    // Borde con el acento del usuario (0.2.15): antes ColAccent fijo.
+    val border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.22f))
     val shape = RoundedCornerShape(cardSize.cornerDp.dp)
     val containerColor = ColCardElevated.copy(alpha = cardTransparency.alpha)
     val innerPadding = cardSize.paddingDp.dp
@@ -246,7 +306,7 @@ fun PulsingText(text: String, color: Color, style: androidx.compose.ui.text.Text
     )
 }
 
-/** Botón principal azul hielo (solo para lo importante: JUGAR, acciones clave). */
+/** Botón principal (solo para lo importante: JUGAR, acciones clave). El color es el acento del usuario: LauncherContent ya pone el acento como primary del MaterialTheme, así que el botón lo lee de ahí (0.2.15; antes era ColAccent fijo y el acento no se veía). */
 @Composable
 fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -265,10 +325,10 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
         enabled = enabled,
         shape = RoundedCornerShape(16.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = ColAccent,
-            contentColor = ColNight,
-            disabledContainerColor = ColCard,
-            disabledContentColor = ColMutedText,
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = onAccentColor(),
+            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         ),
     ) {
         Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -276,9 +336,10 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
 }
 
 /**
- * Botón azul hielo con subtítulo (Fase 2, Ola 1): JUGAR con el Title ID
+ * Botón con subtítulo (Fase 2, Ola 1): JUGAR con el Title ID
  * y la resolución debajo, e icono vectorial a la izquierda. El icono
- * va en el botón, nunca en la cadena de texto.
+ * va en el botón, nunca en la cadena de texto. Color: el acento del
+ * usuario (0.2.15; antes ColAccent fijo).
  */
 @Composable
 fun PrimaryButtonWithSubtitle(
@@ -287,7 +348,7 @@ fun PrimaryButtonWithSubtitle(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    icon: @Composable () -> Unit = { PlayIcon(tint = ColNight) },
+    icon: @Composable () -> Unit = { PlayIcon(tint = onAccentColor()) },
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
@@ -305,10 +366,10 @@ fun PrimaryButtonWithSubtitle(
         enabled = enabled,
         shape = RoundedCornerShape(16.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = ColAccent,
-            contentColor = ColNight,
-            disabledContainerColor = ColCard,
-            disabledContentColor = ColMutedText,
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = onAccentColor(),
+            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         ),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -411,12 +472,12 @@ fun PrimaryProgressBar(progress: Float, modifier: Modifier = Modifier) {
     )
     Box(
         modifier = modifier.fillMaxWidth().height(8.dp)
-            .clip(RoundedCornerShape(4.dp)).background(ColCard),
+            .clip(RoundedCornerShape(4.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
     ) {
         if (animated > 0f) {
             Box(
                 modifier = Modifier.fillMaxWidth(animated).height(8.dp)
-                    .clip(RoundedCornerShape(4.dp)).background(ColAccent),
+                    .clip(RoundedCornerShape(4.dp)).background(MaterialTheme.colorScheme.primary),
             )
         }
     }
@@ -428,7 +489,7 @@ fun SectionTitle(text: String) {
         text = text,
         style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.Bold,
-        color = ColAccent,
+        color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
     )
 }

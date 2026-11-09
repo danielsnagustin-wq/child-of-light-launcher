@@ -116,7 +116,7 @@ fun HomeScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(homeBackgroundBrush(uiPrefs?.homeBackground?.hex)),
+            .background(homeBackgroundBrush(uiPrefs?.homeBackground?.hex, isDarkUi(uiPrefs))),
     ) {
         Column(
             modifier = Modifier
@@ -127,19 +127,19 @@ fun HomeScreen(
                 .align(Alignment.TopCenter),
             verticalArrangement = Arrangement.Top,
         ) {
-            // El orden de secciones lo elige el usuario (GAME_CARD / GPU_CARD).
+            // El orden de secciones lo elige el usuario (GAME_CARD / LOGROS_CARD).
             // Aparición progresiva: cada bloque entra con fundido + subida,
             // con ~90 ms entre ellos. Solo la primera vez por sesión. La
-            // tarjeta de Logros vive dentro de la sección GPU_CARD.
+            // tarjeta de Logros vive dentro de la sección LOGROS_CARD.
             val order = uiPrefs?.sectionOrder ?: HomeSection.entries.toList()
             order.forEach { section ->
                 when (section) {
                     HomeSection.GAME_CARD -> { FadeSlideIn(0, play = !introDone) { GameCard(vm, uiPrefs, strings, introDone, onNavigate) }; Spacer(modifier = Modifier.height(16.dp)) }
-                    HomeSection.GPU_CARD -> { FadeSlideIn(90, play = !introDone) { InfoRow(vm, uiPrefs, strings, onNavigate) }; Spacer(modifier = Modifier.height(8.dp)) }
+                    HomeSection.LOGROS_CARD -> { FadeSlideIn(90, play = !introDone) { InfoRow(vm, uiPrefs, strings, onNavigate) }; Spacer(modifier = Modifier.height(8.dp)) }
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
-            FadeSlideIn(180, play = !introDone) { AdvancedRow(strings, onNavigate, iconSize = uiPrefs?.iconSize ?: IconSize.MEDIUM) }
+            FadeSlideIn(180, play = !introDone) { AdvancedRow(strings, onNavigate, uiPrefs, iconSize = uiPrefs?.iconSize ?: IconSize.MEDIUM) }
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
@@ -160,6 +160,10 @@ private fun GameCard(
     // Deshabilitar JUGAR mientras hay un lanzamiento en curso (doble
     // toque = dos launch() a la vez); la guarda vive en el ViewModel.
     val launching by vm.launchingFlow.collectAsState()
+    // Personalización que funciona (0.2.15): el acento y el tema
+    // elegidos por el usuario; antes el inicio pintaba Col* fijos.
+    val dark = isDarkUi(uiPrefs)
+    val accent = userAccent(uiPrefs)
     // Progreso REAL de la instalación del .pkg en el núcleo (el
     // ViewModel lo alimenta en play() vía onInstallProgress): antes
     // Home nunca lo recogía y al pulsar JUGAR con solo .pkg el botón
@@ -209,14 +213,14 @@ private fun GameCard(
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
-                    // Luz ambiental muy sutil: tinte azul hielo al 8%
+                    // Luz ambiental muy sutil: tinte del acento al 8%
                     // arriba, que se desvanece. Sin animaciones infinitas.
                     Box(
                         modifier = Modifier.fillMaxSize()
                             .background(
                                 Brush.verticalGradient(
                                     listOf(
-                                        ColIceBlue.copy(alpha = 0.08f),
+                                        accent.copy(alpha = 0.08f),
                                         Color.Transparent,
                                         Color.Transparent,
                                     ),
@@ -253,7 +257,7 @@ private fun GameCard(
                     "⚠ ${strings.pendingImport}",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = ColAccent,
+                    color = accent,
                 )
             }
             Spacer(modifier = Modifier.height(16.dp))
@@ -271,7 +275,7 @@ private fun GameCard(
             // debajo del botón, con el % real del núcleo cuando lo hay.
             if (launching) {
                 Spacer(modifier = Modifier.height(12.dp))
-                LaunchProgressCard(installProgress)
+                LaunchProgressCard(installProgress, uiPrefs)
             }
         }
     }
@@ -284,11 +288,18 @@ private fun GameCard(
  * turquesa sobre #10131D, sin dorado.
  */
 @Composable
-private fun LaunchProgressCard(installProgress: InstallProgress?) {
+private fun LaunchProgressCard(
+    installProgress: InstallProgress?,
+    uiPrefs: com.danielsnagustin.childoflight.launcher.model.UiPreferences?,
+) {
+    // Personalización que funciona (0.2.15): fondo y textos según el
+    // tema, acento del usuario en el texto pulsante.
+    val dark = isDarkUi(uiPrefs)
+    val accent = userAccent(uiPrefs)
     Column(
         modifier = Modifier.fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(ColCard)
+            .background(cardColor(dark))
             .padding(12.dp),
     ) {
         val progress = installProgress
@@ -297,14 +308,14 @@ private fun LaunchProgressCard(installProgress: InstallProgress?) {
                 "Instalando en el núcleo… ${progress.percent}% — ${progress.message}",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = Color.White,
+                color = cardTextColor(dark),
             )
             Spacer(modifier = Modifier.height(10.dp))
             PrimaryProgressBar(progress = (progress.percent ?: 0) / 100f)
         } else {
             PulsingText(
                 progress?.message ?: "Preparando el juego…",
-                ColIceBlue,
+                accent,
                 MaterialTheme.typography.bodyMedium,
             )
             Spacer(modifier = Modifier.height(10.dp))
@@ -314,7 +325,7 @@ private fun LaunchProgressCard(installProgress: InstallProgress?) {
         Text(
             "No cierres la app. Instalar el juego puede tardar varios minutos.",
             style = MaterialTheme.typography.bodySmall,
-            color = ColMutedText,
+            color = mutedTextColor(dark),
         )
     }
 }
@@ -333,6 +344,9 @@ private fun InfoRow(
     val achievements by vm.achievementsFlow.collectAsState(initial = emptyList())
     val unlocked = achievements.count { it.unlocked }
     val tap = rememberTapHaptic()
+    // Personalización que funciona (0.2.15): textos según el tema
+    // elegido por el usuario (el borde y el fondo los resuelve HalfCard).
+    val dark = isDarkUi(uiPrefs)
     // Los iconos vectoriales dibujan a 24 dp fijos: se escalan por
     // graphicsLayer (vectorial, sin pérdida) según el ajuste de tamaño.
     val iconScale = (uiPrefs?.iconSize ?: IconSize.MEDIUM).sizeDp / 24f
@@ -345,15 +359,16 @@ private fun InfoRow(
                 onClick = { tap(); onNavigate(Screen.ACHIEVEMENTS) },
                 cardSize = uiPrefs?.cardSize ?: CardSize.NORMAL,
                 cardTransparency = uiPrefs?.cardTransparency ?: CardTransparency.OPAQUE,
+                uiPrefs = uiPrefs,
             ) {
                 TrophyIcon(modifier = Modifier.graphicsLayer(scaleX = iconScale, scaleY = iconScale))
                 Spacer(modifier = Modifier.height(8.dp))
-                Text(strings.achievementsShort, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
+                Text(strings.achievementsShort, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = cardTextColor(dark))
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     "$unlocked de 27 · ${if (achievements.isEmpty()) 0 else unlocked * 100 / 27}%",
                     style = MaterialTheme.typography.bodySmall,
-                    color = ColMutedText,
+                    color = mutedTextColor(dark),
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 PrimaryProgressBar(progress = if (achievements.isEmpty()) 0f else unlocked / 27f)
@@ -365,8 +380,11 @@ private fun InfoRow(
 private fun AdvancedRow(
     strings: AppStrings,
     onNavigate: (Screen) -> Unit,
+    uiPrefs: com.danielsnagustin.childoflight.launcher.model.UiPreferences?,
     iconSize: IconSize = IconSize.MEDIUM,
 ) {
+    // Personalización que funciona (0.2.15): textos según el tema.
+    val dark = isDarkUi(uiPrefs)
     val tap = rememberTapHaptic()
     Row(
         modifier = Modifier.fillMaxWidth()
@@ -380,10 +398,10 @@ private fun AdvancedRow(
                 strings.advancedSettings,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = Color.White,
+                color = cardTextColor(dark),
                 modifier = Modifier.weight(1f).padding(start = 12.dp),
             )
-            Text("›", style = MaterialTheme.typography.headlineMedium, color = ColMutedText)
+            Text("›", style = MaterialTheme.typography.headlineMedium, color = mutedTextColor(dark))
         }
 }
 
@@ -420,7 +438,8 @@ private fun CoverEntrance(play: Boolean = true, content: @Composable () -> Unit)
 /**
  * Media tarjeta premium (la mitad de una fila de dos): mismo estilo que
  * PremiumCard (superficie #1A2036, borde azul hielo sutil) pero con ancho por
- * peso, no a todo lo ancho.
+ * peso, no a todo lo ancho. Borde con el acento del usuario y superficie
+ * según el tema (0.2.15).
  */
 @Composable
 private fun HalfCard(
@@ -428,11 +447,12 @@ private fun HalfCard(
     onClick: (() -> Unit)? = null,
     cardSize: CardSize = CardSize.NORMAL,
     cardTransparency: CardTransparency = CardTransparency.OPAQUE,
+    uiPrefs: com.danielsnagustin.childoflight.launcher.model.UiPreferences? = null,
     content: @Composable () -> Unit,
 ) {
-    val border = BorderStroke(1.dp, ColAccent.copy(alpha = 0.22f))
+    val border = BorderStroke(1.dp, userAccent(uiPrefs).copy(alpha = 0.22f))
     val shape = RoundedCornerShape(cardSize.cornerDp.dp)
-    val containerColor = ColCardElevated.copy(alpha = cardTransparency.alpha)
+    val containerColor = cardElevatedColor(isDarkUi(uiPrefs)).copy(alpha = cardTransparency.alpha)
     val innerPadding = cardSize.paddingDp.dp
     if (onClick != null) {
         Card(
