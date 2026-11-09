@@ -466,8 +466,38 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         _justUnlocked.value = null
     }
 
+    // P1-16 (2026-11-09): el Inicio se sentía lento porque
+    // refreshStatus() se llamaba desde 17 sitios sin ninguna guarda:
+    // cada llamada lanzaba un escaneo completo del disco (scanStatus +
+    // firmware + TRP + ...). El reporte 21:46 mostró 5 scanStatus en
+    // UN segundo. Mutex + coalescencia: si ya hay un escaneo en curso,
+    // la llamada solo marca que hay un refresco pendiente y vuelve;
+    // al terminar, el escaneo se repite UNA vez si algo lo pidió. Como
+    // mucho 2 escaneos por ráfaga. Un withLock a secas NO vale:
+    // encolaría los 5 escaneos. AtomicBoolean: el flag lo escribe
+    // cualquier corrutina IO (fuera del mutex) y lo lee la que escanea.
+    private val refreshMutex = Mutex()
+    private val refreshPending = AtomicBoolean(false)
+
     fun refreshStatus() {
         viewModelScope.launch(Dispatchers.IO) {
+            if (!refreshMutex.tryLock()) {
+                refreshPending.set(true)
+                return@launch
+            }
+            try {
+                do {
+                    refreshPending.set(false)
+                    refreshStatusOnce()
+                } while (refreshPending.getAndSet(false))
+            } finally {
+                refreshMutex.unlock()
+            }
+        }
+    }
+
+    /** Un escaneo completo del estado (disco + firmware + TRP). Solo lo llama refreshStatus(), bajo el mutex. */
+    private fun refreshStatusOnce() {
             // BUG (auditoría): scanStatus() hace I/O y puede lanzar; se llama
             // desde init/onResume sin protección. Si falla, se conserva el
             // estado anterior en vez de tumbar la corrutina.
@@ -505,7 +535,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // la tarjeta "Falta la licencia" de Importar aparezca
             // también tras reiniciar, sin reimportar el .pkg.
             rebuildPendingLicenseFromDisk()
-        }
     }
 
     /**

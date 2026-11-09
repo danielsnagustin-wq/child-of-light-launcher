@@ -54,6 +54,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Pantalla principal: portada grande + JUGAR/IMPORTAR, Dark Fantasy
@@ -164,12 +165,10 @@ private fun GameCard(
     // elegidos por el usuario; antes el inicio pintaba Col* fijos.
     val dark = isDarkUi(uiPrefs)
     val accent = userAccent(uiPrefs)
-    // Progreso REAL de la instalación del .pkg en el núcleo (el
-    // ViewModel lo alimenta en play() vía onInstallProgress): antes
-    // Home nunca lo recogía y al pulsar JUGAR con solo .pkg el botón
-    // se apagaba sin mostrar nada durante varios minutos (1,14 GB),
-    // así que parecía que el juego no iniciaba. Ahora se ve aquí.
-    val installProgress by vm.installProgress.collectAsState()
+    // P1-16: el progreso de instalación NO se recoge aquí arriba:
+    // cada % recomponía TODO el Inicio. Lo recoge LaunchProgressCard
+    // dentro de sí (le pasamos el flujo), así solo la tarjeta se
+    // recompone con cada %.
     val cover by vm.coverBitmap.collectAsState()
 
     val gameOk = status.gameInstalled
@@ -275,7 +274,7 @@ private fun GameCard(
             // debajo del botón, con el % real del núcleo cuando lo hay.
             if (launching) {
                 Spacer(modifier = Modifier.height(12.dp))
-                LaunchProgressCard(installProgress, uiPrefs)
+                LaunchProgressCard(vm.installProgress, uiPrefs)
             }
         }
     }
@@ -286,12 +285,22 @@ private fun GameCard(
  * "Preparando el juego…" + barra indeterminada. El % nunca se
  * inventa: solo se muestra el de installProgress. Azul hielo /
  * turquesa sobre #10131D, sin dorado.
+ *
+ * P1-16: recibe el StateFlow y lo recoge DENTRO: cada % recompone
+ * solo esta tarjeta, no todo el Inicio (antes GameCard recogía el
+ * flujo arriba y cada emisión recomponía portada, chips y tarjetas).
  */
 @Composable
 private fun LaunchProgressCard(
-    installProgress: InstallProgress?,
+    installProgressFlow: StateFlow<InstallProgress?>,
     uiPrefs: com.danielsnagustin.childoflight.launcher.model.UiPreferences?,
 ) {
+    // Progreso REAL de la instalación del .pkg en el núcleo (el
+    // ViewModel lo alimenta en play() vía onInstallProgress): antes
+    // Home nunca lo recogía y al pulsar JUGAR con solo .pkg el botón
+    // se apagaba sin mostrar nada durante varios minutos (1,14 GB),
+    // así que parecía que el juego no iniciaba. Ahora se ve aquí.
+    val installProgress by installProgressFlow.collectAsState()
     // Personalización que funciona (0.2.15): fondo y textos según el
     // tema, acento del usuario en el texto pulsante.
     val dark = isDarkUi(uiPrefs)
