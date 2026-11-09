@@ -63,6 +63,11 @@ fun resetCategorySettings(current: LauncherSettings, category: SettingsCategory)
             ngsEnable = preset.ngsEnable,
         )
         SettingsCategory.PERFORMANCE -> current.copy(
+            // R4-P0-9: textureCache sale del preset CANÓNICO (explícito
+            // en presetSettings: true en G99_RECOMMENDED). La variante
+            // conservadora lowRam (false) solo existe en el primer
+            // arranque y nunca se re-aplica aquí, ni al aplicar el
+            // preset a mano, ni en el auto-revert de la prueba de 30 s.
             textureCache = preset.textureCache,
             shaderCache = preset.shaderCache,
             showFpsOverlay = preset.showFpsOverlay,
