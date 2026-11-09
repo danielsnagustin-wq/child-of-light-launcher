@@ -17,9 +17,11 @@ import java.io.File
  *    el firmware instalado es vita_fs/"vs0" no vacío
  *    (app/src/app.cpp: `has_installed_firmware_content`).
  *    La ruta antigua `vitaRoot/vs0/` (sin `vita/`) ya no se ignora:
- *    `resolve()` la MIGRA a `vita/vs0` (P2-A1) cuando el núcleo aún
- *    no tiene firmware ahí; si la migración falla, no se da por
- *    instalado. `deleteFirmware()` ya borraba la ruta antigua.
+ *    se MIGRA a `vita/vs0` con [migrateLegacyVs0] (P2-A1), que el
+ *    ViewModel llama explícitamente al refrescar el estado (P2-33:
+ *    `resolve()` es solo lectura y ya no migra como efecto
+ *    secundario). Si la migración falla, no se da por instalado.
+ *    `deleteFirmware()` ya borraba la ruta antigua.
  * 2. `firmware/installed.json` con VERSIÓN (`{"version":"3.74",...}`):
  *    marcador que se escribe SOLO tras un `installFirmware` con
  *    éxito en el núcleo. Un marcador antiguo con solo el nombre del
