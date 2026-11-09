@@ -65,7 +65,7 @@
             android:name=".core.EmbeddedGameActivity"
             android:exported="false"
             android:launchMode="singleTop"
-            android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation|density"
             android:theme="@style/Theme.ChildOfLightLauncher" />
 
         <!-- Menú de pausa propio (Compose): Activity transparente

@@ -103,6 +103,13 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInit(
         LOGE("nativeInit: storagePath nulo");
         return kInitFailed;
     }
+    // REA 0.2.1 oficial: SDL_ANDROID_ALLOW_RECREATE_ACTIVITY=1 evita
+    // que SDL mate el proceso con System.exit(0) al recrear la
+    // Activity en el mismo proceso (2º JUGAR). Debe estar puesto
+    // antes de que SDLActivity.onCreate lea la variable, y nativeInit
+    // corre en JUGAR antes de crear la Activity. SDL_setenv vale
+    // antes de SDL_Init.
+    SDL_setenv("SDL_ANDROID_ALLOW_RECREATE_ACTIVITY", "1", 1);
     // prepareFrontend primero (idempotente): SDL_SetMainReady debe
     // preceder a cualquier SDL_Init del hilo SDL.
     // P2-B4: best-effort, NO fatal. prepare_frontend_runtime() solo

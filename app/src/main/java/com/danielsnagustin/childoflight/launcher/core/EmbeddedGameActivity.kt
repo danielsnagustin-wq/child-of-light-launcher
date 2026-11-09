@@ -10,7 +10,11 @@ import android.view.KeyEvent
 import android.view.Surface
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.view.WindowManager
+import org.libsdl.app.SDLSurface
+import org.vita3k.emulator.EmuSurface
 import android.widget.Toast
 import com.danielsnagustin.childoflight.launcher.data.GameActivityState
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
@@ -172,6 +176,17 @@ class EmbeddedGameActivity : SDLActivity() {
         return arrayOf("Vita3K")
     }
 
+    /**
+     * REA 0.2.1 oficial (2026-11-09): la superficie del juego DEBE
+     * ser EmuSurface. Su surfaceCreated enciende el interruptor
+     * `has_surface` del renderizador Vulkan del núcleo (sin él, el
+     * tamaño dibujable es {0, 0} y ningún frame se presenta: pantalla
+     * negra con el juego corriendo). La SDLSurface plana no lo hace.
+     */
+    override fun createSDLSurface(context: Context): SDLSurface {
+        return EmuSurface(context)
+    }
+
     /** argv de SDL_main: {"-r", titleId}. Sin Title ID, SDL_main devuelve -1. */
     override fun getArguments(): Array<String> {
         val titleId = intent.getStringExtra(EXTRA_TITLE_ID).orEmpty()
@@ -185,6 +200,25 @@ class EmbeddedGameActivity : SDLActivity() {
         // init() lo detectará y se cerrará con mensaje.
         runCatching { Vita3kCoreBridge.prepareFrontend() }
         super.onCreate(savedInstanceState)
+
+        // REA 0.2.1 oficial: juego a pantalla completa real, como la
+        // app oficial (setWindowStyle + inmersivo + cutout). Sin esto
+        // las barras del sistema recortan la superficie. Solo API 30+
+        // para el controlador de insets; el resto es best-effort.
+        runCatching {
+            SDLActivity.setWindowStyle(true)
+            val attrs = window.attributes
+            attrs.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            window.attributes = attrs
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                window.insetsController?.let {
+                    it.hide(WindowInsets.Type.systemBars())
+                    it.systemBarsBehavior =
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                }
+            }
+        }
 
         val titleId = intent.getStringExtra(EXTRA_TITLE_ID).orEmpty()
         if (titleId.isEmpty()) {
