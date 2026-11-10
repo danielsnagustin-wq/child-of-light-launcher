@@ -12,8 +12,6 @@ import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -33,6 +31,7 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -41,7 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.filterNotNull
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -62,6 +61,7 @@ import com.danielsnagustin.childoflight.launcher.ui.GpuDiagnosticsScreen
 import com.danielsnagustin.childoflight.launcher.ui.HomeScreen
 import com.danielsnagustin.childoflight.launcher.ui.ImportScreen
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
+import com.danielsnagustin.childoflight.launcher.ui.LocalUiPreferences
 import com.danielsnagustin.childoflight.launcher.ui.SavesScreen
 import com.danielsnagustin.childoflight.launcher.ui.Screen
 import com.danielsnagustin.childoflight.launcher.ui.SettingsScreen
@@ -207,7 +207,15 @@ private fun LauncherContent(vm: LauncherViewModel) {
         lightColorScheme(primary = accent, secondary = accent)
     }
     MaterialTheme(colorScheme = colorScheme, typography = typography) {
-        LauncherApp(vm)
+        // Ronda 0.2.55 P1-4: UN solo colector de uiFlow en toda la app:
+        // este de LauncherContent. El valor se expone por
+        // LocalUiPreferences y las pantallas lo leen directamente
+        // (LocalUiPreferences.current, sin otro colector). Antes
+        // LauncherApp lo recogía otra vez y cada pantalla creaba el
+        // suyo con rememberUiPreferences().
+        CompositionLocalProvider(LocalUiPreferences provides uiPrefs) {
+            LauncherApp(vm)
+        }
     }
 }
 
@@ -223,6 +231,25 @@ private fun LaunchErrorScreen(error: Throwable) {
                 Text("Error: ${error.javaClass.simpleName}: ${error.message ?: "sin mensaje"}")
                 Text("Haz una captura de esta pantalla y mándala para arreglarlo.")
             }
+        }
+    }
+}
+
+/**
+ * Ronda 0.2.55 P1-4: el modo rendimiento (pantalla encendida) vive
+ * aquí, en un hijo que recoge settingsFlow dentro de sí. Antes
+ * LauncherApp lo recogía arriba y cualquier cambio de ajuste
+ * recomponía el Scaffold + AnimatedContent entero.
+ */
+@Composable
+private fun KeepScreenOnEffect(vm: LauncherViewModel) {
+    val settings by vm.settingsFlow.collectAsState(initial = null)
+    val activity = androidx.compose.ui.platform.LocalContext.current as? ComponentActivity
+    LaunchedEffect(settings?.performanceMode) {
+        if (settings?.performanceMode == true) {
+            activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
 }
@@ -258,9 +285,9 @@ private fun LauncherApp(vm: LauncherViewModel) {
         }
     }
     // R4-P2-6: la intro de Home se decide por la marca persistente
-    // (UiPreferences.homeIntroSeen): hay que recoger uiFlow aquí,
-    // en LauncherApp, no solo en LauncherContent (tema/texto).
-    val uiPrefs by vm.uiFlow.collectAsState(initial = null)
+    // (UiPreferences.homeIntroSeen). Ronda 0.2.55 P1-4: se lee del
+    // Local que provee LauncherContent, no con otro collectAsState.
+    val uiPrefs = LocalUiPreferences.current
     // La animación de entrada de Home solo se reproduce una vez por
     // INSTALACIÓN (R4-P2-6): la marca vive en UiPreferences
     // (homeIntroSeen, persistente en DataStore), no en rememberSaveable.
@@ -281,74 +308,58 @@ private fun LauncherApp(vm: LauncherViewModel) {
     val message by vm.message.collectAsState()
     val alert by vm.alert.collectAsState()
     val justUnlocked by vm.justUnlocked.collectAsState()
-    val settings by vm.settingsFlow.collectAsState(initial = null)
-    val gpu by vm.gpuFlow.collectAsState(initial = null)
 
     // "Reportar" del diálogo de fallo del motor reutiliza la exportación
     // de bug que ya existe (Diagnóstico → Reportar bug): mismo archivo
     // .txt con log + ajustes + dispositivo, que el usuario comparte a
     // mano. El launcher se registra siempre (no dentro del diálogo):
     // rememberLauncherForActivityResult no debe llamarse condicional.
+    // Ronda 0.2.55 P1-4: LauncherApp ya NO recoge settingsFlow ni
+    // gpuFlow (recomponían el Scaffold entero con cada cambio de
+    // ajuste o de GPU): los lee el ViewModel al exportar, en IO.
     val exportBug = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
-        val s = settings
-        val g = gpu
-        if (uri != null && s != null) vm.exportBugReport(uri, s, g)
-        // P2-39: si el usuario ya eligió el archivo pero los ajustes
-        // aún no cargaron, antes no pasaba nada y no se avisaba: ahora
-        // se dice por qué no se exportó.
-        else if (uri != null) vm.showMessage("Los ajustes aún no han cargado: espera un momento y vuelve a pulsar Reportar.")
+        if (uri != null) vm.exportBugReportCurrent(uri)
     }
 
     // Modo rendimiento: pantalla encendida mientras el launcher está abierto.
-    val activity = androidx.compose.ui.platform.LocalContext.current as? ComponentActivity
-    LaunchedEffect(settings?.performanceMode) {
-        if (settings?.performanceMode == true) {
-            activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        } else {
-            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
-    }
+    // Ronda 0.2.55 P1-4: vive en un composable hijo que recoge
+    // settingsFlow dentro: un cambio de ajuste recompone solo ese
+    // hijo, no LauncherApp entero.
+    KeepScreenOnEffect(vm)
 
     // P2-39: los mensajes se ENCOLAN y se muestran uno a uno. Antes,
     // LaunchedEffect(message) se reiniciaba con cada mensaje nuevo y
     // el que se estaba mostrando se perdía (showSnackbar cancelado).
     // El productor recoge cada mensaje y libera el hueco enseguida
     // (clearMessage) para que el siguiente pueda llegar; el consumidor
-    // los muestra en orden. Ambas corrutinas corren en Main, así que
-    // la cola no necesita sincronización.
-    val messageQueue = remember { ArrayDeque<String>() }
+    // los muestra en orden.
+    // Ronda 0.2.55 P1-15: el consumidor era un bucle while(true) con
+    // delay(100) permanente (10 despertares por segundo para siempre).
+    // Ahora es un Channel con buffer ilimitado: el consumidor duerme
+    // en el receive hasta que llega un mensaje, sin polling.
+    val messageChannel = remember { Channel<String>(Channel.UNLIMITED) }
     LaunchedEffect(Unit) {
         snapshotFlow { message }.filterNotNull().collect { text ->
-            messageQueue.addLast(text)
+            messageChannel.send(text)
             vm.clearMessage()
         }
     }
     LaunchedEffect(Unit) {
-        while (true) {
-            val text = messageQueue.removeFirstOrNull()
-            if (text == null) {
-                delay(100)
-                continue
-            }
+        for (text in messageChannel) {
             snackbarHostState.showSnackbar(text)
         }
     }
 
     Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
         Box(modifier = Modifier.padding(padding)) {
-            // Transición rápida entre pantallas (fundido + deslizamiento,
-            // 150 ms): en una pantalla de 90 Hz, 250 ms se siente pesado
-            // al entrar y al volver a Home.
+            // Transición entre pantallas: solo fundido, sin
+            // deslizamiento. Ronda 0.2.55 P0-3: el deslizamiento
+            // componía dos pantallas a la vez 120-150 ms; con solo
+            // fundido la entrante no arrastra el coste de la saliente.
             AnimatedContent(
                 targetState = screen,
                 transitionSpec = {
-                    (fadeIn(animationSpec = tween(150)) + slideInHorizontally(
-                        initialOffsetX = { it / 6 },
-                        animationSpec = tween(150),
-                    )) togetherWith (fadeOut(animationSpec = tween(120)) + slideOutHorizontally(
-                        targetOffsetX = { -it / 6 },
-                        animationSpec = tween(120),
-                    ))
+                    fadeIn(animationSpec = tween(150)) togetherWith fadeOut(animationSpec = tween(120))
                 },
                 label = "screenTransition",
             ) { target ->
