@@ -181,6 +181,14 @@ class EmbeddedGameActivity : SDLActivity() {
     // --- Overlay táctil (GamepadOverlayView + mando virtual SDL) ---
     private var overlayView: GamepadOverlayView? = null
     private var overlayAttached: Boolean = false
+    /**
+     * R6-P1-14: refcount por botón SDL en el punto único de paso
+     * (forwardOverlayButton): varios controles pueden mantener el
+     * mismo botón (brillo 9 + botón L1, brillo -4 + botón L2, dos
+     * botones del editor en el mismo VitaButton). El false solo se
+     * envía al soltar el último mantenedor.
+     */
+    private val overlayButtonRefCounter = SdlButtonRefCounter()
     private var overlayShouldShow: Boolean = false
     private val overlayScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var inputManager: InputManager? = null
@@ -405,7 +413,15 @@ class EmbeddedGameActivity : SDLActivity() {
         }
         view.generalOpacity = settingsOpacity
         view.neonGlow = neon
-        view.setControls(controls)
+        // R6-P2-25: si los controles son los mismos que los ya montados,
+        // no llamar a setControls(): reconstruye el overlay y suelta
+        // todo lo pulsado (releaseAll) en cada onResume y cada cambio
+        // de mando. La opacidad y el neón se aplican igual (solo
+        // invalidan, no reconstruyen). Si la vista aún no tiene hijos
+        // (primer montaje con ancho 0), sí se monta.
+        if (!view.hasSameControls(controls) || view.childCount == 0) {
+            view.setControls(controls)
+        }
         view.visibility = View.VISIBLE
         maybeAttachOverlayController()
     }
@@ -487,6 +503,10 @@ class EmbeddedGameActivity : SDLActivity() {
     private fun detachOverlayController() {
         if (!overlayAttached) return
         overlayAttached = false
+        // R6-P1-14: el mando virtual destruido pierde todo el estado:
+        // sin reset, el contador creería que botones ya soltados siguen
+        // mantenidos y el mando nuevo no recibiría sus true.
+        overlayButtonRefCounter.reset()
         Vita3kCoreBridge.overlayDetach()
     }
 
@@ -535,6 +555,13 @@ class EmbeddedGameActivity : SDLActivity() {
             Vita3kCoreBridge.overlayDetach()
             val attachOk = Vita3kCoreBridge.overlayAttach()
             val existsInSdl = Vita3kCoreBridge.overlayIsAttached()
+            // R6-P1-15: overlayIsAttached() solo prueba que el mando
+            // existe en la enumeración SDL, no que el núcleo lo
+            // registrara en state.controllers (ese readback no existe
+            // sin modificar las fuentes del pin). El nº de gamepads
+            // que ve SDL distingue "no existe" (0) de "existe pero
+            // quizá no registrado" (>0 con attach fallido).
+            val gamepadCount = Vita3kCoreBridge.overlayGamepadCount()
             if (attachOk && existsInSdl) {
                 overlayAttached = true
                 // R4-P2-2: igual que en maybeAttachOverlayController:
@@ -544,12 +571,12 @@ class EmbeddedGameActivity : SDLActivity() {
                 if (!Vita3kCoreBridge.overlaySetTouchState(false)) {
                     appendOverlayLogAsync("on_launch: táctil frontal no confirmado (sin readback del núcleo)")
                 }
-                LauncherLog.append(this, "overlay", "on_launch: mando virtual re-creado (intento $attempt/$OVERLAY_REBIND_MAX_ATTEMPTS)")
+                LauncherLog.append(this, "overlay", "on_launch: mando virtual re-creado (intento $attempt/$OVERLAY_REBIND_MAX_ATTEMPTS, gamepads SDL=$gamepadCount)")
                 attached = true
                 break
             }
             val retryNote = if (attempt < OVERLAY_REBIND_MAX_ATTEMPTS) "; reintentando en 500 ms" else ""
-            LauncherLog.append(this, "overlay", "on_launch: rebind intento $attempt/$OVERLAY_REBIND_MAX_ATTEMPTS falló (attach=$attachOk, existeEnSdl=$existsInSdl)$retryNote")
+            LauncherLog.append(this, "overlay", "on_launch: rebind intento $attempt/$OVERLAY_REBIND_MAX_ATTEMPTS falló (attach=$attachOk, existeEnSdl=$existsInSdl, gamepads SDL=$gamepadCount)$retryNote")
             if (attempt < OVERLAY_REBIND_MAX_ATTEMPTS) delay(OVERLAY_REBIND_RETRY_DELAY_MS)
         }
         if (!attached) {
@@ -577,6 +604,17 @@ class EmbeddedGameActivity : SDLActivity() {
      * sale siempre.
      */
     private fun forwardOverlayButton(sdlButton: Int, pressed: Boolean) {
+        // R6-P1-14: refcount por botón SDL. Sin él, soltar un control
+        // apagaba el botón que otro seguía manteniendo (brillo 9 +
+        // botón L1, brillo -4 + botón L2, dos botones del editor en el
+        // mismo VitaButton). Solo el primer mantenedor envía el true
+        // y solo el último el false; los demás no tocan el núcleo.
+        val shouldSend = if (pressed) {
+            overlayButtonRefCounter.press(sdlButton)
+        } else {
+            overlayButtonRefCounter.release(sdlButton)
+        }
+        if (!shouldSend) return
         if (Vita3kCoreBridge.overlaySetButton(sdlButton, pressed)) {
             if (OverlayInputStats.recordButton(sdlButton, pressed, delivered = true)) {
                 LauncherLog.append(this, "overlay", "botón SDL $sdlButton pressed=$pressed")
@@ -661,9 +699,33 @@ class EmbeddedGameActivity : SDLActivity() {
         // con pausa y se registra; el reintento definitivo ocurre en
         // on_launch (setCurrentGameId).
         clearBackgroundPause("onResume")
+        // R6-P2-20: al volver del menú de pausa o de Recientes, el
+        // rebind solo corría en on_launch y se confiaba en el booleano
+        // overlayAttached sin re-verificar. Si el núcleo soltó el
+        // mando virtual entre medias, el primer botón fallaba y solo
+        // entonces actuaba la recuperación por pulsación. Verificación
+        // barata con overlayIsAttached() sin caché (la consulta
+        // explícita, no la cacheada de SetButton/SetAxis): si ya no
+        // existe, se reintenta el attach ahora. La pausa de fondo se
+        // quita antes (clearBackgroundPause sigue primero).
+        verifyOverlayAttachmentOnResume()
         refreshOverlay()
         applyPerformanceScreenFlag()
         maybeStartBenchmarkSampling()
+    }
+
+    /**
+     * R6-P2-20: re-verifica el mando virtual al volver a primer plano.
+     * Solo si overlayAttached era true: si el mando ya no existe en
+     * SDL, se marca como perdido y se reintenta el attach (maybeAttach
+     * exige partida en curso y overlay visible, como siempre).
+     */
+    private fun verifyOverlayAttachmentOnResume() {
+        if (!overlayAttached) return
+        if (Vita3kCoreBridge.overlayIsAttached()) return
+        LauncherLog.append(this, "overlay", "onResume: el mando virtual ya no existe en SDL tras volver a primer plano; reintentando el attach")
+        overlayAttached = false
+        maybeAttachOverlayController()
     }
 
     override fun onPause() {

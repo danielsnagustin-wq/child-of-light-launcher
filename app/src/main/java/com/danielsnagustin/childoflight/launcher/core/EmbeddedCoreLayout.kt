@@ -1,6 +1,7 @@
 package com.danielsnagustin.childoflight.launcher.core
 
 import android.content.Context
+import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
 import java.io.File
 
 /**
@@ -217,6 +218,23 @@ object EmbeddedCoreLayout {
         val count = countFiles(legacy)
         if (legacy.renameTo(dest)) return MigrationResult.Migrated(count)
         // renameTo falló (p. ej. distinto punto de montaje): copiar + borrar.
+        // R6-P2-01: sin espacio no se empieza la copia: el original y la
+        // copia conviven hasta que la copia se verifica (el doble del
+        // tamaño del legacy). Si el espacio no se puede medir
+        // (getUsableSpace 0 o negativo), no se bloquea: el fallo, si lo
+        // hay, lo da la copia. Si no cabe, Conflict (bloqueo): copiar a
+        // medias dejaría el juego a medias y el original intacto, pero
+        // sin juego jugable.
+        val legacyBytes = dirTotalBytes(legacy)
+        val probe = nearestExistingAncestor(dest)
+        val usable = runCatching { probe.usableSpace }.getOrDefault(0L)
+        if (usable > 0 && usable < legacyBytes * 2) {
+            return MigrationResult.Conflict(
+                "No hay espacio para migrar la instalación antigua al motor integrado: " +
+                    "hacen falta ${DownloadsCleanup.formatBytes(legacyBytes * 2)} libres y hay ${DownloadsCleanup.formatBytes(usable)}. " +
+                    "Libera espacio o borra la instalación antigua a mano.",
+            )
+        }
         return try {
             legacy.copyRecursively(dest, overwrite = false)
             if (!dest.isDirectory || countFiles(dest) != count) {
@@ -292,5 +310,19 @@ object EmbeddedCoreLayout {
         var n = 0
         dir.walkTopDown().forEach { if (it.isFile) n++ }
         return n
+    }
+
+    /** R6-P2-01: bytes totales de un árbol (suma de los archivos). */
+    private fun dirTotalBytes(dir: File): Long {
+        return dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    }
+
+    /** R6-P2-01: ancestro existente más cercano (para medir espacio con getUsableSpace). */
+    private fun nearestExistingAncestor(file: File): File {
+        var probe: File? = file
+        while (probe != null && !probe.exists()) {
+            probe = probe.parentFile
+        }
+        return probe ?: file
     }
 }

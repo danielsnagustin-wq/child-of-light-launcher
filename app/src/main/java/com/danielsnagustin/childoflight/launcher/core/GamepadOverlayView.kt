@@ -95,12 +95,15 @@ import kotlin.math.sqrt
  * Dibujo: LA MISMA MATEMÁTICA que la vista previa del editor
  * (TouchOverlayMapping.controlRect): posición por fracción DEL RECT
  * DEL JUEGO 960x544 (R4-P1-1), tamaño en dp, opacidad por botón
- * multiplicada por la opacidad general. El estilo es cristal
- * premium (degradado radial, borde luminoso azul hielo, ornamentos
- * florales, glifo PlayStation del botón — X, círculo, cuadrado,
- * triángulo —, brillo turquesa al pulsar): la vista previa del
- * editor sigue siendo esquemática y no refleja este estilo, solo
- * la posición y el tamaño.
+ * multiplicada por la opacidad general. El estilo es el cristal
+ * azul hielo de la imagen de referencia 51025 (fondo negro,
+ * cristal azul hielo/lavanda con brillo): degradado radial, doble
+ * borde luminoso, adornos de diamante y cristal en los 4 puntos
+ * del stick, alas de hielo con estrellitas en la pausa, orbe de
+ * Igniculus con corona floral y destellos, espada con destellos y
+ * flecha fina de salto, brillo turquesa al pulsar. La vista previa
+ * del editor sigue siendo esquemática y no refleja todos estos
+ * adornos, solo la posición, el tamaño y el orbe interior.
  *
  * Entrada: cada botón manda su botón SDL al mando virtual del núcleo
  * (Vita3kCoreBridge.overlaySetButton) y cada stick sus ejes
@@ -177,6 +180,15 @@ class GamepadOverlayView @JvmOverloads constructor(
         builtForSize = null
         rebuild()
     }
+
+    /**
+     * R6-P2-25: true si los controles montados son estructuralmente
+     * los mismos que [controls] (TouchControl es data class, la
+     * igualdad es por valor). EmbeddedGameActivity lo usa para no
+     * llamar a setControls() — y soltar todo lo pulsado — cuando
+     * nada cambió.
+     */
+    fun hasSameControls(controls: List<TouchControl>): Boolean = this.controls == controls
 
     /** Suelta todos los botones y centra todos los sticks (sin botones atascados al pausar/ocultar/salir). */
     fun releaseAll() {
@@ -652,13 +664,16 @@ class GamepadOverlayView @JvmOverloads constructor(
         open val hasActivePointer: Boolean get() = false
 
         /**
-         * Cuerpo de cristal: degradado radial (centro plata luminosa,
-         * medio el color del control, borde azul profundo), borde
-         * luminoso azul hielo y ornamentos florales discretos arriba y
-         * abajo del anillo. Translúcido: el escenario se ve a través.
-         * Al pulsar, el brillo turquesa crece (pressAmount).
+         * Cuerpo de cristal (diseno 51025): degradado radial (centro
+         * plata luminosa, medio el color del control, borde azul
+         * profundo), doble borde luminoso azul hielo (anillo suave
+         * exterior + filo interior) y adornos de diamante y cristal
+         * arriba y abajo del anillo — en los 4 puntos si
+         * fourWayOrnaments (el stick grande). Translúcido: el
+         * escenario se ve a través. Al pulsar, el brillo turquesa
+         * crece (pressAmount).
          */
-        protected fun drawGlassBody(canvas: Canvas, rect: RectF, alpha: Float, ornaments: Boolean = true) {
+        protected fun drawGlassBody(canvas: Canvas, rect: RectF, alpha: Float, ornaments: Boolean = true, fourWayOrnaments: Boolean = false) {
             val cx = rect.centerX()
             val cy = rect.centerY()
             val radius = rect.width() / 2f
@@ -690,12 +705,24 @@ class GamepadOverlayView @JvmOverloads constructor(
             fillPaint.shader = gradient
             drawShapeInto(canvas, rect, fillPaint)
             fillPaint.shader = null
+            // Anillo suave exterior: halo azul hielo que ensancha el
+            // borde luminoso, como el resplandor del cristal 51025.
+            strokePaint.color = Color.parseColor("#8CCBEB")
+            strokePaint.alpha = (alpha * 0.30f * 255).toInt()
+            strokePaint.strokeWidth = 3.5f * density
+            drawShapeInto(canvas, RectF(rect).apply { inset(-1.5f * density, -1.5f * density) }, strokePaint)
             // Borde luminoso azul hielo.
             strokePaint.color = Color.parseColor("#BFE6F7")
             strokePaint.alpha = (alpha * 0.95f * 255).toInt()
             strokePaint.strokeWidth = 2f * density
             drawShapeInto(canvas, rect, strokePaint)
-            if (ornaments) drawOrnaments(canvas, cx, cy, radius, alpha)
+            // Filo interior: linea fina plata que separa el cristal
+            // del borde y da el brillo de bola de cristal.
+            strokePaint.color = Color.parseColor("#DCE8F5")
+            strokePaint.alpha = (alpha * 0.45f * 255).toInt()
+            strokePaint.strokeWidth = 1f * density
+            drawShapeInto(canvas, RectF(rect).apply { inset(3f * density, 3f * density) }, strokePaint)
+            if (ornaments) drawOrnaments(canvas, cx, cy, radius, alpha, fourWayOrnaments)
         }
 
         private fun drawShapeInto(canvas: Canvas, rect: RectF, paint: Paint) {
@@ -706,18 +733,54 @@ class GamepadOverlayView @JvmOverloads constructor(
             }
         }
 
-        /** Ornamentos florales discretos: una florecita de 4 pétalos arriba y abajo del anillo. */
-        protected fun drawOrnaments(canvas: Canvas, cx: Float, cy: Float, radius: Float, alpha: Float) {
+        /**
+         * Adornos de cristal (diseno 51025): un rombo de diamante
+         * lavanda con dos hojitas laterales y un punto plata en el
+         * centro, pegado al borde del anillo. Arriba y abajo siempre;
+         * a izquierda y derecha tambien si fourWay (el stick grande
+         * lleva los 4, como en la imagen de referencia).
+         */
+        protected fun drawOrnaments(canvas: Canvas, cx: Float, cy: Float, radius: Float, alpha: Float, fourWay: Boolean = false) {
             ornamentPaint.alpha = (alpha * 0.85f * 255).toInt()
-            val petal = (radius * 0.04f).coerceAtLeast(2.2f * density)
-            val dist = radius * 0.97f
-            for (oy in listOf(cy - dist, cy + dist)) {
-                canvas.drawCircle(cx - petal * 1.6f, oy, petal, ornamentPaint)
-                canvas.drawCircle(cx + petal * 1.6f, oy, petal, ornamentPaint)
-                canvas.drawCircle(cx, oy - petal * 1.6f, petal, ornamentPaint)
-                canvas.drawCircle(cx, oy + petal * 1.6f, petal, ornamentPaint)
-                canvas.drawCircle(cx, oy, petal * 0.7f, ornamentPaint)
+            iconPaint.alpha = (alpha * 0.95f * 255).toInt()
+            val s = (radius * 0.09f).coerceAtLeast(3f * density)
+            val dist = radius
+            drawDiamondOrnament(canvas, cx, cy - dist, s)
+            drawDiamondOrnament(canvas, cx, cy + dist, s)
+            if (fourWay) {
+                drawDiamondOrnament(canvas, cx - dist, cy, s)
+                drawDiamondOrnament(canvas, cx + dist, cy, s)
             }
+        }
+
+        /** Un adorno de diamante: rombo vertical, dos hojitas laterales y punto plata central. */
+        protected fun drawDiamondOrnament(canvas: Canvas, x: Float, y: Float, s: Float) {
+            val diamond = Path().apply {
+                moveTo(x, y - s)
+                lineTo(x + 0.55f * s, y)
+                lineTo(x, y + s)
+                lineTo(x - 0.55f * s, y)
+                close()
+            }
+            canvas.drawPath(diamond, ornamentPaint)
+            val leaf = 0.45f * s
+            val leftLeaf = Path().apply {
+                moveTo(x - s, y - leaf)
+                lineTo(x - s + leaf, y)
+                lineTo(x - s, y + leaf)
+                lineTo(x - s - leaf, y)
+                close()
+            }
+            canvas.drawPath(leftLeaf, ornamentPaint)
+            val rightLeaf = Path().apply {
+                moveTo(x + s, y - leaf)
+                lineTo(x + s + leaf, y)
+                lineTo(x + s, y + leaf)
+                lineTo(x + s - leaf, y)
+                close()
+            }
+            canvas.drawPath(rightLeaf, ornamentPaint)
+            canvas.drawCircle(x, y, 0.22f * s, iconPaint)
         }
 
         /**
@@ -772,7 +835,7 @@ class GamepadOverlayView @JvmOverloads constructor(
                 IconKind.GLYPH_CIRCLE -> drawGlyphCircle(canvas, cx, cy, rr)
                 IconKind.GLYPH_SQUARE -> drawGlyphSquare(canvas, cx, cy, rr)
                 IconKind.GLYPH_TRIANGLE -> drawGlyphTriangle(canvas, cx, cy, rr)
-                IconKind.PAUSE -> drawPauseIcon(canvas, cx, cy, rr)
+                IconKind.PAUSE -> drawPauseIcon(canvas, cx, cy, rr, alpha)
                 IconKind.IGNICULUS -> drawIgniculusIcon(canvas, cx, cy, rr, alpha)
                 IconKind.TEXT_PS -> drawPsIcon(canvas, cx, cy, rr, alpha)
                 IconKind.SWORD -> drawSwordIcon(canvas, cx, cy, rr)
@@ -794,17 +857,23 @@ class GamepadOverlayView @JvmOverloads constructor(
             canvas.drawText("PS", cx, y, psPaint)
         }
 
+        /**
+         * Flecha fina de salto (diseno 51025): punta de lanza con
+         * lados curvos y asta delgada, en vez de la flecha gruesa
+         * de antes. Gira con degrees para las demas direcciones.
+         */
         private fun drawArrowIcon(canvas: Canvas, cx: Float, cy: Float, r: Float, degrees: Float) {
             canvas.save()
             canvas.rotate(degrees, cx, cy)
             val path = Path().apply {
-                moveTo(cx, cy - 0.45f * r)
-                lineTo(cx + 0.40f * r, cy + 0.10f * r)
-                lineTo(cx + 0.16f * r, cy + 0.10f * r)
-                lineTo(cx + 0.16f * r, cy + 0.45f * r)
-                lineTo(cx - 0.16f * r, cy + 0.45f * r)
-                lineTo(cx - 0.16f * r, cy + 0.10f * r)
-                lineTo(cx - 0.40f * r, cy + 0.10f * r)
+                moveTo(cx, cy - 0.58f * r)
+                quadTo(cx + 0.10f * r, cy - 0.10f * r, cx + 0.42f * r, cy + 0.02f * r)
+                lineTo(cx + 0.14f * r, cy + 0.02f * r)
+                lineTo(cx + 0.14f * r, cy + 0.52f * r)
+                lineTo(cx - 0.14f * r, cy + 0.52f * r)
+                lineTo(cx - 0.14f * r, cy + 0.02f * r)
+                lineTo(cx - 0.42f * r, cy + 0.02f * r)
+                quadTo(cx - 0.10f * r, cy - 0.10f * r, cx, cy - 0.58f * r)
                 close()
             }
             canvas.drawPath(path, iconPaint)
@@ -846,12 +915,44 @@ class GamepadOverlayView @JvmOverloads constructor(
             canvas.drawPath(path, iconStrokePaint)
         }
 
-        private fun drawPauseIcon(canvas: Canvas, cx: Float, cy: Float, r: Float) {
+        private fun drawPauseIcon(canvas: Canvas, cx: Float, cy: Float, r: Float, alpha: Float) {
             val w = 0.16f * r
             val h = 0.72f * r
             val radius = 0.08f * r
             canvas.drawRoundRect(RectF(cx - 0.24f * r - w / 2, cy - h / 2, cx - 0.24f * r + w / 2, cy + h / 2), radius, radius, iconPaint)
             canvas.drawRoundRect(RectF(cx + 0.24f * r - w / 2, cy - h / 2, cx + 0.24f * r + w / 2, cy + h / 2), radius, radius, iconPaint)
+            drawPauseWings(canvas, cx, cy, r, alpha)
+        }
+
+        /**
+         * Alas de hielo de la pausa (diseno 51025): a cada lado del
+         * circulo, dos hojitas de hielo que se abren hacia las
+         * esquinas con una estrellita en cada punta. La vista del
+         * boton recorta todo lo que sale de su cuadrado, asi que las
+         * alas no pueden extenderse como en la imagen: viven pegadas
+         * al circulo, dentro del hueco de las esquinas.
+         */
+        private fun drawPauseWings(canvas: Canvas, cx: Float, cy: Float, r: Float, alpha: Float) {
+            ornamentPaint.alpha = (alpha * 0.85f * 255).toInt()
+            iconPaint.alpha = (alpha * 0.95f * 255).toInt()
+            for (s in listOf(-1f, 1f)) {
+                val upperLeaf = Path().apply {
+                    moveTo(cx + s * 0.80f * r, cy - 0.70f * r)
+                    quadTo(cx + s * 1.30f * r, cy - 1.15f * r, cx + s * 1.52f * r, cy - 0.85f * r)
+                    quadTo(cx + s * 1.15f * r, cy - 0.62f * r, cx + s * 0.80f * r, cy - 0.70f * r)
+                    close()
+                }
+                canvas.drawPath(upperLeaf, ornamentPaint)
+                val lowerLeaf = Path().apply {
+                    moveTo(cx + s * 0.80f * r, cy + 0.70f * r)
+                    quadTo(cx + s * 1.30f * r, cy + 1.15f * r, cx + s * 1.52f * r, cy + 0.85f * r)
+                    quadTo(cx + s * 1.15f * r, cy + 0.62f * r, cx + s * 0.80f * r, cy + 0.70f * r)
+                    close()
+                }
+                canvas.drawPath(lowerLeaf, ornamentPaint)
+                drawSparkle(canvas, cx + s * 1.52f * r, cy - 0.85f * r, 0.09f * r)
+                drawSparkle(canvas, cx + s * 1.52f * r, cy + 0.85f * r, 0.07f * r)
+            }
         }
 
         /**
@@ -887,9 +988,11 @@ class GamepadOverlayView @JvmOverloads constructor(
             )
             canvas.drawCircle(cx, cy + 0.47f * r, 0.06f * r, iconPaint)
             canvas.restore()
-            // Dos destellos de 4 puntas, fuera de la rotación.
+            // Tres destellos de 4 puntas, fuera de la rotación: dos
+            // a los lados y uno junto a la punta de la hoja.
             drawSparkle(canvas, cx + 0.38f * r, cy - 0.34f * r, 0.10f * r)
             drawSparkle(canvas, cx - 0.40f * r, cy + 0.30f * r, 0.08f * r)
+            drawSparkle(canvas, cx + 0.30f * r, cy - 0.48f * r, 0.07f * r)
         }
 
         /** Estrella de 4 puntas (destello) centrada en (x, y) con radio s. */
@@ -923,6 +1026,16 @@ class GamepadOverlayView @JvmOverloads constructor(
                 close()
             }
             canvas.drawPath(body, iconPaint)
+            // Llamita turquesa encima de la cabeza (diseno 51025).
+            glowPaint.color = Color.parseColor("#75D6CE")
+            glowPaint.alpha = (alpha * 0.85f * 255).toInt()
+            val wisp = Path().apply {
+                moveTo(cx, cy - 0.88f * r)
+                quadTo(cx + 0.11f * r, cy - 0.68f * r, cx, cy - 0.58f * r)
+                quadTo(cx - 0.11f * r, cy - 0.68f * r, cx, cy - 0.88f * r)
+                close()
+            }
+            canvas.drawPath(wisp, glowPaint)
             // Ojos: dos puntitos azul profundo.
             glowPaint.color = Color.parseColor("#182644")
             glowPaint.alpha = (alpha * 0.95f * 255).toInt()
@@ -934,6 +1047,11 @@ class GamepadOverlayView @JvmOverloads constructor(
             val smile = RectF(cx - 0.12f * r, cy + 0.08f * r, cx + 0.12f * r, cy + 0.28f * r)
             canvas.drawArc(smile, 20f, 140f, false, iconStrokePaint)
             iconStrokePaint.color = Color.parseColor("#EAF4FB")
+            // Destellos dentro del orbe, alrededor de la carita.
+            iconPaint.alpha = (alpha * 0.95f * 255).toInt()
+            drawSparkle(canvas, cx + 0.48f * r, cy - 0.35f * r, 0.07f * r)
+            drawSparkle(canvas, cx - 0.50f * r, cy + 0.28f * r, 0.06f * r)
+            drawSparkle(canvas, cx + 0.42f * r, cy + 0.42f * r, 0.05f * r)
         }
 
         /** Icono del botón (o la etiqueta en plata si no tiene icono diseñado). */
@@ -1058,11 +1176,23 @@ class GamepadOverlayView @JvmOverloads constructor(
 
         override fun onDraw(canvas: Canvas) {
             val rect = RectF(0f, 0f, width.toFloat(), height.toFloat())
-            drawGlassBody(canvas, rect, effectiveAlpha())
+            // Stick grande (diseno 51025): cristal con adornos de
+            // diamante en los 4 puntos, anillo interior luminoso y
+            // dos diamantitos dentro del anillo (este y oeste).
+            drawGlassBody(canvas, rect, effectiveAlpha(), fourWayOrnaments = true)
+            val radius = rect.width() / 2f
+            strokePaint.color = Color.parseColor("#BFE6F7")
+            strokePaint.alpha = (effectiveAlpha() * 0.5f * 255).toInt()
+            strokePaint.strokeWidth = 1.5f * density
+            canvas.drawCircle(rect.centerX(), rect.centerY(), radius * 0.78f, strokePaint)
+            ornamentPaint.alpha = (effectiveAlpha() * 0.7f * 255).toInt()
+            iconPaint.alpha = (effectiveAlpha() * 0.9f * 255).toInt()
+            val innerDiamond = (radius * 0.05f).coerceAtLeast(2.5f * density)
+            drawDiamondOrnament(canvas, rect.centerX() - radius * 0.78f, rect.centerY(), innerDiamond)
+            drawDiamondOrnament(canvas, rect.centerX() + radius * 0.78f, rect.centerY(), innerDiamond)
             // Gota sobre la base, antes del pomo: el pomo queda nitido encima.
             drawRipple(canvas, rect, effectiveAlpha())
             // Pomo del stick: círculo de cristal más pequeño desplazado con el dedo.
-            val radius = rect.width() / 2f
             val knobRadius = radius * 0.42f
             val cx = rect.centerX() + knobNx * radius * 0.55f
             val cy = rect.centerY() + knobNy * radius * 0.55f
@@ -1171,14 +1301,16 @@ class GamepadOverlayView @JvmOverloads constructor(
      * - Joystick: el punto donde se apoya el dedo es el ancla; el
      *   destino es ancla + arrastre × sensibilidad. El orbe sigue
      *   al destino mientras se arrastra.
-     * hasActivePointer sigue en false en modo Toque directo, a
+     * hasActivePointer sigue en false en los DOS modos, a
      * propósito: un segundo dedo sobre la zona mientras hay uno
      * lo reenvía el router de multi-toque a SDL (su toque es
      * táctil del juego, no de un control activo); si fuera true,
-     * el router lo descartaría por caer sobre un control activo.
-     * Ese segundo dedo no mueve el brillo (lo sigue el primer
-     * dedo); al levantar el primero, el brillo se suelta aunque
-     * el segundo siga apoyado.
+     * el router lo descartaría por caer sobre un control activo
+     * (R6-P2-22: en modo Joystick el segundo dedo se perdía del
+     * todo). Ese segundo dedo no mueve el brillo (lo sigue el
+     * primer dedo); en modo Toque directo el brillo solo se
+     * suelta cuando se levanta el ÚLTIMO dedo de la zona
+     * (R6-P2-23, zoneFingerIds).
      * Desde 0.2.14 se dibuja solo como orbe + anillo tenue:
      * dibujar el cristal sobre todo el rect (220 dp) era una rueda
      * oscura gigante en el centro de la pantalla. En 0.2.54 la
@@ -1199,17 +1331,49 @@ class GamepadOverlayView @JvmOverloads constructor(
         private var joystickActive: Boolean = false
         private var directTouchActive: Boolean = false
 
-        override val hasActivePointer: Boolean get() = joystickActive
+        /**
+         * R6-P2-23: dedos apoyados AHORA sobre la zona en modo Toque
+         * directo (el seguido + los adicionales). El brillo solo se
+         * suelta cuando el conjunto queda vacío: antes se apagaba al
+         * levantar el primer dedo aunque un segundo siguiera sobre
+         * la zona. En modo Joystick no se usa (el brillo lo sigue
+         * solo el primer dedo).
+         */
+        private val zoneFingerIds = mutableSetOf<Int>()
+
+        /**
+         * R6-P2-23: el brillo es UNA sesión desde el primer dedo
+         * hasta el último: un dedo adicional que se convierte en
+         * seguido (el primero se levantó antes) NO vuelve a
+         * encenderlo. Sin esta guarda, su true sumaría un
+         * mantenedor en el refcount de la Activity sin su false
+         * correspondiente y el brillo quedaría atascado en el
+         * núcleo tras levantar el último dedo.
+         */
+        private var glowOn: Boolean = false
+
+        /**
+         * R6-P2-22: false en los DOS modos. En Toque directo ya lo
+         * era: un segundo dedo sobre la zona lo reenvía el router
+         * de multi-toque a SDL como táctil del juego. En Joystick
+         * era joystickActive y el router lo DESCARTABA (segundo dedo
+         * perdido del todo). La zona es táctil del juego en ambos
+         * modos, no un botón: un segundo dedo sobre ella es un toque
+         * de Igniculus más, no un dedo fantasma sobre un control.
+         * El brillo lo sigue solo el primer dedo en ambos modos.
+         */
+        override val hasActivePointer: Boolean get() = false
 
         override fun onDraw(canvas: Canvas) {
-            // Rueda de Igniculus (2026-11-09, 0.2.14): antes se
-            // llamaba drawGlassBody sobre TODO el rect de 220 dp y
-            // el degradado con el borde azul oscuro salía como un
-            // disco gigante en el centro. Ahora solo un orbe
-            // (el icono a 0.42 x ancho en 0.2.54) + un anillo tenue
-            // alrededor (0.45 x ancho, fuera del halo del icono,
-            // que llega a 0.357 x ancho). El resto del área queda
-            // transparente.
+            // Orbe de Igniculus (0.2.56, diseno 51025): bola de
+            // cristal con corona floral arriba y adorno abajo, sobre
+            // un anillo tenue (0.45 x ancho). Antes (0.2.14-0.2.55)
+            // solo se dibujaban el icono y el anillo, sin cristal:
+            // el orbe se perdia sobre el juego. El cristal va SOLO
+            // sobre el orbe (0.42 x ancho), nunca sobre todo el rect
+            // de la zona: dibujarlo entero era una rueda oscura
+            // gigante en el centro de la pantalla. El resto del area
+            // queda transparente.
             val cx = width / 2f
             val cy = height / 2f
             val alpha = effectiveAlpha()
@@ -1231,11 +1395,13 @@ class GamepadOverlayView @JvmOverloads constructor(
             } else {
                 cy
             }
+            val orbR = width * 0.42f
+            val orbRect = RectF(iconCx - orbR, iconCy - orbR, iconCx + orbR, iconCy + orbR)
+            drawGlassBody(canvas, orbRect, alpha)
             // Gota sobre el orbe (recortada a su anillo): nace donde
             // toca el dedo, en los dos modos. El rect es el del orbe
             // (0.42 x ancho en 0.2.54).
-            val orbR = width * 0.42f
-            rippleRect.set(iconCx - orbR, iconCy - orbR, iconCx + orbR, iconCy + orbR)
+            rippleRect.set(orbRect)
             drawRipple(canvas, rippleRect, alpha)
             drawIcon(canvas, IconKind.IGNICULUS, iconCx, iconCy, width * 0.42f, alpha)
         }
@@ -1245,7 +1411,14 @@ class GamepadOverlayView @JvmOverloads constructor(
             // arrastre, el toque sintético debe terminar y el brillo
             // soltarse: si no, el juego seguiría creyendo que el
             // dedo está apoyado y el brillo quedaría encendido.
-            if (joystickActive || directTouchActive) endTouch()
+            // R6-P2-23: el brillo puede estar encendido con el dedo
+            // seguido ya levantado (otro dedo sigue sobre la zona):
+            // vaciar el conjunto antes de endTouch para que el
+            // brillo se suelte, y si no hay toque activo soltarlo
+            // igual (el refcount de la Activity ignora un false sin
+            // mantenedor, así que no se envía nada de más).
+            zoneFingerIds.clear()
+            if (joystickActive || directTouchActive) endTouch() else sendGlow(false)
         }
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -1264,23 +1437,40 @@ class GamepadOverlayView @JvmOverloads constructor(
             }
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                    val index = if (event.actionMasked == MotionEvent.ACTION_DOWN) 0 else event.actionIndex
+                    val fingerId = event.getPointerId(index)
                     // Segundo dedo sobre la zona mientras ya hay uno
                     // seguido: no se sigue (ese dedo lo reenvía el
-                    // router de multi-toque a SDL, ver KDoc).
-                    if (pointerId != -1) return false
-                    val index = if (event.actionMasked == MotionEvent.ACTION_DOWN) 0 else event.actionIndex
-                    pointerId = event.getPointerId(index)
+                    // router de multi-toque a SDL, ver KDoc). En modo
+                    // Toque directo sí se cuenta para el brillo
+                    // (R6-P2-23): el brillo no se suelta hasta que se
+                    // levante el último dedo de la zona.
+                    if (pointerId != -1) {
+                        if (control.igniculusMode != IgniculusMode.JOYSTICK) {
+                            zoneFingerIds.add(fingerId)
+                        }
+                        return false
+                    }
+                    pointerId = fingerId
                     anchorOverlayX = left + event.getX(index)
                     anchorOverlayY = top + event.getY(index)
                     targetOverlayX = anchorOverlayX
                     targetOverlayY = anchorOverlayY
-                    downTime = event.downTime
+                    // R6-P1-16: el downTime del DEDO DE LA ZONA, no
+                    // el del gesto: si la zona se tocó como segundo
+                    // dedo, event.downTime es el del primer dedo.
+                    // El eventTime de su propio DOWN es su downTime
+                    // (en ACTION_DOWN coincide con event.downTime).
+                    downTime = event.eventTime
+                    if (control.igniculusMode != IgniculusMode.JOYSTICK) {
+                        zoneFingerIds.add(pointerId)
+                    }
                     if (control.igniculusMode == IgniculusMode.JOYSTICK) {
                         joystickActive = true
                     } else {
                         directTouchActive = true
                     }
-                    forwardTouch(MotionEvent.ACTION_DOWN)
+                    forwardTouch(MotionEvent.ACTION_DOWN, event.eventTime)
                     sendGlow(true)
                     invalidate()
                     return true
@@ -1302,18 +1492,43 @@ class GamepadOverlayView @JvmOverloads constructor(
                         targetOverlayX = left + event.getX(index)
                         targetOverlayY = top + event.getY(index)
                     }
-                    forwardTouch(MotionEvent.ACTION_MOVE)
+                    forwardTouch(MotionEvent.ACTION_MOVE, event.eventTime)
                     invalidate()
                     return true
                 }
                 MotionEvent.ACTION_POINTER_UP -> {
-                    if (event.getPointerId(event.actionIndex) == pointerId) {
+                    val upId = event.getPointerId(event.actionIndex)
+                    if (upId == pointerId) {
+                        // El dedo seguido se levanta: su toque
+                        // sintético termina, pero el brillo solo se
+                        // suelta si no queda ningún dedo sobre la zona
+                        // (R6-P2-23, modo Toque directo).
+                        zoneFingerIds.remove(upId)
                         endTouch()
+                    } else if (control.igniculusMode != IgniculusMode.JOYSTICK &&
+                        zoneFingerIds.remove(upId) && zoneFingerIds.isEmpty()
+                    ) {
+                        // Un dedo adicional se levanta y era el último
+                        // que quedaba (el seguido ya se había levantado
+                        // antes): apagar el brillo.
+                        sendGlow(false)
                     }
                     return true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (joystickActive || directTouchActive) endTouch()
+                    if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                        // Gesto cancelado: no queda ningún dedo.
+                        zoneFingerIds.clear()
+                    } else {
+                        zoneFingerIds.remove(event.getPointerId(event.actionIndex))
+                    }
+                    if (joystickActive || directTouchActive) {
+                        endTouch()
+                    } else if (zoneFingerIds.isEmpty()) {
+                        // El último dedo era uno adicional (el seguido
+                        // ya se había levantado): apagar el brillo.
+                        sendGlow(false)
+                    }
                     return true
                 }
             }
@@ -1323,12 +1538,28 @@ class GamepadOverlayView @JvmOverloads constructor(
         /**
          * Brillo de Igniculus al mantener (0.2.54): manda los dos
          * botones de [TouchOverlayMapping.glowSdlButtons] (hombro L
-         * 9 + eje L2 -4) en el mismo sentido: en modo normal el 9
-         * basta y en modo ext solo el eje llega al bit L, así que
-         * enviar ambos es inocuo en ambos modos. Se llama al apoyar
-         * el dedo y al soltarlo, en los dos modos de Igniculus.
+         * 9 + eje L2 -4) en el mismo sentido: en lecturas v1 el 9
+         * basta y en lecturas v2 solo el eje llega al bit L. El
+         * comentario anterior decía que enviar ambos era inocuo en
+         * ambos modos y era FALSO: en v2 el 9 pone además el bit L1
+         * (0x400) como colateral (R6-P1-13, ver el KDoc de
+         * glowSdlButtons: el modo no se puede detectar desde el
+         * launcher). El doble envío se mantiene a propósito para no
+         * romper ningún modo; la prueba de teléfono Q4 decide si L1
+         * hace algo en Child of Light. Se llama al apoyar el dedo y
+         * al soltarlo, en los dos modos de Igniculus.
          */
         private fun sendGlow(pressed: Boolean) {
+            // R6-P2-23: guarda de sesión (ver glowOn): si el brillo ya
+            // está en el estado pedido, no se reenvía nada. Sin ella,
+            // un dedo que se convierte en seguido re-encendería un
+            // brillo ya encendido y su false final no equilibraría el
+            // refcount de la Activity.
+            if (pressed == glowOn) return
+            glowOn = pressed
+            // R6-P1-13: constancia en el log cada vez que se envía el
+            // brillo (el doble envío 9 + -4 y su L1 colateral en v2).
+            Log.i("GamepadOverlayView", "brillo Igniculus pressed=$pressed (SDL 9 + eje -4; en lecturas v2 del juego el 9 es L1 colateral)")
             for (sdlButton in glowSdlButtons()) {
                 listener?.onButton(sdlButton, pressed)
             }
@@ -1336,7 +1567,11 @@ class GamepadOverlayView @JvmOverloads constructor(
 
         private fun endTouch() {
             forwardTouch(MotionEvent.ACTION_UP)
-            sendGlow(false)
+            // R6-P2-23: en modo Toque directo el brillo solo se suelta
+            // cuando el último dedo se levanta de la zona. En modo
+            // Joystick el conjunto siempre está vacío (no se cuentan
+            // los adicionales), así que se suelta como antes.
+            if (zoneFingerIds.isEmpty()) sendGlow(false)
             pointerId = -1
             joystickActive = false
             directTouchActive = false
@@ -1352,15 +1587,18 @@ class GamepadOverlayView @JvmOverloads constructor(
          * false para que ningún botón del overlay consuma el toque
          * sintético (si el destino cae sobre un botón, lo pulsaría).
          */
-        private fun forwardTouch(action: Int) {
+        private fun forwardTouch(action: Int, eventTime: Long = SystemClock.uptimeMillis()) {
             val activity = context as? Activity ?: return
-            val synthetic = MotionEvent.obtain(
-                downTime,
-                SystemClock.uptimeMillis(),
-                action,
-                targetOverlayX,
-                targetOverlayY,
-                0,
+            // R6-P1-16: el obtain de 6 args ponía id siempre 0, sin
+            // source y sin pressure, con el downTime del gesto. Ahora
+            // se usa MotionEventHelper (14 args: pointerId real del
+            // dedo de la zona, SOURCE_TOUCHSCREEN, pressure/size 1),
+            // igual que el reenvío del router
+            // (obtainSinglePointerEvent). downTime es el del dedo de
+            // la zona (no el del gesto, ver onTouchEvent).
+            val synthetic = obtainSinglePointerEvent(
+                downTime, eventTime, action, pointerId,
+                targetOverlayX, targetOverlayY,
             )
             try {
                 forwardingSyntheticTouch = true

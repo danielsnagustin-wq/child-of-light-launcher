@@ -20,16 +20,19 @@ import com.danielsnagustin.childoflight.launcher.model.GameStatus
  * - Núcleo disponible + juego solo en .pkg + firmware local
  *   -> UseEmbeddedPkg: primero se instala el .pkg con el propio
  *   núcleo (EmbeddedPkgInstaller) y luego se arranca embebido.
- *   SOLO si el .pkg tiene su licencia (work.bin): sin ella el
+ *   SOLO si el .pkg tiene su licencia (work.bin) o la licencia ya
+ *   está instalada en el núcleo (R6-P1-07): sin ninguna de las dos el
  *   núcleo instalaría un juego que no arranca y nadie avisaría
- *   (P0-1). Sin licencia -> Blocked con "Falta la licencia
- *   (work.bin)…" para que la UI ofrezca el selector de work.bin
- *   (PendingPkgLicense, oleada 2). decide() es pura y no ve el
- *   directorio de licencias del núcleo: si la licencia ya está
- *   instalada dentro del núcleo pero el work.bin guardado se
- *   perdió, decide() bloquea igual y el usuario vuelve a elegir
- *   el work.bin; la reinstalación del eboot (que no pasa por
- *   decide()) sí puede reutilizar esa licencia vía findPkgZrif.
+ *   (P0-1). Sin licencia en ningún sitio -> Blocked con "Falta la
+ *   licencia (work.bin)…" para que la UI ofrezca el selector de
+ *   work.bin (PendingPkgLicense, oleada 2). decide() es pura y lee
+ *   licenseInstalledInCore del GameStatus (lo calcula scanStatus
+ *   desde ux0/license/<TITLE>/<CONTENT_ID>.rif): si la licencia ya
+ *   está instalada dentro del núcleo pero el work.bin guardado se
+ *   perdió, decide() permite instalar igual, porque
+ *   installPkgFile resuelve la licencia vía findPkgZrif. La
+ *   reinstalación del eboot (que no pasa por decide()) ya usaba esa
+ *   vía; el camino principal ahora también.
  * - Núcleo disponible pero SIN firmware local -> Blocked: el núcleo
  *   no puede arrancar sin firmware y ya no se salta a la app externa
  *   por detrás. El motivo dice dónde importarlo (Importar →
@@ -92,7 +95,11 @@ object EmbeddedGameLauncher {
                 // Solo el camino .pkg se bloquea: un juego extraído ya
                 // tiene su licencia registrada en el núcleo y no la
                 // necesita (por eso va primero).
-                status.pkgInstalled && !status.pkgLicensePresent ->
+                // R6-P1-07: la licencia instalada EN EL NÚCLEO también
+                // vale: installPkgFile la reutiliza vía findPkgZrif
+                // cuando no hay work.bin guardado, así que bloquear
+                // aquí pedía un work.bin que ya no hace falta.
+                status.pkgInstalled && !status.pkgLicensePresent && !status.licenseInstalledInCore ->
                     Decision.Blocked(LICENSE_BLOCKED_EMBEDDED)
                 status.pkgInstalled -> Decision.UseEmbeddedPkg(titleId)
                 // P2-A6: hoy inalcanzable por el invariante de

@@ -194,16 +194,37 @@ object TouchOverlayMapping {
      * apoyada (brillo de Igniculus, hombro L del juego original):
      * el botón 9 (LEFT_SHOULDER) Y el eje -4 (LEFT_TRIGGER, L2).
      * Por qué AMBOS: en el pin, ctrl.h:41-42 dice que SCE_CTRL_L2
-     * es alias de SCE_CTRL_L, y ctrl.cpp:226 (modo normal) traduce
-     * el hombro SDL 9 a SCE_CTRL_L, pero ctrl.cpp:246 (modo ext)
-     * traduce ese mismo 9 a SCE_CTRL_L1 (bit aparte, 0x400) y solo
-     * el eje 4 > 0x3FFF llega a SCE_CTRL_L2 (= SCE_CTRL_L,
-     * ctrl.cpp:281-290). En modo normal el 9 basta y en modo ext
-     * solo el eje llega al bit L; enviar ambos es inocuo en ambos
-     * modos. El puente traduce el valor negativo a eje
-     * (input_overlay.cpp:104-108), igual que L2/R2. Puro Kotlin:
-     * testeable, y ZoneView lo usa tal cual en los dos modos de
-     * Igniculus.
+     * es alias de SCE_CTRL_L, y ctrl.cpp:226 (lecturas v1,
+     * SceCtrlData) traduce el hombro SDL 9 a SCE_CTRL_L, pero
+     * ctrl.cpp:246 (lecturas v2, SceCtrlData2) traduce ese mismo 9
+     * a SCE_CTRL_L1 (bit aparte, 0x400) y solo el eje 4 > 0x3FFF
+     * llega a SCE_CTRL_L2 (= SCE_CTRL_L, ctrl.cpp:281-290). En
+     * modo normal el 9 basta y en modo ext solo el eje llega al
+     * bit L; pero enviar ambos NO es inocuo: en lecturas v2 el 9
+     * pone ADEMÁS el bit L1 (0x400) como colateral. El comentario
+     * anterior afirmaba que era inocuo en ambos modos y era FALSO
+     * en v2 (R6-P1-13). No se puede enviar solo el botón válido
+     * por modo porque el modo NO se puede detectar desde el
+     * launcher: "v1 vs v2" no es un modo persistente del juego,
+     * es qué función sceCtrl* invoca en cada lectura
+     * (sceCtrlReadBufferPositive* frente a *2 / *Ext2:
+     * ctrl.cpp: retrieve_ctrl_data pasa is_v2 como `ext` a
+     * apply_controller, y las variantes *Ext sin 2 usan los
+     * binds normales); CtrlState no guarda cuál usó el juego por
+     * última vez, el pin no expone ningún JNI para leerlo
+     * (launcher_bridge.h no tiene ninguna función de ctrl, y
+     * ctrl_peek_buttons siempre lee en v1/no-ext) y leer
+     * state.controllers exigiría modificar las fuentes del pin,
+     * que el launcher no toca (el núcleo se clona en el build
+     * desde upstream). Así que el doble envío se mantiene a
+     * propósito: garantiza L en ambos modos y deja L1 colateral
+     * en v2; quitar uno de los dos a ciegas rompería un modo
+     * (solo-9 rompe v2, solo-eje rompe v1). La prueba de teléfono
+     * Q4 del informe de la ronda 6 decide si L1 hace algo visible
+     * en Child of Light. El puente traduce el valor negativo a
+     * eje (input_overlay.cpp:104-108), igual que L2/R2. Puro
+     * Kotlin: testeable, y ZoneView lo usa tal cual en los dos
+     * modos de Igniculus.
      */
     fun glowSdlButtons(): List<Int> =
         listOf(SDL_BUTTON_LEFT_SHOULDER, -SDL_AXIS_LEFT_TRIGGER)

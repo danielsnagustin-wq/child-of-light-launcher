@@ -2,6 +2,7 @@ package com.danielsnagustin.childoflight.launcher.core
 
 import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
+import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.data.PkgHeaderParser
 import com.danielsnagustin.childoflight.launcher.model.PkgKind
 import com.danielsnagustin.childoflight.launcher.model.TitleId
@@ -170,6 +171,18 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
         }
         if (!pkgFile.isFile) {
             return Result.failure(IllegalStateException("No está el archivo ${pkgFile.name}."))
+        }
+        // R6-P2-01: sin espacio no se empieza la instalación: el .pkg
+        // ya guardado más su extracción conviven en la misma partición
+        // (el doble del .pkg). Es la red de seguridad de los llamadores
+        // que no comprueban espacio (installStoredAddonPkgs comprueba
+        // por addon antes de llamar; los del juego comprueban longitud
+        // + margen). Si no se pudo medir el espacio, no se bloquea
+        // (hasFreeSpace): el fallo, si lo hay, lo da installPkg.
+        val neededBytes = GameLibraryRepository.pkgInstallNeededBytes(pkgFile.length())
+        if (!library.hasFreeSpace(library.ux0Dir, neededBytes)) {
+            val reason = GameLibraryRepository.freeSpaceMessage(neededBytes, library.freeBytes(library.ux0Dir), pkgFile.length())
+            return Result.failure(IllegalStateException(reason))
         }
         if (!ensureCoreInitialized()) {
             return Result.failure(IllegalStateException("El núcleo embebido no se pudo iniciar: no se puede instalar ${pkgFile.name}."))
@@ -366,6 +379,15 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
                     // como "PUP guardado" y decide() no elegiría nunca
                     // el núcleo embebido.
                     FirmwareResolver.markInstalled(library.vitaRoot, version)
+                    // R6-P2-06: aviso (SIN bloquear) si la versión
+                    // instalada es menor que 3.15, el mínimo del juego
+                    // (o desconocida): el juego puede fallar al arrancar
+                    // con firmware viejo. 3.60-3.73 NO se bloquean: el
+                    // juego corre en ellas. El aviso queda en el log
+                    // para el diagnóstico; la instalación ya tuvo éxito.
+                    if (FirmwareResolver.versionBelowMinimum(version)) {
+                        LauncherLog.append(library.appContext, "firmware", "Firmware instalado $version: por debajo del mínimo recomendado 3.15 para este juego. El juego puede fallar al arrancar; si es así, instala un firmware 3.15 o superior.")
+                    }
                     Result.success(version)
                 }
             } catch (e: Exception) {
