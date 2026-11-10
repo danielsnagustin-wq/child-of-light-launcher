@@ -1,7 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.ChildOfLightLauncher" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#10131D</item>
+        <!--
+          Ronda 0.2.55 (arranque sin pantalla negra): el fondo de
+          ventana ya no es un plano #10131D vacío (en AMOLED se veía
+          negro): es splash_background, con la portada del juego
+          centrada sobre el mismo fondo. Es lo primero que se ve al
+          abrir, sin retener Home ni un milisegundo: en cuanto Compose
+          dibuja, Home lo sustituye. En Android 12+ el sistema usa
+          windowSplashScreenBackground + windowSplashScreenAnimatedIcon
+          para su splash (atributos ignorados por debajo de API 31).
+        -->
+        <item name="android:windowBackground">@drawable/splash_background</item>
+        <item name="android:windowSplashScreenBackground">#10131D</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
         <item name="android:statusBarColor">#10131D</item>
         <item name="android:navigationBarColor">#10131D</item>
     </style>
