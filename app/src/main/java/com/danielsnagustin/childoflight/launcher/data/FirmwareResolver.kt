@@ -75,6 +75,46 @@ sealed class FirmwareStatus {
 
 object FirmwareResolver {
 
+    // Ronda 0.2.55 P1-5: caché de resolve(). Listar vita/vs0 (miles
+    // de archivos) en cada refresco era el I/O más caro del escaneo
+    // después de los tamaños. La marca es barata (mtimes + tamaño del
+    // PUP, sin listar nada): si nada de eso cambió, el resultado no
+    // puede haber cambiado por ninguna vía de la app. Las mutaciones
+    // propias (markInstalled, deleteFirmware, migrateLegacyVs0)
+    // invalidan la caché directamente; un cambio manual fuera de la
+    // app que no toque esos mtimes quedaría obsoleto hasta la próxima
+    // invalidación, igual que DirSizeCache.
+    @Volatile
+    private var cachedRoot: String? = null
+    @Volatile
+    private var cachedStamp: String? = null
+    @Volatile
+    private var cachedStatus: FirmwareStatus? = null
+
+    private fun invalidateCache() {
+        cachedRoot = null
+        cachedStamp = null
+        cachedStatus = null
+    }
+
+    private fun resolveStamp(vitaRoot: File): String {
+        val vs0 = coreVs0Dir(vitaRoot)
+        val marker = installedMarkerFile(vitaRoot)
+        val pup = pupFile(vitaRoot)
+        return "${vs0.lastModified()}|${marker.lastModified()}|${pup.lastModified()}|${pup.length()}"
+    }
+
+    fun resolve(vitaRoot: File): FirmwareStatus {
+        val stamp = resolveStamp(vitaRoot)
+        val cached = cachedStatus
+        if (cached != null && cachedRoot == vitaRoot.absolutePath && cachedStamp == stamp) return cached
+        val result = resolveUncached(vitaRoot)
+        cachedRoot = vitaRoot.absolutePath
+        cachedStamp = stamp
+        cachedStatus = result
+        return result
+    }
+
     /**
      * Una frase, dentro de la app, cuando no hay PUP en el teléfono.
      * No manda a buscar nada por internet ni a subir nada a ningún
@@ -97,7 +137,7 @@ object FirmwareResolver {
     /** Marcador de instalación en el núcleo (solo válido si trae versión). */
     fun installedMarkerFile(vitaRoot: File): File = File(vitaRoot, "firmware/installed.json")
 
-    fun resolve(vitaRoot: File): FirmwareStatus {
+    private fun resolveUncached(vitaRoot: File): FirmwareStatus {
         // 1. Firmware extraído POR EL NÚCLEO (vita/vs0, no vacío).
         //    Criterio igual que upstream (`has_installed_firmware_content`:
         //    existe, es directorio y no está vacío).
@@ -162,7 +202,7 @@ object FirmwareResolver {
         } catch (_: Exception) {
             runCatching { dest.deleteRecursively() }
             false
-        }
+        }.also { if (it) invalidateCache() }
     }
 
     /**
@@ -237,9 +277,16 @@ object FirmwareResolver {
             if (!dir.exists()) dir.mkdirs()
             val pupSize = pupFile(vitaRoot).takeIf { it.isFile }?.length()
             val sizeField = if (pupSize != null) ",\"size\":$pupSize" else ""
+            // Ronda 0.2.55: el nombre limpio va en un val aparte (antes
+            // iba interpolado dentro del JSON y el comprobador de
+            // corchetes lo leía mal); el JSON escrito es el mismo.
+            val cleanFileName = fileName.replace("\"", "")
             installedMarkerFile(vitaRoot).writeText(
-                "{\"version\":\"$cleanVersion\",\"file\":\"${fileName.replace("\"", "")}\"$sizeField}",
+                "{\"version\":\"$cleanVersion\",\"file\":\"$cleanFileName\"$sizeField}",
             )
+            // Ronda 0.2.55 P1-5: el marcador cambió: la caché de
+            // resolve() debe olvidarse o seguiría diciendo lo viejo.
+            invalidateCache()
             true
         } catch (_: Exception) {
             false
@@ -295,6 +342,9 @@ object FirmwareResolver {
         // fantasma en diagnósticos viejos.
         val legacyVs0 = File(vitaRoot, "vs0")
         if (legacyVs0.exists() && legacyVs0.deleteRecursively()) deleted = true
+        // Ronda 0.2.55 P1-5: el firmware cambió: olvidar la caché de
+        // resolve() o seguiría diciendo que está instalado.
+        if (deleted) invalidateCache()
         return deleted
     }
 

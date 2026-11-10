@@ -183,6 +183,10 @@ class GameLibraryRepository(private val context: Context) {
     // tamaño; el contenido (qué hay instalado) se sigue leyendo siempre.
     private val dirSizeCache = DirSizeCache()
 
+    // Ronda 0.2.55 P1-5: caché de listSaves() (misma idea que
+    // DirSizeCache): clave título, marca mtime del directorio de saves.
+    private val savesCache = mutableMapOf<String, Pair<Long, List<SaveInfo>>>()
+
     /**
      * R4-P2-5: último resumen de scanStatus registrado en el log.
      * El compare-and-set de abajo va bajo un synchronized pequeño
@@ -334,10 +338,54 @@ class GameLibraryRepository(private val context: Context) {
          * R5-A4-1: mensaje cuando no cabe una importación o una
          * instalación: cuánto hace falta y cuánto hay libre, en
          * formato legible. Puro (testeable en JVM).
+         *
+         * P0 espacio libre (0.2.55): dos casos que el texto viejo
+         * confundía. Si [freeBytes] es negativo, el espacio NO se
+         * pudo medir (StatFs falló incluso sobre un directorio que
+         * existe): se dice así, nunca "hay 0 bytes libres", porque
+         * 0 es una medida real de disco lleno y un negativo es
+         * "no lo sé". Si se conoce el tamaño declarado del .pkg
+         * ([declaredPkgBytes] mayor que 0), se explica el pico en
+         * una línea con cifras reales: el .pkg guardado más su
+         * extracción, y que tras instalarlo el .pkg se borra solo.
          */
-        fun freeSpaceMessage(neededBytes: Long, freeBytes: Long): String {
-            return "Falta espacio: hacen falta ${DownloadsCleanup.formatBytes(neededBytes)}, " +
-                "hay ${DownloadsCleanup.formatBytes(freeBytes)} libres"
+        fun freeSpaceMessage(
+            neededBytes: Long,
+            freeBytes: Long,
+            declaredPkgBytes: Long? = null,
+        ): String {
+            val peak = if (declaredPkgBytes != null && declaredPkgBytes > 0 && declaredPkgBytes < neededBytes) {
+                ". El pico incluye el .pkg guardado (${DownloadsCleanup.formatBytes(declaredPkgBytes)}) " +
+                    "y su extracción (${DownloadsCleanup.formatBytes(neededBytes - declaredPkgBytes)}); " +
+                    "tras instalarlo, el .pkg se borra solo"
+            } else {
+                ""
+            }
+            return if (freeBytes < 0) {
+                "No se pudo medir el espacio libre: hacen falta ${DownloadsCleanup.formatBytes(neededBytes)}$peak"
+            } else {
+                "Falta espacio: hacen falta ${DownloadsCleanup.formatBytes(neededBytes)}, " +
+                    "hay ${DownloadsCleanup.formatBytes(freeBytes)} libres$peak"
+            }
+        }
+
+        /**
+         * P0 espacio libre (0.2.55): sonda para StatFs. StatFs lanza
+         * IllegalArgumentException si la ruta NO existe, y en una
+         * instalación limpia ux0/ y ux0/pkg/ aún no existen (se crean
+         * al copiar), así que medir sobre la ruta destino devolvía 0
+         * y TODA importación se rechazaba. La medición es por
+         * partición, así que el ancestro existente más cercano da el
+         * mismo valor: se sube con parentFile hasta encontrarlo. Si
+         * no existe ni la raíz, se usa [fallbackDir] (filesDir, que
+         * siempre existe). Puro (testeable en JVM).
+         */
+        fun statFsProbeDir(dir: File, fallbackDir: File): File {
+            var probe: File? = dir
+            while (probe != null && !probe.exists()) {
+                probe = probe.parentFile
+            }
+            return probe ?: fallbackDir
         }
 
         /**
@@ -607,12 +655,19 @@ class GameLibraryRepository(private val context: Context) {
 
     /**
      * R5-A4-1: bytes libres en la partición de [dir] (StatFs).
-     * 0 si no se puede medir: el llamador lo trata como "sin
-     * espacio" y no inicia la copia. Puro en lo que devuelve, pero
-     * con StatFs de Android: no testeable en unit tests JVM.
+     *
+     * P0 espacio libre (0.2.55): -1 si no se puede medir (StatFs
+     * falló incluso sobre la sonda); 0 solo si la partición está
+     * llena de verdad. Antes devolvía 0 en ambos casos, y como en
+     * instalación limpia el destino (ux0/pkg/) aún no existe, StatFs
+     * lanzaba y toda importación se rechazaba con "0 bytes libres".
+     * La sonda es el ancestro existente más cercano (o filesDir):
+     * la medición es por partición, así que da el mismo valor.
+     * No testeable en unit tests JVM (StatFs de Android).
      */
     fun freeBytes(dir: File): Long {
-        return runCatching { StatFs(dir.path).availableBytes }.getOrDefault(0L)
+        val probe = statFsProbeDir(dir, context.filesDir)
+        return runCatching { StatFs(probe.path).availableBytes }.getOrDefault(-1L)
     }
 
     /**
@@ -621,10 +676,20 @@ class GameLibraryRepository(private val context: Context) {
      * había ninguna y una copia de 1,14 GB fallaba a mitad con el
      * disco casi lleno. Si no se sabe cuánto hace falta (0 o menos),
      * no hay nada que comprobar.
+     *
+     * P0 espacio libre (0.2.55): si el espacio no se pudo medir
+     * (freeBytes menor que 0), NO se bloquea: bloquear por "no lo
+     * sé" es lo que rechazaba todas las importaciones en
+     * instalación limpia. Tampoco se miente diciendo que hay
+     * espacio: el mensaje de rechazo no se llega a mostrar y, si el
+     * disco está lleno de verdad, la copia o la instalación fallan
+     * con su error real.
      */
     fun hasFreeSpace(dir: File, neededBytes: Long): Boolean {
         if (neededBytes <= 0L) return true
-        return freeBytes(dir) >= neededBytes
+        val free = freeBytes(dir)
+        if (free < 0L) return true
+        return free >= neededBytes
     }
 
     /**
@@ -1501,15 +1566,36 @@ class GameLibraryRepository(private val context: Context) {
     }
 
     fun listSaves(titleId: String): List<SaveInfo> {
+        // Ronda 0.2.55 P1-5: la savedata se re-listaba entera
+        // (walkTopDown) en cada escaneo. Caché por (título, mtime del
+        // directorio): los saves solo cambian jugando, y al volver del
+        // juego el ViewModel invalida (noteReturnedFromGame) y al
+        // borrarlos se invalida en deleteSavesOnly. Un cambio de
+        // contenido sin tocar el directorio (núcleo escribiendo en un
+        // archivo existente) queda obsoleto hasta la próxima
+        // invalidación: mismo compromiso que DirSizeCache.
         val dir = saveDir(titleId)
-        if (!dir.exists()) return emptyList()
-        return dir.walkTopDown().filter { it.isFile }.map {
+        if (!dir.exists()) {
+            savesCache.remove(titleId)
+            return emptyList()
+        }
+        val stamp = dir.lastModified()
+        val cached = savesCache[titleId]
+        if (cached != null && cached.first == stamp) return cached.second
+        val result = dir.walkTopDown().filter { it.isFile }.map {
             SaveInfo(
                 name = it.relativeTo(dir).path,
                 sizeBytes = it.length(),
                 lastModifiedMillis = it.lastModified(),
             )
         }.sortedBy { it.name }.toList()
+        savesCache[titleId] = stamp to result
+        return result
+    }
+
+    /** Olvida los saves cacheados de un título (al volver del juego o tras borrarlos). */
+    fun invalidateSaves(titleId: String) {
+        savesCache.remove(titleId)
     }
 
     // ------------------------------------------------------------------
@@ -1642,7 +1728,12 @@ class GameLibraryRepository(private val context: Context) {
                 val neededBytes = pkgImportNeededBytes(parsed.declaredTotalSizeBytes)
                 val destDir = dest.parentFile ?: pkgDir()
                 if (!hasFreeSpace(destDir, neededBytes)) {
-                    return ImportResult.Rejected(freeSpaceMessage(neededBytes, freeBytes(destDir)))
+                    // P0 espacio libre (0.2.55): se pasa el tamaño
+                    // declarado para que el mensaje explique el pico
+                    // (pkg guardado + extracción) con cifras reales.
+                    return ImportResult.Rejected(
+                        freeSpaceMessage(neededBytes, freeBytes(destDir), parsed.declaredTotalSizeBytes),
+                    )
                 }
                 // Copia atómica: temporal + rename. Un .pkg son ~1.1 GB:
                 // si la copia falla a medias, el .pkg viejo sigue intacto.
@@ -2577,6 +2668,10 @@ class GameLibraryRepository(private val context: Context) {
                 }
             }
         }
+        // Ronda 0.2.55 P1-5: los saves borrados ya no están en disco:
+        // la caché de listSaves() debe olvidarlos o el próximo
+        // escaneo seguiría mostrándolos.
+        if (deleted) savesCache.remove(titleId)
         return SavesDeleteResult(deleted, failed)
     }
 
