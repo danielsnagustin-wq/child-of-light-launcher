@@ -156,6 +156,12 @@ object TouchOverlayMapping {
      * de cara (D-Pad, START, L1/R1, L2/R2, GUIDE, sticks y NONE se
      * dibujan con flechas, pausa, etiqueta o nada, no con un glifo).
      * CROSS tiene su glifo propio y ya no comparte icono con DPAD_UP.
+     * 0.2.54: el layout limpio NO usa estos glifos para sus dos
+     * botones de acción (btn_sword lleva espada y btn_jump flecha
+     * arriba, por id de control, ver [iconOverrideFor]); un botón
+     * de cara que el usuario añada en el editor SÍ sigue con su
+     * glifo (CROSS -> X, etc.): el rombo sigue disponible en el
+     * editor, solo deja de ser el layout por defecto.
      */
     fun faceGlyphFor(button: VitaButton): FaceGlyph? = when (button) {
         VitaButton.CROSS -> FaceGlyph.CROSS
@@ -164,6 +170,56 @@ object TouchOverlayMapping {
         VitaButton.TRIANGLE -> FaceGlyph.TRIANGLE
         else -> null
     }
+
+    /**
+     * Icono propio de un control del layout limpio 0.2.54, por id
+     * de control (NO por botón de Vita): btn_sword lleva una espada
+     * y btn_jump una flecha arriba, aunque sus botones de Vita
+     * (SQUARE y CROSS) tengan glifo propio en [faceGlyphFor].
+     * GamepadOverlayView.iconFor consulta esto ANTES que el glifo,
+     * así que un SQUARE o un CROSS añadidos por el usuario en el
+     * editor (con otro id) siguen dibujándose con su glifo. Puro
+     * Kotlin, sin Android: testeable.
+     */
+    enum class ControlIconOverride { SWORD, ARROW_UP }
+
+    fun iconOverrideFor(controlId: String): ControlIconOverride? = when (controlId) {
+        "btn_sword" -> ControlIconOverride.SWORD
+        "btn_jump" -> ControlIconOverride.ARROW_UP
+        else -> null
+    }
+
+    /**
+     * Botones SDL que manda la zona Igniculus mientras se mantiene
+     * apoyada (brillo de Igniculus, hombro L del juego original):
+     * el botón 9 (LEFT_SHOULDER) Y el eje -4 (LEFT_TRIGGER, L2).
+     * Por qué AMBOS: en el pin, ctrl.h:41-42 dice que SCE_CTRL_L2
+     * es alias de SCE_CTRL_L, y ctrl.cpp:226 (modo normal) traduce
+     * el hombro SDL 9 a SCE_CTRL_L, pero ctrl.cpp:246 (modo ext)
+     * traduce ese mismo 9 a SCE_CTRL_L1 (bit aparte, 0x400) y solo
+     * el eje 4 > 0x3FFF llega a SCE_CTRL_L2 (= SCE_CTRL_L,
+     * ctrl.cpp:281-290). En modo normal el 9 basta y en modo ext
+     * solo el eje llega al bit L; enviar ambos es inocuo en ambos
+     * modos. El puente traduce el valor negativo a eje
+     * (input_overlay.cpp:104-108), igual que L2/R2. Puro Kotlin:
+     * testeable, y ZoneView lo usa tal cual en los dos modos de
+     * Igniculus.
+     */
+    fun glowSdlButtons(): List<Int> =
+        listOf(SDL_BUTTON_LEFT_SHOULDER, -SDL_AXIS_LEFT_TRIGGER)
+
+    /**
+     * Orden de hijos del overlay en el juego (0.2.54): la zona
+     * Igniculus PRIMERO (detrás) y el resto después (encima), en
+     * su orden de lista. Android entrega el toque al hijo de más
+     * arriba primero, así que un botón que se solape con la zona
+     * (la espada y el salto pisan su esquina superior derecha)
+     * recibe su toque aunque la zona esté debajo; la zona solo
+     * recibe los toques que no caen en ningún botón. Solo los
+     * visibles. Puro Kotlin: testeable.
+     */
+    fun overlayChildOrder(controls: List<TouchControl>): List<TouchControl> =
+        visibleControls(controls).sortedBy { if (it.kind == "igniculus") 0 else 1 }
 
     /**
      * R4-P1-1: rectángulo del juego 960x544 encajado y centrado
