@@ -22,6 +22,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
+import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
+import com.danielsnagustin.childoflight.launcher.model.GameStatus
 import com.danielsnagustin.childoflight.launcher.ui.ColTurquoise
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
@@ -46,7 +48,11 @@ fun SettingsStorageScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
     // Ola 3, Etapa 7: estado de archivos (GameStatus + firmware).
     val status by vm.status.collectAsState()
     val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
-    val settings by vm.settingsFlow.collectAsState(initial = null)
+    // Ronda 0.2.55 (refuerzo, hallazgo extra no listado en la
+    // auditoría): settingsFlow se recogía arriba solo para UN booleano
+    // (pkgInstalledInVita3k) del estado de archivos: cada cambio de
+    // ajuste recomponía Almacenamiento entero. Lo recoge
+    // FileStateSectionWithSettings dentro de sí (abajo).
     var showDeleteDownloadsConfirm by rememberSaveable { mutableStateOf(false) }
     // R4-P1-14: textos segun el tema (en Claro, blanco sobre fondo claro no se lee).
     val dark = isDarkUi(rememberUiPreferences())
@@ -140,11 +146,27 @@ fun SettingsStorageScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
             // Ola 3, Etapa 7: los 6 estados, leídos del disco. Guardado
             // no es instalado: un .pkg guardado no es un juego
             // instalado, y un PUP guardado no es firmware instalado.
-            FileStateSection(
-                status = status,
-                firmwareStatus = firmwareStatus,
-                pkgInstalledInVita3k = settings?.pkgInstalledInVita3k ?: false,
-            )
+            FileStateSectionWithSettings(vm, status, firmwareStatus)
         }
     }
+}
+
+/**
+ * Estado de archivos (Ronda 0.2.55, refuerzo): recoge settingsFlow
+ * DENTRO, solo para el booleano pkgInstalledInVita3k que pide
+ * FileStateSection. Antes Almacenamiento lo recogía arriba y cada
+ * cambio de ajuste recomponía la pantalla entera.
+ */
+@Composable
+private fun FileStateSectionWithSettings(
+    vm: LauncherViewModel,
+    status: GameStatus,
+    firmwareStatus: FirmwareStatus,
+) {
+    val settings by vm.settingsFlow.collectAsState(initial = null)
+    FileStateSection(
+        status = status,
+        firmwareStatus = firmwareStatus,
+        pkgInstalledInVita3k = settings?.pkgInstalledInVita3k ?: false,
+    )
 }

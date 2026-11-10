@@ -32,6 +32,7 @@ import com.danielsnagustin.childoflight.launcher.model.isLowRamConservativeVaria
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import com.danielsnagustin.childoflight.launcher.ui.ColTurquoise
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
+import com.danielsnagustin.childoflight.launcher.ui.LocalUiPreferences
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
 import com.danielsnagustin.childoflight.launcher.ui.PremiumCard
 import com.danielsnagustin.childoflight.launcher.ui.Screen
@@ -50,11 +51,14 @@ import com.danielsnagustin.childoflight.launcher.ui.isDarkUi
 fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Screen) -> Unit) {
     val settings by vm.settingsFlow.collectAsState(initial = null)
     val gpu by vm.gpuFlow.collectAsState(initial = null)
-    val uiPrefs by vm.uiFlow.collectAsState(initial = null)
+    val uiPrefs = LocalUiPreferences.current
     // R4-P1-14: textos segun el tema (en Claro, blanco sobre fondo claro no se lee).
     val dark = isDarkUi(uiPrefs)
     val externalVita3k by vm.externalVita3k.collectAsState()
-    val configText by vm.generatedConfig.collectAsState()
+    // Ronda 0.2.55 P1-18: generatedConfig ya NO se recoge aquí arriba:
+    // solo se usa en el diálogo "Ver config.yml" y cada emisión
+    // recomponía la pantalla General entera. Lo recoge
+    // ConfigPreviewDialog dentro de sí.
     var showConfig by rememberSaveable { mutableStateOf(false) }
     var showResetConfirm by rememberSaveable { mutableStateOf(false) }
     // Ola 3, Etapa 9a: copia de seguridad de ajustes (JSON por SAF).
@@ -72,16 +76,7 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
         onBack = onBack,
         dialogs = {
             if (showConfig) {
-                AlertDialog(
-                    onDismissRequest = { showConfig = false },
-                    title = { Text("config.yml generado") },
-                    text = {
-                        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                            Text(configText, style = MaterialTheme.typography.bodySmall)
-                        }
-                    },
-                    confirmButton = { TextButton(onClick = { showConfig = false }) { Text("Cerrar") } },
-                )
+                ConfigPreviewDialog(vm) { showConfig = false }
             }
             if (showResetConfirm) {
                 AlertDialog(
@@ -276,4 +271,25 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
             }
         }
     }
+}
+
+/**
+ * Diálogo "config.yml generado" (Ronda 0.2.55 P1-18): recoge
+ * generatedConfig DENTRO, solo mientras está visible. Antes la
+ * pantalla General lo recogía siempre en la raíz y cada vista previa
+ * generada recomponía la pantalla entera.
+ */
+@Composable
+private fun ConfigPreviewDialog(vm: LauncherViewModel, onClose: () -> Unit) {
+    val configText by vm.generatedConfig.collectAsState()
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("config.yml generado") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(configText, style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { TextButton(onClick = onClose) { Text("Cerrar") } },
+    )
 }

@@ -56,12 +56,15 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
     val logText by vm.logText.collectAsState()
     // R2-P1-02 (parte pantalla): mismo replace que la exportación del
     // reporte: el nombre del paquete no sale en texto visible.
-    val safeLogText = logText.replace("com.danielsnagustin.childoflight.launcher", "child-of-light-launcher")
+    // Ronda 0.2.55 P1-13: el replace y el filtrado de errores se
+    // memorizan por logText: antes se re-ejecutaban en cada
+    // recomposición de la pantalla (el string entero + regex por línea).
+    val safeLogText = remember(logText) { logText.replace("com.danielsnagustin.childoflight.launcher", "child-of-light-launcher") }
     val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
     val embeddedCore by vm.embeddedCoreFlow.collectAsState()
     val s = settings
     val lastFps = benchmarks.firstOrNull { it.fpsAvg != null }?.fpsAvg
-    val recentErrors = extractRecentErrorLines(safeLogText)
+    val recentErrors = remember(safeLogText) { extractRecentErrorLines(safeLogText) }
     // R4-P1-14: textos segun el tema (en Claro, blanco sobre fondo claro no se lee).
     val dark = isDarkUi(rememberUiPreferences())
     SettingsCategoryScaffold(

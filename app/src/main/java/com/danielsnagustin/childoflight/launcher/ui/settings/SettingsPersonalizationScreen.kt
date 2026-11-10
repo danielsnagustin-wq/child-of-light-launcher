@@ -9,7 +9,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.Saver
@@ -33,6 +32,7 @@ import com.danielsnagustin.childoflight.launcher.model.UiPreferences
 import com.danielsnagustin.childoflight.launcher.ui.EnumChips
 import com.danielsnagustin.childoflight.launcher.ui.PrimaryButton
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
+import com.danielsnagustin.childoflight.launcher.ui.LocalUiPreferences
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
 import com.danielsnagustin.childoflight.launcher.ui.Screen
 
@@ -103,7 +103,7 @@ private val uiPreferencesDraftSaver = Saver<UiPreferences?, Map<String, Any>>(
 )
 @Composable
 fun SettingsPersonalizationScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Screen) -> Unit) {
-    val saved by vm.uiFlow.collectAsState(initial = null)
+    val saved = LocalUiPreferences.current
     // R2-P2-27: rememberSaveable (con Saver propio) en vez de remember:
     // el borrador se perdía al rotar la pantalla.
     var draft by rememberSaveable(stateSaver = uiPreferencesDraftSaver) { mutableStateOf<UiPreferences?>(null) }
