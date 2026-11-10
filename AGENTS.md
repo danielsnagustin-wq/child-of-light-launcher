@@ -13,7 +13,10 @@ Tocas el icono y juegas. Sin lista de juegos, sin biblioteca de emulador.
 - El launcher importa, instala y guarda esa copia en el almacenamiento
   privado de la app, y lanza el juego con el núcleo emulador embebido.
 - Ajustes completos (GPU, CPU, audio, rendimiento, controles y HUD,
-  firmware, almacenamiento, diagnóstico) en 10 secciones con buscador.
+  almacenamiento, diagnóstico) en 9 secciones con buscador. El
+  firmware no es una sección de Ajustes: vive en Importar, junto al
+  juego y los DLCs (hay un enlace "Firmware → Importar" en
+  Almacenamiento, donde vive el estado de archivos).
 - 27 logros locales. Varias sesiones con copias de guardado y
   auto-respaldo.
 
