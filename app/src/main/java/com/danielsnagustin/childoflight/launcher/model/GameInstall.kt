@@ -98,6 +98,14 @@ data class GameStatus(
     val licenseInstalledInCore: Boolean = false,
     val dlcs: List<DlcInfo> = emptyList(),
     val updateInstalled: Boolean = false,
+    /**
+     * R6-P1-05: true si hay un update .pkg GUARDADO (pkg/patch/<TITLE>.pkg)
+     * sin instalar. Es distinto de updateInstalled (contenido real en
+     * patch/): un update guardado se instala al pulsar JUGAR. La UI de
+     * Importar lo muestra como "Guardado · se instala al pulsar JUGAR"
+     * en vez de "Ausente".
+     */
+    val updateStored: Boolean = false,
     val firmwareInstalled: Boolean = false,
     val firmwareName: String? = null,
     val saves: List<SaveInfo> = emptyList(),

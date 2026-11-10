@@ -582,6 +582,10 @@ fun shouldAutoRevertTo1x(fpsAvg: Float?, profile: GpuProfileId, autoRevertEnable
  * Surface Sync Disabled, fps-hack OFF (P2-14: con 60 FPS ON el
  * config.yml emitía fps-hack: true + v-sync: false y el "modo
  * seguro" no era seguro).
+ * R6-P1-09: también neutraliza los ajustes experimentales que más
+ * pueden romper el juego: caché de texturas sin hash OFF, Double
+ * Buffer (un Page Table en Mali puede ser la causa del fallo) y
+ * retraso de carga de archivos 0.
  */
 fun applySafeMode(settings: LauncherSettings): LauncherSettings = settings.copy(
     safeMode = true,
@@ -596,6 +600,9 @@ fun applySafeMode(settings: LauncherSettings): LauncherSettings = settings.copy(
     ngsEnable = true,
     shaderCache = true,
     fpsHack = false,
+    hashlessTextureCache = false,
+    memoryMapping = MemoryMapping.DOUBLE_BUFFER,
+    fileLoadingDelay = 0,
 )
 
 /**
