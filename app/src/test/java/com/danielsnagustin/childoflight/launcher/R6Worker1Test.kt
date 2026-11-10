@@ -1,11 +1,13 @@
 package com.danielsnagustin.childoflight.launcher
 
+import com.danielsnagustin.childoflight.launcher.core.Vita3kCoreBridge
 import com.danielsnagustin.childoflight.launcher.data.TrophyStoreReader
 import com.danielsnagustin.childoflight.launcher.launcher.Vita3KLauncher
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 
 /**
