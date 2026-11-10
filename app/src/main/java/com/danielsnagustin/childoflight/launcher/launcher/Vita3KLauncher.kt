@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.provider.Settings
 import com.danielsnagustin.childoflight.launcher.core.EmbeddedCoreLayout
@@ -114,6 +115,21 @@ class Vita3KLauncher(private val context: Context) {
     @Volatile
     var lastScannedStatus: GameStatus? = null
         private set
+
+    /**
+     * Ronda 0.2.55 P1-6: instante (monótono) del último escaneo de
+     * checkPrerequisites(). Con menos de 2 s (misma ventana que la
+     * guarda P1-9 del ViewModel), el escaneo se reutiliza en vez de
+     * lanzar otro scanStatus() completo: un JUGAR justo después de
+     * una prueba de 30 s (o dos JUGAR seguidos) ya no escanea dos
+     * veces. decide() solo lee instalado/extraído/.pkg/licencia de
+     * ese estado, y en 2 s el disco no cambia por ninguna vía de la
+     * app sin pasar por un refresco. Si el estado reutilizado es el
+     * del lanzamiento anterior, play() lo detecta (misma referencia)
+     * y conserva su _status, que ya es fresco.
+     */
+    @Volatile
+    private var lastScannedAtMillis: Long = 0L
 
     companion object {
         const val VITA3K_PACKAGE = "org.vita3k.emulator"
@@ -251,11 +267,20 @@ class Vita3KLauncher(private val context: Context) {
     }
 
     fun checkPrerequisites(library: GameLibraryRepository): Prerequisites {
-        val status = library.scanStatus()
-        // R4-P0-8: el escaneo queda guardado para reutilizarlo (decide()
-        // en launchImpl y el refresco final de play()): un JUGAR ya no
-        // hace 3 escaneos completos del disco.
-        lastScannedStatus = status
+        // Ronda 0.2.55 P1-6: reutilizar el escaneo si tiene menos de
+        // 2 s (misma ventana que la guarda P1-9). Si no, escanear de
+        // disco y guardar el instante: JUGAR necesita el estado
+        // correcto, y un escaneo viejo no lo es.
+        val nowMillis = SystemClock.elapsedRealtime()
+        val cachedStatus = lastScannedStatus
+        val status = if (cachedStatus != null && nowMillis - lastScannedAtMillis < 2000L) {
+            cachedStatus
+        } else {
+            library.scanStatus().also {
+                lastScannedStatus = it
+                lastScannedAtMillis = nowMillis
+            }
+        }
         val firmwareStatus = FirmwareResolver.resolve(library.vitaRoot)
         val missing = mutableListOf<String>()
         if (!status.gameInstalled) {
