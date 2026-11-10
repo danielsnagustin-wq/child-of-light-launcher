@@ -192,8 +192,13 @@ class TouchLayoutTest {
 
     @Test
     fun controlEncodeDecodeRoundTripKeepsAllFields() {
+        // R5-A1-7: decodeControl normaliza los colores legacy
+        // (#E57373 -> #A99ACD) al leer, así que el round-trip
+        // identidad usa un color de la identidad actual
+        // (#6578B8, azul lavanda) y el legacy se cubre aparte
+        // en decodeNormalizesLegacyRedToLavender.
         val original = defaultTouchLayout().first { it.id == "btn_a" }.copy(
-            colorHex = "#E57373",
+            colorHex = "#6578B8",
             shape = com.danielsnagustin.childoflight.launcher.data.ControlShape.SQUARE,
             vitaButton = com.danielsnagustin.childoflight.launcher.data.VitaButton.R1,
             visible = false,
@@ -203,6 +208,22 @@ class TouchLayoutTest {
         val decoded = TouchLayoutRepository.decodeControl(encoded)
         assertNotNull(decoded)
         assertEquals(original, decoded)
+    }
+
+    @Test
+    fun decodeNormalizesLegacyRedToLavender() {
+        // R5-A1-7: el rojo viejo (#E57373) ya no es de la
+        // identidad: al decodificar se normaliza a lavanda
+        // (#A99ACD). El resto de campos sobrevive intacto.
+        // (También cubierto en R5TouchMigrationTest.)
+        val raw = "btn_a|A|button|R1|0.8|0.8|64|0.85|#E57373|SQUARE|false|ANALOG|DIRECT_TOUCH|1.5"
+        val decoded = TouchLayoutRepository.decodeControl(raw)
+        assertNotNull(decoded)
+        assertEquals("#A99ACD", decoded!!.colorHex)
+        assertEquals(com.danielsnagustin.childoflight.launcher.data.VitaButton.R1, decoded.vitaButton)
+        assertEquals(com.danielsnagustin.childoflight.launcher.data.ControlShape.SQUARE, decoded.shape)
+        assertFalse(decoded.visible)
+        assertEquals(1.5f, decoded.sensitivity)
     }
 
     @Test

@@ -178,13 +178,16 @@ class R5TouchMigrationTest {
     @Test
     fun editedDiamondDoesNotBlockFactoryPass() {
         // El usuario movió un botón de cara: el rombo no migra,
-        // pero el stick y la Igniculus (en fábrica) sí.
+        // pero el stick y la Igniculus (en fábrica) sí. El botón
+        // editado queda EXACTAMENTE donde lo dejó el usuario
+        // (0.85, 0.71): la y 0.80 es la del rombo nuevo y no se
+        // aplica a un botón editado.
         val edited = oldDefaultLayout().map {
             if (it.id == "btn_a") it.copy(xFraction = 0.85f) else it
         }
         val saved = ControlProfile("default-g99", "Por defecto G99", true, edited)
         val migrated = TouchLayoutRepository.migrateBuiltInProfile(saved)
-        assertEquals(0.85f to 0.80f, position(migrated.controls, "btn_a"))
+        assertEquals(0.85f to 0.71f, position(migrated.controls, "btn_a"))
         assertEquals(0.70f to 0.70f, position(migrated.controls, "btn_y"))
         assertEquals(104, stickSize(migrated.controls))
         assertEquals(0.50f to 0.55f, position(migrated.controls, "igniculus"))
