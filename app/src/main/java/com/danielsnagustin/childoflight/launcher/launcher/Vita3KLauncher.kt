@@ -23,6 +23,7 @@ import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
 import com.danielsnagustin.childoflight.launcher.data.LARGE_FILE_COPY_BUFFER_BYTES
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
+import com.danielsnagustin.childoflight.launcher.data.PkgHeaderParser
 import com.danielsnagustin.childoflight.launcher.data.SessionManager
 import com.danielsnagustin.childoflight.launcher.data.formatLoadGameResult
 import com.danielsnagustin.childoflight.launcher.data.TurnipDriverRepository
@@ -553,6 +554,11 @@ class Vita3KLauncher(private val context: Context) {
                 // si el juego arranca destruía la única vía de
                 // recuperación si el eboot quedó truncado. El
                 // work.bin se conserva siempre.
+                // R5-A4-4: red de seguridad para update/DLC en .pkg
+                // guardados pero no instalados (ver
+                // installStoredAddonPkgs): con el juego ya extraído,
+                // ningún camino los instalaba nunca.
+                installStoredAddonPkgs(library, titleId, onInstallProgress)
                 return when (val attempt = tryLaunchEmbedded(library, titleId, configFile.absolutePath, benchmark)) {
                     is EmbeddedAttempt.Ok -> attempt.outcome
                     is EmbeddedAttempt.Failed -> {
@@ -686,6 +692,10 @@ class Vita3KLauncher(private val context: Context) {
                 }
                 is EmbeddedCoreLayout.MigrationResult.Migrated -> {
                     LauncherLog.append(context, "launch", "Layout migrado a vita/ux0 (${migration.filesMoved} archivos)")
+                    // R5-A4-7: la migración mueve el juego de sitio:
+                    // el tamaño cacheado de la ruta vieja ya no vale
+                    // (la clave de la caché es la ruta absoluta).
+                    library.invalidateInstalledSizes(titleId)
                 }
                 else -> { /* AlreadyMigrated / NothingToMigrate: nada que hacer */ }
             }
@@ -798,6 +808,14 @@ class Vita3KLauncher(private val context: Context) {
         val installer = EmbeddedPkgInstaller(library)
         val progress: EmbeddedPkgInstaller.ProgressListener =
             onInstallProgress ?: EmbeddedPkgInstaller.ProgressListener { _, _ -> }
+        // R5-A4-1: sin espacio no se empieza la reinstalación (mismo
+        // motivo que en installPkgWithEmbeddedCore).
+        val neededBytes = pkgFile.length()
+        if (!library.hasFreeSpace(library.ux0Dir, neededBytes)) {
+            val reason = GameLibraryRepository.freeSpaceMessage(neededBytes, library.freeBytes(library.ux0Dir))
+            LauncherLog.append(context, "pkg", "Reinstalación .pkg embebida bloqueada: $reason")
+            return Result.failure(IllegalStateException(reason))
+        }
         val result = installer.installPkgFile(pkgFile, library.findPkgWorkBinFile(pkgFile), progress)
         // R4-P2-7: el núcleo acaba de escribir en ux0/app/<titleId>:
         // el tamaño cacheado ya no vale.
@@ -810,6 +828,82 @@ class Vita3KLauncher(private val context: Context) {
         // tryLaunchEmbedded (al que llega el flujo tras reinstalar).
         // El work.bin se conserva siempre.
         return result
+    }
+
+    /**
+     * R5-A4-4: red de seguridad para update/DLC en .pkg guardados
+     * pero no instalados. Con el juego ya extraído (UseEmbedded),
+     * ningún camino instalaba esos .pkg: ni JUGAR, ni el arranque,
+     * ni el refresco. Escenarios reales: un update/DLC importado
+     * cuando no había núcleo o falló su instalación (el .pkg quedó
+     * guardado "para reintentarlo" sin ningún reintento), o un .pkg
+     * de DLC/update en el ux0 antiguo tras la migración (la fusión
+     * mueve los archivos pero no los instala). Se instala aquí, antes
+     * de arrancar: primero el update y luego cada DLC en pkg/dlc/
+     * (ambos ux0, sin duplicar, igual que installPkgWithEmbeddedCore).
+     * Solo se instala lo que aún NO está instalado (extraído):
+     * reinstalar en cada JUGAR lo que ya está dentro costaría minutos
+     * por partida. Un fallo de un addon NO bloquea el lanzamiento
+     * (log y seguir); un éxito invalida los tamaños. No se hace en
+     * refreshStatusOnce: instalar es pesado y exige el núcleo
+     * inicializado. Nunca lanza excepciones.
+     */
+    private suspend fun installStoredAddonPkgs(
+        library: GameLibraryRepository,
+        titleId: String,
+        onInstallProgress: EmbeddedPkgInstaller.ProgressListener? = null,
+    ) {
+        if (!Vita3kCoreBridge.available) return
+        if (!FirmwareResolver.resolve(library.vitaRoot).ready) return
+        val title = TitleId.fromString(titleId) ?: return
+        val installer = EmbeddedPkgInstaller(library)
+        val progress: EmbeddedPkgInstaller.ProgressListener =
+            onInstallProgress ?: EmbeddedPkgInstaller.ProgressListener { _, _ -> }
+        // Update guardado, solo si no está ya instalado (extraído).
+        val patchInstalled = library.patchDir(title.id).let { patch ->
+            patch.exists() && patch.listFiles()?.isNotEmpty() == true
+        }
+        if (!patchInstalled && library.findPkgPatchFile(title.id) != null) {
+            installer.installUpdatePkg(title, progress)
+                .onSuccess {
+                    LauncherLog.append(context, "pkg", "Update guardado instalado antes de jugar: ${title.id}")
+                    library.invalidateInstalledSizes(title.id)
+                }
+                .onFailure {
+                    LauncherLog.append(context, "pkg", "Update guardado no se pudo instalar antes de jugar: ${it.message}")
+                }
+        }
+        // DLCs en .pkg en AMBOS ux0 (efectivo y antiguo), sin duplicar
+        // el mismo DLC: el efectivo manda si está en los dos. Solo los
+        // que no están ya instalados (extraídos): la coincidencia es
+        // por clave de contenido (el nombre del archivo del .pkg puede
+        // ser un hash; la carpeta en addcont/ lleva el nombre corto
+        // del contenido, leído del header del .pkg).
+        val installedDlcKeys = library.addcontDir(title.id).listFiles()
+            ?.filter { it.isDirectory }
+            ?.map { GameLibraryRepository.dlcMergeKey(it.name) }
+            ?.toSet() ?: emptySet()
+        val dlcPkgs = linkedMapOf<String, File>()
+        for (ux0 in listOf(library.ux0Dir, EmbeddedCoreLayout.legacyUx0Dir(library.vitaRoot))) {
+            File(File(ux0, "pkg"), "dlc").listFiles()
+                ?.filter { it.isFile && it.name.lowercase().endsWith(".pkg") }
+                ?.forEach { pkg -> dlcPkgs.putIfAbsent(pkg.nameWithoutExtension, pkg) }
+        }
+        dlcPkgs.forEach { (dlcId, pkg) ->
+            val contentKey = runCatching {
+                pkg.inputStream().use { PkgHeaderParser.parse(it) }
+            }.getOrNull()?.getOrNull()?.contentName?.let { GameLibraryRepository.dlcMergeKey(it) }
+                ?: GameLibraryRepository.dlcMergeKey(dlcId)
+            if (contentKey in installedDlcKeys) return@forEach
+            installer.installPkgFile(pkg, library.findPkgWorkBinFile(pkg), progress)
+                .onSuccess {
+                    LauncherLog.append(context, "pkg", "DLC guardado instalado antes de jugar: $dlcId")
+                    library.invalidateInstalledSizes(title.id)
+                }
+                .onFailure {
+                    LauncherLog.append(context, "pkg", "DLC guardado $dlcId no se pudo instalar antes de jugar: ${it.message}")
+                }
+        }
     }
 
     /**
@@ -840,6 +934,15 @@ class Vita3KLauncher(private val context: Context) {
         // el ux0 efectivo y dejaban fuera el contenido del legacy.
         val gamePkg = library.findPkgGameFile(titleId.id)
             ?: return Result.failure(IllegalStateException("No está el archivo ${titleId.id}.pkg."))
+        // R5-A4-1: sin espacio no se empieza la instalación en el
+        // núcleo: el .pkg ya guardado más su extracción son ~2,28 GB
+        // de pico y un fallo a mitad dejaría el juego a medias.
+        val neededBytes = gamePkg.length()
+        if (!library.hasFreeSpace(library.ux0Dir, neededBytes)) {
+            val reason = GameLibraryRepository.freeSpaceMessage(neededBytes, library.freeBytes(library.ux0Dir))
+            LauncherLog.append(context, "pkg", "Instalación .pkg embebida bloqueada: $reason")
+            return Result.failure(IllegalStateException(reason))
+        }
         val result = installer.installPkgFile(gamePkg, library.findPkgWorkBinFile(gamePkg), progress)
         result.onFailure {
             LauncherLog.append(context, "pkg", "Instalación .pkg embebida falló: ${it.message}")

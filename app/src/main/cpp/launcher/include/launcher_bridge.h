@@ -25,7 +25,7 @@
 //
 // NOTA: upstream IGNORA el parámetro jclass en todas estas funciones
 // (usan solo env + los argumentos); el adaptador pasa nullptr.
-// Algunas están declaradas para uso futuro (isInitialized, IME):
+// Algunas están declaradas para uso futuro (isInitialized):
 // declararlas no cuesta nada y documenta la superficie JNI
 // disponible de upstream.
 //
@@ -123,12 +123,12 @@ JNIEXPORT jboolean JNICALL
 Java_org_vita3k_emulator_NativeLib_isAppPaused(JNIEnv *env, jclass clazz);
 JNIEXPORT jstring JNICALL
 Java_org_vita3k_emulator_NativeLib_getRunningAppTitle(JNIEnv *env, jclass clazz);
-JNIEXPORT jboolean JNICALL
-Java_org_vita3k_emulator_NativeLib_isImeActive(JNIEnv *env, jclass clazz);
-JNIEXPORT jboolean JNICALL
-Java_org_vita3k_emulator_NativeLib_submitIme(JNIEnv *env, jclass clazz);
-JNIEXPORT jboolean JNICALL
-Java_org_vita3k_emulator_NativeLib_dismissIme(JNIEnv *env, jclass clazz);
+// R5-A3-7: isImeActive/submitIme/dismissIme NO se declaran aquí:
+// existen en upstream (native_session.cpp:151-176) pero ningún
+// código del launcher las llama (verificado por grep en
+// app/src/main/java y app/src/main/cpp). Si el IME hace falta algún
+// día, re-añadirlas con estas firmas exactas: jboolean (JNIEnv *,
+// jclass), sin argumentos.
 
 // --- native_drivers.cpp ---
 // Instala un driver GPU personalizado (zip Turnip): upstream extrae el

@@ -70,7 +70,6 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
         title = "General",
         subtitle = "Perfil, presets y lo principal del launcher.",
         onBack = onBack,
-        onResetCategory = { vm.resetCategory(SettingsCategory.GENERAL) },
         dialogs = {
             if (showConfig) {
                 AlertDialog(
@@ -189,7 +188,7 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                     // corrige el driver al aplicar.
                     NoteText(presetCompatibilityNote(profile))
                 }
-                NoteText("Aplicar un preset conserva tus cambios manuales de cachés y overlay (caché de texturas, caché de shaders, overlay de FPS, caché sin hash y avisos de shaders): si alguno difiere del preset, arriba verás \"Perfil modificado\".")
+                NoteText("Aplicar un preset conserva tus cambios manuales de cachés y overlay (caché de texturas, caché de shaders, overlay de FPS con su detalle y posición, caché sin hash y avisos de shaders): si alguno difiere del preset, arriba verás \"Perfil modificado\".")
                 NoteText("G99 Calidad (2x): prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado.")
                 }
             }

@@ -36,6 +36,13 @@ data class SfoInfo(
      * "gp"; un juego importado como update trae "gd" y se rechaza.
      */
     val category: String? = null,
+    /**
+     * CONTENT_ID leído del SFO (p. ej.
+     * "EP0001-PCSB00598_00-CHILDOFLIGHT0000"). null si no lo trae.
+     * R5-A4-3: con él se comprueba la licencia instalada en el núcleo
+     * (ux0/license/<TITLE>/<CONTENT_ID>.rif).
+     */
+    val contentId: String? = null,
 )
 
 object ParamSfo {
@@ -75,6 +82,7 @@ object ParamSfo {
         var titleId: String? = null
         var title: String? = null
         var category: String? = null
+        var contentId: String? = null
         for (i in 0 until entryCount) {
             val entryOff = 0x14 + i * 16
             if (entryOff + 16 > bytes.size) {
@@ -90,7 +98,7 @@ object ParamSfo {
             val keyPos = keyTableStart + keyOffset
             if (keyPos < 0 || keyPos >= bytes.size) continue
             val key = readCString(bytes, keyPos, dataTableStart)
-            if (key != "TITLE_ID" && key != "TITLE" && key != "CATEGORY") continue
+            if (key != "TITLE_ID" && key != "TITLE" && key != "CATEGORY" && key != "CONTENT_ID") continue
             val dataPos = dataTableStart + dataOffset
             if (dataPos < 0 || dataPos >= bytes.size || dataLen < 0) continue
             val value = readCString(bytes, dataPos, minOf(dataPos + dataLen, bytes.size))
@@ -98,9 +106,10 @@ object ParamSfo {
                 "TITLE_ID" -> titleId = value
                 "TITLE" -> title = value
                 "CATEGORY" -> category = value
+                "CONTENT_ID" -> contentId = value
             }
         }
-        return Result.success(SfoInfo(titleId?.trim(), title?.trim(), category?.trim()))
+        return Result.success(SfoInfo(titleId?.trim(), title?.trim(), category?.trim(), contentId?.trim()))
     }
 
     /** Parsea el param.sfo de un archivo (lo lee entero, con tope de tamaño). */

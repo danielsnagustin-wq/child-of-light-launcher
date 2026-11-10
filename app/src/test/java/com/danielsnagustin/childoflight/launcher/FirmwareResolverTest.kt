@@ -224,6 +224,9 @@ class FirmwareResolverTest {
         val root = tmp.newFolder("vitaRoot")
         writePup(root)
         assertTrue(FirmwareResolver.markInstalled(root, "3.74"))
+        // R5-A4-6: borrar el PUP exige además vs0 no vacío (el
+        // marcador solo ya no basta).
+        File(File(File(root, "vita"), "vs0"), "sys").mkdirs()
         assertTrue(FirmwareResolver.deleteSavedPupIfInstalled(root))
         assertFalse(File(File(root, "firmware"), "PSVUPDAT.PUP").exists())
         assertTrue(File(File(root, "firmware"), "installed.json").exists())

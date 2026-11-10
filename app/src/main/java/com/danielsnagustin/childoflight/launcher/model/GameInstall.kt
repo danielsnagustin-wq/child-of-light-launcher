@@ -87,6 +87,15 @@ data class GameStatus(
     val pkgSizeBytes: Long = 0L,
     /** true si el .pkg guardado tiene su work.bin (licencia) al lado. */
     val pkgLicensePresent: Boolean = false,
+    /**
+     * R5-A4-3: true si la licencia del juego EXTRAÍDO ya está
+     * registrada en el núcleo (ux0/license/<TITLE>/<CONTENT_ID>.rif).
+     * El reporte mentía "Licencia work.bin: false" cuando el juego
+     * ya estaba instalado y el .pkg guardado se había borrado tras
+     * JUGAR: sin .pkg no había work.bin que comprobar, pero la
+     * licencia real ya estaba dentro del núcleo.
+     */
+    val licenseInstalledInCore: Boolean = false,
     val dlcs: List<DlcInfo> = emptyList(),
     val updateInstalled: Boolean = false,
     val firmwareInstalled: Boolean = false,

@@ -129,7 +129,17 @@ fun SettingsPersonalizationScreen(vm: LauncherViewModel, onBack: () -> Unit, onN
             current?.let { ui ->
                 PrimaryButton(
                     "Aplicar personalización",
-                    onClick = { vm.saveUiPrefs(ui); draft = null },
+                    // R5-A1-6: homeIntroSeen = max(borrador, actual):
+                    // el borrador se creó con el valor del momento de
+                    // abrir la pantalla; si la intro marcó true
+                    // después (dentro de los primeros 900 ms de la
+                    // primera Home), aplicar el borrador tal cual la
+                    // re-escribía en false y la intro volvía a sonar.
+                    // saved es el valor corriente de DataStore.
+                    onClick = {
+                        val toSave = if (saved?.homeIntroSeen == true) ui.copy(homeIntroSeen = true) else ui
+                        vm.saveUiPrefs(toSave); draft = null
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = hasChanges,
                 )

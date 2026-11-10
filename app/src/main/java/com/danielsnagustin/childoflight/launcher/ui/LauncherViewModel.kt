@@ -39,6 +39,7 @@ import com.danielsnagustin.childoflight.launcher.data.TrpReadResult
 import com.danielsnagustin.childoflight.launcher.data.TurnipDriverRepository
 import com.danielsnagustin.childoflight.launcher.data.UiPreferencesRepository
 import com.danielsnagustin.childoflight.launcher.data.Vita3kConfigGenerator
+import com.danielsnagustin.childoflight.launcher.data.backupJsonHasSafeModeEnabled
 import com.danielsnagustin.childoflight.launcher.data.decodeSettingsBackup
 import com.danielsnagustin.childoflight.launcher.data.encodeSettingsBackup
 import com.danielsnagustin.childoflight.launcher.launcher.Vita3KLauncher
@@ -64,6 +65,7 @@ import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategorySettin
 import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategoryUiPrefs
 import com.danielsnagustin.childoflight.launcher.model.defaultProfileFor
 import com.danielsnagustin.childoflight.launcher.model.effectiveSettings
+import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 import com.danielsnagustin.childoflight.launcher.model.shouldAutoRevertTo1x
 import kotlinx.coroutines.Dispatchers
@@ -154,6 +156,18 @@ internal fun isBenchmarkPendingStale(startedAtMillis: Long, nowMillis: Long = Sy
  * siendo el forzado, se restaura el valor anterior (snapshot). Sin esto,
  * el mensaje "los cambios hechos mientras estaba activado se conservan"
  * mentía para esos campos.
+ *
+ * R5-A2-7 (ambigüedad documentada, sin arreglo de seguimiento): la
+ * igualdad con el valor forzado NO distingue "no lo toqué" de "lo puse
+ * a propósito en el valor forzado". Ejemplo real: antes del modo seguro
+ * vSync=true y el modo seguro fuerza vSync=false; si el usuario pone
+ * vSync=false DURANTE el modo seguro (lo quiere apagado), al desactivar
+ * current sigue siendo el forzado y se restaura true del snapshot: ese
+ * cambio deliberado se pierde. Solo se distingue registrando qué campos
+ * se editaron mientras el modo seguro estaba ON, y eso no está
+ * implementado: el mensaje de desactivación lo advierte. (Si el valor
+ * pre-modo-seguro ya era igual al forzado, restaurar el snapshot no
+ * cambia nada observable.)
  */
 internal fun restoreSafeModeSnapshot(snapshot: LauncherSettings, current: LauncherSettings): LauncherSettings {
     val forced = applySafeMode(snapshot)
@@ -191,6 +205,36 @@ internal fun restoreAudioFixSnapshot(snapshot: LauncherSettings, current: Launch
         ngsEnable = snapshot.ngsEnable,
         shaderCache = snapshot.shaderCache,
     )
+
+/**
+ * R5-A4-2 (P0, privacidad): el nombre del paquete contiene el nombre
+ * del usuario y NUNCA sale en ninguna pantalla visible. Centralizado
+ * aquí: refreshConfigPreview() lo aplica al generar la vista previa
+ * de config.yml (antes el diálogo de General mostraba el texto sin
+ * sanitizar) y el reporte de bug aplica el mismo replace al final
+ * de buildBugReportText. Las pantallas de Diagnóstico y GPU
+ * sanitizan su propio log visible con este mismo replace.
+ * Pura (JVM): R5PresetPreservationTest.
+ */
+internal fun sanitizeVisiblePath(text: String): String =
+    text.replace("com.danielsnagustin.childoflight.launcher", "child-of-light-launcher")
+
+/**
+ * R5-A2-5: true si alguno de los campos preservados al aplicar un
+ * preset (las 5 cachés/overlay de preserveManualCacheChoices más el
+ * detalle y la posición del HUD) difiere entre los ajustes actuales
+ * y el preset canónico: en ese caso el preset NO cambia ese campo
+ * (se conserva el manual) y el mensaje al aplicar el preset lo dice.
+ * Pura (JVM): R5PresetPreservationTest.
+ */
+internal fun preservedPresetFieldsDiffer(current: LauncherSettings, preset: LauncherSettings): Boolean =
+    current.textureCache != preset.textureCache ||
+        current.shaderCache != preset.shaderCache ||
+        current.showFpsOverlay != preset.showFpsOverlay ||
+        current.hashlessTextureCache != preset.hashlessTextureCache ||
+        current.showCompileShaders != preset.showCompileShaders ||
+        current.performanceOverlayDetail != preset.performanceOverlayDetail ||
+        current.performanceOverlayPosition != preset.performanceOverlayPosition
 
 /**
  * Un .pkg guardado al que le falta su work.bin (licencia). La tarjeta
@@ -712,6 +756,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     /** Un escaneo completo del estado (disco + firmware + TRP). Solo lo llama refreshStatus(), bajo el mutex. */
     private fun refreshStatusOnce() {
+            // R5-A4-1: limpiar .tmp huérfanos de importaciones fallidas
+            // al inicio de cada refresco (no solo en la siguiente
+            // importación): un .tmp de hasta 1,14 GB no debe quedarse
+            // en disco entre importaciones.
+            runCatching { library.cleanStaleImportLeftovers() }
             // P2-33: la migración del vs0 antiguo (vitaRoot/vs0) a la
             // ruta del núcleo (vita/vs0) es EXPLÍCITA y se hace aquí,
             // antes de leer el estado — resolve() es una lectura y ya
@@ -762,8 +811,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // extraído (appDir del ux0 efectivo). Unreadable si no trae
             // TRP o el XML no se puede interpretar: nunca se inventa un
             // conteo; la lista de 27 no cambia sin esta prueba.
+            // R5-A4-8: readTrpForDiagnosis reintenta con el TRP
+            // instalado por el núcleo si el empaquetado es ilegible, y
+            // un fallo del lector se convierte en Unreadable (antes el
+            // getOrNull() hacía desaparecer la tarjeta en silencio).
             _trpRead.value = if (title != null) {
-                runCatching { TrophyTrpReader.readBundledTrp(library.appDir(title)) }.getOrNull()
+                runCatching { TrophyTrpReader.readTrpForDiagnosis(library.appDir(title)) }
+                    .getOrElse { TrpReadResult.Unreadable("No se pudo leer el diagnóstico TRP.", it.message) }
             } else null
             // P1-11: el pendiente de licencia es solo en memoria y se
             // pierde al reiniciar; se reconstruye desde disco (lo que
@@ -927,10 +981,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // P1-14: generate() espera vitaFsPath, no vitaRoot: con la
             // raíz, la vista previa mostraba el pref-path ANTIGUO (el
             // del bug -3) mientras writeConfig escribía el bueno.
-            _generatedConfig.value = Vita3kConfigGenerator.generate(
-                settings,
-                Vita3kConfigGenerator.vitaFsPathFor(library.vitaRoot).absolutePath,
-                gpu,
+            // R5-A4-2 (P0): la vista previa se sanitiza AQUÍ, al
+            // generarla, así ningún consumidor futuro vuelve a filtrar
+            // el nombre del paquete en pantalla.
+            _generatedConfig.value = sanitizeVisiblePath(
+                Vita3kConfigGenerator.generate(
+                    settings,
+                    Vita3kConfigGenerator.vitaFsPathFor(library.vitaRoot).absolutePath,
+                    gpu,
+                ),
             )
         }
     }
@@ -1003,23 +1062,20 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val current = settingsRepo.settingsFlow.first()
             settingsRepo.applyPreset(profile, current = current)
-            // R2-P2-13: el preset no debe reactivar en silencio el modo
-            // rendimiento ni el auto-revert: presetSettings trae
-            // performanceMode=true (G99) y autoRevert=true por defecto,
-            // así que aplicar un preset de calidad con el modo
-            // rendimiento apagado lo encendía sin avisar (y con él el
-            // auto-revert a 1x). Se conservan los valores del usuario.
-            val afterPreset = settingsRepo.settingsFlow.first()
-            if (afterPreset.performanceMode != current.performanceMode ||
-                afterPreset.autoRevertTo1xIfBelow28Fps != current.autoRevertTo1xIfBelow28Fps
-            ) {
-                settingsRepo.save(
-                    afterPreset.copy(
-                        performanceMode = current.performanceMode,
-                        autoRevertTo1xIfBelow28Fps = current.autoRevertTo1xIfBelow28Fps,
-                    ),
-                )
-                LauncherLog.append(context, "preset", "Preset aplicado: ${profile.name} (modo rendimiento y auto-revert conservados del usuario)")
+            // R5-A2-2: la conservación del modo rendimiento y del
+            // auto-revert vive ahora dentro de SettingsRepository
+            // .applyPreset (la cubren también el auto-revert de la
+            // prueba de 30 s y detectGpu); el bloque duplicado que
+            // vivía aquí se eliminó.
+            // R5-A2-5: si algún campo preservado (cachés y overlay)
+            // difiere entre los ajustes actuales y el preset, el
+            // preset NO lo cambió (se conservó el manual) y el
+            // mensaje lo dice: la pantalla General muestra
+            // "Perfil modificado" en ese caso.
+            val preservedNote = if (preservedPresetFieldsDiffer(current, presetSettings(profile))) {
+                " Tus cambios manuales de cachés y overlay se conservaron (verás «Perfil modificado»)."
+            } else {
+                ""
             }
             // Turnip solo vale en Adreno y solo si el zip está
             // instalado: en Mali (o sin Turnip instalado) el preset
@@ -1031,12 +1087,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 val updated = settingsRepo.settingsFlow.first()
                 if (gpu?.vendor != GpuVendor.ADRENO || !updated.turnipInstalled) {
                     settingsRepo.save(updated.copy(gpuDriver = com.danielsnagustin.childoflight.launcher.model.GpuDriver.SYSTEM))
-                    _message.value = "Preset aplicado: ${profile.label}. Turnip no está disponible en este teléfono (solo Adreno con el driver instalado): se usa el driver del sistema."
+                    _message.value = "Preset aplicado: ${profile.label}. Turnip no está disponible en este teléfono (solo Adreno con el driver instalado): se usa el driver del sistema.$preservedNote"
                     LauncherLog.append(context, "preset", "Preset aplicado: ${profile.name} (Turnip no disponible, driver Sistema)")
                     return@launch
                 }
             }
-            _message.value = "Preset aplicado: ${profile.label}"
+            _message.value = "Preset aplicado: ${profile.label}.$preservedNote"
             LauncherLog.append(context, "preset", "Preset aplicado: ${profile.name}")
         }
     }
@@ -1100,7 +1156,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 deleteSettingsSnapshot(safeModeSnapshotFile())
                 if (snapshot != null) {
                     settingsRepo.save(restoreSafeModeSnapshot(snapshot, current))
-                    _message.value = "Modo seguro desactivado. Se restauraron los valores anteriores al modo seguro; los cambios hechos mientras estaba activado se conservan."
+                    _message.value = "Modo seguro desactivado. Se restauraron los valores anteriores al modo seguro; los cambios hechos mientras estaba activado se conservan, salvo si un ajuste quedó justo en el valor que el modo seguro forzaba: en ese caso no se puede saber si lo tocaste y vuelve al valor anterior."
                 } else {
                     settingsRepo.save(current.copy(safeMode = false))
                     _message.value = "Modo seguro desactivado. No había ajustes guardados que restaurar: vuelve a aplicar tu preset si lo necesitas."
@@ -2842,14 +2898,23 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      */
     fun markHomeIntroSeen() {
         viewModelScope.launch {
-            val current = uiRepo.uiFlow.first()
-            if (!current.homeIntroSeen) uiRepo.save(current.copy(homeIntroSeen = true))
+            // R5-A1-4: escritura atómica en el repo (una sola clave
+            // dentro de edit{}), sin read-modify-write en el VM: antes
+            // se leía el snapshot entero y se guardaba, y un cambio de
+            // personalización en el mismo instante se podía perder.
+            uiRepo.markHomeIntroSeen()
         }
     }
 
     fun resetAllCustomization() {
         viewModelScope.launch {
+            // R5-A1-3: el reset total borraba homeIntroSeen y la intro
+            // volvía a sonar. Se lee ANTES del reset y, si ya estaba
+            // vista, se vuelve a marcar DESPUÉS (misma marca atómica
+            // que markHomeIntroSeen()).
+            val introSeen = runCatching { uiRepo.uiFlow.first().homeIntroSeen }.getOrDefault(false)
             uiRepo.resetAll()
+            if (introSeen) uiRepo.markHomeIntroSeen()
             touchRepo.reset()
             _message.value = "Personalización restablecida: tema, acento, fondo, texto, idioma, portada y controles."
         }
@@ -2917,7 +2982,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             try {
                 val current = settingsRepo.settingsFlow.first()
                 val currentUi = uiRepo.uiFlow.first()
-                val text = encodeSettingsBackup(current, currentUi)
+                // R5-A2-8: el modo seguro nunca se exporta: una copia
+                // con safeMode=true guardaba los valores forzados
+                // 1x/SDL como ajustes normales sin snapshot, y al
+                // importarla los ajustes previos se perdían. Se
+                // exporta safeMode=false; los valores forzados que
+                // queden en el JSON son solo ajustes normales.
+                val text = encodeSettingsBackup(current.copy(safeMode = false), currentUi)
                 context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
                 withContext(Dispatchers.Main) { _message.value = "Copia de seguridad exportada." }
             } catch (e: Exception) {
@@ -2953,16 +3024,27 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 return@launch
             }
             val (settings, ui) = decoded.getOrThrow()
+            // R5-A2-8: una copia vieja puede traer safeMode=true (sin
+            // snapshot que restaurar: los valores forzados quedarían
+            // como permanentes al desactivarlo). Se importa como false
+            // y el mensaje lo dice.
+            val importedSafeMode = backupJsonHasSafeModeEnabled(text)
+            val importedSettings = if (importedSafeMode) settings.copy(safeMode = false) else settings
             // P1-8: una copia de otro teléfono (o de un estado huérfano)
             // puede traer gpuDriver=TURNIP; en este teléfono no tendría
             // forma de revertirse desde la UI.
             val gpu = settingsRepo.gpuInfoFlow.first()
-            val guarded = guardTurnipDriver(settings, gpu?.vendor)
+            val guarded = guardTurnipDriver(importedSettings, gpu?.vendor)
             settingsRepo.save(guarded)
             uiRepo.save(ui)
             withContext(Dispatchers.Main) {
                 _message.value = "Copia de seguridad importada: ajustes y personalización restaurados." +
-                    if (guarded.gpuDriver != settings.gpuDriver) {
+                    if (importedSafeMode) {
+                        " La copia traía el modo seguro activado (copias antiguas): se importó desactivado para no perder tus ajustes anteriores."
+                    } else {
+                        ""
+                    } +
+                    if (guarded.gpuDriver != importedSettings.gpuDriver) {
                         " Turnip no está disponible en este teléfono: se usa el driver del sistema."
                     } else {
                         ""
@@ -3268,6 +3350,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    // R5-A4-3: la línea de licencia del reporte. Antes decía siempre
+    // "Licencia work.bin: false" cuando el .pkg guardado ya se había
+    // borrado tras un JUGAR con éxito (la licencia real ya está
+    // registrada en el núcleo): el campo licenseInstalledInCore se
+    // calcula en scanStatus() mirando ux0/license/<TITLE>/<CONTENT_ID>.rif.
+    private fun licenseLine(status: GameStatus): String = when {
+        status.gameExtracted && status.licenseInstalledInCore -> "Licencia: instalada en el núcleo"
+        status.pkgInstalled -> "Licencia work.bin: ${status.pkgLicensePresent}"
+        else -> "Licencia: sin dato"
+    }
+
     fun buildBugReportText(settings: LauncherSettings, gpu: GpuInfo?): String {
         val status = _status.value
         // Ola 3, Etapa 10: el log se lee una vez y se reutiliza para el
@@ -3293,7 +3386,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             appendLine()
             appendLine("--- Juego ---")
             appendLine("Instalado: ${status.gameInstalled} (${status.titleId?.id ?: "-"})")
-            appendLine("Extraído: ${status.gameExtracted} | .pkg: ${status.pkgTitleId?.id ?: "-"} (${status.pkgContentId ?: "-"}) | Licencia work.bin: ${status.pkgLicensePresent}")
+            appendLine("Extraído: ${status.gameExtracted} | .pkg: ${status.pkgTitleId?.id ?: "-"} (${status.pkgContentId ?: "-"}) | ${licenseLine(status)}")
             appendLine("Entregado a la app externa: ${settings.pkgDeliveredToVita3k} | Instalado en la app externa (confirmado por el usuario): ${settings.pkgInstalledInVita3k}")
             appendLine("DLCs: ${status.dlcCount} | Update: ${status.updateInstalled} | Firmware: ${status.firmwareInstalled}")
             appendLine("Saves: ${status.saves.size} archivos")
@@ -3343,6 +3436,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             appendLine("Driver: ${effective.gpuDriver} | Turnip: ${effective.turnipVersion} (instalado: ${effective.turnipInstalled})")
             appendLine("Caché de texturas: ${effective.textureCache} | Caché de shaders: ${effective.shaderCache} | Caché sin hash: ${effective.hashlessTextureCache}")
             appendLine("Overlay de FPS: ${effective.showFpsOverlay} (detalle ${effective.performanceOverlayDetail.label}, posición ${effective.performanceOverlayPosition.label}) | Overlay táctil: ${effective.showTouchOverlayInGame}")
+            appendLine("Compilar shaders: ${effective.showCompileShaders} | PSN: ${effective.psnSignedIn} | Retraso carga: ${effective.fileLoadingDelay} | Cerrar apps: ${effective.closeBackgroundApps}")
             val totalRamGb = DeviceMemory.totalRamBytes(context)?.let { it / 1_073_741_824.0 }
             appendLine("RAM total: ${totalRamGb?.let { "%.1f GB".format(it) } ?: "no detectada"}")
             appendLine()

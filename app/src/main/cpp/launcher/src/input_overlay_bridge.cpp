@@ -22,10 +22,15 @@
 // P2-B11: nativeOverlaySetButton/Axis también devuelven ese estado
 // (antes devolvían true aunque upstream no hiciera nada): si
 // devuelven false, el llamador debe reintentar el attach.
+// R5-A3-6: SetButton/SetAxis usan una caché de 250 ms de ese estado
+// (overlay_is_attached_cached) para no enumerar gamepads en cada
+// evento; un false nunca se cachea y se re-comprueba de inmediato.
 
 #include <jni.h>
 #include <android/log.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstring>
 
 #define LOG_TAG "LauncherBridge"
@@ -67,6 +72,38 @@ static bool overlay_is_attached() {
     }
     SDL_free(ids);
     return found;
+}
+
+// R5-A3-6: caché de overlay_is_attached() con TTL corto, solo para
+// el camino caliente SetButton/SetAxis: enumerar todos los gamepads
+// SDL (SDL_GetGamepads + nombre por mando) en cada pulsación y cada
+// movimiento de stick costaba por evento. Solo se cachea el `true`
+// (250 ms con std::chrono::steady_clock, monótono); un `false`
+// nunca se cachea y se re-comprueba de inmediato en la siguiente
+// llamada, así que un attach reciente se ve sin esperar al TTL.
+// nativeOverlayIsAttached sigue llamando a la función sin caché:
+// es la consulta explícita de diagnóstico/reintento
+// (EmbeddedGameActivity) y debe ver el estado fresco. La semántica
+// de retorno es la misma, solo cacheada: true mientras el mando
+// virtual exista, false si no existe.
+static bool overlay_is_attached_cached() {
+    using clock = std::chrono::steady_clock;
+    static std::atomic<bool> cached_attached{false};
+    static std::atomic<long long> cached_at_ms{0}; // 0 = sin caché válida
+    static constexpr long long kCacheTtlMs = 250;
+    const long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        clock::now().time_since_epoch()).count();
+    // Atómicos (sin mutex): dos hilos pueden re-enumerar a la vez en
+    // el peor caso, pero nunca se devuelve un `true` falso: el valor
+    // se guarda antes que el instante, y un instante 0 invalida.
+    if (cached_attached.load(std::memory_order_relaxed) &&
+        now_ms - cached_at_ms.load(std::memory_order_relaxed) < kCacheTtlMs) {
+        return true;
+    }
+    const bool attached = overlay_is_attached();
+    cached_attached.store(attached, std::memory_order_relaxed);
+    cached_at_ms.store(attached ? now_ms : 0, std::memory_order_relaxed);
+    return attached;
 }
 #endif
 
@@ -145,8 +182,10 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeOverl
     // se devolvía true incondicional y el llamador creía que el
     // botón llegó al juego. Ahora se devuelve si el mando virtual
     // existe de verdad: si es false, hay que reintentar el attach
-    // (ver Vita3kCoreBridge.overlaySetButton).
-    return overlay_is_attached() ? JNI_TRUE : JNI_FALSE;
+    // (ver Vita3kCoreBridge.overlaySetButton). R5-A3-6: estado
+    // cacheado 250 ms (overlay_is_attached_cached) para no enumerar
+    // gamepads en cada pulsación.
+    return overlay_is_attached_cached() ? JNI_TRUE : JNI_FALSE;
 #else
     return JNI_FALSE;
 #endif
@@ -163,8 +202,10 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeOverl
     // P2-B11: igual que SetButton (upstream void, no hace nada sin
     // joystick virtual, input_overlay.cpp:98-102): se devuelve si el
     // mando virtual existe de verdad; si es false, reintentar el
-    // attach (ver Vita3kCoreBridge.overlaySetAxis).
-    return overlay_is_attached() ? JNI_TRUE : JNI_FALSE;
+    // attach (ver Vita3kCoreBridge.overlaySetAxis). R5-A3-6: estado
+    // cacheado 250 ms (overlay_is_attached_cached) para no enumerar
+    // gamepads en cada movimiento de stick.
+    return overlay_is_attached_cached() ? JNI_TRUE : JNI_FALSE;
 #else
     return JNI_FALSE;
 #endif

@@ -129,6 +129,22 @@ class UiPreferencesRepository(private val context: Context) {
         }
     }
 
+    /**
+     * R5-A1-4: marca la intro de Home como vista en UNA sola escritura
+     * atómica. Antes el ViewModel leía el snapshot (uiFlow.first()),
+     * lo copiaba con homeIntroSeen = true y guardaba las 11 claves:
+     * si el usuario aplicaba personalización en el mismo instante en
+     * que terminaba la intro de 900 ms, la marca pisaba el cambio
+     * nuevo con valores viejos. Aquí la lectura y la escritura
+     * ocurren dentro del mismo edit{}: DataStore serializa los edit
+     * (mismo patrón atómico que hideGpuPresets).
+     */
+    suspend fun markHomeIntroSeen(): Boolean {
+        return safeEdit("marca de intro de inicio") { p ->
+            p[Keys.HOME_INTRO_SEEN] = true
+        }
+    }
+
     suspend fun resetAll(): Boolean {
         return save(UiPreferences())
     }

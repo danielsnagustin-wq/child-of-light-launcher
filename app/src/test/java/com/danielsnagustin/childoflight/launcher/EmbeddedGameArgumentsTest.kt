@@ -53,4 +53,33 @@ class EmbeddedGameArgumentsTest {
         args[1] = "OTRO"
         assertEquals("PCSB00598", extra[1])
     }
+
+    @Test
+    fun blankTitleIdIsTreatedAsMissing() {
+        // R5-A1-17: " " no produce ["-r", " "].
+        assertEquals(0, resolveLaunchArguments(null, " ").size)
+        assertEquals(0, resolveLaunchArguments(emptyArray(), "   ").size)
+    }
+
+    @Test
+    fun extraWithoutDashRFallsBackToRunTitleId() {
+        // R5-A3-8: SDL_main busca "-r" y sin Title ID devuelve -1 en
+        // silencio: un extra sin "-r" con Title ID conocido se
+        // sustituye por {"-r", titleId}.
+        assertArrayEquals(arrayOf("-r", "PCSB00598"), resolveLaunchArguments(arrayOf("--debug"), "PCSB00598"))
+        assertArrayEquals(arrayOf("-r", "PCSB00598"), resolveLaunchArguments(arrayOf("--debug", "--verbose"), "PCSB00598"))
+    }
+
+    @Test
+    fun extraWithDashRIsRespectedEvenWithOtherFlags() {
+        // Solo se respeta el extra tal cual si trae "-r".
+        assertArrayEquals(arrayOf("--debug", "-r", "PCSB00598"), resolveLaunchArguments(arrayOf("--debug", "-r", "PCSB00598"), "PCSB00598"))
+    }
+
+    @Test
+    fun extraWithoutDashRAndBlankTitleIdIsRespectedAsIs() {
+        // Sin Title ID no hay nada con qué sustituir el extra: se
+        // respeta tal cual (paridad con el oficial).
+        assertArrayEquals(arrayOf("--help"), resolveLaunchArguments(arrayOf("--help"), " "))
+    }
 }

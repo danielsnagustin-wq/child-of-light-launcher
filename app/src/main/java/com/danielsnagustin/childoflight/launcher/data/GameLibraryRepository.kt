@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.StatFs
 import android.provider.MediaStore
 import androidx.documentfile.provider.DocumentFile
 import com.danielsnagustin.childoflight.launcher.core.EmbeddedCoreLayout
@@ -184,14 +185,23 @@ class GameLibraryRepository(private val context: Context) {
 
     /**
      * R4-P2-5: último resumen de scanStatus registrado en el log.
-     * scanStatus() corre siempre bajo el mutex de refreshStatus() del
-     * ViewModel (o en importaciones, en el mismo hilo IO), así que un
-     * @Volatile basta: solo se registra la línea cuando el resumen
-     * CAMBIA (ver LauncherLog.shouldLogScanStatus). Sin esto, cada
-     * onResume añadía una línea idéntica y el log rotaba en ráfagas.
+     * El compare-and-set de abajo va bajo un synchronized pequeño
+     * (R5-A1-12): scanStatus() NO corre siempre bajo el mutex de
+     * refreshStatus() del ViewModel, como afirmaba el comentario
+     * anterior. Hay llamadores fuera de ese mutex (checkPrerequisites
+     * en Vita3KLauncher y deleteInstalledGamePkgs en el ViewModel),
+     * así que dos escaneos concurrentes podían ver el mismo cambio y
+     * registrar la línea duplicada. Benigno (una línea duplicada en
+     * el log, nunca un dato incorrecto: los append son
+     * sincronizados), pero el comentario mentía y el duplicado era
+     * real. El @Volatile se conserva: la lectura fuera del
+     * synchronized sigue viendo el último valor publicado.
      */
     @Volatile
     private var lastScanStatusSummary: String? = null
+
+    /** Candado del compare-and-set del resumen de scanStatus (R5-A1-12). */
+    private val scanStatusLogLock = Any()
 
     companion object {
         /**
@@ -284,6 +294,51 @@ class GameLibraryRepository(private val context: Context) {
          * instalarlo en cada JUGAR (P1-13).
          */
         const val MIN_PUP_SIZE_BYTES = 100_000_000L
+
+        /**
+         * R5-A4-1: margen de extracción al importar un .pkg: el núcleo
+         * extrae ~1,1 GB en ux0/app/ además del .pkg guardado, así
+         * que el pico es el tamaño declarado del .pkg más este margen
+         * (el .pkg del juego pesa 1.141.710.576 B; la extracción ronda
+         * lo mismo). Solo se usa para el chequeo previo de espacio,
+         * nunca como tamaño real.
+         */
+        const val PKG_EXTRACTION_MARGIN_BYTES = 1_141_710_576L
+
+        /**
+         * R5-A4-1: cuánto espacio libre hace falta para importar un
+         * .pkg: su tamaño declarado en el header más el margen de
+         * extracción del núcleo. Si el header no declara tamaño
+         * (0 o negativo), solo el margen: algo de protección es mejor
+         * que ninguna. Puro (testeable en JVM).
+         */
+        fun pkgImportNeededBytes(declaredTotalSizeBytes: Long): Long {
+            return if (declaredTotalSizeBytes > 0) {
+                declaredTotalSizeBytes + PKG_EXTRACTION_MARGIN_BYTES
+            } else {
+                PKG_EXTRACTION_MARGIN_BYTES
+            }
+        }
+
+        /**
+         * R5-A4-1: cuánto espacio libre hace falta para importar un
+         * .zip/.vpk: el doble de su tamaño (la extracción a un
+         * temporal más la copia a ux0/app/ conviven en la misma
+         * partición). Puro (testeable en JVM).
+         */
+        fun zipImportNeededBytes(zipSizeBytes: Long): Long {
+            return zipSizeBytes * 2
+        }
+
+        /**
+         * R5-A4-1: mensaje cuando no cabe una importación o una
+         * instalación: cuánto hace falta y cuánto hay libre, en
+         * formato legible. Puro (testeable en JVM).
+         */
+        fun freeSpaceMessage(neededBytes: Long, freeBytes: Long): String {
+            return "Falta espacio: hacen falta ${DownloadsCleanup.formatBytes(neededBytes)}, " +
+                "hay ${DownloadsCleanup.formatBytes(freeBytes)} libres"
+        }
 
         /**
          * Tamaño de la cabecera SCE de un SELF (R4-P0-5/R4-P0-6,
@@ -538,14 +593,39 @@ class GameLibraryRepository(private val context: Context) {
     private fun isDlcInstalled(titleId: String, dlcId: String): Boolean =
         (".bak-" !in dlcId && File(addcontDir(titleId), dlcId).exists()) || findPkgDlcFile(dlcId) != null
 
-    /** ¿El update ya está subido (extraído en patch/ o como .pkg)? Dual: en el ux0 efectivo o en el antiguo. */
-    private fun isUpdateInstalled(titleId: String): Boolean =
-        (patchDir(titleId).exists() && patchDir(titleId).listFiles()?.isNotEmpty() == true) ||
-            findPkgPatchFile(titleId) != null
+    /** ¿El update ya está INSTALADO (contenido real en patch/)? Dual: en el ux0 efectivo o en el antiguo. Un .pkg solo guardado NO es instalado (P1-1): el .pkg se instala en el núcleo al pulsar JUGAR, y contarlo como instalado mentía en el informe. R5-A4-9: antes solo se miraba el patch/ efectivo y el update del ux0 antiguo era invisible en estado de conflicto. */
+    private fun isUpdateInstalled(titleId: String): Boolean {
+        return bothUx0Dirs().any { ux0 ->
+            val patch = File(ux0, "patch/$titleId")
+            patch.exists() && patch.listFiles()?.isNotEmpty() == true
+        }
+    }
 
     private fun formatSizeMb(bytes: Long): String =
         if (bytes >= 1_000_000_000L) String.format(Locale.US, "%.2f GB", bytes / 1_000_000_000.0)
         else "${bytes / 1_000_000} MB"
+
+    /**
+     * R5-A4-1: bytes libres en la partición de [dir] (StatFs).
+     * 0 si no se puede medir: el llamador lo trata como "sin
+     * espacio" y no inicia la copia. Puro en lo que devuelve, pero
+     * con StatFs de Android: no testeable en unit tests JVM.
+     */
+    fun freeBytes(dir: File): Long {
+        return runCatching { StatFs(dir.path).availableBytes }.getOrDefault(0L)
+    }
+
+    /**
+     * R5-A4-1: ¿cabe [neededBytes] en la partición de [dir]? La
+     * única comprobación de espacio libre del launcher: antes no
+     * había ninguna y una copia de 1,14 GB fallaba a mitad con el
+     * disco casi lleno. Si no se sabe cuánto hace falta (0 o menos),
+     * no hay nada que comprobar.
+     */
+    fun hasFreeSpace(dir: File, neededBytes: Long): Boolean {
+        if (neededBytes <= 0L) return true
+        return freeBytes(dir) >= neededBytes
+    }
 
     /**
      * Mensaje de duplicado para el JUEGO, o null si no está subido.
@@ -646,7 +726,11 @@ class GameLibraryRepository(private val context: Context) {
      * ([deleteOrphanBackups], con su tamaño visible antes de
      * confirmar); aquí, en la limpieza silenciosa, siguen sin tocarse.
      */
-    private fun cleanStaleImportLeftovers() {
+    // R5-A4-1: internal (no private) para que refreshStatusOnce() del
+    // ViewModel la llame al inicio de cada refresco: un .tmp huérfano
+    // de una importación fallida no debe esperar a la siguiente
+    // importación para limpiarse.
+    internal fun cleanStaleImportLeftovers() {
         runCatching {
             listOf(pkgDir(), pkgDlcDir(), pkgPatchDir()).forEach { dir ->
                 dir.listFiles()?.forEach { f ->
@@ -764,6 +848,9 @@ class GameLibraryRepository(private val context: Context) {
             val dest = File(dir, originalName)
             if (dest.exists()) return@forEach
             if (f.renameTo(dest)) {
+                // R5-A1-13: el directorio restaurado cambió de sitio:
+                // su tamaño cacheado (y el de sus hijos) ya no vale.
+                invalidateDirSizes(dest)
                 LauncherLog.append(context, "import", "Respaldo restaurado: ${f.name} -> $originalName (la app murió a mitad de una importación anterior).")
             }
         }
@@ -1196,6 +1283,26 @@ class GameLibraryRepository(private val context: Context) {
         }
     }
 
+    /**
+     * R5-A4-3: ¿la licencia del juego extraído ya está registrada en
+     * el núcleo? El núcleo guarda el .rif en
+     * ux0/license/<TITLE>/<CONTENT_ID>.rif (pin license.cpp:99). El
+     * Content ID sale del param.sfo instalado
+     * (app/<TITLE>/sce_sys/param.sfo); si el SFO no trae CONTENT_ID,
+     * vale cualquier .rif en la carpeta de ese título (todos los .rif
+     * de license/<TITLE>/ pertenecen a ese título). Solo mira el ux0
+     * efectivo: el juego extraído vive ahí y su licencia también.
+     */
+    private fun isLicenseInstalledInCore(titleId: String): Boolean {
+        val licenseDir = File(ux0Dir, "license/$titleId")
+        val sfo = File(appDir(titleId), "sce_sys/param.sfo")
+        val contentId = runCatching { ParamSfo.parse(sfo) }.getOrNull()?.getOrNull()?.contentId?.trim()?.takeIf { it.isNotBlank() }
+        if (contentId != null) {
+            return File(licenseDir, "$contentId.rif").isFile
+        }
+        return licenseDir.listFiles()?.any { it.isFile && it.name.lowercase().endsWith(".rif") } == true
+    }
+
     // R4-P1-12: si el llamador ya resolvió el firmware en este mismo
     // refresco, se reutiliza en vez de resolverlo otra vez dentro del
     // escaneo (antes FirmwareResolver.resolve() corría 2 veces por
@@ -1272,14 +1379,30 @@ class GameLibraryRepository(private val context: Context) {
             LauncherLog.append(context, "status", "Dos .pkg de juego guardados (${pkgTitlesFound.joinToString { it.id }}); se muestra ${pkgTitle?.id}.")
         }
         val title = extractedTitle ?: pkgTitle
+        // R5-A4-3: con el juego extraído, la licencia que vale es la
+        // registrada en el núcleo (ux0/license/<TITLE>/<CONTENT_ID>.rif),
+        // no el work.bin junto al .pkg guardado: tras un JUGAR
+        // con éxito el .pkg se borra y el chequeo del work.bin
+        // quedaba en false aunque el juego corriera. Si hay .pkg
+        // guardado, pkgLicense sigue calculándose como antes (arriba).
+        val licenseInstalledInCore = extractedTitle?.let { isLicenseInstalledInCore(it.id) } ?: false
         val extractedDlcs = mutableListOf<DlcInfo>()
         if (title != null) {
-            val base = addcontDir(title.id)
-            if (base.exists()) {
+            // R5-A4-9: los DLCs extraídos se leen de AMBOS ux0 (el
+            // efectivo y el antiguo), igual que ya se hacía con los
+            // .pkg de DLC: en estado de conflicto, un DLC del ux0
+            // antiguo era invisible. Sin duplicar el mismo DLC en
+            // sus dos formas (la clave de fusión manda, como en
+            // mergeDlcLists); el efectivo manda si está en los dos.
+            val seenExtractedKeys = mutableSetOf<String>()
+            for (ux0 in bothUx0Dirs()) {
+                val base = File(ux0, "addcont/${title.id}")
+                if (!base.exists()) continue
                 // P2-C1: las carpetas de respaldo "<dlc>.bak-<ts>" no
                 // son DLCs: se filtran (y se restauran en
                 // restoreStaleBackups, no se listan como fantasmas).
                 base.listFiles()?.filter { it.isDirectory && ".bak-" !in it.name }?.forEach { dlcDir ->
+                    if (!seenExtractedKeys.add(dlcMergeKey(dlcDir.name))) return@forEach
                     val size = dirSizeCache.sizeOf(dlcDir)
                     extractedDlcs.add(DlcInfo(dlcDir.name, title.id, size))
                 }
@@ -1318,10 +1441,11 @@ class GameLibraryRepository(private val context: Context) {
         // en ux0/patch/. Antes bastaba con que existiera el .pkg
         // guardado (findPkgPatchFile != null) y el informe mentía:
         // un update solo guardado, sin instalar, salía como instalado.
-        val updateInstalled = TitleId.entries.any { candidate ->
-            patchDir(candidate.id).exists() &&
-                (patchDir(candidate.id).listFiles()?.isNotEmpty() == true)
-        }
+        // R5-A4-9: isUpdateInstalled mira el patch/ de AMBOS ux0, así
+        // que en estado de conflicto el update del ux0 antiguo ya no
+        // es invisible; el .pkg guardado sigue sin contar como
+        // instalado (ver isUpdateInstalled).
+        val updateInstalled = TitleId.entries.any { isUpdateInstalled(it.id) }
         // Firmware: criterio ÚNICO con FirmwareResolver. "Instalado"
         // significa instalado EN EL NÚCLEO (vs0 extraído o marcador
         // con versión); un PUP solo guardado NO es instalado (es
@@ -1347,9 +1471,15 @@ class GameLibraryRepository(private val context: Context) {
         // añadía la misma línea y el log rotaba en ráfagas.
         val scanSummary =
             "scanStatus ux0=${ux0Dir.absolutePath} extraído=${extractedTitle?.id} pkg=${pkgTitle?.id} instalado=${extractedTitle != null || pkgTitle != null}"
-        if (LauncherLog.shouldLogScanStatus(lastScanStatusSummary, scanSummary)) {
-            lastScanStatusSummary = scanSummary
-            LauncherLog.append(context, "status", scanSummary)
+        // R5-A1-12: el compare-and-set va bajo el candado: hay
+        // llamadores de scanStatus fuera del mutex de refreshStatus
+        // del ViewModel, así que sin esto dos escaneos concurrentes
+        // podían registrar la misma línea dos veces.
+        synchronized(scanStatusLogLock) {
+            if (LauncherLog.shouldLogScanStatus(lastScanStatusSummary, scanSummary)) {
+                lastScanStatusSummary = scanSummary
+                LauncherLog.append(context, "status", scanSummary)
+            }
         }
         return GameStatus(
             titleId = title,
@@ -1361,6 +1491,7 @@ class GameLibraryRepository(private val context: Context) {
             pkgContentId = pkgContentId,
             pkgSizeBytes = pkgSize,
             pkgLicensePresent = pkgLicense,
+            licenseInstalledInCore = licenseInstalledInCore,
             dlcs = dlcs.sortedBy { it.dlcId },
             updateInstalled = updateInstalled,
             firmwareInstalled = firmwareInstalled,
@@ -1504,6 +1635,15 @@ class GameLibraryRepository(private val context: Context) {
             return try {
                 cleanLegacyPending()
                 val (dest, licenseDest) = pkgStorageFor(title, parsed, pkgKind)
+                // R5-A4-1: sin espacio no se empieza la copia: el .pkg
+                // guardado más la extracción del núcleo son ~2,28 GB
+                // de pico en la misma partición. Si no cabe, se
+                // rechaza antes de copiar nada (nunca a mitad).
+                val neededBytes = pkgImportNeededBytes(parsed.declaredTotalSizeBytes)
+                val destDir = dest.parentFile ?: pkgDir()
+                if (!hasFreeSpace(destDir, neededBytes)) {
+                    return ImportResult.Rejected(freeSpaceMessage(neededBytes, freeBytes(destDir)))
+                }
                 // Copia atómica: temporal + rename. Un .pkg son ~1.1 GB:
                 // si la copia falla a medias, el .pkg viejo sigue intacto.
                 copyUriAtomic(uri, dest)
@@ -1566,6 +1706,20 @@ class GameLibraryRepository(private val context: Context) {
         // a mitad (extractZip lanzó y el tmp quedó en cacheDir).
         cleanImportTemps()
         val tmp = File(context.cacheDir, "import_${kind.name.lowercase()}_${System.currentTimeMillis()}")
+        // R5-A4-1: sin espacio no se empieza la extracción: el temporal
+        // en caché más la copia a ux0/app/ conviven en la misma
+        // partición interna (el doble del tamaño del zip). Si el
+        // tamaño del zip no se puede saber, no se bloquea: se intenta
+        // y el fallo, si lo hay, lo da la extracción.
+        val zipSizeBytes = runCatching {
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
+        }.getOrDefault(-1L)
+        if (zipSizeBytes > 0) {
+            val neededBytes = zipImportNeededBytes(zipSizeBytes)
+            if (!hasFreeSpace(ux0Dir, neededBytes)) {
+                return ImportResult.Rejected(freeSpaceMessage(neededBytes, freeBytes(ux0Dir)))
+            }
+        }
         return try {
             tmp.deleteRecursively()
             extractZip(uri, tmp)

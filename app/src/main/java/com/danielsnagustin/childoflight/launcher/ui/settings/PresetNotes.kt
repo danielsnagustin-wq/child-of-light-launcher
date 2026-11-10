@@ -30,14 +30,20 @@ import com.danielsnagustin.childoflight.launcher.model.presetSettings
  * solo cambia el filtro a FSR, ADRENO_PERFORMANCE solo cambia el
  * mapeo a Page Table, G99_QUALITY cambia 3 ajustes y
  * ADRENO_QUALITY_TURNIP cambia 6).
+ *
+ * R5-A2-6: las notas describen el preset CANÓNICO, no el resultado
+ * real cuando la preservación conserva un cambio manual (ver
+ * preserveManualCacheChoices): por eso MALI_PERFORMANCE y
+ * G99_QUALITY se matizan con "salvo tus cambios manuales
+ * conservados".
  */
 fun presetCompatibilityNote(profile: GpuProfileId): String = when (profile) {
     GpuProfileId.G99_RECOMMENDED ->
         "Recomendado en Helio G99 / Mali-G57: 1x estable, Double Buffer, sin Turnip."
     GpuProfileId.G99_QUALITY ->
-        "2x con FSR en Mali y HUD de FPS activado: las únicas diferencias con Recomendado son la resolución 2x, el filtro FSR y el HUD. Prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado."
+        "2x con FSR en Mali y HUD de FPS activado: las únicas diferencias con Recomendado son la resolución 2x, el filtro FSR y el HUD, salvo tus cambios manuales conservados (si tenías el HUD apagado, se queda apagado). Prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado."
     GpuProfileId.MALI_PERFORMANCE ->
-        "Mali genérico (no G99): la única diferencia con Recomendado es la caché de texturas OFF (libera RAM). 1x siempre, Double Buffer forzado. Sin Turnip: el driver Turnip no funciona en Mali."
+        "Mali genérico (no G99): la única diferencia con Recomendado es la caché de texturas OFF (libera RAM), salvo tus cambios manuales conservados (si la tenías ON, se queda ON). 1x siempre, Double Buffer forzado. Sin Turnip: el driver Turnip no funciona en Mali."
     GpuProfileId.MALI_BALANCED ->
         "Mali genérico: la única diferencia con Recomendado es el filtro FSR a 1x, si el FPS es estable. Sin Turnip: el driver Turnip no funciona en Mali."
     GpuProfileId.ADRENO_PERFORMANCE ->

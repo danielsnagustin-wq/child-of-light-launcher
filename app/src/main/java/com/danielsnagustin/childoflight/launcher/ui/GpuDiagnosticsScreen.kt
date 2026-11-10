@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.data.DeviceCompat
 import com.danielsnagustin.childoflight.launcher.data.DeviceMemory
 import com.danielsnagustin.childoflight.launcher.model.BenchmarkSource
+import com.danielsnagustin.childoflight.launcher.model.effectiveSettings
 import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 import com.danielsnagustin.childoflight.launcher.ui.settings.extractRecentErrorLines
 
@@ -79,8 +80,11 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         vm.refreshLog()
     }
 
+    // R5-A2-3: fondo según el tema (antes el overload sin argumentos
+    // fijaba dark=true y la pantalla quedaba oscura con Tema Claro).
+    val uiPrefs by vm.uiFlow.collectAsState(initial = null)
     Box(
-        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
+        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush(isDarkUi(uiPrefs), uiPrefs?.homeBackground?.hex)),
     ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
@@ -152,7 +156,11 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         val lastFps = benchmarks.firstOrNull { it.fpsAvg != null }?.fpsAvg
         Text("Perfil activo: ${settings?.activeProfile?.label ?: "—"}")
         Text("Backend efectivo: ${settings?.let { resolveBackend(it, g) }?.label ?: "—"} · Resolución: ${settings?.resolutionLabel ?: "—"} · Filtro: ${settings?.screenFilter ?: "—"}")
-        Text("VSync: ${if (settings?.vSync == true) "ON" else "OFF"} · Modo 60 FPS: ${if (settings?.fpsHack == true) "ON" else "OFF"} · Modo seguro: ${if (settings?.safeMode == true) "ON" else "OFF"}")
+        // R5-A1-14: VSync EFECTIVO (con 60 FPS ON, apply60FpsMode lo
+        // fuerza ON aunque el guardado sea OFF): settings es delegada,
+        // así que se captura con let, no con smart cast. Igual que
+        // SettingsDiagnosticsScreen.
+        Text("VSync: ${if (settings?.let { effectiveSettings(it).vSync } == true) "ON" else "OFF"} · Modo 60 FPS: ${if (settings?.fpsHack == true) "ON" else "OFF"} · Modo seguro: ${if (settings?.safeMode == true) "ON" else "OFF"}")
         Text("Último FPS (prueba de 30 s): ${lastFps?.let { "$it fps" } ?: "sin medir"}")
         SectionTitle("Errores recientes del log")
         val recentErrors = extractRecentErrorLines(safeLogText)

@@ -111,7 +111,11 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     entry("Ver config.yml generado", "config yml ver generado yaml", SettingsCategory.GENERAL),
     entry("Restablecer ajustes", "restablecer reset preset gpu defecto", SettingsCategory.GENERAL),
     entry("Copia de seguridad de ajustes", "copia seguridad backup exportar importar json ajustes", SettingsCategory.GENERAL),
-    entry("Restablecer esta categoría", "restablecer reset categoria valores preset", SettingsCategory.GENERAL),
+    // R5-A2-9: la entrada "Restablecer esta categoría" → GENERAL se
+    // quitó: General no tiene ajustes de preset que restablecer
+    // (categoryHasResettableSettings GENERAL = false) y el botón
+    // llevaba a un no-op con diálogo. Las demás categorías conservan
+    // la suya: su reset sí hace algo.
     // --- Personalización ---
     entry("Tema", "tema claro oscuro sistema apariencia", SettingsCategory.PERSONALIZATION),
     entry("Color de acento", "acento color azul hielo lavanda turquesa plata", SettingsCategory.PERSONALIZATION),

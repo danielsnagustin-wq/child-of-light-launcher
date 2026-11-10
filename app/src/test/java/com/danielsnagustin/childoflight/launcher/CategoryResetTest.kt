@@ -64,6 +64,45 @@ class CategoryResetTest {
     }
 
     @Test
+    fun gpuResetKeepsTurnipWhenInstalled() {
+        // R5-A2-10: usuario Adreno con Turnip instalado y activo que
+        // restablece la GPU con el perfil G99 (preset SYSTEM): el
+        // driver NO se suelta sin aviso. Antes el preset lo pisaba a
+        // SYSTEM y no había forma de recuperarlo desde la UI sin
+        // reinstalar el zip.
+        val turnip = changed.copy(gpuDriver = GpuDriver.TURNIP, turnipInstalled = true)
+        val reset = resetCategorySettings(turnip, SettingsCategory.GPU)
+        assertEquals(GpuDriver.TURNIP, reset.gpuDriver)
+        // El resto de GPU sí se restablece al preset G99.
+        val preset = presetSettings(GpuProfileId.G99_RECOMMENDED)
+        assertEquals(preset.backend, reset.backend)
+        assertEquals(preset.resolutionMultiplier, reset.resolutionMultiplier, 0.001f)
+    }
+
+    @Test
+    fun gpuResetDropsTurnipWhenNotInstalled() {
+        // Sin Turnip instalado, TURNIP no se conserva: el preset
+        // SYSTEM manda (la guarda guardTurnipDriver haría lo mismo).
+        val turnip = changed.copy(gpuDriver = GpuDriver.TURNIP, turnipInstalled = false)
+        val reset = resetCategorySettings(turnip, SettingsCategory.GPU)
+        assertEquals(GpuDriver.SYSTEM, reset.gpuDriver)
+    }
+
+    @Test
+    fun gpuResetAppliesPresetTurnipForTurnipProfile() {
+        // Perfil ADRENO_QUALITY_TURNIP con driver SYSTEM: el reset
+        // aplica el TURNIP del preset (no se conserva el SYSTEM
+        // anterior: la conservación solo protege un TURNIP activo).
+        val system = changed.copy(
+            activeProfile = GpuProfileId.ADRENO_QUALITY_TURNIP,
+            gpuDriver = GpuDriver.SYSTEM,
+            turnipInstalled = true,
+        )
+        val reset = resetCategorySettings(system, SettingsCategory.GPU)
+        assertEquals(GpuDriver.TURNIP, reset.gpuDriver)
+    }
+
+    @Test
     fun cpuResetRestoresOnlyCpuFields() {
         val reset = resetCategorySettings(changed, SettingsCategory.CPU)
         assertTrue(reset.cpuOpt)

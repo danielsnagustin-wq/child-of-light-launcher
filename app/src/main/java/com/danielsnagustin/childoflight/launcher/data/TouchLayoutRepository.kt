@@ -113,8 +113,11 @@ data class ControlProfile(
  * en la pantalla de título — era CIRCLE (atrás), no CROSS.
  * R4-P2-1: stick de 104 dp (antes 140 dp, ocupaba el tercio
  * inferior izquierdo) e Igniculus en y 0.55 (antes 0.35, su orbe
- * flotaba sobre la "C" de "CHILD OF LIGHT" tapando el logo). Solo
- * el default de fábrica: los perfiles ya guardados no se tocan.
+ * flotaba sobre la "C" de "CHILD OF LIGHT" tapando el logo).
+ * R5-A1-1: los perfiles ya guardados con los valores viejos de
+ * fábrica SÍ se normalizan al cargar (migrateBuiltInFactoryValues),
+ * pero solo si siguen en el valor de fábrica: si el usuario los
+ * movió o los redimensionó, son suyos y no se tocan.
  */
 fun defaultTouchLayout(): List<TouchControl> = listOf(
     TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.18f, 0.72f, 104, 0.70f),
@@ -127,7 +130,9 @@ fun defaultTouchLayout(): List<TouchControl> = listOf(
 )
 
 fun oneHandLayout(): List<TouchControl> = listOf(
-    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.20f, 0.75f, 120, 0.75f),
+    // R5-A1-2: stick unificado en 104 dp con los otros dos perfiles
+    // (antes 120 dp, sin motivo documentado).
+    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.20f, 0.75f, 104, 0.75f),
     TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.76f, 0.65f, 64, 0.80f, visible = false),
     TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.69f, 0.74f, 64, 0.80f, visible = false),
     TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.83f, 0.74f, 64, 0.80f),
@@ -135,11 +140,14 @@ fun oneHandLayout(): List<TouchControl> = listOf(
     TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.06f, 56, 0.70f, visible = false),
     // R4-P2-1: Igniculus en y 0.50 (antes 0.28, tapaba el logo
     // igual que en el perfil por defecto); solo fábrica.
-    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.55f, 0.50f, 160, 0.25f, colorHex = "#7FB3D5"),
+    // R5-A1-2: x 0.50 (antes 0.55), coherente con el default.
+    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.50f, 0.50f, 160, 0.25f, colorHex = "#7FB3D5"),
 )
 
 fun externalGamepadLayout(): List<TouchControl> = listOf(
-    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.18f, 0.72f, 140, 0.70f, visible = false),
+    // R5-A1-2: stick unificado en 104 dp (antes 140 dp, oculto):
+    // al mostrarlo ya no resucita el 140.
+    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.18f, 0.72f, 104, 0.70f, visible = false),
     TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.80f, 0.62f, 64, 0.80f, visible = false),
     TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.73f, 0.71f, 64, 0.80f, visible = false),
     TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.87f, 0.71f, 64, 0.80f, visible = false),
@@ -216,7 +224,7 @@ class TouchLayoutRepository(private val context: Context) {
         val profiles = decodeProfiles(prefs[Keys.PROFILES] ?: "") ?: builtInProfiles()
         val activeId = prefs[Keys.ACTIVE_PROFILE] ?: "default-g99"
         val active = profiles.firstOrNull { it.id == activeId }
-        if (active != null) migrateBuiltInFaceDiamond(active).controls else defaultTouchLayout()
+        if (active != null) migrateBuiltInProfile(active).controls else defaultTouchLayout()
     }.onStart {
         migrateSavedBuiltInProfilesOnce()
     }.catch { e ->
@@ -225,9 +233,11 @@ class TouchLayoutRepository(private val context: Context) {
     }
 
     /**
-     * R4-P0-1: reescribe en DataStore los perfiles predefinidos
-     * guardados con el rombo transpuesto y los deja con el rombo
-     * estándar. Solo corre una vez por instancia; es idempotente
+     * R4-P0-1/R5-A1-1: reescribe en DataStore los perfiles
+     * predefinidos guardados con el rombo transpuesto (los deja con
+     * el rombo estándar) y con los valores viejos de fábrica del
+     * stick y la Igniculus (los normaliza a 104 dp y a y 0.55).
+     * Solo corre una vez por instancia; es idempotente
      * (la segunda vez ya no hay nada que migrar y no escribe).
      * La lectura, la migración y la escritura ocurren dentro de un
      * solo edit de DataStore, así que dos migraciones concurrentes
@@ -243,7 +253,7 @@ class TouchLayoutRepository(private val context: Context) {
                 val migrated = migrateBuiltInProfiles(profiles)
                 if (migrated != profiles) {
                     prefs[Keys.PROFILES] = migrated.joinToString("\n###\n") { encodeProfile(it) }
-                    Log.i("ChildOfLight", "R4-P0-1: rombo predefinido migrado al estándar en DataStore")
+                    Log.i("ChildOfLight", "R5-A1-1: perfil predefinido migrado (rombo + valores de fábrica) en DataStore")
                 }
             }
         }
@@ -385,12 +395,18 @@ class TouchLayoutRepository(private val context: Context) {
             if (profiles.size <= 1) return@withLock false
             if (profiles.none { it.id == id }) return@withLock false
             val remaining = profiles.filter { it.id != id }
-            saveProfiles(remaining)
+            // R5-A4-5: si el guardado falla, el borrado no ocurrió:
+            // no se puede devolver true ni tocar el perfil activo.
+            if (!saveProfiles(remaining)) return@withLock false
             // BUG (auditoría): antes se forzaba "default-g99" como activo; si
             // ese perfil ya había sido borrado, el activo apuntaba a un perfil
             // inexistente y save() no guardaba nada en silencio.
-            if (currentActiveId() == id) setActiveProfileLocked(remaining.first().id)
-            true
+            if (currentActiveId() == id) {
+                // R5-A4-5: el cambio de activo también puede fallar
+                // (disco lleno): su Boolean decide el resultado.
+                return@withLock setActiveProfileLocked(remaining.first().id)
+            }
+            return@withLock true
         }
     }
 
@@ -522,9 +538,80 @@ class TouchLayoutRepository(private val context: Context) {
             )
         }
 
+        /**
+         * R5-A1-1/R5-A1-2: segunda pasada de la migración de
+         * perfiles predefinidos guardados: normaliza el stick y la
+         * Igniculus a los valores de fábrica actuales. Solo actúa
+         * si el perfil es predefinido Y el control sigue en su
+         * valor viejo de fábrica (misma guarda que el rombo, pero
+         * por control: el stick y la Igniculus se juzgan por
+         * separado, así que mover un botón de cara no bloquea esta
+         * pasada ni al revés).
+         * - stick 140 dp (default/externo) o 120 dp (una mano) ->
+         *   104 dp, con su posición de fábrica intacta.
+         * - Igniculus (0.50, 0.35) -> y 0.55 (default/externo);
+         *   (0.55, 0.28) -> (0.50, 0.50) (una mano).
+         * Si el usuario movió o redimensionó el control, no se
+         * toca. Idempotente y puro: testeable.
+         */
+        fun migrateBuiltInFactoryValues(profile: ControlProfile): ControlProfile {
+            if (!profile.isBuiltIn) return profile
+            return profile.copy(
+                controls = profile.controls.map { control ->
+                    when (control.id) {
+                        "stick" -> {
+                            val oldSize = if (profile.id == "one-hand") 120 else 140
+                            val oldX = if (profile.id == "one-hand") 0.20f else 0.18f
+                            val oldY = if (profile.id == "one-hand") 0.75f else 0.72f
+                            if (control.kind == "stick" && control.sizeDp == oldSize &&
+                                abs(control.xFraction - oldX) <= FACE_SLOT_EPSILON &&
+                                abs(control.yFraction - oldY) <= FACE_SLOT_EPSILON
+                            ) {
+                                control.copy(sizeDp = 104)
+                            } else {
+                                control
+                            }
+                        }
+                        "igniculus" -> {
+                            if (control.kind != "igniculus") {
+                                control
+                            } else if (profile.id == "one-hand") {
+                                if (abs(control.xFraction - 0.55f) <= FACE_SLOT_EPSILON &&
+                                    abs(control.yFraction - 0.28f) <= FACE_SLOT_EPSILON
+                                ) {
+                                    control.copy(xFraction = 0.50f, yFraction = 0.50f)
+                                } else {
+                                    control
+                                }
+                            } else {
+                                if (abs(control.xFraction - 0.50f) <= FACE_SLOT_EPSILON &&
+                                    abs(control.yFraction - 0.35f) <= FACE_SLOT_EPSILON
+                                ) {
+                                    control.copy(yFraction = 0.55f)
+                                } else {
+                                    control
+                                }
+                            }
+                        }
+                        else -> control
+                    }
+                },
+            )
+        }
+
+        /**
+         * R5-A1-1: migración completa de un perfil predefinido
+         * guardado: rombo de cara + valores de fábrica (stick e
+         * Igniculus). Las dos pasadas son independientes: un perfil
+         * con el rombo ya migrado pero el stick viejo sigue
+         * normalizando el stick.
+         */
+        fun migrateBuiltInProfile(profile: ControlProfile): ControlProfile =
+            migrateBuiltInFactoryValues(migrateBuiltInFaceDiamond(profile))
+
         /** R4-P0-1: migra todos los perfiles predefinidos de la lista. */
         fun migrateBuiltInProfiles(profiles: List<ControlProfile>): List<ControlProfile> =
-            profiles.map { migrateBuiltInFaceDiamond(it) }
+            profiles.map { migrateBuiltInProfile(it) }
 
 
         fun sanitizeName(name: String): String =
@@ -564,6 +651,20 @@ class TouchLayoutRepository(private val context: Context) {
             val lo = halfSizeFraction.coerceAtMost(0.5f)
             val hi = (1f - halfSizeFraction).coerceAtLeast(0.5f)
             return fraction.coerceIn(lo, hi)
+        }
+
+        /**
+         * R5-A1-7: un perfil guardado en <=0.2.49 con el verde o el
+         * rojo viejos de la paleta se renderizaba igual: decode
+         * tomaba el color tal cual. Al leer, esos dos hex se
+         * normalizan a su equivalente de la identidad actual
+         * (case-insensitive); cualquier otro color se deja tal cual.
+         * Puro Kotlin, sin Context: testeable.
+         */
+        fun normalizePaletteColor(hex: String): String = when (hex.uppercase()) {
+            "#4CAF50" -> "#75D6CE"
+            "#E57373" -> "#A99ACD"
+            else -> hex
         }
 
         private fun finiteFloat(raw: String?, default: Float): Float =
@@ -630,11 +731,14 @@ class TouchLayoutRepository(private val context: Context) {
             // B9: normalizar al leer. Un valor corrupto fuera de rango
             // (fracción > 1, tamaño negativo, opacidad > 1, "NaN") no
             // puede sacar el botón de la pantalla ni romper el layout.
+            // R5-A1-7: el color también se normaliza a la paleta de
+            // la identidad (verde/rojo viejos -> turquesa/lavanda).
             return parsed.copy(
                 xFraction = parsed.xFraction.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0.5f,
                 yFraction = parsed.yFraction.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0.5f,
                 sizeDp = parsed.sizeDp.coerceIn(16, 400),
                 opacity = parsed.opacity.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0.8f,
+                colorHex = normalizePaletteColor(parsed.colorHex),
                 sensitivity = parsed.sensitivity.takeIf { it.isFinite() }?.coerceIn(0.5f, 2.0f) ?: 1.0f,
             )
         }

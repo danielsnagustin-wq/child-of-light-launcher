@@ -290,11 +290,17 @@ class SettingsRepository(private val context: Context) {
         // es importar un juego nuevo.
         // R4-P1-13: las cachés y el overlay manuales también se
         // conservan (textureCache, shaderCache, overlay FPS, caché sin
-        // hash, avisos de shaders; ver preserveManualCacheChoices).
-        // La divergencia que eso produce frente al preset queda
-        // visible en General como "Perfil modificado" (ver
-        // divergesFromPreset), con la caché de texturas nombrada
-        // explícitamente cuando difiere.
+        // hash, avisos de shaders, detalle y posición del HUD; ver
+        // preserveManualCacheChoices). La divergencia que eso produce
+        // frente al preset queda visible en General como "Perfil
+        // modificado" (ver divergesFromPreset), con la caché de
+        // texturas nombrada explícitamente cuando difiere.
+        // R5-A2-2: el modo rendimiento y el auto-revert a 1x también se
+        // conservan AQUÍ, dentro de applyPreset, y ya no en el
+        // ViewModel: el auto-revert de la prueba de 30 s (completeBenchmark)
+        // y detectGpu llaman directo al repo, y el bloque del VM no los
+        // cubría (un usuario con performanceMode=false acababa con
+        // performanceMode=true en silencio tras un auto-revert).
         val fromPreset = base.copy(
             gpuDriver = driver,
             customDriverName = current?.customDriverName ?: "",
@@ -306,6 +312,8 @@ class SettingsRepository(private val context: Context) {
             safeMode = current?.safeMode ?: false,
             closeBackgroundApps = current?.closeBackgroundApps ?: true,
             psnSignedIn = current?.psnSignedIn ?: true,
+            performanceMode = current?.performanceMode ?: true,
+            autoRevertTo1xIfBelow28Fps = current?.autoRevertTo1xIfBelow28Fps ?: true,
             pkgDeliveredToVita3k = current?.pkgDeliveredToVita3k ?: false,
             pkgInstalledInVita3k = current?.pkgInstalledInVita3k ?: false,
             hideTouchWhenGamepadConnected = current?.hideTouchWhenGamepadConnected ?: true,

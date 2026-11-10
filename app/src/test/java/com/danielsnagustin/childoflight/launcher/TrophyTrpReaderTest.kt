@@ -472,4 +472,63 @@ class TrophyTrpReaderTest {
             dir.deleteRecursively()
         }
     }
+
+    // R5-A4-8: diagnóstico con fallback al TRP instalado por el núcleo.
+    private fun ux0With(bundled: ByteArray?, installed: ByteArray?): File {
+        val ux0 = Files.createTempDirectory("trp-diag-").toFile()
+        val appDir = File(ux0, "app/PCSB00598").apply { mkdirs() }
+        if (bundled != null) {
+            File(appDir, "sce_sys/trophy").apply { mkdirs() }
+            File(appDir, "sce_sys/trophy/TROPHY.TRP").writeBytes(bundled)
+        }
+        if (installed != null) {
+            File(ux0, "user/00/trophy/PCSB00598").apply { mkdirs() }
+            File(ux0, "user/00/trophy/PCSB00598/TROPHY.TRP").writeBytes(installed)
+        }
+        return ux0
+    }
+
+    @Test
+    fun diagnosis_fallsBackToInstalledTrpWhenBundledIsUnreadable() {
+        val ux0 = ux0With(ByteArray(1024) { (it * 7 % 256).toByte() }, buildReducedTrp3())
+        try {
+            val value = success(TrophyTrpReader.readTrpForDiagnosis(File(ux0, "app/PCSB00598")))
+            assertEquals(3, value.trophyCount)
+        } finally {
+            ux0.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun diagnosis_prefersBundledTrpWhenReadable() {
+        val ux0 = ux0With(buildReducedTrp20(), buildReducedTrp3())
+        try {
+            val value = success(TrophyTrpReader.readTrpForDiagnosis(File(ux0, "app/PCSB00598")))
+            assertEquals(20, value.trophyCount)
+        } finally {
+            ux0.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun diagnosis_bothUnreadable_isUnreadable() {
+        val random = ByteArray(1024) { (it * 7 % 256).toByte() }
+        val ux0 = ux0With(random, random)
+        try {
+            unreadable(TrophyTrpReader.readTrpForDiagnosis(File(ux0, "app/PCSB00598")))
+        } finally {
+            ux0.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun diagnosis_bundledMissing_installedReadable() {
+        val ux0 = ux0With(null, buildReducedTrp3())
+        try {
+            val value = success(TrophyTrpReader.readTrpForDiagnosis(File(ux0, "app/PCSB00598")))
+            assertEquals(3, value.trophyCount)
+        } finally {
+            ux0.deleteRecursively()
+        }
+    }
 }

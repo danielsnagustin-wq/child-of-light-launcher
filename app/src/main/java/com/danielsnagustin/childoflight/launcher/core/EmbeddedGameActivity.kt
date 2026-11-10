@@ -69,7 +69,8 @@ import org.libsdl.app.SDLActivity
  *   menú de pausa propio (PauseMenuActivity, Compose); nunca cierra
  *   el juego directamente.
  * - getNativeDisplayRotation(): Int: rotación de la pantalla
- *   (0/90/180/270) para el motion del núcleo.
+ *   (constantes Surface.ROTATION_*, 0-3, igual que el oficial)
+ *   para el motion del núcleo.
  *
  * El botón atrás también abre el menú de pausa propio
  * (onBackPressed -> openPauseMenu). SDLActivity por defecto cerraría
@@ -211,10 +212,16 @@ class EmbeddedGameActivity : SDLActivity() {
 
     /** argv de SDL_main: el extra AppStartParameters si existe, si no {"-r", titleId} (ver [resolveLaunchArguments]). */
     override fun getArguments(): Array<String> {
-        return resolveLaunchArguments(
-            intent.getStringArrayExtra(EXTRA_APP_START_PARAMETERS),
-            intent.getStringExtra(EXTRA_TITLE_ID).orEmpty(),
-        )
+        val extra = intent.getStringArrayExtra(EXTRA_APP_START_PARAMETERS)
+        val titleId = intent.getStringExtra(EXTRA_TITLE_ID).orEmpty()
+        // R5-A3-8: un extra sin "-r" con Title ID conocido se sustituye
+        // por {"-r", titleId} en resolveLaunchArguments (SDL_main
+        // devuelve -1 sin Title ID); el aviso queda aquí, en el log
+        // del launcher, porque la función pura no puede registrarlo.
+        if (extra != null && extra.isNotEmpty() && "-r" !in extra && titleId.isNotBlank()) {
+            LauncherLog.append(this, "launch", "AppStartParameters sin '-r' ignorado: SDL_main exige '-r' para arrancar; se usa '-r' con el Title ID actual.")
+        }
+        return resolveLaunchArguments(extra, titleId)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -404,6 +411,21 @@ class EmbeddedGameActivity : SDLActivity() {
     }
 
     /**
+     * R5-A1-11: los append de fallo de setTouchState (maybeAttach y
+     * rebind en on_launch) corrían en Main: LauncherLog.append hace
+     * E/S de fichero síncrona. Se encolan en Dispatchers.IO con el
+     * overlayScope que ya existe en esta Activity. Es solo registro
+     * (best-effort): si la Activity se destruye antes de escribir,
+     * la línea se puede perder al cancelarse el scope; no afecta
+     * al juego.
+     */
+    private fun appendOverlayLogAsync(message: String) {
+        overlayScope.launch(Dispatchers.IO) {
+            LauncherLog.append(this@EmbeddedGameActivity, "overlay", message)
+        }
+    }
+
+    /**
      * Crea el mando virtual SDL del overlay, solo con la partida en
      * curso. attach es idempotente en upstream; si SDL aún no está
      * listo, no crea nada y overlayIsAttached() lo dice: se reintenta
@@ -452,8 +474,12 @@ class EmbeddedGameActivity : SDLActivity() {
         // en frontal, Igniculus (toque directo) puede no llegar al
         // juego y antes no quedaba ningún aviso. El default del
         // núcleo ya es frontal, así que es solo registro, no reintento.
+        // R5-A1-18: el texto ya no afirma que el flag cambiara: el
+        // booleano solo prueba que la llamada JNI no lanzó (el
+        // setTouchState de upstream es void, sin readback).
+        // R5-A1-11: el append va fuera de Main (Dispatchers.IO).
         if (!Vita3kCoreBridge.overlaySetTouchState(false)) {
-            LauncherLog.append(this, "overlay", "táctil frontal no confirmado (overlaySetTouchState devolvió false); si el núcleo lo dejó en trasero, el toque de Igniculus puede no llegar")
+            appendOverlayLogAsync("táctil frontal no confirmado (sin readback del núcleo)")
         }
         LauncherLog.append(this, "overlay", "mando virtual del overlay activo")
     }
@@ -513,8 +539,10 @@ class EmbeddedGameActivity : SDLActivity() {
                 overlayAttached = true
                 // R4-P2-2: igual que en maybeAttachOverlayController:
                 // un false queda en el log en vez de ignorarse.
+                // R5-A1-18: texto suavizado (sin readback del núcleo)
+                // y R5-A1-11: el append va fuera de Main (Dispatchers.IO).
                 if (!Vita3kCoreBridge.overlaySetTouchState(false)) {
-                    LauncherLog.append(this, "overlay", "on_launch: táctil frontal no confirmado (overlaySetTouchState devolvió false); si el núcleo lo dejó en trasero, el toque de Igniculus puede no llegar")
+                    appendOverlayLogAsync("on_launch: táctil frontal no confirmado (sin readback del núcleo)")
                 }
                 LauncherLog.append(this, "overlay", "on_launch: mando virtual re-creado (intento $attempt/$OVERLAY_REBIND_MAX_ATTEMPTS)")
                 attached = true
@@ -652,10 +680,23 @@ class EmbeddedGameActivity : SDLActivity() {
         // super.onPause(), como el oficial (suspendForBackgroundIfNeeded
         // antes de super.onPause()): antes se fijaba después y el juego
         // corría unos frames sin pausar al salir a segundo plano.
-        runCatching {
+        // R5-A3-5: el retorno del set ya no se ignora (igual que el
+        // clear en R4-P0-4): el núcleo devuelve false sin tocar nada
+        // si la fase no es Running, y sin registro el juego seguiría
+        // corriendo en segundo plano sin que nadie lo supiera. No hay
+        // getter de fase en el puente (no se inventa JNI): el log
+        // registra lo observable (pausado / en curso).
+        val pauseSetOk = runCatching {
             Vita3kCoreBridge.setPauseReasonEnabled(
                 Vita3kCoreBridge.PAUSE_REASON_BACKGROUND,
                 true,
+            )
+        }.getOrDefault(false)
+        if (!pauseSetOk) {
+            LauncherLog.append(
+                this,
+                "pause",
+                "onPause: el núcleo rechazó fijar la pausa de fondo (fase distinta de Running o sin núcleo); el juego puede seguir corriendo en segundo plano (pausado=${Vita3kCoreBridge.isAppPaused()}, en curso=${Vita3kCoreBridge.isAppRunning()})",
             )
         }
         super.onPause()
@@ -859,11 +900,17 @@ class EmbeddedGameActivity : SDLActivity() {
      * por qué.
      */
     private fun openPauseMenu() {
-        runCatching {
+        // R5-A3-5: el clear de USER también se verifica: si el núcleo
+        // lo rechaza (fase distinta de Running) con el juego pausado,
+        // queda en el log en vez de perderse en silencio.
+        val userClearOk = runCatching {
             Vita3kCoreBridge.setPauseReasonEnabled(
                 Vita3kCoreBridge.PAUSE_REASON_USER,
                 false,
             )
+        }.getOrDefault(false)
+        if (!userClearOk && Vita3kCoreBridge.isAppPaused()) {
+            LauncherLog.append(this, "pause", "openPauseMenu: el núcleo rechazó quitar la pausa de usuario (fase distinta de Running); el juego sigue pausado al abrir el menú")
         }
         runCatching {
             startActivityForResult(
@@ -936,6 +983,9 @@ class EmbeddedGameActivity : SDLActivity() {
      * Rotación de la pantalla para el motion del núcleo (hook on_init).
      * Firma exacta exigida por main_android.cpp: ()I. Sin este método
      * SDL_main se cierra: get_display_rotation() no comprueba null.
+     * R5-A3-3: devuelve constantes Surface.ROTATION_* (0-3, no
+     * grados), igual que el oficial: display.rotation ya es esa
+     * constante. No tocar el código: devuelve lo correcto.
      */
     @Suppress("DEPRECATION")
     fun getNativeDisplayRotation(): Int {

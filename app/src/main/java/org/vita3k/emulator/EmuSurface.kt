@@ -7,6 +7,7 @@ import android.view.SurfaceHolder
 import android.view.View
 import android.view.ViewGroup
 import com.danielsnagustin.childoflight.launcher.core.GamepadOverlayView
+import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import org.libsdl.app.SDLSurface
 
 /**
@@ -79,7 +80,17 @@ class EmuSurface(context: Context) : SDLSurface(context) {
 
     override fun surfaceCreated(holder: SurfaceHolder) {
         runCatching { setSurfaceStatus(true) }
-            .onFailure { Log.w("EmuSurface", "setSurfaceStatus(true) falló: $it") }
+            .onFailure {
+                Log.w("EmuSurface", "setSurfaceStatus(true) falló: $it")
+                // R5-A3-15: además de logcat, queda en launcher.log (el
+                // reporte de bug incluye su cola): así el próximo
+                // reporte distingue "superficie sin avisar al núcleo"
+                // de otros negros. LauncherLog es un object público y
+                // se importa aquí igual que GamepadOverlayView, sin
+                // vía compartida nueva. Solo el set(true): el set(false)
+                // de surfaceDestroyed sigue solo con Log.w.
+                LauncherLog.append(context, "surface", "setSurfaceStatus(true) falló: $it; el núcleo no presentará frames (superficie sin avisar al núcleo)")
+            }
         super.surfaceCreated(holder)
     }
 

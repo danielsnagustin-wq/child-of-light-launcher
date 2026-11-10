@@ -50,7 +50,21 @@ fun resetCategorySettings(current: LauncherSettings, category: SettingsCategory)
             // El driver sí forma parte del preset (Turnip solo en
             // ADRENO_QUALITY_TURNIP); la info del driver instalado
             // se conserva, igual que en applyPreset (M21).
-            gpuDriver = preset.gpuDriver,
+            // R5-A2-10: pero el driver ACTIVO no se suelta sin aviso:
+            // un usuario Adreno con Turnip instalado y activo que
+            // restablece la GPU con el perfil G99 (preset SYSTEM)
+            // perdía Turnip y no hay forma de recuperarlo desde la
+            // UI sin reinstalar el zip. Se conserva TURNIP cuando
+            // está instalado; la guarda guardTurnipDriver (que el
+            // ViewModel aplica después del reset) sigue mandando
+            // sobre el vendor: en Mali o sin Turnip instalado vuelve
+            // a SYSTEM, así que conservarlo aquí nunca deja un
+            // TURNIP huérfano.
+            gpuDriver = if (current.gpuDriver == GpuDriver.TURNIP && current.turnipInstalled) {
+                GpuDriver.TURNIP
+            } else {
+                preset.gpuDriver
+            },
         )
         SettingsCategory.CPU -> current.copy(
             cpuOpt = preset.cpuOpt,

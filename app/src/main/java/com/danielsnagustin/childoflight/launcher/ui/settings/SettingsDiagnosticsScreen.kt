@@ -103,7 +103,11 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 // Antes se mostraban los valores guardados, que con
                 // Modo seguro o fallback no son los que corre el juego.
                 val effective = effectiveSettings(s)
-                Text("Configuración efectiva: perfil ${effective.activeProfile.label} · ${resolveBackend(effective, gpu).label} · ${effective.resolutionLabel} · filtro ${effective.screenFilter} · VSync ${if (effective.vSync) "ON" else "OFF"} · modo 60 FPS ${if (effective.fpsHack) "ON" else "OFF"}.", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = cardTextColor(dark))
+                // R5-A2-11: también las cachés efectivas: con 60 FPS ON
+                // apply60FpsMode las fuerza ON aunque la guardada sea
+                // OFF (p. ej. textureCache OFF en ≤ 4 GB), y sin esto
+                // la línea mentía igual que R4-P2-10 en los demás sitios.
+                Text("Configuración efectiva: perfil ${effective.activeProfile.label} · ${resolveBackend(effective, gpu).label} · ${effective.resolutionLabel} · filtro ${effective.screenFilter} · VSync ${if (effective.vSync) "ON" else "OFF"} · modo 60 FPS ${if (effective.fpsHack) "ON" else "OFF"} · caché de texturas ${if (effective.textureCache) "ON" else "OFF"} · caché de shaders ${if (effective.shaderCache) "ON" else "OFF"}.", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = cardTextColor(dark))
                 if (s.safeMode) {
                     NoteText("Modo seguro activado: los valores efectivos de arriba (1x, SDL, High Accuracy OFF) mandan sobre los guardados.")
                 }

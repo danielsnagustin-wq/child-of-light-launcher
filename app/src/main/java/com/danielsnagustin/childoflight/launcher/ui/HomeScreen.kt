@@ -97,6 +97,11 @@ fun HomeScreen(
     vm: LauncherViewModel,
     introDone: Boolean = false,
     onIntroDone: () -> Unit = {},
+    // R5-A1-5: se invoca al EMPEZAR la intro (primer frame), no al
+    // terminarla: si el usuario sale de Home antes de los 900 ms o
+    // gira el teléfono, la marca ya está persistida y la intro no
+    // vuelve a sonar. MainActivity lo pasa como vm.markHomeIntroSeen().
+    onIntroStarted: () -> Unit = {},
     onNavigate: (Screen) -> Unit,
 ) {
     val uiPrefs by vm.uiFlow.collectAsState(initial = null)
@@ -110,8 +115,16 @@ fun HomeScreen(
     // repetía (~800 ms) en cada vuelta a Home. 900 ms = portada 650 ms
     // + último retardo 180 ms. Al terminar, onIntroDone() persiste la
     // marca (ViewModel.markHomeIntroSeen) y la intro no vuelve a sonar.
-    if (!introDone) {
+    // R5-A1-5: la marca se persiste además AL EMPEZAR (onIntroStarted,
+    // antes del delay): si el usuario sale de Home antes de los 900 ms
+    // o gira el teléfono a mitad de intro, el LaunchedEffect se cancela
+    // y la marca ya está escrita, así que la intro no se repite. Y la
+    // animación no arranca hasta que uiPrefs != null: mientras DataStore
+    // aún no emitió tras recrear la Activity, introDone es false y la
+    // intro arrancaba de nuevo sin haber marcado nada.
+    if (!introDone && uiPrefs != null) {
         LaunchedEffect(Unit) {
+            onIntroStarted()
             delay(900)
             onIntroDone()
         }

@@ -453,7 +453,7 @@ class GamepadOverlayView @JvmOverloads constructor(
      * OverlayControlView.
      */
     private enum class IconKind {
-        ARROW_UP, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, GLYPH_CROSS, GLYPH_CIRCLE, GLYPH_SQUARE, GLYPH_TRIANGLE, PAUSE, IGNICULUS
+        ARROW_UP, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, GLYPH_CROSS, GLYPH_CIRCLE, GLYPH_SQUARE, GLYPH_TRIANGLE, PAUSE, IGNICULUS, TEXT_PS
     }
 
     private abstract inner class OverlayControlView(
@@ -470,6 +470,15 @@ class GamepadOverlayView @JvmOverloads constructor(
             color = Color.parseColor("#EAF4FB")
             textAlign = Paint.Align.CENTER
             textSize = 14f * density
+            isFakeBoldText = true
+        }
+        // R5-A1-16: pintura propia del glifo "PS" de GUIDE: el
+        // texto escala con el botón (textSize por dibujado) y no
+        // puede compartir textPaint, cuyo tamaño es fijo para las
+        // etiquetas.
+        protected val psPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#EAF4FB")
+            textAlign = Paint.Align.CENTER
             isFakeBoldText = true
         }
         protected val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -607,6 +616,7 @@ class GamepadOverlayView @JvmOverloads constructor(
          * temáticos. CROSS ya no comparte icono con DPAD_UP: CROSS
          * es GLYPH_CROSS y DPAD_UP sigue siendo ARROW_UP. El D-Pad
          * sigue con flechas y START con barras de pausa.
+         * R5-A1-16: GUIDE lleva el texto "PS" como glifo (TEXT_PS).
          */
         protected fun iconFor(button: VitaButton): IconKind? {
             when (faceGlyphFor(button)) {
@@ -618,6 +628,7 @@ class GamepadOverlayView @JvmOverloads constructor(
             }
             return when (button) {
                 VitaButton.START -> IconKind.PAUSE
+                VitaButton.GUIDE -> IconKind.TEXT_PS
                 VitaButton.DPAD_UP -> IconKind.ARROW_UP
                 VitaButton.DPAD_DOWN -> IconKind.ARROW_DOWN
                 VitaButton.DPAD_LEFT -> IconKind.ARROW_LEFT
@@ -642,7 +653,23 @@ class GamepadOverlayView @JvmOverloads constructor(
                 IconKind.GLYPH_TRIANGLE -> drawGlyphTriangle(canvas, cx, cy, rr)
                 IconKind.PAUSE -> drawPauseIcon(canvas, cx, cy, rr)
                 IconKind.IGNICULUS -> drawIgniculusIcon(canvas, cx, cy, rr, alpha)
+                IconKind.TEXT_PS -> drawPsIcon(canvas, cx, cy, rr, alpha)
             }
+        }
+
+        /**
+         * R5-A1-16: glifo PS para GUIDE. El logo de PlayStation
+         * como formas sería ilegible a este tamaño, así que se
+         * dibuja el texto "PS" en negrita, escalado al botón (la
+         * mitad del radio, centrado vertical con fontMetrics como
+         * las etiquetas). L2/R2/L3/R3 siguen solo con su etiqueta.
+         */
+        private fun drawPsIcon(canvas: Canvas, cx: Float, cy: Float, r: Float, alpha: Float) {
+            psPaint.alpha = (alpha * 0.95f * 255).toInt()
+            psPaint.textSize = r * 0.52f
+            val metrics = psPaint.fontMetrics
+            val y = cy - (metrics.ascent + metrics.descent) / 2f
+            canvas.drawText("PS", cx, y, psPaint)
         }
 
         private fun drawArrowIcon(canvas: Canvas, cx: Float, cy: Float, r: Float, degrees: Float) {

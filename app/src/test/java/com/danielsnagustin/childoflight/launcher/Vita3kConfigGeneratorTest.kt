@@ -15,7 +15,9 @@ import com.danielsnagustin.childoflight.launcher.model.ScreenFilter
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 /**
@@ -371,5 +373,110 @@ class Vita3kConfigGeneratorTest {
         assertFalse(dir.exists())
         assertTrue(Vita3kConfigGenerator.writeConfigIfChanged(file, "v-sync: false\n"))
         assertEquals("v-sync: false\n", file.readText())
+    }
+
+    // R5-A3-9: writeConfigIfChanged con fichero ilegible y con
+    // config.yml como directorio.
+
+    @Test
+    fun writeConfigIfChangedWritesWhenExistingFileIsUnreadable() {
+        // Si readText() falla (permiso), existing queda null y se
+        // intenta escribir: el fallo de lectura no bloquea la
+        // escritura (el fichero sigue siendo escribible). En sistemas
+        // que no honran el permiso (root), readText lee y el
+        // contenido difiere, así que el resultado es el mismo:
+        // escribe y devuelve true.
+        val file = tempConfigFile()
+        assertTrue(Vita3kConfigGenerator.writeConfigIfChanged(file, "v-sync: false\n"))
+        file.setReadable(false, false)
+        try {
+            assertTrue(Vita3kConfigGenerator.writeConfigIfChanged(file, "v-sync: true\n"))
+        } finally {
+            file.setReadable(true, false)
+        }
+        assertEquals("v-sync: true\n", file.readText())
+    }
+
+    @Test
+    fun writeConfigIfChangedThrowsWhenConfigYmlIsADirectory() {
+        // config.yml como directorio: isFile es false, así que
+        // existing queda null y writeText lanza FileNotFoundException.
+        // Es comportamiento DOCUMENTADO, no un crash inesperado: los
+        // llamadores lo aguantan con runCatching/catch (Throwable) y
+        // muestran bloqueo, no crash.
+        val dir = java.io.File(System.getProperty("java.io.tmpdir"), "col-r5a39-dir-${System.nanoTime()}/config.yml")
+        assertTrue(dir.mkdirs())
+        try {
+            assertThrows(java.io.FileNotFoundException::class.java) {
+                Vita3kConfigGenerator.writeConfigIfChanged(dir, "v-sync: false\n")
+            }
+        } finally {
+            dir.delete()
+        }
+    }
+
+    // R5-A3-10: un solo tipo incorrecto en config.yml descarta TODOS
+    // los ajustes en silencio (el parse del núcleo aborta entero).
+
+    @Test
+    fun everyEmittedLineHasTheYamlTypeTheCoreExpects() {
+        // Regresión: cada línea emitida tiene el tipo YAML que
+        // config.h declara para esa clave. En especial psn-signed-in
+        // es INT (1/0), nunca true/false. No hay validación de
+        // re-lectura YAML en writeConfig (no hay librería YAML en la
+        // app): solo este test.
+        val expectedTypes = mapOf(
+            "backend-renderer" to "string",
+            "resolution-multiplier" to "float",
+            "screen-filter" to "string",
+            "v-sync" to "bool",
+            "anisotropic-filtering" to "int",
+            "async-pipeline-compilation" to "bool",
+            "high-accuracy" to "bool",
+            "disable-surface-sync" to "bool",
+            "memory-mapping" to "string",
+            "texture-cache" to "bool",
+            "shader-cache" to "bool",
+            "custom-driver-name" to "string",
+            "cpu-opt" to "bool",
+            "fps-hack" to "bool",
+            "file-loading-delay" to "int",
+            "audio-backend" to "string",
+            "audio-volume" to "int",
+            "ngs-enable" to "bool",
+            "performance-overlay" to "bool",
+            "performance-overlay-detail" to "int",
+            "performance-overlay-position" to "int",
+            "hashless-texture-cache" to "bool",
+            "show-compile-shaders" to "bool",
+            "show-welcome" to "bool",
+            "psn-signed-in" to "int",
+            "pref-path" to "string",
+        )
+        val yaml = Vita3kConfigGenerator.generate(LauncherSettings(psnSignedIn = true), "/data/vita3k")
+        for (line in yaml.lines()) {
+            if (line.isBlank() || line.startsWith("#")) continue
+            val key = line.substringBefore(":")
+            val value = line.substringAfter(":").trim()
+            val expected = expectedTypes[key] ?: fail("config.yml emite una clave sin tipo clasificado en este test: $key")
+            when (expected) {
+                "string" -> assertTrue("'$key' debe ser string entrecomillado, fue: $value", value.startsWith("\"") && value.endsWith("\""))
+                "bool" -> assertTrue("'$key' debe ser bool, fue: $value", value == "true" || value == "false")
+                "int" -> assertTrue("'$key' debe ser int, fue: $value", value.matches(Regex("-?\\d+")))
+                "float" -> assertTrue("'$key' debe ser float, fue: $value", value.matches(Regex("-?\\d+\\.\\d+")))
+                else -> fail("tipo desconocido en este test: $expected")
+            }
+        }
+        assertTrue(yaml.contains("psn-signed-in: 1"))
+        assertFalse(yaml.contains("psn-signed-in: true"))
+        // Con el ajuste OFF, 0 (nunca false).
+        val off = Vita3kConfigGenerator.generate(LauncherSettings(psnSignedIn = false), "/data/vita3k")
+        assertTrue(off.contains("psn-signed-in: 0"))
+        assertFalse(off.contains("psn-signed-in: false"))
+        // Todas las claves clasificadas se emiten (el test no deja
+        // pasar una clave que desaparezca sin avisar).
+        for (key in expectedTypes.keys) {
+            assertTrue("config.yml ya no emite '$key'", yaml.lines().any { it.startsWith("$key:") })
+        }
     }
 }

@@ -1,6 +1,7 @@
 package com.danielsnagustin.childoflight.launcher.data
 
 import android.content.Context
+import android.os.SystemClock
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -46,6 +47,12 @@ object LauncherLog {
     /**
      * R4-P2-5: true si ya pasó el intervalo mínimo desde el último
      * intento de rotación. Puro, testeable en JVM.
+     *
+     * R5-A1-9: los dos instantes son milisegundos MONÓTONOS
+     * (SystemClock.elapsedRealtime(), no el reloj de pared): si el
+     * usuario o la red atrasan la hora, el intervalo no se alarga;
+     * si la adelantan, la rotación no se dispara antes de tiempo.
+     * El llamador (append) pasa elapsedRealtime() en ambos.
      */
     fun shouldAttemptRotation(nowMillis: Long, lastAttemptMillis: Long): Boolean =
         nowMillis - lastAttemptMillis >= ROTATION_MIN_INTERVAL_MILLIS
@@ -56,12 +63,26 @@ object LauncherLog {
      * rotó y false si no hacía falta o no se pudo leer/escribir.
      * Pura salvo File, para poder probarla en la JVM sin Android
      * (el mismo patrón que writeConfigIfChanged).
+     *
+     * R5-A1-10: la rotación es ATÓMICA: el contenido nuevo se escribe
+     * en launcher.log.tmp y luego se renombra sobre launcher.log
+     * (renameTo en el mismo FS). Antes se hacía readLines +
+     * writeText directo sobre el mismo archivo: writeText trunca
+     * primero y luego escribe, así que matar el proceso a mitad de
+     * rotación dejaba el log truncado o vacío. Si el renombre falla,
+     * se borra el .tmp y se devuelve false: el log viejo queda intacto.
      */
     fun rotateLogFile(file: File): Boolean {
         return try {
             if (!file.isFile || file.length() <= MAX_LOG_BYTES) return false
+            val parent = file.parentFile ?: return false
             val lines = file.readLines()
-            file.writeText(lines.takeLast(KEEP_LINES_AFTER_ROTATION).joinToString("\n") + "\n")
+            val tmp = File(parent, file.name + ".tmp")
+            tmp.writeText(lines.takeLast(KEEP_LINES_AFTER_ROTATION).joinToString("\n") + "\n")
+            if (!tmp.renameTo(file)) {
+                tmp.delete()
+                return false
+            }
             true
         } catch (_: Exception) {
             false
@@ -97,11 +118,17 @@ object LauncherLog {
             // mínimo desde el último intento (como mucho una vez por
             // minuto). El append de arriba ya quedó escrito; la
             // rotación conserva las 200 líneas recientes, incluida esta.
+            // R5-A1-9: el intervalo se mide con elapsedRealtime()
+            // (monótono, inmune al cambio de hora), no con el reloj de
+            // pared; y el instante del intento solo se registra si la
+            // rotación devolvió true: un fallo de rotación ya no
+            // consume el minuto (el siguiente append lo reintenta).
             if (shouldRotate(file.length()) &&
-                shouldAttemptRotation(System.currentTimeMillis(), lastRotationAttemptMillis.get())
+                shouldAttemptRotation(SystemClock.elapsedRealtime(), lastRotationAttemptMillis.get())
             ) {
-                lastRotationAttemptMillis.set(System.currentTimeMillis())
-                rotateLogFile(file)
+                if (rotateLogFile(file)) {
+                    lastRotationAttemptMillis.set(SystemClock.elapsedRealtime())
+                }
             }
         } catch (_: Exception) {
             // El log nunca debe romper el launcher.

@@ -111,7 +111,12 @@ class MainActivity : ComponentActivity() {
         try {
             setContent { LauncherContent(vm) }
         } catch (t: Throwable) {
-            LauncherLog.append(applicationContext, "launch", "Fallo en la primera composición: ${t.javaClass.simpleName}: ${t.message}")
+            // R5-A1-11: el append es I/O de disco y onCreate corre en
+            // Main: va por IO, igual que el de onResume. Antes corría
+            // en el hilo principal en el camino del fallo.
+            lifecycleScope.launch(Dispatchers.IO) {
+                LauncherLog.append(applicationContext, "launch", "Fallo en la primera composición: ${t.javaClass.simpleName}: ${t.message}")
+            }
             setContent { LaunchErrorScreen(t) }
         }
     }
@@ -348,7 +353,11 @@ private fun LauncherApp(vm: LauncherViewModel) {
                 label = "screenTransition",
             ) { target ->
                 when (target) {
-                    Screen.HOME -> HomeScreen(vm, introDone = homeIntroDone, onIntroDone = { vm.markHomeIntroSeen() }) { navigateTo(it) }
+                    // R5-A1-5: onIntroStarted persiste la marca al
+                    // empezar la intro (primer frame), no solo al
+                    // terminarla: si el usuario sale antes de los
+                    // 900 ms o gira el teléfono, no se repite.
+                    Screen.HOME -> HomeScreen(vm, introDone = homeIntroDone, onIntroDone = { vm.markHomeIntroSeen() }, onIntroStarted = { vm.markHomeIntroSeen() }) { navigateTo(it) }
                     Screen.IMPORT -> ImportScreen(vm) { goBack() }
                     Screen.SETTINGS -> SettingsScreen(vm, { goBack() }, { navigateTo(it) })
                     Screen.SETTINGS_GENERAL -> SettingsGeneralScreen(vm, { goBack() }, { navigateTo(it) })

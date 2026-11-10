@@ -40,6 +40,18 @@ import com.danielsnagustin.childoflight.launcher.model.UiPreferences
  * una instalación real en la app externa), customDriverName /
  * turnipVersion / turnipInstalled (driver instalado en disco).
  * Al restaurar, esos campos se conservan como estén en el teléfono.
+ *
+ * R5-A2-8: el modo seguro NUNCA se exporta: al exportar se fuerza
+ * safeMode=false en el JSON (ver exportSettingsBackup en el
+ * ViewModel). Un backup exportado con el modo seguro ON guardaba los
+ * valores forzados 1x/SDL como ajustes normales y ningún snapshot:
+ * al importar, safeMode=true quedaba persistido sin copia que
+ * restaurar y al desactivarlo los valores previos se perdían. Al
+ * importar, si el JSON trae safeMode=true (copias viejas), se trata
+ * como false y el mensaje de importación lo dice (ver
+ * backupJsonHasSafeModeEnabled). Los snapshots internos (modo seguro,
+ * "Corregir audio") NO pasan por aquí: readSettingsSnapshot usa
+ * decodeSettingsBackup directamente y conserva safeMode tal cual.
  */
 const val SETTINGS_BACKUP_FORMAT = "col-settings-backup"
 const val SETTINGS_BACKUP_VERSION = 1
@@ -179,6 +191,17 @@ fun decodeSettingsBackup(
     )
     return Result.success(settings to ui)
 }
+
+/**
+ * R5-A2-8: true si el JSON de una copia de seguridad trae
+ * safeMode=true (copias viejas, exportadas con el modo seguro ON).
+ * Lee el valor con el mismo parser que decodeSettingsBackup, así
+ * que admite espacios alrededor de ':' y no depende del formato
+ * exacto del encoder. Un JSON inválido devuelve false: la
+ * decodificación ya rechaza el archivo por su cuenta. Pura (JVM).
+ */
+fun backupJsonHasSafeModeEnabled(json: String): Boolean =
+    parseFlatJsonObject(json).getOrNull()?.get("safeMode") == "true"
 
 /** Escapa un string para JSON (comillas, barra, controles y unicode no ASCII). */
 internal fun jsonString(value: String): String {

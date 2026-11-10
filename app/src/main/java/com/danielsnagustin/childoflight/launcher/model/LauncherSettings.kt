@@ -127,8 +127,8 @@ enum class AudioBackend(val vita3kValue: String, val label: String) {
 
 /**
  * Detalle del HUD de rendimiento (performance-overlay-detail en
- * config.yml). VERIFICADO en upstream (pin 3e43bc80, config.h:52-62
- * enum PerformanceOverlayDetail y config.h:362): int con default
+ * config.yml). VERIFICADO en upstream (pin 3e43bc80, config.h:29-34
+ * enum PerformanceOverlayDetail y config.h:187): int con default
  * MINIMUM (0). Más detalle = más métricas en el overlay. El contenido
  * exacto de cada nivel no se verificó en el código del renderer: las
  * etiquetas son neutras (Mínimo/Bajo/Medio/Máximo), sin prometer qué
@@ -143,8 +143,8 @@ enum class PerformanceOverlayDetail(val value: Int, val label: String) {
 
 /**
  * Posición del HUD de rendimiento (performance-overlay-position en
- * config.yml). VERIFICADO (pin 3e43bc80, config.h:65-79 enum
- * PerformanceOverlayPosition y config.h:364): int con default
+ * config.yml). VERIFICADO (pin 3e43bc80, config.h:36-43 enum
+ * PerformanceOverlayPosition y config.h:188): int con default
  * TOP_LEFT (0).
  */
 enum class PerformanceOverlayPosition(val value: Int, val label: String) {
@@ -263,8 +263,8 @@ data class LauncherSettings(
      * Sesión PSN (simulada): si está ON, config.yml emite
      * psn-signed-in: 1 y el núcleo responde "sesión iniciada" a los
      * juegos que preguntan antes de activar sus DLC (clave
-     * verificada en config.h:398; consumo en SceNpManager.cpp:131
-     * y :149). NO es una conexión real a PSN: no hay cuenta, ni
+     * verificada en config.h:205; consumo en SceNpManager.cpp:73
+     * y :83). NO es una conexión real a PSN: no hay cuenta, ni
      * red, ni sincronización de trofeos. Solo le indica al juego
      * que hay sesión iniciada. ON por defecto: con OFF, los DLC
      * pueden no activarse. Se lee en el init del núcleo: el cambio
@@ -518,9 +518,12 @@ fun isLowRamConservativeVariant(settings: LauncherSettings): Boolean {
  * de cachés y overlay del usuario, igual que ya se conservaban
  * audio, modo seguro, cerrar apps, PSN, entrega del .pkg y overlay
  * táctil (ver SettingsRepository.applyPreset). Campos conservados:
- * textureCache, shaderCache, showFpsOverlay, hashlessTextureCache
- * y showCompileShaders. Antes, apagar la caché de texturas a mano
- * y tocar cualquier preset la volvía a ON en silencio.
+ * textureCache, shaderCache, showFpsOverlay, hashlessTextureCache,
+ * showCompileShaders y (R5-A2-1) performanceOverlayDetail y
+ * performanceOverlayPosition: antes, un detalle o una posición del
+ * HUD elegidos a mano volvían a Mínimo/Arriba-izquierda al tocar
+ * cualquier preset, sin aviso, y presetProfileFields SÍ los incluía,
+ * así que la pérdida era invisible ("Perfil modificado" no salía).
  *
  * DECISIÓN (verificada campo a campo en presetSettings):
  * G99_RECOMMENDED y MALI_PERFORMANCE solo se diferencian en
@@ -560,6 +563,8 @@ fun preserveManualCacheChoices(preset: LauncherSettings, current: LauncherSettin
         showFpsOverlay = current.showFpsOverlay,
         hashlessTextureCache = current.hashlessTextureCache,
         showCompileShaders = current.showCompileShaders,
+        performanceOverlayDetail = current.performanceOverlayDetail,
+        performanceOverlayPosition = current.performanceOverlayPosition,
     )
 }
 

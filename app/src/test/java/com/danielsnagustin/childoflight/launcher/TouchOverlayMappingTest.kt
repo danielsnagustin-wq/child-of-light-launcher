@@ -114,7 +114,10 @@ class TouchOverlayMappingTest {
                 profile.controls.none { it.vitaButton in newButtons },
             )
         }
-        // L2/R2/GUIDE no tienen glifo: se dibujan con su etiqueta.
+        // L2/R2 no tienen glifo: se dibujan con su etiqueta.
+        // GUIDE tampoco tiene glifo de cara (faceGlyphFor es null),
+        // pero el overlay le dibuja el texto "PS" como icono
+        // (R5-A1-16: iconFor -> TEXT_PS).
         assertNull(faceGlyphFor(VitaButton.L2))
         assertNull(faceGlyphFor(VitaButton.R2))
         assertNull(faceGlyphFor(VitaButton.GUIDE))

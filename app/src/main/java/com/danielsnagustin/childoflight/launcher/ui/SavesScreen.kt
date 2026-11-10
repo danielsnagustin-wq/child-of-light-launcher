@@ -53,8 +53,11 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         if (uri != null) vm.importAchievements(uri)
     }
 
+    // R5-A2-3: fondo según el tema (antes el overload sin argumentos
+    // fijaba dark=true y la pantalla quedaba oscura con Tema Claro).
+    val uiPrefs by vm.uiFlow.collectAsState(initial = null)
     Box(
-        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
+        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush(isDarkUi(uiPrefs), uiPrefs?.homeBackground?.hex)),
     ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),

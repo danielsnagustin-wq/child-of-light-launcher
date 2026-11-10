@@ -248,19 +248,26 @@ object FirmwareResolver {
 
     /**
      * Borra el PUP guardado cuando el firmware YA está instalado en
-     * el núcleo (hay marcador con versión, escrito por
-     * markInstalled tras un installFirmware con éxito). El PUP
-     * (133 MB) solo hace falta para instalar; una vez instalado, es
-     * peso redundante: el usuario solo quiere lo que pesa el juego y
-     * la APK (2026-11-09). Sin marcador (firmware solo guardado, sin
-     * instalar) NO se borra nada: el PUP es la única vía para
-     * instalarlo. Si el firmware se borra alguna vez con
-     * deleteFirmware, habrá que volver a importar el PUP. El marcador
-     * se conserva: es lo que dice que el firmware está instalado.
+     * el núcleo. El PUP (133 MB) solo hace falta para instalar; una
+     * vez instalado, es peso redundante: el usuario solo quiere lo
+     * que pesa el juego y la APK (2026-11-09). Sin marcador (firmware
+     * solo guardado, sin instalar) NO se borra nada: el PUP es la
+     * única vía para instalarlo. Si el firmware se borra alguna vez
+     * con deleteFirmware, habrá que volver a importar el PUP. El
+     * marcador se conserva: es lo que dice que el firmware está
+     * instalado.
+     * R5-A4-6: el marcador solo NO basta para borrar: un marcador
+     * huérfano (sin versión, o con el vs0 ya perdido por un borrado
+     * manual o una migración fallida) borraría la única fuente de
+     * reinstalación del firmware. Se exige además versión conocida
+     * (installedVersion != null, el criterio de resolve()) y vs0 no
+     * vacío (el criterio real de firmware instalado en el núcleo).
      * Puro (solo File). Devuelve true si borró el PUP.
      */
     fun deleteSavedPupIfInstalled(vitaRoot: File): Boolean {
         if (!installedMarkerFile(vitaRoot).isFile) return false
+        if (installedVersion(vitaRoot) == null) return false
+        if (coreVs0Dir(vitaRoot).listFiles()?.isNotEmpty() != true) return false
         val pup = pupFile(vitaRoot)
         if (!pup.isFile) return false
         return try {

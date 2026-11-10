@@ -204,9 +204,6 @@ fun onAccentColor(accent: Color = MaterialTheme.colorScheme.primary): Color {
     return if (lum > 0.6f) ColNight else Color.White
 }
 
-/** Fondo AMOLED #10131D (sustituye al negro puro #000000). */
-fun premiumBackgroundBrush(): Brush = premiumBackgroundBrush(dark = true)
-
 /**
  * R4-P1-14: parsea "#RRGGBB" (también "#RGB" y "#AARRGGBB", cuyo
  * alfa se ignora) en Color, en Kotlin PURO, sin android.graphics.
@@ -266,9 +263,9 @@ fun premiumBackgroundBrush(dark: Boolean, baseHex: String? = null): Brush {
     return Brush.verticalGradient(listOf(ColNight, ColNight))
 }
 
-/** Fondo de la Home: el tinte elegido por el usuario (casi negro) arriba → AMOLED #10131D abajo. En tema claro, fondo claro (los tintes guardados son oscuros). */
+/** Fondo de la Home: el tinte elegido por el usuario (casi negro) arriba → AMOLED #10131D abajo. En tema claro, tinte claro del fondo elegido arriba → plata claro abajo (R5-A2-4: antes el hex elegido se ignoraba en claro y el gradiente era fijo). */
 fun homeBackgroundBrush(baseHex: String?, dark: Boolean): Brush {
-    if (!dark) return Brush.verticalGradient(listOf(ColBackgroundLight, Color(0xFFDCE8F5)))
+    if (!dark) return Brush.verticalGradient(listOf(lightBackgroundTint(baseHex), ColBackgroundLight))
     val base = parseHexColor(baseHex) ?: ColNight
     return Brush.verticalGradient(listOf(base, ColNight))
 }

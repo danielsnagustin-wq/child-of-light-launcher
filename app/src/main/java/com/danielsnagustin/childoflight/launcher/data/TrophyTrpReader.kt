@@ -212,6 +212,39 @@ object TrophyTrpReader {
         return readFileCached(trp)
     }
 
+    /**
+     * R5-A4-8: lee el TROPHY.TRP instalado por el núcleo en
+     * ux0/user/00/trophy/<TITLE>/TROPHY.TRP. Es el TRP descifrado por
+     * el núcleo al instalar; si el empaquetado sigue cifrado o
+     * comprimido dentro de su contenedor, este es el que sí se puede
+     * leer. Unreadable si el núcleo aún no lo creó (no se ha jugado).
+     */
+    fun readInstalledTrp(ux0Dir: File, titleId: String): TrpReadResult {
+        val trp = File(ux0Dir, "user/00/trophy/$titleId/TROPHY.TRP")
+        if (!trp.isFile) {
+            return TrpReadResult.Unreadable(
+                reason = "El núcleo aún no creó TROPHY.TRP instalado para $titleId.",
+                detail = "Ruta buscada: ${trp.path}",
+            )
+        }
+        return readFileCached(trp)
+    }
+
+    /**
+     * R5-A4-8: diagnóstico TRP con fallback. Primero el TRP
+     * empaquetado del juego; si es Unreadable (cifrado o comprimido
+     * en su contenedor), reintenta con el TRP instalado por el núcleo
+     * (ux0/user/00/trophy/<TITLE>/TROPHY.TRP, derivado de appDir
+     * como ux0/app/<TITLE>). Nunca lanza; nunca inventa un conteo.
+     */
+    fun readTrpForDiagnosis(appDir: File): TrpReadResult {
+        val bundled = readBundledTrp(appDir)
+        if (bundled is TrpReadResult.Success) return bundled
+        val ux0Dir = appDir.parentFile?.parentFile
+        if (ux0Dir == null) return bundled
+        return readInstalledTrp(ux0Dir, appDir.name)
+    }
+
     fun compareByName(
         success: TrpSuccess,
         launcherEnglishNames: Map<Int, String>,

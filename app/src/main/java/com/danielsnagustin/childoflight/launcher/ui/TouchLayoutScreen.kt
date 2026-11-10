@@ -63,10 +63,11 @@ import com.danielsnagustin.childoflight.launcher.data.VitaButton
 
 // R4-P2-2: paleta solo con la identidad azul/lavanda/turquesa/
 // plata (antes incluía un verde y un rojo, fuera de la identidad).
-// internal para que el test R4P2 la pueda verificar; ningún default
-// de control usa verde ni rojo (verificado por grep en main: solo
-// esta paleta los tenía).
-internal val CONTROL_COLORS = listOf("#8CCBEB", "#7FB3D5", "#75D6CE", "#A99ACD", "#BA68C8", "#FFFFFF")
+// R5-A1-8: el morado rosado #BA68C8 sale de la paleta y entra el
+// azul lavanda #6578B8 de la identidad. internal para que el test
+// R4P2 la pueda verificar; ningún default de control usa verde ni
+// rojo (verificado por grep en main: solo esta paleta los tenía).
+internal val CONTROL_COLORS = listOf("#8CCBEB", "#7FB3D5", "#75D6CE", "#A99ACD", "#6578B8", "#FFFFFF")
 
 private fun parseHex(hex: String): Color = try {
     Color(android.graphics.Color.parseColor(hex))
@@ -113,6 +114,12 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     val profiles by vm.profilesFlow.collectAsState(initial = emptyList())
     val activeProfileId by vm.activeProfileIdFlow.collectAsState(initial = "default-g99")
     val settings by vm.settingsFlow.collectAsState(initial = null)
+    // R5-A2-3: fondo según el tema, como el scaffold de Ajustes
+    // (SettingsCommon.kt:72). Antes premiumBackgroundBrush() sin
+    // argumentos fijaba dark=true: con Tema Claro esta pantalla
+    // quedaba con el fondo AMOLED oscuro mientras las categorías
+    // de Ajustes se aclaraban.
+    val uiPrefs = rememberUiPreferences()
     // B11: selectedId y los textos de los diálogos se pierden al
     // rotar/recrear (eran remember): el usuario editaba un botón y
     // al girar el teléfono volvía al stick y perdía lo escrito.
@@ -167,7 +174,7 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     }
 
     Box(
-        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush()),
+        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush(isDarkUi(uiPrefs), uiPrefs?.homeBackground?.hex)),
     ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState(), enabled = !isDragging).padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
