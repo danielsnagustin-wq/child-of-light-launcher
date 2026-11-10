@@ -122,6 +122,18 @@ internal fun shouldSkipRecentRefresh(
         nowMillis - lastCompletedAtMillis < REFRESH_RECENCY_MILLIS
 
 /**
+ * Pura (JVM): Title IDs cuyos tamaños instalados debe olvidar
+ * refreshStorageState() antes de re-escanear. El estado solo muestra
+ * un título (el extraído si lo hay, si no el del .pkg), pero el .pkg
+ * guardado puede ser de la otra región que el extraído (M15: dos
+ * regiones instaladas) y sus directorios también pueden tener
+ * tamaños cacheados obsoletos; devolver los tres sin duplicar cubre
+ * ambos casos sin coste.
+ */
+internal fun storageInvalidationTitleIds(status: GameStatus): List<String> =
+    listOfNotNull(status.titleId?.id, status.extractedTitleId?.id, status.pkgTitleId?.id).distinct()
+
+/**
  * Pura (JVM): true si una lectura cacheada de versión externa o
  * batería sigue fresca. 0 (nunca leída) nunca es fresca.
  */
@@ -620,9 +632,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     // la primera vez (sucia al arrancar, para que Almacenamiento no
     // nazca vacía). Después, cada refresco la salta: la entrega a
     // Descargas y el borrado de copias la re-listan directamente, y
-    // Almacenamiento puede pedirla al entrar con
-    // refreshDownloadsCopiesNow(). Nada vuelve a marcarla sucia: el
-    // flag solo evita repetir la query de MediaStore en cada refresco.
+    // Almacenamiento la pide al entrar con refreshStorageState().
+    // Nada vuelve a marcarla sucia: el flag solo evita repetir la
+    // query de MediaStore en cada refresco.
     @Volatile
     private var downloadsCopiesDirty: Boolean = true
 
@@ -741,16 +753,30 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * R4-P1-12: re-lee la lista de Descargas/ChildOfLight/ AHORA, sin
-     * escanear nada más. Para que Almacenamiento la pida al entrar (la
-     * query de MediaStore ya no corre en cada refresco). La entrega a
-     * Descargas y el borrado de copias la refrescan directamente sin
-     * pasar por aquí.
+     * R5-A1-13: refresco completo al entrar a Almacenamiento. Invalidar
+     * solo no bastaría: los tamaños viven en el flujo status y solo se
+     * recalculan en scanStatus(), así que tras olvidar los tamaños
+     * cacheados de los títulos conocidos se fuerza un escaneo nuevo.
+     * - La guarda de recencia de refreshStatus() se salta a propósito:
+     *   entrar a Almacenamiento es un pedido explícito de ver tamaños
+     *   frescos, no spam de escaneos; marcar el pendiente antes de
+     *   llamar a refreshStatus() es el mismo mecanismo que ya usa un
+     *   refresco pedido mientras otro escaneo corría (y si un escaneo
+     *   corre ahora mismo, el pendiente hace que se repita una vez al
+     *   terminar, con la caché ya olvidada).
+     * - La lista de Descargas se re-lee aquí mismo (antes la pedía la
+     *   pantalla con refreshDownloadsCopiesNow()): un solo punto de
+     *   entrada al entrar a Almacenamiento y una sola query de
+     *   MediaStore (el flag se limpia antes de refreshStatus() para
+     *   que refreshStatusOnce() no la repita).
      */
-    fun refreshDownloadsCopiesNow() {
+    fun refreshStorageState() {
         viewModelScope.launch(Dispatchers.IO) {
-            refreshDownloadsCopies()
+            storageInvalidationTitleIds(_status.value).forEach { library.invalidateInstalledSizes(it) }
             downloadsCopiesDirty = false
+            refreshPending.set(true)
+            refreshStatus()
+            refreshDownloadsCopies()
         }
     }
 
@@ -796,9 +822,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // R4-P1-12: la query de MediaStore de Descargas solo corre
             // en el primer refresco (downloadsCopiesDirty): la entrega
             // y el borrado de copias re-listan directamente, y
-            // Almacenamiento puede pedirla al entrar con
-            // refreshDownloadsCopiesNow(). En cada refresco, no: el
-            // usuario casi nunca abre Almacenamiento.
+            // Almacenamiento la pide al entrar con refreshStorageState().
+            // En cada refresco, no: el usuario casi nunca abre
+            // Almacenamiento.
             if (downloadsCopiesDirty) {
                 refreshDownloadsCopies()
                 downloadsCopiesDirty = false
