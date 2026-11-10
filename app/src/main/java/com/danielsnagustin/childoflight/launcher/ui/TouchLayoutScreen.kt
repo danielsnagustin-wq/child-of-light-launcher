@@ -45,6 +45,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -219,7 +220,12 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                 .size(size)
                                 .alpha(control.opacity)
                                 .background(
-                                    if (control.kind == "igniculus") parseHex(control.colorHex)
+                                    // R4-P1-4: ambas ramas devuelven Brush.
+                                    // Antes la rama igniculus devolvía Color
+                                    // y la otra Brush: el if quedaba como Any
+                                    // y ninguna sobrecarga de background
+                                    // aplicaba (run #159).
+                                    if (control.kind == "igniculus") SolidColor(parseHex(control.colorHex))
                                     else touchPreviewGlassBrush(parseHex(control.colorHex)),
                                     shape,
                                 )

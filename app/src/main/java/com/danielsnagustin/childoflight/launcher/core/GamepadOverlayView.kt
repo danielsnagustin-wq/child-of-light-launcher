@@ -331,9 +331,15 @@ class GamepadOverlayView @JvmOverloads constructor(
             pressure = 1f
             size = 1f
         }
+        // R4-P1-16: las matrices van en variables con tipo explícito.
+        // Con arrayOf(...) en línea, el compilador resolvía la
+        // sobrecarga obtain(..., x: Float, y: Float, ...) y fallaba
+        // con "Argument type mismatch" (run #159).
+        val propsArray: Array<MotionEvent.PointerProperties> = arrayOf(properties)
+        val coordsArray: Array<MotionEvent.PointerCoords> = arrayOf(coords)
         return MotionEvent.obtain(
             downTime, eventTime, action, 1,
-            arrayOf(properties), arrayOf(coords),
+            propsArray, coordsArray,
             0, 0, 1f, 1f, 0, 0,
         )
     }
