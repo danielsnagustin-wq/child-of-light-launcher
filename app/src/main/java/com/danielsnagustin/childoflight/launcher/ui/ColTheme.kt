@@ -208,17 +208,42 @@ fun onAccentColor(accent: Color = MaterialTheme.colorScheme.primary): Color {
 fun premiumBackgroundBrush(): Brush = premiumBackgroundBrush(dark = true)
 
 /**
+ * R4-P1-14: parsea "#RRGGBB" (también "#RGB" y "#AARRGGBB", cuyo
+ * alfa se ignora) en Color, en Kotlin PURO, sin android.graphics.
+ * Color.parseColor es un stub sin implementar en los unit tests
+ * JVM (devuelve 0 o lanza "Stub!"), así que cualquier función que
+ * lo use NO es testeable en JVM aunque su KDoc lo diga: el test
+ * lightBackgroundTint_blancoSeQuedaBlanco fallaba en CI por eso
+ * (run #162: 519 tests, 1 fallido), no por la fórmula. Devuelve
+ * null si el texto no es un hex válido; el llamador decide el
+ * fallback (normalmente ColNight).
+ */
+fun parseHexColor(hex: String?): Color? {
+    val clean = hex?.trim()?.removePrefix("#") ?: return null
+    val expanded = when (clean.length) {
+        3 -> clean.map { "$it$it" }.joinToString("")
+        6 -> clean
+        8 -> clean.substring(2)
+        else -> return null
+    }
+    val value = expanded.toLongOrNull(16) ?: return null
+    return Color(
+        red = ((value shr 16) and 0xFF) / 255f,
+        green = ((value shr 8) and 0xFF) / 255f,
+        blue = (value and 0xFF) / 255f,
+        alpha = 1f,
+    )
+}
+
+/**
  * R4-P1-14: tinte claro del fondo elegido, para Tema Claro. Los
  * fondos guardados son casi negros (AMOLED); aclararlos un 88 %
  * hacia el blanco deja un tinte pálido que conserva el matiz del
- * fondo elegido en vez de ignorarlo. Puro y testeable en JVM.
+ * fondo elegido en vez de ignorarlo. Puro y testeable en JVM
+ * (parsea con parseHexColor, no con Color.parseColor).
  */
 fun lightBackgroundTint(baseHex: String?): Color {
-    val base = try {
-        Color(android.graphics.Color.parseColor(baseHex ?: "#10131D"))
-    } catch (_: Exception) {
-        ColNight
-    }
+    val base = parseHexColor(baseHex) ?: ColNight
     val mix = 0.88f
     return Color(
         red = base.red + (1f - base.red) * mix,
@@ -244,11 +269,7 @@ fun premiumBackgroundBrush(dark: Boolean, baseHex: String? = null): Brush {
 /** Fondo de la Home: el tinte elegido por el usuario (casi negro) arriba → AMOLED #10131D abajo. En tema claro, fondo claro (los tintes guardados son oscuros). */
 fun homeBackgroundBrush(baseHex: String?, dark: Boolean): Brush {
     if (!dark) return Brush.verticalGradient(listOf(ColBackgroundLight, Color(0xFFDCE8F5)))
-    val base = try {
-        Color(android.graphics.Color.parseColor(baseHex ?: "#10131D"))
-    } catch (_: Exception) {
-        ColNight
-    }
+    val base = parseHexColor(baseHex) ?: ColNight
     return Brush.verticalGradient(listOf(base, ColNight))
 }
 
