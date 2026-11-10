@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Fondo de ventana / arranque (ronda 0.2.55, alcance añadido 2026-11-10).
+
+  Antes el arranque era un plano #10131D sin nada: en AMOLED eso se ve
+  negro y vacío hasta el primer frame de Compose. Este drawable es lo
+  primero que dibuja el sistema al abrir la app (sin código, sin
+  esperas): fondo AMOLED #10131D con la portada del juego centrada
+  (la miniatura 384x216, 16:9, sin distorsión: el marco es 320x180 dp,
+  misma proporción). NO es una pantalla de splash que retenga la app:
+  en cuanto Compose dibuja su primer frame, Home lo sustituye; no hay
+  ningún retardo añadido. En Android 12+ el sistema usa además el
+  fondo y el icono de splash del tema (ver themes.xml).
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="#10131D" />
+    <item
+        android:width="320dp"
+        android:height="180dp"
+        android:gravity="center"
+        android:drawable="@drawable/col_cover_thumb" />
+</layer-list>
