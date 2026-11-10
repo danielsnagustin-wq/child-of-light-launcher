@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.compose.ui.graphics.ImageBitmap
@@ -380,7 +381,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     /** Refresca la lista de mandos físicos conectados (InputDevice). */
     fun refreshGamepads() {
-        _gamepads.value = launcher.connectedGamepads()
+        // Ronda 0.2.55 P1-17: InputDevice.getDeviceIds() es IPC y se
+        // llamaba desde LaunchedEffect (Main). Ahora en IO.
+        viewModelScope.launch(Dispatchers.IO) {
+            _gamepads.value = launcher.connectedGamepads()
+        }
     }
 
     // --- Descargas/ChildOfLight/ (copias para la app externa) ---
@@ -430,8 +435,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             // S11: no fiarse del _status guardado (puede ir
             // desactualizado tras importar o borrar): escanear fresco
-            // de disco antes de decidir qué .pkg borrar.
-            val status = runCatching { library.scanStatus() }.getOrNull() ?: _status.value
+            // de disco antes de decidir qué .pkg borrar. Ronda 0.2.55
+            // P1-6: el escaneo pasa por scanStatusFresh() (mutex +
+            // guarda de recencia P1-9), no directo a scanStatus().
+            val status = runCatching { scanStatusFresh() }.getOrNull() ?: _status.value
             val extractedId = status.extractedTitleId?.id
             val freed = if (extractedId != null && status.pkgTitleId?.id == extractedId) {
                 val size = status.pkgSizeBytes
@@ -484,6 +491,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     private val _status = MutableStateFlow(GameStatus())
     val status: StateFlow<GameStatus> = _status.asStateFlow()
+
+    // Ronda 0.2.55 P0-1: true cuando el primer escaneo ya emitió un
+    // GameStatus real. Antes Home nacía con GameStatus() vacío y
+    // mostraba IMPORTAR hasta que terminaba el escaneo; ahora la
+    // tarjeta muestra "Comprobando…" hasta que esto es true.
+    private val _statusLoaded = MutableStateFlow(false)
+    val statusLoaded: StateFlow<Boolean> = _statusLoaded.asStateFlow()
 
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
@@ -566,6 +580,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     private val _logText = MutableStateFlow("")
     val logText: StateFlow<String> = _logText.asStateFlow()
+
+    // Ronda 0.2.55 P0-2: marca del archivo de log en la última lectura
+    // (mtime + tamaño). refreshLog() solo re-lee si cambió: antes
+    // re-leía el archivo entero en cada onResume. Se declara ANTES
+    // del init porque refreshLog() corre desde el init.
+    @Volatile
+    private var lastLogFileStamp: Pair<Long, Long>? = null
 
     // Portada de Home decodificada UNA vez en el hilo IO: painterResource
     // decodifica en el hilo principal y lo repetía en cada vuelta a Home
@@ -721,6 +742,34 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /**
+     * Ronda 0.2.55 P1-6: escaneo fresco SIN saltarse la guarda P1-9.
+     * Para llamadores que necesitan el GameStatus como valor de
+     * retorno (deleteInstalledGamePkgs): si el último escaneo
+     * completado tiene menos de 2 s se reutiliza _status; si no, se
+     * escanea una vez bajo el mutex de refreshStatus() (nunca dos
+     * escaneos a la vez) y se actualiza la marca de recencia. Se
+     * suspende esperando el mutex si otro escaneo corre: es IO, nunca
+     * Main. No es refreshStatus(): ese es fire-and-forget y no
+     * devuelve el estado.
+     */
+    private suspend fun scanStatusFresh(): GameStatus {
+        refreshMutex.withLock {
+            if (shouldSkipRecentRefresh(
+                    lastRefreshCompletedAtMillis.get(),
+                    System.currentTimeMillis(),
+                    refreshPending.get(),
+                )
+            ) {
+                return _status.value
+            }
+            refreshPending.set(false)
+            refreshStatusOnce()
+            lastRefreshCompletedAtMillis.set(System.currentTimeMillis())
+            return _status.value
+        }
+    }
+
     // R4-P1-12: versión externa cacheada (getPackageInfo es IPC por
     // refresco). La caché dura EXTERNAL_INFO_CACHE_TTL_MILLIS; las
     // lecturas explícitas en vivo (Diagnóstico, reporte de bug) la
@@ -782,6 +831,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     /** Un escaneo completo del estado (disco + firmware + TRP). Solo lo llama refreshStatus(), bajo el mutex. */
     private fun refreshStatusOnce() {
+            // Ronda 0.2.55 (S1/S2): duración del refresco por fase,
+            // una línea de log barata para confirmar en el teléfono
+            // si el cuello es el firmware (vs0) o el escaneo.
+            val refreshStartedMillis = SystemClock.elapsedRealtime()
+            var firmwareMillis = 0L
+            var scanMillis = 0L
             // R5-A4-1: limpiar .tmp huérfanos de importaciones fallidas
             // al inicio de cada refresco (no solo en la siguiente
             // importación): un .tmp de hasta 1,14 GB no debe quedarse
@@ -802,13 +857,20 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // otra vez por dentro. Si la resolución falla (nunca
             // debería: es lectura de archivos), scanStatus() resuelve
             // por su cuenta y _firmwareStatus conserva su valor.
+            val firmwareResolveStartedMillis = SystemClock.elapsedRealtime()
             val firmware = runCatching { FirmwareResolver.resolve(library.vitaRoot) }.getOrNull()
+            firmwareMillis = SystemClock.elapsedRealtime() - firmwareResolveStartedMillis
             // BUG (auditoría): scanStatus() hace I/O y puede lanzar; se llama
             // desde init/onResume sin protección. Si falla, se conserva el
             // estado anterior en vez de tumbar la corrutina.
+            val scanStartedMillis = SystemClock.elapsedRealtime()
             runCatching { library.scanStatus(firmware) }
                 .onSuccess { _status.value = it }
                 .onFailure { LauncherLog.append(context, "status", "No se pudo escanear el estado: ${it.message}") }
+            scanMillis = SystemClock.elapsedRealtime() - scanStartedMillis
+            // Ronda 0.2.55 P0-1: el primer escaneo ya emitió (o lo
+            // intentó): Home deja de mostrar "Comprobando…".
+            _statusLoaded.value = true
             firmware?.let { _firmwareStatus.value = it }
             _externalVita3k.value = cachedExternalVersion()
             // Crash al abrir (#80/#82): NO cargar el .so aquí. `available`
@@ -851,6 +913,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // la tarjeta "Falta la licencia" de Importar aparezca
             // también tras reiniciar, sin reimportar el .pkg.
             rebuildPendingLicenseFromDisk()
+            // Ronda 0.2.55 (S1/S2): una línea por refresco con la
+            // duración por fase. Es una sola línea (el resumen de
+            // scanStatus sigue deduplicado aparte) y es lo que
+            // permite medir en el teléfono si el refresco es lento.
+            LauncherLog.append(
+                context,
+                "status",
+                "Refresco de estado: ${SystemClock.elapsedRealtime() - refreshStartedMillis} ms " +
+                    "(firmware $firmwareMillis ms, escaneo $scanMillis ms).",
+            )
     }
 
     /**
@@ -985,15 +1057,29 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         // El log se leía en el hilo principal (file.readLines() en init y
         // en cada onResume): hasta 200 KB de I/O bloqueando el primer
         // frame. Ahora en IO; la UI observa el flujo.
+        // Ronda 0.2.55 P0-2: solo se re-lee si el archivo cambió
+        // (mtime + tamaño); en cada onResume sin cambios no se toca
+        // el disco. P1-13: tampoco se re-emite si el contenido es
+        // idéntico, para no recomponer Diagnóstico/GPU sin motivo.
         viewModelScope.launch(Dispatchers.IO) {
-            _logText.value = LauncherLog.readLast(context, 60)
+            val file = LauncherLog.file(context)
+            val stamp = file.lastModified() to file.length()
+            if (stamp == lastLogFileStamp && _logText.value.isNotEmpty()) return@launch
+            lastLogFileStamp = stamp
+            val text = LauncherLog.readLast(context, 60)
+            if (text != _logText.value) _logText.value = text
         }
     }
 
     private fun loadCoverBitmap() {
         viewModelScope.launch(Dispatchers.IO) {
+            // Ronda 0.2.55 P1-12: la portada se muestra a ~1/3 de su
+            // ancho real (1024x734): decodificarla entera (~3 MB de
+            // bitmap) es trabajo de más en un G99. inSampleSize=2 la
+            // deja en 512x367, de sobra para la tarjeta.
             _coverBitmap.value = runCatching {
-                BitmapFactory.decodeResource(context.resources, R.drawable.col_cover_clean)?.asImageBitmap()
+                val options = BitmapFactory.Options().apply { inSampleSize = 2 }
+                BitmapFactory.decodeResource(context.resources, R.drawable.col_cover_clean, options)?.asImageBitmap()
             }.getOrNull()
         }
     }
@@ -1002,7 +1088,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         // La vista previa debe mostrar lo mismo que se escribirá al
         // lanzar (incluido el fallback Vulkan -> OpenGL): por eso se
         // lee la GPU detectada antes de generar.
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val gpu = settingsRepo.gpuInfoFlow.first()
             // P1-14: generate() espera vitaFsPath, no vitaRoot: con la
             // raíz, la vista previa mostraba el pref-path ANTIGUO (el
@@ -1074,7 +1160,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     // --- Ajustes ---
 
     fun saveSettings(settings: LauncherSettings) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             // P1-18: si el guardado falla (disco lleno, archivo corrupto),
             // la app ya no muere (safeEdit lo registra y devuelve false),
             // pero el usuario debe saber que su cambio no quedó guardado.
@@ -1085,7 +1171,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun applyPreset(profile: GpuProfileId) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val current = settingsRepo.settingsFlow.first()
             settingsRepo.applyPreset(profile, current = current)
             // R5-A2-2: la conservación del modo rendimiento y del
@@ -1124,7 +1210,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun resetSettings() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val gpu = settingsRepo.gpuInfoFlow.first()
             val current = settingsRepo.settingsFlow.first()
             // Si el Modo seguro estaba ON, su copia queda huérfana al
@@ -1171,7 +1257,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * .pkg — que el snapshot no guarda — sobreviven (R2-P1-08/09).
      */
     fun setSafeMode(enabled: Boolean) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val current = settingsRepo.settingsFlow.first()
             if (enabled) {
                 writeSettingsSnapshot(safeModeSnapshotFile(), current)
@@ -1253,7 +1339,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * — incluidos Turnip y entrega del .pkg, que el snapshot no guarda —
      * se conserva como esté ahora. */
     fun undoFixAudio() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val snapshot = readSettingsSnapshot(audioFixSnapshotFile()) ?: _audioFixSnapshot.value ?: return@launch
             val current = settingsRepo.settingsFlow.first()
             settingsRepo.save(restoreAudioFixSnapshot(snapshot, current))
@@ -1619,7 +1705,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     /** Un .pkg nuevo (o borrado) invalida la entrega/confirmación anterior. */
     private fun resetPkgDeliveryFlags() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val current = settingsRepo.settingsFlow.first()
             if (current.pkgDeliveredToVita3k || current.pkgInstalledInVita3k) {
                 settingsRepo.save(current.copy(pkgDeliveredToVita3k = false, pkgInstalledInVita3k = false))
@@ -1953,7 +2039,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     /** El usuario confirma que instaló el .pkg en Vita3K (honesto: el launcher no puede comprobarlo). */
     fun confirmPkgInstalledInVita3k() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val current = settingsRepo.settingsFlow.first()
             settingsRepo.save(current.copy(pkgInstalledInVita3k = true))
             _message.value = "Anotado: el juego quedó instalado en la app externa. Pulsa JUGAR y ábrelo en su biblioteca."
@@ -2101,7 +2187,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun useSystemDriver() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val current = settingsRepo.settingsFlow.first()
             settingsRepo.save(current.copy(gpuDriver = com.danielsnagustin.childoflight.launcher.model.GpuDriver.SYSTEM))
             _message.value = "Driver del sistema activado."
@@ -2395,6 +2481,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      */
     fun noteReturnedFromGame() {
         viewModelScope.launch(Dispatchers.IO) {
+            // Ronda 0.2.55 P1-5: al volver del juego los saves pueden
+            // haber cambiado (el núcleo escribe en ellos): se olvida
+            // la caché de listSaves() para que el próximo escaneo los
+            // re-liste frescos. En el resto de refrescos la caché manda.
+            _status.value.titleId?.id?.let { library.invalidateSaves(it) }
             sessionManager.notePlayEnded()
             // Prueba de 30 s: si el juego midió el FPS automáticamente
             // (EmbeddedGameActivity muestrea getFps cada segundo y lo
@@ -2767,7 +2858,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     /** Borra un botón del perfil activo (con confirmación en la UI). Desaparece del overlay. */
     fun deleteTouchControl(controlId: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             // B6: el borrado es atómico en el repositorio (leer +
             // filtrar + guardar bajo el mismo mutex); antes se hacía
             // aquí en tres pasos y dos borrados rápidos podían
@@ -2912,7 +3003,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     // --- Personalización del launcher ---
 
     fun saveUiPrefs(prefs: com.danielsnagustin.childoflight.launcher.model.UiPreferences) {
-        viewModelScope.launch { uiRepo.save(prefs) }
+        viewModelScope.launch(Dispatchers.IO) { uiRepo.save(prefs) }
     }
 
     /**
@@ -2923,7 +3014,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * ocurre una vez por instalación.
      */
     fun markHomeIntroSeen() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             // R5-A1-4: escritura atómica en el repo (una sola clave
             // dentro de edit{}), sin read-modify-write en el VM: antes
             // se leía el snapshot entero y se guardaba, y un cambio de
@@ -2933,7 +3024,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun resetAllCustomization() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             // R5-A1-3: el reset total borraba homeIntroSeen y la intro
             // volvía a sonar. Se lee ANTES del reset y, si ya estaba
             // vista, se vuelve a marcar DESPUÉS (misma marca atómica
@@ -2952,7 +3043,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     // fingir que se restableció algo. El firmware ya no es una categoría
     // de Ajustes: vive en Importar (juego y DLCs).
     fun resetCategory(category: SettingsCategory) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             if (!categoryHasResettableSettings(category)) {
                 _message.value = when (category) {
                     SettingsCategory.STORAGE -> "Almacenamiento no tiene ajustes que restablecer: son archivos (copias en Descargas, juego, DLCs), no ajustes."
@@ -3503,6 +3594,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         // sustituye por un nombre neutro; las rutas siguen siendo
         // legibles para depurar.
         return raw.replace("com.danielsnagustin.childoflight.launcher", "child-of-light-launcher")
+    }
+
+    /**
+     * Ronda 0.2.55 P1-4: exportar el reporte leyendo ajustes y GPU
+     * aquí (IO), para que MainActivity no tenga que recoger
+     * settingsFlow/gpuFlow en la raíz. Si los ajustes aún no han
+     * emitido, first() espera a la primera emisión en vez de fallar
+     * en silencio como antes.
+     */
+    fun exportBugReportCurrent(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val settings = settingsRepo.settingsFlow.first()
+            val gpu = settingsRepo.gpuInfoFlow.first()
+            exportBugReport(uri, settings, gpu)
+        }
     }
 
     fun exportBugReport(uri: Uri, settings: LauncherSettings, gpu: GpuInfo?) {

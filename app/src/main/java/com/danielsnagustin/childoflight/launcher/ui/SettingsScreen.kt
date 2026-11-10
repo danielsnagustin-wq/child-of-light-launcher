@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,10 +44,14 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
     // R2-P2-21a / R2-P2-28: la búsqueda oculta "Instalar Turnip" cuando
     // la GPU detectada no es Adreno.
     val gpu by vm.gpuFlow.collectAsState(initial = null)
-    val results = searchSettings(query, gpuVendor = gpu?.vendor)
+    // Ronda 0.2.55 P1-10: el filtrado se memoriza por consulta (y GPU):
+    // antes se re-ejecutaba en cada composición, también por cambios
+    // ajenos a la búsqueda. El índice es pequeño (~70 entradas), pero
+    // el remember evita el trabajo en cada tecla de más.
+    val results = remember(query, gpu?.vendor) { searchSettings(query, gpuVendor = gpu?.vendor) }
     // R5-A2-3: fondo según el tema (antes el overload sin argumentos
     // fijaba dark=true y el hub quedaba oscuro con Tema Claro).
-    val uiPrefs by vm.uiFlow.collectAsState(initial = null)
+    val uiPrefs = LocalUiPreferences.current
     Box(
         modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush(isDarkUi(uiPrefs), uiPrefs?.homeBackground?.hex)),
     ) {
@@ -69,7 +74,8 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
             }
             if (query.isBlank()) {
                 SettingsCategory.entries.forEach { category ->
-                    item {
+                    // Ronda 0.2.55 P1-10/P2-20: key estable por categoría.
+                    item(key = "category-${category.name}") {
                         CategoryRow(category) { onNavigate(category.screen) }
                     }
                 }
@@ -83,7 +89,10 @@ fun SettingsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Scree
                 }
             } else {
                 results.forEach { result ->
-                    item {
+                    // Ronda 0.2.55 P1-10/P2-20: key estable por resultado
+                    // (título + destino): sin key, cada tecla reordenaba
+                    // y recomponía toda la lista de resultados.
+                    item(key = "result-${result.title}-${result.destination?.name ?: result.category.name}") {
                         SearchResultRow(result) { onNavigate(result.destination ?: result.category.screen) }
                     }
                 }

@@ -48,7 +48,7 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     val profiles by vm.profilesFlow.collectAsState(initial = emptyList())
     val activeProfileId by vm.activeProfileIdFlow.collectAsState(initial = "default-g99")
     val settings by vm.settingsFlow.collectAsState(initial = null)
-    val uiPrefs by vm.uiFlow.collectAsState(initial = null)
+    val uiPrefs = LocalUiPreferences.current
     val status by vm.status.collectAsState()
     var showBatchConfirm by rememberSaveable { mutableStateOf(false) }
     var deleteDlcTarget by rememberSaveable { mutableStateOf<String?>(null) }

@@ -60,7 +60,9 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     // absolutas con el nombre del paquete. Mismo replace que la
     // exportación del reporte (LauncherViewModel.buildBugReportText):
     // el nombre del paquete nunca sale en texto visible.
-    val safeLogText = logText.replace("com.danielsnagustin.childoflight.launcher", "child-of-light-launcher")
+    // Ronda 0.2.55 P1-13: el replace se memoriza por logText (antes
+    // recorría el string entero en cada recomposición).
+    val safeLogText = remember(logText) { logText.replace("com.danielsnagustin.childoflight.launcher", "child-of-light-launcher") }
     val pending by vm.pendingBenchmark.collectAsState()
     // B3: firmware y batería se leen como flujo, no con llamada plana.
     val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
@@ -82,7 +84,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
 
     // R5-A2-3: fondo según el tema (antes el overload sin argumentos
     // fijaba dark=true y la pantalla quedaba oscura con Tema Claro).
-    val uiPrefs by vm.uiFlow.collectAsState(initial = null)
+    val uiPrefs = LocalUiPreferences.current
     Box(
         modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush(isDarkUi(uiPrefs), uiPrefs?.homeBackground?.hex)),
     ) {
@@ -163,7 +165,9 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         Text("VSync: ${if (settings?.let { effectiveSettings(it).vSync } == true) "ON" else "OFF"} · Modo 60 FPS: ${if (settings?.fpsHack == true) "ON" else "OFF"} · Modo seguro: ${if (settings?.safeMode == true) "ON" else "OFF"}")
         Text("Último FPS (prueba de 30 s): ${lastFps?.let { "$it fps" } ?: "sin medir"}")
         SectionTitle("Errores recientes del log")
-        val recentErrors = extractRecentErrorLines(safeLogText)
+        // Ronda 0.2.55 P1-13: el filtrado se memoriza por safeLogText
+        // (líneas + lowercase + regex por línea en cada recomposición).
+        val recentErrors = remember(safeLogText) { extractRecentErrorLines(safeLogText) }
         if (recentErrors.isEmpty()) {
             Text("Sin errores recientes en el log.", color = ColTurquoise)
         } else {

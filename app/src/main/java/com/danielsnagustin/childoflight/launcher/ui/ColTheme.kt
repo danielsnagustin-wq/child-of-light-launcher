@@ -109,11 +109,21 @@ val LocalUiPreferences = staticCompositionLocalOf<UiPreferences?> { null }
 @Composable
 fun rememberUiPreferences(): UiPreferences? {
     val fromLocal = LocalUiPreferences.current
-    if (fromLocal != null) return fromLocal
     val context = LocalContext.current
     val repo = remember(context) { UiPreferencesRepository(context.applicationContext) }
     val prefs by repo.uiFlow.collectAsState(initial = null)
-    return prefs
+    // Ronda 0.2.55 P1-4: el valor del Local, si existe, siempre gana.
+    // OJO (seguridad de slots): los hooks (remember + collectAsState)
+    // se llaman SIEMPRE, en el mismo orden, aunque el Local exista.
+    // La versión anterior hacía early-return antes de los hooks cuando
+    // el Local no era null: en el primer frame el Local aún es null
+    // (DataStore no emitió) y al emitir cambia la secuencia de hooks
+    // entre composiciones, lo que puede romper la tabla de slots en
+    // el teléfono. El colector que queda aquí es el mismo que ya
+    // existía en cada call site; las pantallas que pueden leer el
+    // Local lo leen directamente (LocalUiPreferences.current), sin
+    // pasar por este helper.
+    return fromLocal ?: prefs
 }
 
 /** R4-P1-15: un tamaño explícito gana; sin él, la preferencia guardada; sin ella, Normal. */

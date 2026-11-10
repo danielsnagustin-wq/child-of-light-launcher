@@ -142,7 +142,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
 
     // R5-A2-3: fondo según el tema (antes el overload sin argumentos
     // fijaba dark=true y la pantalla quedaba oscura con Tema Claro).
-    val uiPrefs by vm.uiFlow.collectAsState(initial = null)
+    val uiPrefs = LocalUiPreferences.current
     Box(
         modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush(isDarkUi(uiPrefs), uiPrefs?.homeBackground?.hex)),
     ) {

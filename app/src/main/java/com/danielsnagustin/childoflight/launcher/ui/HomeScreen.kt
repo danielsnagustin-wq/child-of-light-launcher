@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.R
 import com.danielsnagustin.childoflight.launcher.model.CardSize
 import com.danielsnagustin.childoflight.launcher.model.CardTransparency
+import com.danielsnagustin.childoflight.launcher.model.GameStatus
 import com.danielsnagustin.childoflight.launcher.model.HomeSection
 import com.danielsnagustin.childoflight.launcher.model.IconSize
 import kotlinx.coroutines.delay
@@ -104,7 +105,7 @@ fun HomeScreen(
     onIntroStarted: () -> Unit = {},
     onNavigate: (Screen) -> Unit,
 ) {
-    val uiPrefs by vm.uiFlow.collectAsState(initial = null)
+    val uiPrefs = LocalUiPreferences.current
     val strings = stringsFor(uiPrefs?.language ?: com.danielsnagustin.childoflight.launcher.model.AppLanguage.SPANISH)
 
     // La intro (portada + tarjetas) solo se reproduce una vez por
@@ -173,7 +174,11 @@ private fun GameCard(
     onNavigate: (Screen) -> Unit,
 ) {
     val status by vm.status.collectAsState()
-    val settings by vm.settingsFlow.collectAsState(initial = null)
+    // Ronda 0.2.55 P0-1: hasta la primera emisión real del escaneo,
+    // la tarjeta muestra "Comprobando…" en vez de IMPORTAR: con el
+    // GameStatus() vacío inicial, Home mentía "pendiente de importar"
+    // aunque el juego estuviera instalado.
+    val statusLoaded by vm.statusLoaded.collectAsState()
     // Deshabilitar JUGAR mientras hay un lanzamiento en curso (doble
     // toque = dos launch() a la vez); la guarda vive en el ViewModel.
     val launching by vm.launchingFlow.collectAsState()
@@ -210,9 +215,11 @@ private fun GameCard(
                         .background(ColNight),
                 ) {
                     // La imagen se decodifica UNA vez en el ViewModel (hilo
-                    // IO) y se reutiliza: painterResource decodifica en el
-                    // hilo principal y lo repetía en cada vuelta a Home
-                    // (la composición se descarta al navegar).
+                    // IO, inSampleSize=2) y se reutiliza. Mientras llega,
+                    // el respaldo es la miniatura (384x216, mucho más
+                    // barata que decodificar la portada entera en Main
+                    // en cada entrada a Home, como hacía antes el
+                    // painterResource de col_cover_clean).
                     if (cover != null) {
                         Image(
                             bitmap = cover!!,
@@ -222,7 +229,7 @@ private fun GameCard(
                         )
                     } else {
                         Image(
-                            painter = painterResource(R.drawable.col_cover_clean),
+                            painter = painterResource(R.drawable.col_cover_thumb),
                             contentDescription = "Child of Light",
                             contentScale = ContentScale.Fit,
                             modifier = Modifier.fillMaxSize(),
@@ -266,24 +273,36 @@ private fun GameCard(
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
-            if (!gameOk) {
+            if (!statusLoaded) {
+                // Ronda 0.2.55 P0-1: estado honesto mientras el primer
+                // escaneo no terminó: ni JUGAR ni IMPORTAR, porque aún
+                // no se sabe si el juego está instalado. Botón
+                // deshabilitado, sin inventar ningún estado.
                 Spacer(modifier = Modifier.height(10.dp))
                 Text(
-                    "⚠ ${strings.pendingImport}",
+                    "Comprobando…",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = accent,
                 )
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-            if (gameOk) {
-                val subtitle = listOfNotNull(
-                    status.titleId?.id,
-                    settings?.resolutionLabel?.takeIf { it.isNotEmpty() },
-                ).joinToString(" · ")
-                PrimaryButtonWithSubtitle(strings.playShort, subtitle, onClick = { vm.play() }, enabled = !launching)
+                Spacer(modifier = Modifier.height(16.dp))
+                PrimaryButton("Comprobando…", onClick = {}, enabled = false)
             } else {
-                PrimaryButton(strings.importGame.uppercase(), onClick = { onNavigate(Screen.IMPORT) })
+                if (!gameOk) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        "⚠ ${strings.pendingImport}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = accent,
+                    )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                if (gameOk) {
+                    PlayButton(vm, status, launching, strings)
+                } else {
+                    PrimaryButton(strings.importGame.uppercase(), onClick = { onNavigate(Screen.IMPORT) })
+                }
             }
             // Mientras JUGAR trabaja (sobre todo instalando el .pkg en
             // el núcleo, varios minutos): tarjeta de progreso visible
@@ -294,6 +313,30 @@ private fun GameCard(
             }
         }
     }
+
+/**
+ * Botón JUGAR con su subtítulo (Title ID · resolución).
+ *
+ * Ronda 0.2.55 (refuerzo, hallazgo extra no listado en la auditoría):
+ * GameCard recogía settingsFlow arriba solo para el subtítulo, así
+ * que cada cambio de ajuste recomponía la tarjeta entera (portada
+ * incluida). El subtítulo se recoge aquí dentro: solo el botón
+ * recompone cuando cambia un ajuste.
+ */
+@Composable
+private fun PlayButton(
+    vm: LauncherViewModel,
+    status: GameStatus,
+    launching: Boolean,
+    strings: AppStrings,
+) {
+    val settings by vm.settingsFlow.collectAsState(initial = null)
+    val subtitle = listOfNotNull(
+        status.titleId?.id,
+        settings?.resolutionLabel?.takeIf { it.isNotEmpty() },
+    ).joinToString(" · ")
+    PrimaryButtonWithSubtitle(strings.playShort, subtitle, onClick = { vm.play() }, enabled = !launching)
+}
 
 /**
  * Tarjeta de progreso del lanzamiento (Home): % real del núcleo +

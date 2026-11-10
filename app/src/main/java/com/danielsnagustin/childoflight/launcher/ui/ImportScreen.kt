@@ -21,6 +21,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -33,6 +34,7 @@ import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
 import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
 import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
 import com.danielsnagustin.childoflight.launcher.model.AppLanguage
+import com.danielsnagustin.childoflight.launcher.model.GameStatus
 
 /**
  * Pantalla de Importación: juego principal, DLCs, updates y
@@ -61,12 +63,21 @@ import com.danielsnagustin.childoflight.launcher.model.AppLanguage
  */
 @Composable
 fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
-    val settings by vm.settingsFlow.collectAsState(initial = null)
-    val uiPrefs by vm.uiFlow.collectAsState(initial = null)
+    // Ronda 0.2.55 (refuerzo, hallazgo extra no listado en la
+    // auditoría): ImportScreen recogía settingsFlow arriba solo para
+    // dos booleanos de la entrega a la app externa
+    // (pkgDeliveredToVita3k / pkgInstalledInVita3k): cada cambio de
+    // ajuste recomponía la pantalla entera. Esos booleanos los recoge
+    // ExternalDeliveryBlock dentro de sí (abajo).
+    val uiPrefs = LocalUiPreferences.current
     val strings = stringsFor(uiPrefs?.language ?: AppLanguage.SPANISH)
     val status by vm.status.collectAsState()
     val importing by vm.importing.collectAsState()
-    val installProgress by vm.installProgress.collectAsState()
+    // Ronda 0.2.55 P1-11: installProgress NO se recoge aquí arriba:
+    // cada % recomponía TODO el LazyColumn. Lo recoge
+    // ImportProgressCard dentro de sí, como hace HomeScreen con
+    // LaunchProgressCard. importing sí se queda arriba: los botones
+    // lo leen para deshabilitarse y cambia pocas veces.
     val pendingLicense by vm.pendingPkgLicense.collectAsState()
 
     val pickGame = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -96,7 +107,6 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         if (uri != null) vm.importFirmware(uri)
     }
 
-    val s = settings
     // R5-A2-3: fondo según el tema (antes el overload sin argumentos
     // fijaba dark=true y la pantalla quedaba oscura con Tema Claro).
     Box(
@@ -109,39 +119,11 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 ScreenHeader(strings.importTitle, strings.importSubtitle)
             }
             // --- Progreso: copia indeterminada, instalación en núcleo con % real ---
-            if (importing || installProgress != null) {
-                item {
-                    PremiumCard {
-                        val progress = installProgress
-                        if (progress?.percent != null) {
-                            Text(
-                                "${strings.installingLabel} ${progress.percent}% — ${progress.message}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color.White,
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            LinearProgressIndicator(
-                                progress = { (progress.percent ?: 0) / 100f },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        } else {
-                            PulsingText(
-                                progress?.message ?: strings.importingLabel,
-                                ColAccent,
-                                MaterialTheme.typography.bodyMedium,
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            "No cierres la app mientras dura.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = ColMutedText,
-                        )
-                    }
-                }
+            // Ronda 0.2.55 P1-11: la tarjeta vive en ImportProgressCard
+            // y recoge installProgress dentro: cada % recompone solo
+            // la tarjeta, no toda la pantalla de Importar.
+            item {
+                ImportProgressCard(vm, strings, importing)
             }
             // --- Juego principal: estado + un dato + una acción ---
             item {
@@ -195,16 +177,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                     // solo si el núcleo NO está presente. Con núcleo,
                     // el .pkg se instala solo al pulsar JUGAR.
                     if (status.pkgInstalled && embeddedCore != true) {
-                        if (s?.pkgDeliveredToVita3k == true) {
-                            Text("✓ Copiado a Descargas/ChildOfLight/", style = MaterialTheme.typography.bodyMedium, color = ColTurquoise)
-                        }
-                        if (s?.pkgInstalledInVita3k == true) {
-                            Text("✓ Instalado en la app externa", style = MaterialTheme.typography.bodyMedium, color = ColTurquoise)
-                        }
-                        TextButton(onClick = { vm.deliverPkgToVita3k() }, enabled = !importing && status.pkgLicensePresent) { Text("Copiar a la app externa") }
-                        if (s?.pkgDeliveredToVita3k == true && s?.pkgInstalledInVita3k != true) {
-                            TextButton(onClick = { vm.confirmPkgInstalledInVita3k() }) { Text("Ya lo instalé en la app externa") }
-                        }
+                        ExternalDeliveryBlock(vm, status, importing)
                     }
                 }
             }
@@ -224,11 +197,17 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                         TextButton(onClick = { pickDlcFolder.launch(null) }, enabled = !importing) { Text("o importar carpeta") }
                     } else {
                         status.dlcs.forEach { dlc ->
-                            Text(
-                                "✓ ${dlc.dlcId} · ${DownloadsCleanup.formatBytes(dlc.sizeBytes)}" + if (dlc.isPkg) " (.pkg)" else "",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White,
-                            )
+                            // Ronda 0.2.55 P2-20: key por DLC (dentro de
+                            // la tarjeta no cabe item(key) de LazyColumn:
+                            // key() de Compose da la misma identidad
+                            // estable a cada fila).
+                            key(dlc.dlcId) {
+                                Text(
+                                    "✓ ${dlc.dlcId} · ${DownloadsCleanup.formatBytes(dlc.sizeBytes)}" + if (dlc.isPkg) " (.pkg)" else "",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.White,
+                                )
+                            }
                         }
                         TextButton(onClick = { pickDlc.launch("*/*") }, enabled = !importing) { Text("Añadir otro DLC") }
                     }
@@ -381,5 +360,77 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 dismissButton = { TextButton(onClick = { showDeleteFirmwareConfirm = false }) { Text("Cancelar") } },
             )
         }
+    }
+}
+
+/**
+ * Tarjeta de progreso de Importar (copia indeterminada o instalación
+ * en el núcleo con % real).
+ *
+ * Ronda 0.2.55 P1-11: recoge installProgress DENTRO, como hace
+ * HomeScreen con LaunchProgressCard: cada % recompone solo esta
+ * tarjeta, no todo el LazyColumn de Importar. Si no hay nada en
+ * curso, no dibuja nada (el item que la contiene queda vacío).
+ * importing viene por parámetro (lo lee también la pantalla para los
+ * botones) y cambia pocas veces; el % es lo que cambia a menudo.
+ */
+@Composable
+private fun ImportProgressCard(vm: LauncherViewModel, strings: AppStrings, importing: Boolean) {
+    val installProgress by vm.installProgress.collectAsState()
+    if (!importing && installProgress == null) return
+    PremiumCard {
+        val progress = installProgress
+        if (progress?.percent != null) {
+            Text(
+                "${strings.installingLabel} ${progress.percent}% — ${progress.message}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            LinearProgressIndicator(
+                progress = { (progress.percent ?: 0) / 100f },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            PulsingText(
+                progress?.message ?: strings.importingLabel,
+                ColAccent,
+                MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            "No cierres la app mientras dura.",
+            style = MaterialTheme.typography.bodySmall,
+            color = ColMutedText,
+        )
+    }
+}
+
+/**
+ * Entrega del .pkg a la app externa (Importar, solo opción avanzada).
+ *
+ * Ronda 0.2.55 (refuerzo, hallazgo extra no listado en la auditoría):
+ * recoge settingsFlow DENTRO: los dos booleanos de entrega
+ * (pkgDeliveredToVita3k / pkgInstalledInVita3k) solo los lee este
+ * bloque, y antes ImportScreen los recogía arriba y cada cambio de
+ * ajuste recomponía la pantalla entera.
+ */
+@Composable
+private fun ExternalDeliveryBlock(vm: LauncherViewModel, status: GameStatus, importing: Boolean) {
+    val settings by vm.settingsFlow.collectAsState(initial = null)
+    val s = settings
+    if (s?.pkgDeliveredToVita3k == true) {
+        Text("✓ Copiado a Descargas/ChildOfLight/", style = MaterialTheme.typography.bodyMedium, color = ColTurquoise)
+    }
+    if (s?.pkgInstalledInVita3k == true) {
+        Text("✓ Instalado en la app externa", style = MaterialTheme.typography.bodyMedium, color = ColTurquoise)
+    }
+    TextButton(onClick = { vm.deliverPkgToVita3k() }, enabled = !importing && status.pkgLicensePresent) { Text("Copiar a la app externa") }
+    if (s?.pkgDeliveredToVita3k == true && s?.pkgInstalledInVita3k != true) {
+        TextButton(onClick = { vm.confirmPkgInstalledInVita3k() }) { Text("Ya lo instalé en la app externa") }
     }
 }
