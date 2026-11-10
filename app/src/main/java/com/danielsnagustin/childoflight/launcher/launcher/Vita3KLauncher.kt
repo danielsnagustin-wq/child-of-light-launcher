@@ -1019,7 +1019,7 @@ class Vita3KLauncher(private val context: Context) {
         // solo del efectivo: un DLC instalado en el antiguo se
         // reinstalaba en cada JUGAR).
         val installedDlcKeys = listOf(library.ux0Dir, EmbeddedCoreLayout.legacyUx0Dir(library.vitaRoot))
-            .flatMap { ux0 -> File(ux0, "addcont/${title.id}").listFiles().orEmpty() }
+            .flatMap { ux0 -> File(ux0, "addcont/${title.id}").listFiles().orEmpty().toList() }
             .filter { it.isDirectory }
             .map { GameLibraryRepository.dlcMergeKey(it.name) }
             .toSet()
