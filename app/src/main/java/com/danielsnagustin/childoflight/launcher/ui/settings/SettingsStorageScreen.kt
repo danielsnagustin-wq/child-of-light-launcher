@@ -50,12 +50,16 @@ fun SettingsStorageScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
     var showDeleteDownloadsConfirm by rememberSaveable { mutableStateOf(false) }
     // R4-P1-14: textos segun el tema (en Claro, blanco sobre fondo claro no se lee).
     val dark = isDarkUi(rememberUiPreferences())
-    // R4-P1-12: pedir la lista de Descargas/ChildOfLight/ al entrar:
-    // la query de MediaStore ya solo corre en el primer refresco, y sin
-    // esto los archivos metidos desde otra app no se verian hasta el
-    // proximo arranque. LaunchedEffect(Unit) corre una sola vez al
-    // entrar, no en cada recomposicion.
-    LaunchedEffect(Unit) { vm.refreshDownloadsCopiesNow() }
+    // R4-P1-12 + R5-A1-13: al entrar, refresco completo de
+    // Almacenamiento: se olvidan los tamaños instalados cacheados y
+    // se fuerza un escaneo nuevo (sin esto, un cambio en disco que no
+    // moviera el lastModified del directorio se seguiría mostrando
+    // con el tamaño viejo), y se re-lee Descargas/ChildOfLight/ (la
+    // query de MediaStore ya solo corre en el primer refresco, y sin
+    // esto los archivos metidos desde otra app no se verían hasta el
+    // próximo arranque). LaunchedEffect(Unit) corre una sola vez al
+    // entrar, no en cada recomposición.
+    LaunchedEffect(Unit) { vm.refreshStorageState() }
     SettingsCategoryScaffold(
         title = "Almacenamiento",
         subtitle = "Dónde vive cada cosa y qué se puede borrar.",
