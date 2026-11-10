@@ -13,6 +13,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: android-ci-main
+  cancel-in-progress: false
+
 env:
   VITA3K_PIN: 3e43bc803a04c775737a3474e0d54f3e10ca61bf
   ANDROID_NDK_VERSION: 29.0.14206865
@@ -21,6 +25,7 @@ jobs:
   # --- Etapa 1, sin tocar (sigue verde aunque el nativo falle) ---
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,7 +62,9 @@ jobs:
 
   # --- Etapa 2: núcleo Vita3K embebido ---
   build-native:
+    needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Checkout launcher
         uses: actions/checkout@v4
@@ -95,12 +102,22 @@ jobs:
 
       - name: Clone Vita3K (commit fijado) + submódulos
         run: |
-          git clone --depth 1 https://github.com/Vita3K/Vita3K.git app/src/main/cpp/vita3k
+          for i in 1 2 3; do
+            rm -rf app/src/main/cpp/vita3k
+            git clone --depth 1 https://github.com/Vita3K/Vita3K.git app/src/main/cpp/vita3k && break
+            echo "Intento $i de clonar Vita3K falló; reintentando en 30 s..."
+            sleep 30
+          done
+          [ -d app/src/main/cpp/vita3k/.git ] || { echo "ERROR: no se pudo clonar Vita3K tras 3 intentos"; exit 1; }
           cd app/src/main/cpp/vita3k
           # --depth 1 clona la punta de master, no el pin: si upstream
           # avanzó desde el pin, el chequeo de abajo fallaría siempre.
           # Se trae el commit fijado y se deja el árbol en él.
-          git fetch --depth 1 origin "${VITA3K_PIN}"
+          for i in 1 2 3; do
+            git fetch --depth 1 origin "${VITA3K_PIN}" && break
+            echo "Intento $i de traer ${VITA3K_PIN} falló; reintentando en 30 s..."
+            sleep 30
+          done
           git checkout "${VITA3K_PIN}"
           HEAD_SHA=$(git rev-parse HEAD)
           if [ "$HEAD_SHA" != "${VITA3K_PIN}" ]; then
@@ -125,14 +142,20 @@ jobs:
           path: |
             ~/.cache/vcpkg
             app/src/main/cpp/vita3k/vcpkg_installed
-          key: vcpkg-arm64-${{ hashFiles('app/src/main/cpp/vita3k/vcpkg.json', 'app/src/main/cpp/vita3k/CMakeLists.txt') }}
+          key: vcpkg-arm64-${{ env.VITA3K_PIN }}-${{ env.ANDROID_NDK_VERSION }}-${{ hashFiles('app/src/main/cpp/vita3k/vcpkg.json', 'app/src/main/cpp/vita3k/CMakeLists.txt') }}
           restore-keys: |
-            vcpkg-arm64-
+            vcpkg-arm64-${{ env.VITA3K_PIN }}-
 
       - name: Install vcpkg deps (triplet arm64-android)
         run: |
           cd app/src/main/cpp/vita3k
-          vcpkg install --triplet arm64-android
+          VCPKG_OK=0
+          for i in 1 2 3; do
+            if vcpkg install --triplet arm64-android; then VCPKG_OK=1; break; fi
+            echo "Intento $i de vcpkg install falló; reintentando en 30 s..."
+            sleep 30
+          done
+          [ "$VCPKG_OK" = 1 ] || { echo "ERROR: vcpkg install falló tras 3 intentos"; exit 1; }
 
       - name: Copy core assets (como .ci/build-android.sh de upstream)
         run: |
@@ -162,13 +185,16 @@ jobs:
           find app/.cxx -name "libVita3K.so" -exec ls -lh {} \;
           find app/.cxx -name "libSDL3.a" -exec ls -lh {} \;
           ls -lh app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/release/app-release-unsigned.apk
-          # Páginas de 16 KiB (Play Store): solo diagnóstico, no falla
-          # el build. p_align debe ser 16384 en los LOAD de cada .so.
-          for so in $(find app/.cxx -name "libVita3K.so"); do
+          # Páginas de 16 KiB: p_align debe ser 16384 en los LOAD de cada .so.
+          # Se mide el .so EXTRAÍDO DEL APK (lo que se envía), no solo app/.cxx,
+          # y el paso FALLA si el valor no es 0x4000 o si falta el .so.
+          mkdir -p /tmp/apk-check && unzip -p app/build/outputs/apk/debug/app-debug.apk lib/arm64-v8a/libVita3K.so > /tmp/apk-check/libVita3K.so
+          [ -s /tmp/apk-check/libVita3K.so ] || { echo "ERROR: libVita3K.so ausente en el APK debug"; exit 1; }
+          for so in /tmp/apk-check/libVita3K.so $(find app/.cxx -name "libVita3K.so"); do
             echo "== $so =="
-            readelf -W -l "$so" | grep -A1 LOAD | grep -i align || true
+            readelf -W -l "$so" | grep LOAD
+            readelf -W -l "$so" | awk '/LOAD/ { if ($NF != "0x4000") { print "ERROR: p_align " $NF " != 0x4000 en " FILENAME; exit 1 } }'
           done
-          [ -n "$(find app/.cxx -name 'libVita3K.so' -print -quit)" ] || echo "AVISO: no se encontró libVita3K.so en app/.cxx"
 
       - name: Upload APKs (núcleo embebido)
         uses: actions/upload-artifact@v4
