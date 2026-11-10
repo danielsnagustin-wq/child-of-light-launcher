@@ -105,57 +105,80 @@ data class ControlProfile(
 )
 
 /**
- * Rombo estándar PlayStation/Vita, centrado en ~(0.80, 0.71):
- * TRIANGLE arriba, CIRCLE derecha, CROSS abajo, SQUARE izquierda.
- * R4-P0-1: el rombo anterior estaba transpuesto (TRIANGLE a la
- * izquierda, SQUARE arriba, CIRCLE abajo, CROSS a la derecha), así
- * que el botón de abajo — el que todo el mundo pulsa para confirmar
- * en la pantalla de título — era CIRCLE (atrás), no CROSS.
- * R4-P2-1: stick de 104 dp (antes 140 dp, ocupaba el tercio
- * inferior izquierdo) e Igniculus en y 0.55 (antes 0.35, su orbe
- * flotaba sobre la "C" de "CHILD OF LIGHT" tapando el logo).
- * R5-A1-1: los perfiles ya guardados con los valores viejos de
- * fábrica SÍ se normalizan al cargar (migrateBuiltInFactoryValues),
- * pero solo si siguen en el valor de fábrica: si el usuario los
- * movió o los redimensionó, son suyos y no se tocan.
+ * Layout limpio 0.2.54 (6 controles, sin rombo): lo que el juego
+ * original de Vita usa de verdad. Conversión desde la captura de
+ * referencia 1847x851 (rect del juego x 172.5-1674.5, y 0-851):
+ * fracJuego = (fracVentana * anchoVentana - 172.5) / 1502 en x,
+ * igual en y. Densidad de la captura aprox 2.07 (51% de la altura
+ * son 434 px = 210 dp; 32% son 272 px = 131 dp).
+ * - btn_start (START, pausa): (0.50, 0.07), 56 dp, 0.70. Igual que antes.
+ * - btn_circle (CIRCLE = volver/cancelar en menús y batalla):
+ *   junto a la pausa, a su derecha: pausa de 56 dp (0.0772 de
+ *   ancho de juego, mitad 0.0386) + hueco de 16 dp (0.0220) +
+ *   mitad del círculo de 44 dp (0.0303) = centro en x 0.59, y
+ *   0.07, 44 dp, 0.70. Glifo ○ (drawGlyphCircle), mismo cristal
+ *   y misma gota al presionar que los demás botones.
+ * - stick izquierdo (mover a Aurora): centro en ventana (0.134,
+ *   0.675) -> juego (0.05, 0.675), 210 dp de diámetro, 0.70.
+ *   Desviación documentada: en la captura el stick pisa la barra
+ *   negra lateral (pillarbox), pero controlRectInGameRect limita el
+ *   centro a media anchura dentro del rect del juego, así que en
+ *   pantalla queda pegado al borde izquierdo del juego, no sobre
+ *   la barra. La fracción guardada sigue siendo 0.05 y el recorte
+ *   lo hace el dibujado, en cualquier densidad.
+ * - btn_sword "Espada" (SQUARE = interactuar: hablar, cofres,
+ *   puertas): centro en ventana (0.796, 0.576) -> juego (0.864,
+ *   0.576), 82 dp, 0.80. Icono espada por id de control.
+ * - btn_jump "Salto" (CROSS = saltar/confirmar): centro en ventana
+ *   (0.920, 0.752) -> juego x 1.02, que se limita a 1-medioBotón
+ *   (0.93 con 82 dp en la densidad de la captura), y 0.752, 82 dp,
+ *   0.80. Icono flecha arriba por id de control.
+ * - igniculus (táctil directo, brillo al mantener): centro en
+ *   ventana (0.760, 0.808) -> juego (0.82, 0.808). Zona táctil de
+ *   156 dp y orbe dibujado a 0.42 x ancho (2 x 0.42 x 156 = 131 dp
+ *   de diámetro, como en la captura): la zona de 220 dp no cabía a
+ *   y 0.808 sin que el recorte la subiera, así que se achica la
+ *   zona y crece el ratio de dibujo, no al revés.
+ * El rombo (TRIANGLE arriba, CIRCLE derecha, CROSS abajo, SQUARE
+ * izquierda) ya NO es el layout por defecto, pero sigue disponible
+ * en el editor: VitaButton.entries lo incluye y cualquier botón de
+ * cara añadido por el usuario sigue con su glifo. El Circle del
+ * default es btn_circle junto a la pausa, no el btn_b del rombo.
  */
 fun defaultTouchLayout(): List<TouchControl> = listOf(
-    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.18f, 0.72f, 104, 0.70f),
-    TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.80f, 0.62f, 64, 0.80f),
-    TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.73f, 0.71f, 64, 0.80f),
-    TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.87f, 0.71f, 64, 0.80f),
-    TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.80f, 0.80f, 64, 0.85f),
-    TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.06f, 56, 0.70f),
-    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.50f, 0.55f, 220, 0.25f, colorHex = "#7FB3D5"),
+    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 210, 0.70f),
+    TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.864f, 0.576f, 82, 0.80f),
+    TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 0.93f, 0.752f, 82, 0.80f),
+    TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 56, 0.70f),
+    TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 44, 0.70f),
+    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 156, 0.25f, colorHex = "#7FB3D5"),
 )
 
 fun oneHandLayout(): List<TouchControl> = listOf(
-    // R5-A1-2: stick unificado en 104 dp con los otros dos perfiles
-    // (antes 120 dp, sin motivo documentado).
-    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.20f, 0.75f, 104, 0.75f),
-    TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.76f, 0.65f, 64, 0.80f, visible = false),
-    TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.69f, 0.74f, 64, 0.80f, visible = false),
-    TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.83f, 0.74f, 64, 0.80f),
-    TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.76f, 0.83f, 72, 0.85f),
-    TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.06f, 56, 0.70f, visible = false),
-    // R4-P2-1: Igniculus en y 0.50 (antes 0.28, tapaba el logo
-    // igual que en el perfil por defecto); solo fábrica.
-    // R5-A1-2: x 0.50 (antes 0.55), coherente con el default.
-    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.50f, 0.50f, 160, 0.25f, colorHex = "#7FB3D5"),
+    // Una mano: los mismos 6 controles, con el grupo derecho
+    // desplazado hacia la esquina inferior derecha para el pulgar
+    // (espada y salto bajan y se acercan al borde, Igniculus baja
+    // con ellos; el stick baja un poco y queda en 0.70) y Start
+    // visible, a diferencia de la una mano vieja, que lo ocultaba
+    // junto con dos botones del rombo. Todos visibles.
+    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.70f, 210, 0.75f),
+    TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.83f, 0.63f, 82, 0.80f),
+    TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 0.91f, 0.79f, 82, 0.80f),
+    TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 56, 0.70f),
+    TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 44, 0.70f),
+    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.78f, 0.80f, 156, 0.25f, colorHex = "#7FB3D5"),
 )
 
 fun externalGamepadLayout(): List<TouchControl> = listOf(
-    // R5-A1-2: stick unificado en 104 dp (antes 140 dp, oculto):
-    // al mostrarlo ya no resucita el 140.
-    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.18f, 0.72f, 104, 0.70f, visible = false),
-    TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.80f, 0.62f, 64, 0.80f, visible = false),
-    TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.73f, 0.71f, 64, 0.80f, visible = false),
-    TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.87f, 0.71f, 64, 0.80f, visible = false),
-    TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.80f, 0.80f, 64, 0.85f, visible = false),
-    TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.06f, 56, 0.70f),
-    // R4-P2-1: Igniculus en y 0.55 (antes 0.35, tapaba el logo);
-    // mismo default de fábrica que el perfil por defecto.
-    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.50f, 0.55f, 220, 0.25f, colorHex = "#7FB3D5"),
+    // Mando externo: mismas posiciones que el default; stick,
+    // espada, salto y círculo ocultos (los pone el mando físico),
+    // Start e Igniculus visibles, como antes.
+    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 210, 0.70f, visible = false),
+    TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.864f, 0.576f, 82, 0.80f, visible = false),
+    TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 0.93f, 0.752f, 82, 0.80f, visible = false),
+    TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 56, 0.70f),
+    TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 44, 0.70f, visible = false),
+    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 156, 0.25f, colorHex = "#7FB3D5"),
 )
 
 fun builtInProfiles(): List<ControlProfile> = listOf(
@@ -203,9 +226,11 @@ class TouchLayoutRepository(private val context: Context) {
     }.onStart {
         migrateSavedBuiltInProfilesOnce()
     }.map { profiles ->
-        // En memoria el rombo ya es el estándar aunque el guardado
-        // en DataStore aún no haya aterrizado: el juego y el editor
-        // nunca ven el rombo transpuesto.
+        // En memoria el layout limpio 0.2.54 ya está aplicado
+        // aunque el guardado en DataStore aún no haya aterrizado:
+        // el juego y el editor nunca ven el rombo viejo. Los
+        // perfiles que el usuario modificó siguen con sus
+        // migraciones viejas (rombo + valores de fábrica).
         migrateBuiltInProfiles(profiles)
     }.catch { e ->
         Log.w("ChildOfLight", "DataStore touch (perfiles) ilegible, usando fábrica: ${e.message}")
@@ -233,10 +258,12 @@ class TouchLayoutRepository(private val context: Context) {
     }
 
     /**
-     * R4-P0-1/R5-A1-1: reescribe en DataStore los perfiles
-     * predefinidos guardados con el rombo transpuesto (los deja con
-     * el rombo estándar) y con los valores viejos de fábrica del
-     * stick y la Igniculus (los normaliza a 104 dp y a y 0.55).
+     * R4-P0-1/R5-A1-1/0.2.54: reescribe en DataStore los perfiles
+     * predefinidos guardados con su layout viejo de fábrica (los
+     * sustituye por el layout limpio) y, si el usuario los
+     * modificó, con el rombo transpuesto (lo deja con el rombo
+     * estándar) y con los valores viejos de fábrica del stick y
+     * la Igniculus (los normaliza a 104 dp y a y 0.55).
      * Solo corre una vez por instancia; es idempotente
      * (la segunda vez ya no hay nada que migrar y no escribe).
      * La lectura, la migración y la escritura ocurren dentro de un
@@ -247,13 +274,13 @@ class TouchLayoutRepository(private val context: Context) {
     private suspend fun migrateSavedBuiltInProfilesOnce() {
         if (!diamondMigrationStarted.compareAndSet(false, true)) return
         mutationMutex.withLock {
-            safeEdit("migración rombo predefinido") { prefs ->
+            safeEdit("migración layout limpio predefinido") { prefs ->
                 val raw = prefs[Keys.PROFILES] ?: return@safeEdit
                 val profiles = decodeProfiles(raw) ?: return@safeEdit
                 val migrated = migrateBuiltInProfiles(profiles)
                 if (migrated != profiles) {
                     prefs[Keys.PROFILES] = migrated.joinToString("\n###\n") { encodeProfile(it) }
-                    Log.i("ChildOfLight", "R5-A1-1: perfil predefinido migrado (rombo + valores de fábrica) en DataStore")
+                    Log.i("ChildOfLight", "0.2.54: perfil predefinido migrado (layout limpio + rombo + valores de fábrica) en DataStore")
                 }
             }
         }
@@ -438,10 +465,11 @@ class TouchLayoutRepository(private val context: Context) {
     private suspend fun currentProfiles(): List<ControlProfile> {
         val raw = context.touchDataStore.data.first()[Keys.PROFILES] ?: ""
         val profiles = decodeProfiles(raw) ?: builtInProfiles()
-        // R4-P0-1: en memoria los predefinidos ya llevan el rombo
-        // estándar (el guardado lo hace migrateSavedBuiltInProfilesOnce
-        // al cargar, y saveProfiles al escribir). Así duplicar un
-        // predefinido aún sin migrar en disco no hereda el transpuesto.
+        // R4-P0-1/0.2.54: en memoria los predefinidos ya llevan el
+        // layout limpio (el guardado lo hace
+        // migrateSavedBuiltInProfilesOnce al cargar, y saveProfiles
+        // al escribir). Así duplicar un predefinido aún sin migrar
+        // en disco no hereda el layout viejo.
         return migrateBuiltInProfiles(profiles)
     }
 
@@ -450,9 +478,10 @@ class TouchLayoutRepository(private val context: Context) {
     }
 
     private suspend fun saveProfiles(profiles: List<ControlProfile>): Boolean {
-        // R4-P0-1: red de seguridad: cualquier guardado de perfiles
-        // deja los predefinidos con el rombo estándar (la migración
-        // en sí es pura e idempotente; los personalizados no se tocan).
+        // R4-P0-1/0.2.54: red de seguridad: cualquier guardado de
+        // perfiles deja los predefinidos con el layout limpio (la
+        // migración en sí es pura e idempotente; los personalizados
+        // no se tocan).
         val normalized = migrateBuiltInProfiles(profiles)
         return safeEdit("perfiles de controles") { prefs ->
             prefs[Keys.PROFILES] = normalized.joinToString("\n###\n") { encodeProfile(it) }
@@ -464,6 +493,137 @@ class TouchLayoutRepository(private val context: Context) {
         // crean dos perfiles en el mismo milisegundo. Se añade nanoTime.
         private fun newProfileId(): String =
             "custom-${System.currentTimeMillis()}-${System.nanoTime() % 100000}"
+
+        /**
+         * 0.2.54: layouts viejos de fábrica de cada perfil
+         * predefinido, en sus DOS formas guardadas: el rombo
+         * transpuesto de 0.2.49 (stick 140/120 dp, Igniculus en y
+         * 0.35 / (0.55, 0.28)) y el rombo estándar posterior
+         * (stick 104 dp, Igniculus en y 0.55 / 0.50). Un perfil
+         * guardado puede estar en cualquiera de las dos: la
+         * migración del rombo ya lo habría normalizado a la
+         * segunda al cargar, pero esta pasada corre ANTES que ella
+         * y no puede contar con eso.
+         */
+        private fun legacyFactoryLayouts(profileId: String): List<List<TouchControl>> {
+            val transposed: List<TouchControl>
+            val standard: List<TouchControl>
+            when (profileId) {
+                "one-hand" -> {
+                    transposed = listOf(
+                        TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.20f, 0.75f, 120, 0.75f),
+                        TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.70f, 0.70f, 64, 0.80f, visible = false),
+                        TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.78f, 0.62f, 64, 0.80f, visible = false),
+                        TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.72f, 0.87f, 64, 0.80f),
+                        TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.84f, 0.78f, 72, 0.85f),
+                        TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.06f, 56, 0.70f, visible = false),
+                        TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.55f, 0.28f, 160, 0.25f, colorHex = "#7FB3D5"),
+                    )
+                    standard = listOf(
+                        TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.20f, 0.75f, 104, 0.75f),
+                        TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.76f, 0.65f, 64, 0.80f, visible = false),
+                        TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.69f, 0.74f, 64, 0.80f, visible = false),
+                        TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.83f, 0.74f, 64, 0.80f),
+                        TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.76f, 0.83f, 72, 0.85f),
+                        TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.06f, 56, 0.70f, visible = false),
+                        TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.50f, 0.50f, 160, 0.25f, colorHex = "#7FB3D5"),
+                    )
+                }
+                "external-gamepad" -> {
+                    transposed = listOf(
+                        TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.18f, 0.72f, 140, 0.70f, visible = false),
+                        TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.70f, 0.70f, 64, 0.80f, visible = false),
+                        TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.78f, 0.62f, 64, 0.80f, visible = false),
+                        TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.78f, 0.80f, 64, 0.80f, visible = false),
+                        TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.87f, 0.71f, 64, 0.85f, visible = false),
+                        TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.06f, 56, 0.70f),
+                        TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.50f, 0.35f, 220, 0.25f, colorHex = "#7FB3D5"),
+                    )
+                    standard = listOf(
+                        TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.18f, 0.72f, 104, 0.70f, visible = false),
+                        TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.80f, 0.62f, 64, 0.80f, visible = false),
+                        TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.73f, 0.71f, 64, 0.80f, visible = false),
+                        TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.87f, 0.71f, 64, 0.80f, visible = false),
+                        TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.80f, 0.80f, 64, 0.85f, visible = false),
+                        TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.06f, 56, 0.70f),
+                        TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.50f, 0.55f, 220, 0.25f, colorHex = "#7FB3D5"),
+                    )
+                }
+                else -> {
+                    transposed = listOf(
+                        TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.18f, 0.72f, 140, 0.70f),
+                        TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.70f, 0.70f, 64, 0.80f),
+                        TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.78f, 0.62f, 64, 0.80f),
+                        TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.78f, 0.80f, 64, 0.80f),
+                        TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.87f, 0.71f, 64, 0.85f),
+                        TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.06f, 56, 0.70f),
+                        TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.50f, 0.35f, 220, 0.25f, colorHex = "#7FB3D5"),
+                    )
+                    standard = listOf(
+                        TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.18f, 0.72f, 104, 0.70f),
+                        TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.80f, 0.62f, 64, 0.80f),
+                        TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.73f, 0.71f, 64, 0.80f),
+                        TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.87f, 0.71f, 64, 0.80f),
+                        TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.80f, 0.80f, 64, 0.85f),
+                        TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.06f, 56, 0.70f),
+                        TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.50f, 0.55f, 220, 0.25f, colorHex = "#7FB3D5"),
+                    )
+                }
+            }
+            return listOf(transposed, standard)
+        }
+
+        /**
+         * 0.2.54: migra UN perfil predefinido de su layout viejo de
+         * fábrica (rombo, transpuesto o estándar) al layout limpio
+         * de fábrica. También migra un perfil que ya lleva el
+         * layout limpio de 5 controles (sin btn_circle, forma en
+         * la que pudo quedar guardado en 0.2.54 antes del círculo):
+         * recibe el ○ junto a la pausa. Solo actúa si el perfil es
+         * predefinido Y sus controles son EXACTAMENTE uno de los
+         * layouts viejos de fábrica de su id o el limpio de 5: si
+         * el usuario movió, redimensionó, remapeó, ocultó o añadió
+         * aunque sea un control, el perfil es suyo y no se toca (y
+         * siguen sus migraciones actuales: rombo + valores de
+         * fábrica, que se mantienen). Idempotente: un perfil ya
+         * limpio de 6 no coincide con ningún layout viejo ni con
+         * el de 5 y se devuelve tal cual. Puro Kotlin, sin
+         * Context: testeable.
+         */
+        fun migrateBuiltInToCleanLayout(profile: ControlProfile): ControlProfile {
+            if (!profile.isBuiltIn) return profile
+            val clean = when (profile.id) {
+                "default-g99" -> defaultTouchLayout()
+                "one-hand" -> oneHandLayout()
+                "external-gamepad" -> externalGamepadLayout()
+                else -> return profile
+            }
+            val withoutCircle = cleanLayoutWithoutCircle(profile.id)
+            if (legacyFactoryLayouts(profile.id).none { it == profile.controls } &&
+                withoutCircle != profile.controls
+            ) return profile
+            return profile.copy(controls = clean)
+        }
+
+        /**
+         * 0.2.54 (círculo): el layout limpio de 5 controles, sin
+         * btn_circle — la forma en la que un perfil predefinido
+         * pudo quedar guardado si migró en 0.2.54 antes del
+         * círculo. Se construye desde el layout nuevo quitando
+         * btn_circle, así no se duplica la lista: si el usuario
+         * tocó aunque sea un control, ya no coincide y la
+         * migración no lo toca. Null para ids desconocidos (nunca
+         * coincide con un perfil guardado).
+         */
+        private fun cleanLayoutWithoutCircle(profileId: String): List<TouchControl>? {
+            val clean = when (profileId) {
+                "default-g99" -> defaultTouchLayout()
+                "one-hand" -> oneHandLayout()
+                "external-gamepad" -> externalGamepadLayout()
+                else -> return null
+            }
+            return clean.filter { it.id != "btn_circle" }
+        }
 
         /**
          * R4-P0-1: un hueco del rombo de botones de cara: id del
@@ -601,13 +761,17 @@ class TouchLayoutRepository(private val context: Context) {
 
         /**
          * R5-A1-1: migración completa de un perfil predefinido
-         * guardado: rombo de cara + valores de fábrica (stick e
-         * Igniculus). Las dos pasadas son independientes: un perfil
-         * con el rombo ya migrado pero el stick viejo sigue
-         * normalizando el stick.
+         * guardado: primero el layout limpio 0.2.54 (si sigue
+         * exactamente en su layout viejo de fábrica o en el limpio
+         * de 5 controles sin círculo), y después las pasadas
+         * viejas (rombo de cara + valores de fábrica del stick y
+         * la Igniculus), que se mantienen para los perfiles que el
+         * usuario modificó y no pasan por la primera. Las pasadas
+         * son independientes: un perfil con el rombo ya migrado
+         * pero el stick viejo sigue normalizando el stick.
          */
         fun migrateBuiltInProfile(profile: ControlProfile): ControlProfile =
-            migrateBuiltInFactoryValues(migrateBuiltInFaceDiamond(profile))
+            migrateBuiltInFactoryValues(migrateBuiltInFaceDiamond(migrateBuiltInToCleanLayout(profile)))
 
         /** R4-P0-1: migra todos los perfiles predefinidos de la lista. */
         fun migrateBuiltInProfiles(profiles: List<ControlProfile>): List<ControlProfile> =
