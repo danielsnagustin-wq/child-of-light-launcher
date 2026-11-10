@@ -34,7 +34,7 @@ import com.danielsnagustin.childoflight.launcher.ui.SectionTitle
 import com.danielsnagustin.childoflight.launcher.ui.cardTextColor
 import com.danielsnagustin.childoflight.launcher.ui.isDarkUi
 import com.danielsnagustin.childoflight.launcher.ui.mutedTextColor
-import com.danielsnagustin.childoflight.launcher.ui.rememberUiPreferences
+import com.danielsnagustin.childoflight.launcher.ui.LocalUiPreferences
 
 /**
  * Categoría "Almacenamiento" (Ola 2, Etapa 1): todo vive en la data
@@ -55,7 +55,7 @@ fun SettingsStorageScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
     // FileStateSectionWithSettings dentro de sí (abajo).
     var showDeleteDownloadsConfirm by rememberSaveable { mutableStateOf(false) }
     // R4-P1-14: textos segun el tema (en Claro, blanco sobre fondo claro no se lee).
-    val dark = isDarkUi(rememberUiPreferences())
+    val dark = isDarkUi(LocalUiPreferences.current)
     // R4-P1-12 + R5-A1-13: al entrar, refresco completo de
     // Almacenamiento: se olvidan los tamaños instalados cacheados y
     // se fuerza un escaneo nuevo (sin esto, un cambio en disco que no
@@ -131,7 +131,7 @@ fun SettingsStorageScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
         item {
             SectionTitle("Limpiar no usados")
             OutlinedButton(onClick = { onNavigate(Screen.CLEANUP) }, modifier = Modifier.fillMaxWidth()) { Text("Limpiar no usados…") }
-            NoteText("Botones ocultos, perfiles sin usar, presets sin usar, Turnip sin usar, DLCs y saves.")
+            NoteText("Botones ocultos, perfiles sin usar, presets sin usar, Turnip sin usar y DLCs. Los saves no se borran desde la limpieza: se borran desde Guardados → \"Borrar datos del juego\".")
         }
         item {
             // P2-13: "Sesiones y guardados" vive aquí (Almacenamiento),
@@ -140,6 +140,12 @@ fun SettingsStorageScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
             SectionTitle("Secciones")
             PremiumCard {
                 SecondaryButton("Sesiones y guardados", onClick = { onNavigate(Screen.SAVES) })
+                // R6-P2-13: el firmware NO es una sección de Ajustes
+                // (son 9, no 10): vive en Importar, junto al juego y
+                // los DLCs. Enlace visible desde aquí, donde ya vive
+                // el estado de archivos.
+                SecondaryButton("Firmware → Importar", onClick = { onNavigate(Screen.IMPORT) })
+                NoteText("El firmware (PSVUPDAT.PUP) se importa y se instala desde Importar, junto al juego y los DLCs.")
             }
         }
         item {

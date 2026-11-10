@@ -31,7 +31,7 @@ import com.danielsnagustin.childoflight.launcher.ui.SettingSwitch
 import com.danielsnagustin.childoflight.launcher.ui.cardTextColor
 import com.danielsnagustin.childoflight.launcher.ui.isDarkUi
 import com.danielsnagustin.childoflight.launcher.ui.mutedTextColor
-import com.danielsnagustin.childoflight.launcher.ui.rememberUiPreferences
+import com.danielsnagustin.childoflight.launcher.ui.LocalUiPreferences
 
 /**
  * Categoría "Audio" (Ola 2, Etapa 4).
@@ -50,7 +50,7 @@ fun SettingsAudioScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (
     var showFixPreview by rememberSaveable { mutableStateOf(false) }
     val s = settings
     // R4-P1-14: textos segun el tema (en Claro, blanco sobre fondo claro no se lee).
-    val dark = isDarkUi(rememberUiPreferences())
+    val dark = isDarkUi(LocalUiPreferences.current)
     SettingsCategoryScaffold(
         title = "Audio",
         subtitle = "Backend, NGS y volumen.",

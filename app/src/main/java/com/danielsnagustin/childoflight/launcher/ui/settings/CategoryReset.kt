@@ -127,6 +127,20 @@ fun resetCategoryUiPrefs(current: UiPreferences, category: SettingsCategory): Ui
         current
     }
 
+/**
+ * R6-P2-09: nota cuando restablecer la GPU conserva Turnip aunque el
+ * preset diga Sistema (resetCategorySettings lo conserva si estaba
+ * instalado y activo: R5-A2-10). El mensaje del momento debe decirlo:
+ * sin la nota, "restablecida a los valores del preset" miente por
+ * omisión. Pura, testeable en JVM (CategoryResetTest).
+ */
+fun turnipKeptNote(reset: LauncherSettings, preset: LauncherSettings): String =
+    if (reset.gpuDriver == GpuDriver.TURNIP && preset.gpuDriver == GpuDriver.SYSTEM) {
+        " Turnip se conservó (estaba instalado y activo)."
+    } else {
+        ""
+    }
+
 /** true si la categoría tiene algún campo de ajustes que restablecer. */
 fun categoryHasResettableSettings(category: SettingsCategory): Boolean =
     category != SettingsCategory.STORAGE && category != SettingsCategory.GENERAL

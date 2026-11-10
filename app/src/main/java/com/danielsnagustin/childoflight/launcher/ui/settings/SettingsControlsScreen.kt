@@ -7,6 +7,7 @@ import androidx.compose.runtime.getValue
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
 import com.danielsnagustin.childoflight.launcher.ui.Screen
+import com.danielsnagustin.childoflight.launcher.ui.SecondaryButton
 import com.danielsnagustin.childoflight.launcher.ui.SectionTitle
 import com.danielsnagustin.childoflight.launcher.ui.SettingSlider
 import com.danielsnagustin.childoflight.launcher.ui.SettingSwitch
@@ -14,8 +15,9 @@ import com.danielsnagustin.childoflight.launcher.ui.SettingSwitch
 /**
  * Categoría "Controles y HUD" (Ola 2, Etapa 1): ajustes GENERALES del
  * overlay táctil dentro del juego. Los botones, posiciones, tamaños y
- * opacidad POR BOTÓN se editan en "Controles táctiles" (General →
- * Secciones): lo que se ve en su vista previa es lo que aparece
+ * opacidad POR BOTÓN se editan en el editor táctil ("Personalizar
+ * botones", aquí mismo arriba, o General → Secciones → "Controles
+ * táctiles"): lo que se ve en su vista previa es lo que aparece
  * sobre el juego.
  */
 @Composable
@@ -35,6 +37,12 @@ fun SettingsControlsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate
         } else {
             item {
                 SectionTitle("Controles en el juego")
+                // R6 (evidencia del teléfono, 0.2.55): el editor táctil
+                // existía pero solo se abría desde General → Secciones
+                // y el usuario no lo encontraba. Entrada obvia, primera
+                // de la sección: abre el editor de botones.
+                SecondaryButton("Personalizar botones", onClick = { onNavigate(Screen.TOUCH) })
+                NoteText("Mueve, cambia el tamaño, reasigna o borra los botones táctiles. Lo que ves en el editor es lo que aparece sobre el juego.")
                 SettingSwitch(
                     "Mostrar controles táctiles en el juego",
                     "El overlay con tus botones aparece sobre el juego embebido. OFF = juegas solo con mando físico.",

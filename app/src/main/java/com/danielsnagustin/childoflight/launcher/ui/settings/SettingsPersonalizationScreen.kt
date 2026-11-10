@@ -31,6 +31,7 @@ import com.danielsnagustin.childoflight.launcher.model.ThemeMode
 import com.danielsnagustin.childoflight.launcher.model.UiPreferences
 import com.danielsnagustin.childoflight.launcher.ui.EnumChips
 import com.danielsnagustin.childoflight.launcher.ui.PrimaryButton
+import com.danielsnagustin.childoflight.launcher.ui.SecondaryButton
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.LocalUiPreferences
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
@@ -211,6 +212,13 @@ fun SettingsPersonalizationScreen(vm: LauncherViewModel, onBack: () -> Unit, onN
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
+                // R6 (evidencia del teléfono, 0.2.55): el editor táctil
+                // solo se abría desde General → Secciones. También
+                // desde aquí: es personalización de los botones del
+                // juego (mover, tamaño, reasignar, borrar).
+                Text("Editor táctil", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                SecondaryButton("Personalizar botones", onClick = { onNavigate(Screen.TOUCH) })
+                NoteText("Los botones del juego se editan en el editor táctil: mover, cambiar el tamaño, reasignar o borrar. Lo que ves ahí es lo que aparece sobre el juego.")
                 OutlinedButton(
                     onClick = { vm.resetAllCustomization(); draft = null },
                     modifier = Modifier.fillMaxWidth(),

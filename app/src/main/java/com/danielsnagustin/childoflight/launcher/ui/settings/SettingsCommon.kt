@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.ui.BackButton
 import com.danielsnagustin.childoflight.launcher.ui.ContentMaxWidth
+import com.danielsnagustin.childoflight.launcher.ui.LocalUiPreferences
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
 import com.danielsnagustin.childoflight.launcher.ui.PremiumCard
 import com.danielsnagustin.childoflight.launcher.ui.ScreenHeader
@@ -34,7 +35,6 @@ import com.danielsnagustin.childoflight.launcher.ui.cardTextColor
 import com.danielsnagustin.childoflight.launcher.ui.isDarkUi
 import com.danielsnagustin.childoflight.launcher.ui.mutedTextColor
 import com.danielsnagustin.childoflight.launcher.ui.premiumBackgroundBrush
-import com.danielsnagustin.childoflight.launcher.ui.rememberUiPreferences
 
 /**
  * Armazón común de las 9 pantallas de categoría de Ajustes (Ola 2).
@@ -66,7 +66,7 @@ fun SettingsCategoryScaffold(
     // R4-P1-14: fondo y textos según el tema. En claro, el fondo es el
     // tinte claro del fondo elegido (premiumBackgroundBrush con tema);
     // antes era siempre el AMOLED oscuro con textos blancos fijos.
-    val uiPrefs = rememberUiPreferences()
+    val uiPrefs = LocalUiPreferences.current
     val dark = isDarkUi(uiPrefs)
     Box(
         modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush(dark, uiPrefs?.homeBackground?.hex)),
@@ -101,7 +101,7 @@ fun SettingsCategoryScaffold(
         AlertDialog(
             onDismissRequest = { showResetCategoryConfirm = false },
             title = { Text("¿Restablecer esta categoría?") },
-            text = { Text("Se restablecen solo los ajustes de esta categoría a los valores del preset del perfil activo (o a los defaults en Personalización). El resto de ajustes no se toca.") },
+            text = { Text("Se restablecen solo los ajustes de esta categoría a los valores por defecto / del preset del perfil activo. El resto de ajustes no se toca.") },
             confirmButton = {
                 TextButton(onClick = { onResetCategory(); showResetCategoryConfirm = false }) { Text("Restablecer") }
             },
@@ -114,7 +114,7 @@ fun SettingsCategoryScaffold(
 /** Fila de categoría en el hub: tarjeta con título + subtítulo, toca para entrar. R4-P1-14: colores de texto según el tema. */
 @Composable
 fun CategoryRow(category: SettingsCategory, onClick: () -> Unit) {
-    val dark = isDarkUi(rememberUiPreferences())
+    val dark = isDarkUi(LocalUiPreferences.current)
     PremiumCard(onClick = onClick) {
         Text(
             category.title,
@@ -135,7 +135,7 @@ fun CategoryRow(category: SettingsCategory, onClick: () -> Unit) {
 /** Fila de resultado del buscador: título del ajuste + categoría a la que lleva (sin "En:" cuando el destino no es una categoría de ajustes, como Logros, que vive en el Inicio). R4-P1-14: colores de texto según el tema. */
 @Composable
 fun SearchResultRow(result: SearchableSetting, onClick: () -> Unit) {
-    val dark = isDarkUi(rememberUiPreferences())
+    val dark = isDarkUi(LocalUiPreferences.current)
     PremiumCard(onClick = onClick) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Text(

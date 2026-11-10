@@ -12,10 +12,13 @@ import com.danielsnagustin.childoflight.launcher.ui.Screen
  *
  * Coincidencia: la consulta se parte en palabras y TODAS deben aparecer
  * (tras normalizar) en el título, las palabras clave o el título de la
- * categoría. La normalización quita mayúsculas, tildes y espacios, así
- * que "diagnostico" encuentra "Diagnóstico", "60 fps" encuentra el modo
- * 60 FPS y "60fps" también. Una consulta vacía no devuelve nada: el
- * hub muestra entonces las 9 categorías.
+ * categoría. La normalización quita mayúsculas y tildes, así que
+ * "diagnostico" encuentra "Diagnóstico", "60 fps" encuentra el modo
+ * 60 FPS y "60fps" también (concatenación de palabras enteras seguidas).
+ * La coincidencia es por límite de palabra, no por subcadena cruda
+ * (R6-P2-11): "pup" no encuentra "Presets por GPU" ni "psn" "Resumen
+ * del dispositivo". Una consulta vacía no devuelve nada: el hub muestra
+ * entonces las 9 categorías.
  */
 /**
  * Una entrada del buscador. La categoría es el grupo de ajustes al que
@@ -51,6 +54,29 @@ fun normalizeSearchText(text: String): String {
     return out.toString()
 }
 
+/**
+ * R6-P2-11: true si [word] coincide con el haystack por LÍMITE DE
+ * PALABRA: es una palabra entera del haystack, o la concatenación de
+ * varias palabras enteras seguidas ("60fps" = "60" + "FPS", R2-P2-21d).
+ * La subcadena cruda sobre el texto compactado producía falsos
+ * positivos entre palabras ("pup" en "gpu"+"preset" de "Presets por
+ * GPU"; "psn" en "fps"+"nucleo" de "Resumen del dispositivo") y
+ * dentro de palabra ("app" en "mapping", "externa" en "external" de
+ * "Memory Mapping"). Pura, testeable en JVM (SettingsSearchTest).
+ */
+internal fun matchesWordBoundary(word: String, haystackWords: List<String>): Boolean {
+    if (word in haystackWords) return true
+    for (start in haystackWords.indices) {
+        var joined = ""
+        for (end in start until haystackWords.size) {
+            joined += haystackWords[end]
+            if (joined == word) return true
+            if (joined.length > word.length) break
+        }
+    }
+    return false
+}
+
 fun searchSettings(
     query: String,
     index: List<SearchableSetting> = SETTINGS_SEARCH_INDEX,
@@ -68,13 +94,12 @@ fun searchSettings(
     return index
         .filter { entry -> gpuVendor == null || gpuVendor == GpuVendor.ADRENO || entry.title != "Instalar Turnip" }
         .filter { entry ->
-            val haystack = normalizeSearchText(
+            val haystackWords = normalizeSearchText(
                 entry.title + " " + entry.keywords + " " + entry.category.title,
-            )
-            // R2-P2-21d: comparar sin espacios, para que "60fps"
-            // encuentre "60 FPS" (y "60 fps" siga funcionando).
-            val compactHaystack = haystack.replace(" ", "")
-            words.all { compactHaystack.contains(it) }
+            ).split(' ', '\t').map { it.trim() }.filter { it.isNotEmpty() }
+            // R6-P2-11: por límite de palabra (ver matchesWordBoundary),
+            // no por subcadena cruda sobre el texto compactado.
+            words.all { matchesWordBoundary(it, haystackWords) }
         }
 }
 
@@ -143,11 +168,11 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     entry("High Accuracy Rendering", "high accuracy precision renderizado lento", SettingsCategory.GPU),
     entry("Surface Sync activado", "surface sync sincronizacion superficie rapido", SettingsCategory.GPU),
     entry("Memory Mapping", "memory mapping double buffer page table native external off", SettingsCategory.GPU),
-    entry("Driver GPU", "driver gpu turnip sistema adreno mali", SettingsCategory.GPU),
-    // P2-21: el chip de la pantalla GPU se llama "Driver
-    // personalizado": buscarlo por ese nombre no encontraba nada
-    // (la entrada "Driver GPU" no lleva "personalizado").
-    entry("Driver personalizado", "driver personalizado turnip sistema", SettingsCategory.GPU),
+    entry("Driver GPU", "driver gpu turnip sistema adreno mali personalizado", SettingsCategory.GPU),
+    // R6-P2-11: "Driver GPU" + "Driver personalizado" eran dos entradas
+    // para el mismo control (los chips de la pantalla GPU): fusionadas
+    // en una sola (el nombre "personalizado" sigue en las claves, así
+    // que buscarlo encuentra esta entrada).
     entry("Instalar Turnip", "turnip instalar cambiar zip driver mesa", SettingsCategory.GPU),
     entry("Restablecer esta categoría", "restablecer reset categoria valores preset", SettingsCategory.GPU),
     // --- CPU ---
@@ -175,6 +200,11 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     entry("Modo rendimiento del launcher", "modo rendimiento pantalla encendida", SettingsCategory.PERFORMANCE),
     entry("Restablecer esta categoría", "restablecer reset categoria valores preset", SettingsCategory.PERFORMANCE),
     // --- Controles y HUD ---
+    // R6 (evidencia del teléfono, 0.2.55): el editor táctil no se
+    // encontraba: solo se abría desde General → Secciones. Ahora
+    // tiene botón propio en Controles y HUD ("Personalizar botones")
+    // y esta entrada del buscador lleva ahí.
+    entry("Personalizar botones", "personalizar editar botones tactiles layout editor mover tamano reasignar borrar", SettingsCategory.CONTROLS),
     entry("Mostrar controles táctiles en el juego", "controles tactiles overlay juego mostrar", SettingsCategory.CONTROLS),
     entry("Opacidad general del overlay", "opacidad overlay tactil", SettingsCategory.CONTROLS),
     entry("Brillo neón", "neon brillo halo azul botones", SettingsCategory.CONTROLS),
@@ -185,6 +215,11 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     entry("Copias en Descargas", "descargas copias childoflight borrar", SettingsCategory.STORAGE),
     entry("Limpiar no usados", "limpiar no usados botones perfiles presets dlc saves", SettingsCategory.STORAGE),
     entry("Estado de archivos", "estado archivos firmware guardado instalado juego dlc update app externa", SettingsCategory.STORAGE),
+    // R6-P2-11: el firmware se importa desde Importar, no desde
+    // Ajustes: buscar "firmware", "importar firmware" o "pup" debe
+    // encontrarlo (antes devolvía 0 o solo "Estado de archivos").
+    // Destino propio (pantalla Importar), como Logros.
+    entry("Importar firmware", "importar firmware pup instalar psvupdat actualizacion version nucleo", SettingsCategory.STORAGE, Screen.IMPORT),
     // --- Diagnóstico ---
     entry("GPU y diagnóstico", "gpu diagnostico prueba 30 segundos benchmark", SettingsCategory.DIAGNOSTICS),
     entry("Cerrar apps en segundo plano antes de jugar", "cerrar apps segundo plano ram liberar", SettingsCategory.DIAGNOSTICS),

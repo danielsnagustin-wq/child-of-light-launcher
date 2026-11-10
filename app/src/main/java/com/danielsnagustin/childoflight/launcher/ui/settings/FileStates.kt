@@ -17,7 +17,7 @@ import com.danielsnagustin.childoflight.launcher.ui.SectionTitle
 import com.danielsnagustin.childoflight.launcher.ui.cardTextColor
 import com.danielsnagustin.childoflight.launcher.ui.isDarkUi
 import com.danielsnagustin.childoflight.launcher.ui.mutedTextColor
-import com.danielsnagustin.childoflight.launcher.ui.rememberUiPreferences
+import com.danielsnagustin.childoflight.launcher.ui.LocalUiPreferences
 
 /**
  * Estado de archivos (Ola 3, Etapa 7): los 6 estados, todos leídos del
@@ -40,7 +40,7 @@ fun FileStateSection(
     pkgInstalledInVita3k: Boolean,
 ) {
     // R4-P1-14: textos segun el tema (en Claro, blanco sobre fondo claro no se lee).
-    val dark = isDarkUi(rememberUiPreferences())
+    val dark = isDarkUi(LocalUiPreferences.current)
     SectionTitle("Estado de archivos")
     // 1. Firmware importado = PUP guardado.
     Text(

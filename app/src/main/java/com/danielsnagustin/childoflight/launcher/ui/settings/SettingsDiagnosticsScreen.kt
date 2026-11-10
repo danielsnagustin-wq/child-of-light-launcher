@@ -27,7 +27,7 @@ import com.danielsnagustin.childoflight.launcher.ui.SettingSwitch
 import com.danielsnagustin.childoflight.launcher.ui.cardTextColor
 import com.danielsnagustin.childoflight.launcher.ui.isDarkUi
 import com.danielsnagustin.childoflight.launcher.ui.mutedTextColor
-import com.danielsnagustin.childoflight.launcher.ui.rememberUiPreferences
+import com.danielsnagustin.childoflight.launcher.ui.LocalUiPreferences
 
 /**
  * Categoría "Diagnóstico" (Ola 2, Etapa 1; Ola 3, Etapa 10): enlace a
@@ -66,7 +66,7 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
     val lastFps = benchmarks.firstOrNull { it.fpsAvg != null }?.fpsAvg
     val recentErrors = remember(safeLogText) { extractRecentErrorLines(safeLogText) }
     // R4-P1-14: textos segun el tema (en Claro, blanco sobre fondo claro no se lee).
-    val dark = isDarkUi(rememberUiPreferences())
+    val dark = isDarkUi(LocalUiPreferences.current)
     SettingsCategoryScaffold(
         title = "Diagnóstico",
         subtitle = "Prueba de 30 s y corrección de errores.",
@@ -134,7 +134,7 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 SectionTitle("Corrección de errores")
                 NoteText("Mitigaciones del launcher (no reescriben el núcleo del juego). Si algo falla, empieza por el Modo seguro.")
                 SettingSwitch("Cerrar apps en segundo plano antes de jugar", "Best-effort con el permiso del sistema. Libera RAM antes de lanzar.", s.closeBackgroundApps) { vm.saveSettings(s.copy(closeBackgroundApps = it)) }
-                SettingSwitch("Modo seguro", "Fuerza 1x, SDL, High Accuracy OFF. Para cuando algo falle.", s.safeMode) { vm.setSafeMode(it) }
+                SettingSwitch("Modo seguro", "Fuerza 1x, SDL, High Accuracy OFF, sin caché sin hash, Double Buffer y sin retraso de carga. Para cuando algo falle.", s.safeMode) { vm.setSafeMode(it) }
             }
         }
     }
