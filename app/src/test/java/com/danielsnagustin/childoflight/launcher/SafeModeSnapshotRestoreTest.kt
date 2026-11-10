@@ -4,6 +4,7 @@ import com.danielsnagustin.childoflight.launcher.data.decodeSettingsBackup
 import com.danielsnagustin.childoflight.launcher.data.encodeSettingsBackup
 import com.danielsnagustin.childoflight.launcher.model.AudioBackend
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
+import com.danielsnagustin.childoflight.launcher.model.MemoryMapping
 import com.danielsnagustin.childoflight.launcher.model.UiPreferences
 import com.danielsnagustin.childoflight.launcher.model.applySafeMode
 import com.danielsnagustin.childoflight.launcher.ui.restoreAudioFixSnapshot
@@ -111,6 +112,59 @@ class SafeModeSnapshotRestoreTest {
         val restored = restoreSafeModeSnapshot(snapshot, current)
         assertTrue(restored.fpsHack)
         assertTrue(restored.vSync)
+    }
+
+    @Test
+    fun safeModeForcesNewExperimentalFields() {
+        // R6-P1-09: el modo seguro también neutraliza la caché sin
+        // hash, el Page Table y el retraso de carga.
+        val before = LauncherSettings(
+            hashlessTextureCache = true,
+            memoryMapping = MemoryMapping.PAGE_TABLE,
+            fileLoadingDelay = 30,
+        )
+        val forced = applySafeMode(before)
+        assertFalse(forced.hashlessTextureCache)
+        assertEquals(MemoryMapping.DOUBLE_BUFFER, forced.memoryMapping)
+        assertEquals(0, forced.fileLoadingDelay)
+    }
+
+    @Test
+    fun safeModeRestoreRestoresNewFieldsWhenUntouched() {
+        // R6-P1-09: al salir, si el usuario no los tocó durante el
+        // modo seguro, vuelven los valores anteriores.
+        val before = LauncherSettings(
+            hashlessTextureCache = true,
+            memoryMapping = MemoryMapping.PAGE_TABLE,
+            fileLoadingDelay = 30,
+        )
+        val snapshot = snapshotViaFile(before)
+        val current = applySafeMode(before)
+        val restored = restoreSafeModeSnapshot(snapshot, current)
+        assertTrue(restored.hashlessTextureCache)
+        assertEquals(MemoryMapping.PAGE_TABLE, restored.memoryMapping)
+        assertEquals(30, restored.fileLoadingDelay)
+    }
+
+    @Test
+    fun safeModeRestoreKeepsInterimChangeToNewFields() {
+        // R6-P1-09: un cambio hecho DURANTE el modo seguro en un
+        // campo nuevo se conserva (misma regla keepIfTouched).
+        val before = LauncherSettings(
+            hashlessTextureCache = true,
+            memoryMapping = MemoryMapping.PAGE_TABLE,
+            fileLoadingDelay = 30,
+        )
+        val snapshot = snapshotViaFile(before)
+        val current = applySafeMode(before).copy(
+            hashlessTextureCache = true,
+            memoryMapping = MemoryMapping.PAGE_TABLE,
+            fileLoadingDelay = 15,
+        )
+        val restored = restoreSafeModeSnapshot(snapshot, current)
+        assertTrue(restored.hashlessTextureCache)
+        assertEquals(MemoryMapping.PAGE_TABLE, restored.memoryMapping)
+        assertEquals(15, restored.fileLoadingDelay)
     }
 
     @Test

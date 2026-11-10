@@ -403,8 +403,9 @@ class CleanTouchLayoutTest {
     @Test
     fun glowSendsBothShoulderButtonAndTriggerAxis() {
         // Hombro L (SDL 9) + eje L2 (-4): en modo normal el 9 basta
-        // y en modo ext solo el eje llega al bit L; enviar ambos es
-        // inocuo en ambos modos (ver KDoc de glowSdlButtons).
+        // y en modo ext solo el eje llega al bit L; enviar ambos NO
+        // es inocuo: en lecturas v2 el 9 pone ademas el bit L1
+        // (0x400) como colateral (ver KDoc de glowSdlButtons).
         assertEquals(listOf(9, -4), TouchOverlayMapping.glowSdlButtons())
         assertEquals(9, TouchOverlayMapping.SDL_BUTTON_LEFT_SHOULDER)
         assertEquals(-4, -TouchOverlayMapping.SDL_AXIS_LEFT_TRIGGER)

@@ -13,6 +13,7 @@ import com.danielsnagustin.childoflight.launcher.ui.settings.categoryHasResettab
 import com.danielsnagustin.childoflight.launcher.ui.settings.guardTurnipDriver
 import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategorySettings
 import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategoryUiPrefs
+import com.danielsnagustin.childoflight.launcher.ui.settings.turnipKeptNote
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -77,6 +78,34 @@ class CategoryResetTest {
         val preset = presetSettings(GpuProfileId.G99_RECOMMENDED)
         assertEquals(preset.backend, reset.backend)
         assertEquals(preset.resolutionMultiplier, reset.resolutionMultiplier, 0.001f)
+    }
+
+    @Test
+    fun turnipKeptNoteMentionsConservedTurnip() {
+        // R6-P2-09: reset GPU con Turnip activo e instalado y preset
+        // SYSTEM (G99): el mensaje debe avisar de que Turnip se
+        // conservó, no decir solo "valores del preset".
+        val turnip = changed.copy(gpuDriver = GpuDriver.TURNIP, turnipInstalled = true)
+        val reset = resetCategorySettings(turnip, SettingsCategory.GPU)
+        val preset = presetSettings(GpuProfileId.G99_RECOMMENDED)
+        assertEquals(GpuDriver.TURNIP, reset.gpuDriver)
+        assertEquals(GpuDriver.SYSTEM, preset.gpuDriver)
+        assertTrue(turnipKeptNote(reset, preset).contains("Turnip se conservó"))
+    }
+
+    @Test
+    fun turnipKeptNoteEmptyWhenNothingKept() {
+        // Sin Turnip activo, o con preset Turnip, no hay nada que
+        // avisar: la nota es vacía.
+        val preset = presetSettings(GpuProfileId.G99_RECOMMENDED)
+        val systemReset = resetCategorySettings(changed, SettingsCategory.GPU)
+        assertEquals("", turnipKeptNote(systemReset, preset))
+        val turnipPreset = presetSettings(GpuProfileId.ADRENO_QUALITY_TURNIP)
+        val turnipReset = resetCategorySettings(
+            changed.copy(activeProfile = GpuProfileId.ADRENO_QUALITY_TURNIP, gpuDriver = GpuDriver.TURNIP, turnipInstalled = true),
+            SettingsCategory.GPU,
+        )
+        assertEquals("", turnipKeptNote(turnipReset, turnipPreset))
     }
 
     @Test

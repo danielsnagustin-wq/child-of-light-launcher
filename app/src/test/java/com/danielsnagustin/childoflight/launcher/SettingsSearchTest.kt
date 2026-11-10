@@ -120,12 +120,64 @@ class SettingsSearchTest {
         assertTrue(results.any { it.title == "Configuración efectiva" && it.category == SettingsCategory.DIAGNOSTICS })
     }
 
-    // P2-21: "Driver personalizado" y "Descartar cambios" existen
-    // en sus pantallas y el buscador no los encontraba por su nombre.
+    // P2-21 + R6-P2-11: "Driver personalizado" y "Driver GPU" eran dos
+    // entradas para el mismo control: fusionadas en una sola ("Driver
+    // GPU", con "personalizado" en las claves).
     @Test
     fun findsDriverPersonalizado() {
         val results = searchSettings("driver personalizado")
-        assertTrue(results.any { it.title == "Driver personalizado" && it.category == SettingsCategory.GPU })
+        assertTrue(results.any { it.title == "Driver GPU" && it.category == SettingsCategory.GPU })
+        assertEquals(1, results.count { it.title == "Driver GPU" })
+        assertTrue(results.none { it.title == "Driver personalizado" })
+    }
+
+    @Test
+    fun findsImportarFirmware() {
+        // R6-P2-11: "importar firmware" / "firmware" / "pup" llevan a
+        // la pantalla Importar (destino propio, no una categoría).
+        val byFull = searchSettings("importar firmware")
+        assertTrue(byFull.any { it.title == "Importar firmware" })
+        val entry = byFull.first { it.title == "Importar firmware" }
+        assertEquals(Screen.IMPORT, entry.destination)
+        assertTrue(searchSettings("firmware").any { it.title == "Importar firmware" })
+        assertTrue(searchSettings("pup").any { it.title == "Importar firmware" })
+    }
+
+    @Test
+    fun pupHasNoFalsePositives() {
+        // R6-P2-11: "pup" es subcadena de "gpu"+"preset" ("Presets por
+        // GPU") con el matching viejo. Ahora solo coincide la entrada
+        // que lleva "pup" como palabra entera.
+        val results = searchSettings("pup")
+        assertTrue(results.all { it.title == "Importar firmware" })
+        assertTrue(results.none { it.title == "Presets por GPU" })
+        assertTrue(results.none { it.title == "Perfil activo" })
+    }
+
+    @Test
+    fun psnHasNoFalsePositives() {
+        // R6-P2-11: "psn" es subcadena de "fps"+"nucleo" ("Resumen del
+        // dispositivo") con el matching viejo.
+        val results = searchSettings("psn")
+        assertTrue(results.any { it.title == "Sesión PSN (simulada)" })
+        assertTrue(results.none { it.title == "Resumen del dispositivo" })
+    }
+
+    @Test
+    fun appExternaHasNoFalsePositives() {
+        // R6-P2-11: "app" es subcadena de "mapping" y "externa" de
+        // "external" ("Memory Mapping") con el matching viejo.
+        val results = searchSettings("app externa")
+        assertTrue(results.any { it.title == "Permitir app externa" })
+        assertTrue(results.none { it.title == "Memory Mapping" })
+    }
+
+    @Test
+    fun findsPersonalizarBotones() {
+        // R6 (evidencia del teléfono, 0.2.55): el editor táctil tiene
+        // entrada propia en Controles y HUD y el buscador lleva ahí.
+        val results = searchSettings("personalizar botones")
+        assertTrue(results.any { it.title == "Personalizar botones" && it.category == SettingsCategory.CONTROLS })
     }
 
     @Test

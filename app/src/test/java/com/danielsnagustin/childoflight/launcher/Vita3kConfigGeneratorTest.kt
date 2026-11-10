@@ -399,15 +399,15 @@ class Vita3kConfigGeneratorTest {
 
     @Test
     fun writeConfigIfChangedThrowsWhenConfigYmlIsADirectory() {
-        // config.yml como directorio: isFile es false, así que
-        // existing queda null y writeText lanza FileNotFoundException.
-        // Es comportamiento DOCUMENTADO, no un crash inesperado: los
+        // R6-P2-29: config.yml como directorio es un error EXPLÍCITO
+        // y documentado (IllegalStateException con la ruta), no el
+        // FileNotFoundException incidental de writeText de antes. Los
         // llamadores lo aguantan con runCatching/catch (Throwable) y
         // muestran bloqueo, no crash.
         val dir = java.io.File(System.getProperty("java.io.tmpdir"), "col-r5a39-dir-${System.nanoTime()}/config.yml")
         assertTrue(dir.mkdirs())
         try {
-            assertThrows(java.io.FileNotFoundException::class.java) {
+            assertThrows(IllegalStateException::class.java) {
                 Vita3kConfigGenerator.writeConfigIfChanged(dir, "v-sync: false\n")
             }
         } finally {

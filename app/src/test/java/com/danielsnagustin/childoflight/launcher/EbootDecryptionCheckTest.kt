@@ -24,9 +24,16 @@ import org.junit.rules.TemporaryFolder
  * destruía la única vía de recuperación. Se exige cabecera
  * estructural: SELF con version 3 y header_type 1 (lo mismo que
  * comprueba el núcleo al cargar, load_self.cpp:512-520), con
- * self_filesize igual al tamaño del archivo y elf_offset y
+ * self_filesize no mayor que el tamaño del archivo y elf_offset y
  * phdr_offset dentro de él; ELF32 con la tabla de segmentos dentro
  * del archivo.
+ *
+ * R6-P0: la igualdad estricta self_filesize == tamaño NO la respalda
+ * el pin (load_self.cpp nunca la compara; solo la usa para el dump)
+ * y era el falso negativo que reinstalaba el .pkg en cada JUGAR con
+ * el eboot real instalado (5.340.000 B, sysver 3.15). Un SELF con
+ * bytes finales (self_filesize < tamaño) es válido; uno truncado
+ * (self_filesize > tamaño) sigue sin serlo.
  *
  * Ronda 4 (R4-P0-5/R4-P0-6, 2026-11-09): header_type se lee en su
  * offset real, u16 @10 (el offset 8 es sdk_type, no header_type:
@@ -61,7 +68,7 @@ class EbootDecryptionCheckTest {
 
     /**
      * SELF válido: magia + version 3 + sdk_type 0x10 + header_type 1
-     * en @10 + self_filesize igual al tamaño del archivo +
+     * en @10 + self_filesize no mayor que el tamaño del archivo +
      * elf_offset y phdr_offset dentro del archivo con la magia ELF
      * en elf_offset. El tamaño por defecto es 1 MB, pero el SELF
      * también es válido pequeño (ver selfValidoPequenoAceptado).
@@ -141,6 +148,42 @@ class EbootDecryptionCheckTest {
             GameLibraryRepository.EbootInvalidReason.OK,
             GameLibraryRepository.selfValidationReason(eboot),
         )
+    }
+
+    @Test
+    fun selfConBytesFinalesEsValido() {
+        // R6-P0: el eboot REAL instalado (5.340.000 B, sysver 3.15)
+        // fallaba la validación estricta y cada JUGAR reinstalaba
+        // el .pkg. El campo sospechoso es self_filesize: el pin
+        // (load_self.cpp) nunca lo compara con el tamaño del
+        // archivo. Un SELF cuya cabecera declara self_filesize
+        // MENOR que el archivo (bytes finales) es cargable por el
+        // núcleo y debe ser válido: solo el truncado (self_filesize
+        // mayor que el archivo) se rechaza (ver
+        // truncatedValidSelfIsNotValid).
+        val eboot = tmp.newFile("eboot.bin")
+        val bytes = validSelfBytes(1_000_000)
+        eboot.writeBytes(bytes + ByteArray(100))
+        assertEquals(1_000_100, eboot.length())
+        assertEquals(
+            GameLibraryRepository.EbootInvalidReason.OK,
+            GameLibraryRepository.selfValidationReason(eboot),
+        )
+        assertTrue(GameLibraryRepository.isSelfFile(eboot))
+        assertTrue(GameLibraryRepository.isValidEbootFile(eboot))
+    }
+
+    @Test
+    fun elfConBytesFinalesEsValido() {
+        // R6-P0: la vía ELF nunca comprobó el tamaño total, solo
+        // la tabla de segmentos: un ELF con bytes finales ya era
+        // válido. Se deja por escrito para que el caso no se
+        // vuelva a endurecer por error.
+        val eboot = tmp.newFile("eboot.bin")
+        val bytes = validElfBytes(1_000_000)
+        eboot.writeBytes(bytes + ByteArray(100))
+        assertTrue(GameLibraryRepository.isElfFile(eboot))
+        assertTrue(GameLibraryRepository.isValidEbootFile(eboot))
     }
 
     @Test

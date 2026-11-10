@@ -473,7 +473,9 @@ class TrophyTrpReaderTest {
         }
     }
 
-    // R5-A4-8: diagnóstico con fallback al TRP instalado por el núcleo.
+    // R5-A4-8 + R6-P1-18: diagnóstico con fallback al TROPCONF.SFM
+    // instalado por el núcleo (ux0/user/00/trophy/data/<NPCOMMID>/,
+    // no la ruta vieja trophy/<TITLE>/TROPHY.TRP, que el núcleo no usa).
     private fun ux0With(bundled: ByteArray?, installed: ByteArray?): File {
         val ux0 = Files.createTempDirectory("trp-diag-").toFile()
         val appDir = File(ux0, "app/PCSB00598").apply { mkdirs() }
@@ -482,8 +484,8 @@ class TrophyTrpReaderTest {
             File(appDir, "sce_sys/trophy/TROPHY.TRP").writeBytes(bundled)
         }
         if (installed != null) {
-            File(ux0, "user/00/trophy/PCSB00598").apply { mkdirs() }
-            File(ux0, "user/00/trophy/PCSB00598/TROPHY.TRP").writeBytes(installed)
+            File(ux0, "user/00/trophy/data/NPWR00001_00").apply { mkdirs() }
+            File(ux0, "user/00/trophy/data/NPWR00001_00/TROPCONF.SFM").writeBytes(installed)
         }
         return ux0
     }
@@ -530,5 +532,69 @@ class TrophyTrpReaderTest {
         } finally {
             ux0.deleteRecursively()
         }
+    }
+
+    // R6-P1-18: el TROPCONF.SFM instalado lleva una cabecera binaria
+    // de 0x40 B antes del XML: el lector la salta buscando <trophyconf>.
+    @Test
+    fun diagnosis_installedTropconfWithBinaryHeader_isReadable() {
+        val withHeader = ByteArray(0x40) + buildReducedTrp3()
+        val ux0 = ux0With(ByteArray(1024) { (it * 7 % 256).toByte() }, withHeader)
+        try {
+            val value = success(TrophyTrpReader.readTrpForDiagnosis(File(ux0, "app/PCSB00598")))
+            assertEquals(3, value.trophyCount)
+        } finally {
+            ux0.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun readInstalledTrp_resolvesNpcommidDirectly() {
+        val ux0 = Files.createTempDirectory("trp-inst-").toFile()
+        try {
+            val dir = File(ux0, "user/00/trophy/data/NPWR00001_00").apply { mkdirs() }
+            File(dir, "TROPCONF.SFM").writeBytes(buildReducedTrp3())
+            val value = success(TrophyTrpReader.readInstalledTrp(ux0, "PCSB00598", "NPWR00001_00"))
+            assertEquals(3, value.trophyCount)
+            assertEquals("NPWR00001_00", value.npcommid)
+        } finally {
+            ux0.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun readInstalledTrp_withoutNpcommid_scansAllDataDirs() {
+        val ux0 = Files.createTempDirectory("trp-scan-").toFile()
+        try {
+            val bad = File(ux0, "user/00/trophy/data/NPWR99999_00").apply { mkdirs() }
+            File(bad, "TROPCONF.SFM").writeBytes(ByteArray(512) { (it * 3 % 256).toByte() })
+            val good = File(ux0, "user/00/trophy/data/NPWR00001_00").apply { mkdirs() }
+            File(good, "TROPCONF.SFM").writeBytes(buildReducedTrp3())
+            val value = success(TrophyTrpReader.readInstalledTrp(ux0, "PCSB00598"))
+            assertEquals(3, value.trophyCount)
+        } finally {
+            ux0.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun readInstalledTrp_noDataDir_isUnreadable() {
+        val ux0 = Files.createTempDirectory("trp-nodata-").toFile()
+        try {
+            // La ruta vieja ya no vale: un TROPHY.TRP bajo
+            // trophy/<TITLE>/ no se lee como instalado.
+            val legacy = File(ux0, "user/00/trophy/PCSB00598").apply { mkdirs() }
+            File(legacy, "TROPHY.TRP").writeBytes(buildReducedTrp3())
+            unreadable(TrophyTrpReader.readInstalledTrp(ux0, "PCSB00598"))
+        } finally {
+            ux0.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun extractNpcommid_readsPlainTextAndIgnoresRandomBytes() {
+        assertEquals("NPWR00001_00", TrophyTrpReader.extractNpcommid(buildReducedTrp3()))
+        assertEquals(null, TrophyTrpReader.extractNpcommid(ByteArray(1024) { (it * 7 % 256).toByte() }))
+        assertEquals(null, TrophyTrpReader.extractNpcommid(ByteArray(0)))
     }
 }

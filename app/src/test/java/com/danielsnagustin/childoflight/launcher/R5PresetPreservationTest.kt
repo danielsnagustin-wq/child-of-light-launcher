@@ -2,6 +2,8 @@ package com.danielsnagustin.childoflight.launcher
 
 import com.danielsnagustin.childoflight.launcher.data.backupJsonHasSafeModeEnabled
 import com.danielsnagustin.childoflight.launcher.data.encodeSettingsBackup
+import com.danielsnagustin.childoflight.launcher.data.mergePresetWithUserChoices
+import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.PerformanceOverlayDetail
@@ -89,6 +91,41 @@ class R5PresetPreservationTest {
     }
 
     // --- R5-A4-2 (P0): la ruta visible nunca lleva el nombre del paquete ---
+
+    @Test
+    fun mergePresetKeepsAllowExternalVita3k() {
+        // R6-P1-08: aplicar un preset NO apaga "Permitir app externa"
+        // en silencio: se conserva el valor del usuario.
+        val current = LauncherSettings(allowExternalVita3k = true)
+        val merged = mergePresetWithUserChoices(
+            presetSettings(GpuProfileId.G99_QUALITY),
+            current,
+            GpuDriver.SYSTEM,
+        )
+        assertTrue(merged.allowExternalVita3k)
+        // Los valores del preset sí se aplican: 2x con FSR.
+        assertEquals(2f, merged.resolutionMultiplier, 0.001f)
+        assertEquals(GpuProfileId.G99_QUALITY, merged.activeProfile)
+    }
+
+    @Test
+    fun mergePresetDefaultsAllowExternalVita3kToFalse() {
+        // Sin ajustes guardados (o con el interruptor en OFF), el
+        // preset deja el campo en false (su default): no se inventa
+        // un true.
+        val fromNull = mergePresetWithUserChoices(
+            presetSettings(GpuProfileId.G99_RECOMMENDED),
+            null,
+            GpuDriver.SYSTEM,
+        )
+        assertFalse(fromNull.allowExternalVita3k)
+        val fromOff = mergePresetWithUserChoices(
+            presetSettings(GpuProfileId.G99_RECOMMENDED),
+            LauncherSettings(allowExternalVita3k = false),
+            GpuDriver.SYSTEM,
+        )
+        assertFalse(fromOff.allowExternalVita3k)
+    }
 
     @Test
     fun sanitizeVisiblePathReplacesPackageName() {
