@@ -80,8 +80,12 @@ class RippleStateTest {
         // vale 0.75: la gota ya recorrio 3/4 del radio, no la mitad.
         val ripple = rippleAt(startMs = 1000L)
         assertEquals(75f, ripple.radiusAt(1000L + RippleState.DURATION_MS / 2, 100f), 0.001f)
-        // A un cuarto (t = 0.25) el easing vale 0.4375.
-        assertEquals(43.75f, ripple.radiusAt(1000L + RippleState.DURATION_MS / 4, 100f), 0.001f)
+        // A un cuarto (t = 0.25) el easing vale 0.4375, pero
+        // DURATION_MS (350) no es divisible entre 4: la division
+        // entera da 87 ms, t = 87/350 = 0.2486 y el radio real es
+        // 43.5355, no 43.75. La implementacion es correcta; el
+        // valor esperado es el del instante real.
+        assertEquals(43.5355f, ripple.radiusAt(1000L + RippleState.DURATION_MS / 4, 100f), 0.001f)
     }
 
     @Test
