@@ -110,6 +110,13 @@ object Vita3kConfigGenerator {
         sb.appendLine("resolution-multiplier: ${formatFloat(s.resolutionMultiplier)}")
         sb.appendLine("# GPU — screen-filter verificado (default \"Bilinear\").")
         sb.appendLine("screen-filter: \"${escapeYamlDoubleQuoted(s.screenFilter.vita3kValue)}\"")
+        // v-sync VERIFICADO (config.h:155): bool, default true en
+        // upstream. El launcher lo pone en false DELIBERADAMENTE
+        // (LauncherSettings.vSync = false en todos los perfiles):
+        // con v-sync activado el Mali-G57 del teléfono pierde
+        // fotogramas esperando al refresco; desactivado, el juego
+        // corre más fluido y el tearing no se nota en esta pantalla.
+        // No es un olvido: el usuario puede activarlo en Ajustes.
         sb.appendLine("v-sync: ${s.vSync}")
         sb.appendLine("anisotropic-filtering: ${s.anisotropicFiltering}")
         sb.appendLine("async-pipeline-compilation: ${s.asyncPipelineCompilation}")
@@ -297,11 +304,29 @@ object Vita3kConfigGenerator {
         val content = generate(settings, vitaFs.absolutePath, gpu)
         if (!vitaRoot.exists()) vitaRoot.mkdirs()
         val file = File(vitaRoot, "config.yml")
-        if (writeConfigIfChanged(file, content)) {
+        val report = writeConfigIfChangedDetailed(file, content)
+        if (report.wrote) {
             LauncherLog.append(context, "config", "config.yml escrito (${content.length} bytes, perfil ${settings.activeProfile.name})")
+        }
+        // R6-P2-29: la lectura previa falló (contenido desconocido):
+        // se reescribió entero; queda en el log para que el próximo
+        // diagnóstico sepa que el config anterior no se pudo leer.
+        if (report.previousReadFailed) {
+            LauncherLog.append(context, "config", "config.yml no se pudo leer antes de escribir (contenido previo desconocido): se reescribió entero")
         }
         return file
     }
+
+    /**
+     * Informe de una escritura de config.yml (R6-P2-29): [wrote] es
+     * true si se escribió, [previousReadFailed] es true si la lectura
+     * del contenido previo falló y se escribió sin saber qué había
+     * (el llamador lo registra en el log).
+     */
+    data class ConfigWriteReport(
+        val wrote: Boolean,
+        val previousReadFailed: Boolean,
+    )
 
     /**
      * Escribe [content] en [file] SOLO si difiere del contenido actual
@@ -310,12 +335,46 @@ object Vita3kConfigGenerator {
      * no existe, lo crea (con sus carpetas padre). Pura salvo File,
      * para poder probarla en la JVM sin Android (el log vive en
      * writeConfig, no aquí).
+     *
+     * R6-P2-29: si config.yml es un directorio, el error es explícito
+     * y documentado (IllegalStateException con la ruta): antes era un
+     * FileNotFoundException incidental de writeText. El llamador lo
+     * muestra como bloqueo, no como crash. Si readText() falla (p.
+     * ej. bytes UTF-8 inválidos), el contenido previo se trata como
+     * desconocido (no como "vacío") y se reintenta escribir; el
+     * informe marca previousReadFailed para que writeConfig lo
+     * registre en el log.
      */
-    fun writeConfigIfChanged(file: File, content: String): Boolean {
-        val existing = runCatching { if (file.isFile) file.readText() else null }.getOrNull()
-        if (existing == content) return false
+    fun writeConfigIfChangedDetailed(file: File, content: String): ConfigWriteReport {
+        if (file.isDirectory) {
+            throw IllegalStateException("config.yml es un directorio, no un archivo: ${file.absolutePath}")
+        }
+        var previousReadFailed = false
+        val existing = if (file.isFile) {
+            try {
+                file.readText()
+            } catch (e: Exception) {
+                previousReadFailed = true
+                null
+            }
+        } else {
+            null
+        }
+        if (existing == content) return ConfigWriteReport(wrote = false, previousReadFailed = previousReadFailed)
         file.parentFile?.mkdirs()
         file.writeText(content)
-        return true
+        return ConfigWriteReport(wrote = true, previousReadFailed = previousReadFailed)
+    }
+
+    /**
+     * Escribe [content] en [file] SOLO si difiere del contenido actual
+     * del archivo; devuelve true si escribió y false si ya era idéntico
+     * (entonces no toca el archivo: ni bytes ni fecha). Si el archivo
+     * no existe, lo crea (con sus carpetas padre). Pura salvo File,
+     * para poder probarla en la JVM sin Android (el log vive en
+     * writeConfig, no aquí). Delega en writeConfigIfChangedDetailed.
+     */
+    fun writeConfigIfChanged(file: File, content: String): Boolean {
+        return writeConfigIfChangedDetailed(file, content).wrote
     }
 }

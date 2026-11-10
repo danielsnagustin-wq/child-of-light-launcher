@@ -301,33 +301,12 @@ class SettingsRepository(private val context: Context) {
         // y detectGpu llaman directo al repo, y el bloque del VM no los
         // cubría (un usuario con performanceMode=false acababa con
         // performanceMode=true en silencio tras un auto-revert).
-        val fromPreset = base.copy(
-            gpuDriver = driver,
-            customDriverName = current?.customDriverName ?: "",
-            turnipVersion = current?.turnipVersion ?: "",
-            turnipInstalled = current?.turnipInstalled ?: false,
-            audioVolume = current?.audioVolume ?: 100,
-            audioBackend = current?.audioBackend ?: com.danielsnagustin.childoflight.launcher.model.AudioBackend.SDL,
-            ngsEnable = current?.ngsEnable ?: true,
-            safeMode = current?.safeMode ?: false,
-            closeBackgroundApps = current?.closeBackgroundApps ?: true,
-            psnSignedIn = current?.psnSignedIn ?: true,
-            performanceMode = current?.performanceMode ?: true,
-            autoRevertTo1xIfBelow28Fps = current?.autoRevertTo1xIfBelow28Fps ?: true,
-            pkgDeliveredToVita3k = current?.pkgDeliveredToVita3k ?: false,
-            pkgInstalledInVita3k = current?.pkgInstalledInVita3k ?: false,
-            hideTouchWhenGamepadConnected = current?.hideTouchWhenGamepadConnected ?: true,
-            showTouchOverlayInGame = current?.showTouchOverlayInGame ?: true,
-            touchOverlayOpacity = current?.touchOverlayOpacity ?: 1f,
-            touchOverlayNeonGlow = current?.touchOverlayNeonGlow ?: false,
-            touchOverlayHiddenProfileIds = current?.touchOverlayHiddenProfileIds ?: emptySet(),
-        )
+        val fromPreset = mergePresetWithUserChoices(base, current, driver)
         val merged = preserveManualCacheChoices(fromPreset, current, lowRam = lowRam)
         save(merged)
     }
 
-    suspend fun resetToDefaults(gpu: GpuInfo?) {
-        val profile = if (gpu != null) defaultProfileFor(gpu) else GpuProfileId.G99_RECOMMENDED
+    suspend fun resetToDefaults(gpu: GpuInfo?) {        val profile = if (gpu != null) defaultProfileFor(gpu) else GpuProfileId.G99_RECOMMENDED
         // R4-P0-9: "Restablecer ajustes" usa el preset CANÓNICO, sin
         // lowRam: la variante conservadora de ≤ 4 GB solo se aplica en
         // el primer arranque (detectGpu) y queda registrada como
@@ -457,3 +436,40 @@ class SettingsRepository(private val context: Context) {
         }
     }
 }
+
+/**
+ * R6-P1-08: fusión pura del preset con los gustos del usuario.
+ * El preset cambia rendimiento/calidad, no los gustos del usuario:
+ * audio, modo seguro, cerrar apps, PSN, modo rendimiento, auto-revert,
+ * entrega del .pkg, overlay táctil y "Permitir app externa" se
+ * conservan (antes allowExternalVita3k se perdía en silencio al tocar
+ * cualquier preset: presetSettings() no lo define y el copy no lo
+ * llevaba, así que siempre quedaba en false). Pura, testeable en JVM
+ * (R5PresetPreservationTest).
+ */
+internal fun mergePresetWithUserChoices(
+    base: LauncherSettings,
+    current: LauncherSettings?,
+    driver: GpuDriver,
+): LauncherSettings = base.copy(
+    gpuDriver = driver,
+    customDriverName = current?.customDriverName ?: "",
+    turnipVersion = current?.turnipVersion ?: "",
+    turnipInstalled = current?.turnipInstalled ?: false,
+    audioVolume = current?.audioVolume ?: 100,
+    audioBackend = current?.audioBackend ?: com.danielsnagustin.childoflight.launcher.model.AudioBackend.SDL,
+    ngsEnable = current?.ngsEnable ?: true,
+    safeMode = current?.safeMode ?: false,
+    closeBackgroundApps = current?.closeBackgroundApps ?: true,
+    psnSignedIn = current?.psnSignedIn ?: true,
+    performanceMode = current?.performanceMode ?: true,
+    autoRevertTo1xIfBelow28Fps = current?.autoRevertTo1xIfBelow28Fps ?: true,
+    pkgDeliveredToVita3k = current?.pkgDeliveredToVita3k ?: false,
+    pkgInstalledInVita3k = current?.pkgInstalledInVita3k ?: false,
+    hideTouchWhenGamepadConnected = current?.hideTouchWhenGamepadConnected ?: true,
+    showTouchOverlayInGame = current?.showTouchOverlayInGame ?: true,
+    touchOverlayOpacity = current?.touchOverlayOpacity ?: 1f,
+    touchOverlayNeonGlow = current?.touchOverlayNeonGlow ?: false,
+    touchOverlayHiddenProfileIds = current?.touchOverlayHiddenProfileIds ?: emptySet(),
+    allowExternalVita3k = current?.allowExternalVita3k ?: false,
+)

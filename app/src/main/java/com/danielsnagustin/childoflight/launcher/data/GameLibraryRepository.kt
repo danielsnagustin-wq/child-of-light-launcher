@@ -18,6 +18,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
+import java.nio.ByteBuffer
 import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -177,6 +178,9 @@ object DownloadsCleanup {
  */
 class GameLibraryRepository(private val context: Context) {
 
+    /** Context de la app, para el log de diagnóstico desde el instalador (EmbeddedPkgInstaller). */
+    val appContext: Context get() = context
+
     // Caché de tamaños de directorio: scanStatus() se llama en init, en
     // cada onResume y al volver del juego, y antes recorría TODO el juego
     // (~1,14 GB) y cada DLC en cada llamada. La caché solo guarda el
@@ -293,9 +297,9 @@ class GameLibraryRepository(private val context: Context) {
 
         /**
          * Tamaño mínimo de un PSVUPDAT.PUP real: el PUP de Vita 3.74
-         * ronda los ~300 MB. Por debajo de 100 MB no es un PUP
-         * completo: se rechaza en vez de guardarlo y reintentar
-         * instalarlo en cada JUGAR (P1-13).
+         * ronda los 134 MB (ver FirmwareResolver.APPROX_PUP_SIZE_TEXT).
+         * Por debajo de 100 MB no es un PUP completo: se rechaza en
+         * vez de guardarlo y reintentar instalarlo en cada JUGAR (P1-13).
          */
         const val MIN_PUP_SIZE_BYTES = 100_000_000L
 
@@ -332,6 +336,140 @@ class GameLibraryRepository(private val context: Context) {
          */
         fun zipImportNeededBytes(zipSizeBytes: Long): Long {
             return zipSizeBytes * 2
+        }
+
+        /**
+         * R6-P2-01: bytes libres que hacen falta para INSTALAR un .pkg
+         * ya guardado: el .pkg ya existe en disco y su extracción
+         * convive con él en la misma partición, así que el pico es el
+         * doble del .pkg. Para el juego equivale a longitud +
+         * PKG_EXTRACTION_MARGIN_BYTES (el margen es el tamaño del
+         * propio juego). Puro (testeable en JVM).
+         */
+        fun pkgInstallNeededBytes(pkgLengthBytes: Long): Long {
+            return pkgLengthBytes * 2
+        }
+
+        /**
+         * R6-P2-08(c): ¿la copia de un .pkg quedó incompleta? Si el
+         * header declara un tamaño total, manda él; si declara 0
+         * (header sin ese campo), manda el tamaño del archivo de
+         * origen si se conoce. Sin tamaño de origen conocido no se
+         * puede saber: se devuelve false y el fallo aparecerá al
+         * instalar (límite documentado en importArchive). Puro.
+         */
+        fun pkgCopyIncomplete(destLengthBytes: Long, declaredTotalSizeBytes: Long, sourceSizeBytes: Long): Boolean {
+            if (declaredTotalSizeBytes > 0) return destLengthBytes < declaredTotalSizeBytes
+            if (sourceSizeBytes > 0) return destLengthBytes < sourceSizeBytes
+            return false
+        }
+
+        /** R6-P1-02(a): un .pkg de juego por debajo de 200 MB es sospechoso (el juego real es 1,14 GB). */
+        const val SUSPICIOUS_SMALL_GAME_PKG_BYTES = 200_000_000L
+
+        /**
+         * R6-P2-02: Title IDs de las carpetas de juego que trae un zip,
+         * leídos SOLO de los nombres de sus entradas (sin extraer). Se
+         * miran los componentes de ruta hasta el nivel 3, igual que
+         * ImportTreeSearch.findTitleDirs sobre el árbol extraído. Un
+         * juego PLANO (eboot.bin en la raíz, Title ID en el SFO) no se
+         * puede determinar por nombres: devuelve vacío y el llamador
+         * deja el comportamiento actual. Puro (testeable en JVM).
+         */
+        fun zipTitleDirNames(entryNames: List<String>): List<TitleId> {
+            val found = mutableListOf<TitleId>()
+            for (name in entryNames) {
+                val parts = name.split('/').take(4)
+                for (part in parts) {
+                    TitleId.fromString(part)?.let { if (it !in found) found.add(it) }
+                }
+            }
+            return found
+        }
+
+        /**
+         * R6-P2-02: DLCs que trae un zip, leídos de los nombres de sus
+         * entradas: cualquier ruta con un componente "addcont" (sin
+         * distinguir mayúsculas) seguido de una carpeta es un DLC con
+         * ese nombre. Puro (testeable en JVM).
+         */
+        fun zipAddcontDlcIds(entryNames: List<String>): List<String> {
+            val found = mutableListOf<String>()
+            for (name in entryNames) {
+                val parts = name.split('/')
+                for (i in parts.indices) {
+                    if (parts[i].equals("addcont", ignoreCase = true) && i + 1 < parts.size) {
+                        val dlcId = parts[i + 1]
+                        if (dlcId.isNotBlank() && dlcId !in found) found.add(dlcId)
+                    }
+                }
+            }
+            return found
+        }
+
+        /**
+         * R6-P2-02: ¿el zip trae un eboot.bin? (por nombre, sin
+         * extraer). Solo sirve como pista: el título de un juego
+         * plano vive en el SFO, no en los nombres. Puro (testeable
+         * en JVM).
+         */
+        fun zipHasEboot(entryNames: List<String>): Boolean {
+            return entryNames.any { it.substringAfterLast('/').equals("eboot.bin", ignoreCase = true) }
+        }
+
+        /**
+         * R6-P2-02: busca el End Of Central Directory (EOCD) en la cola
+         * del archivo (los últimos bytes leídos). Devuelve (nº de
+         * entradas, tamaño del directorio central, offset del
+         * directorio central) o null si no hay EOCD (no es un zip,
+         * está truncado) o es ZIP64 (contadores a 0xFFFF/0xFFFFFFFF:
+         * el índice no cabe en el EOCD y la pasada barata no se puede
+         * hacer). Solo se acepta un EOCD cuyo final coincida con el
+         * final del archivo (el comentario del zip va tras él): así no
+         * vale una firma que aparezca dentro del comentario. Puro.
+         */
+        fun findZipEocd(tail: ByteArray): Triple<Int, Long, Long>? {
+            val sig = byteArrayOf(0x50, 0x4b, 0x05, 0x06)
+            var pos = tail.size - 22
+            while (pos >= 0) {
+                if (tail[pos] == sig[0] && tail[pos + 1] == sig[1] && tail[pos + 2] == sig[2] && tail[pos + 3] == sig[3]) {
+                    val commentLen = u16Le(tail, pos + 20)
+                    if (pos + 22 + commentLen == tail.size) {
+                        val totalEntries = u16Le(tail, pos + 10)
+                        val cdSize = u32Le(tail, pos + 12).toLong() and 0xFFFFFFFFL
+                        val cdOffset = u32Le(tail, pos + 16).toLong() and 0xFFFFFFFFL
+                        if (totalEntries == 0xFFFF || cdSize == 0xFFFFFFFFL || cdOffset == 0xFFFFFFFFL) return null
+                        return Triple(totalEntries, cdSize, cdOffset)
+                    }
+                }
+                pos--
+            }
+            return null
+        }
+
+        /**
+         * R6-P2-02: nombres de las entradas del directorio central de
+         * un zip. [bytes] es el bloque del directorio central leído de
+         * disco; [expectedCount] es el nº de entradas que dice el
+         * EOCD. null si el bloque no cuadra (firma, truncado, nº
+         * distinto): el llamador usa el comportamiento actual. Puro.
+         */
+        fun parseZipCentralDirectoryNames(bytes: ByteArray, expectedCount: Int): List<String>? {
+            val names = mutableListOf<String>()
+            var pos = 0
+            while (names.size < expectedCount) {
+                if (pos + 46 > bytes.size) return null
+                if (bytes[pos] != 0x50.toByte() || bytes[pos + 1] != 0x4b.toByte() || bytes[pos + 2] != 0x01.toByte() || bytes[pos + 3] != 0x02.toByte()) return null
+                val nameLen = u16Le(bytes, pos + 28)
+                val extraLen = u16Le(bytes, pos + 30)
+                val commentLen = u16Le(bytes, pos + 32)
+                val entryEnd = pos + 46 + nameLen + extraLen + commentLen
+                if (entryEnd > bytes.size) return null
+                val name = runCatching { String(bytes, pos + 46, nameLen, Charsets.UTF_8) }.getOrNull() ?: return null
+                names.add(name)
+                pos = entryEnd
+            }
+            return names
         }
 
         /**
@@ -527,8 +665,16 @@ class GameLibraryRepository(private val context: Context) {
          * más trae sdk_type distinto de 1 y antes se rechazaba
          * aunque el SELF fuera perfecto). Además, chequeo
          * estructural real en vez de piso de tamaño (R4-P0-6):
-         * self_filesize u64 @32 debe ser el tamaño del archivo
-         * (truncado si es mayor), elf_offset u64 @64 debe caer
+         * self_filesize u64 @32 solo se exige NO MAYOR que el
+         * archivo (truncado si es mayor). R6-P0: la igualdad
+         * estricta (self_filesize == length) NO la respalda el
+         * pin: load_self.cpp nunca compara self_filesize con el
+         * tamaño del archivo (solo lo usa para el dump, :699, y
+         * lo loguea, :586); un SELF real puede traer bytes
+         * finales y el núcleo lo carga igual. La igualdad
+         * estricta era el falso negativo que reinstalaba el
+         * .pkg en cada JUGAR con el eboot real instalado
+         * (5.340.000 B, sysver 3.15). elf_offset u64 @64 debe caer
          * dentro del archivo y traer la magia ELF (0x7F 'E' 'L' 'F'
          * + EI_CLASS 1) en ese offset, y phdr_offset u64 @72 debe
          * caer dentro del archivo. El núcleo lo descifra EN MEMORIA
@@ -541,7 +687,7 @@ class GameLibraryRepository(private val context: Context) {
             if (u32Le(header, 4) != 3) return EbootInvalidReason.VERSION
             if (u16Le(header, 10) != 1) return EbootInvalidReason.HEADER_TYPE
             val length = file.length()
-            if (u64Le(header, 32) != length) return EbootInvalidReason.TAMANO
+            if (u64Le(header, 32) > length) return EbootInvalidReason.TAMANO
             val elfOffset = u64Le(header, 64)
             if (elfOffset < 0 || elfOffset > length - 5) return EbootInvalidReason.TAMANO
             val elfHead = readBytesAt(file, elfOffset, 5) ?: return EbootInvalidReason.TAMANO
@@ -594,7 +740,14 @@ class GameLibraryRepository(private val context: Context) {
          */
         fun mergeDlcLists(extracted: List<DlcInfo>, storedPkgs: List<DlcInfo>): List<DlcInfo> {
             val extractedKeys = extracted.map { dlcMergeKey(it.contentKey) }.toSet()
-            return extracted + storedPkgs.filter { dlcMergeKey(it.contentKey) !in extractedKeys }
+            // R6-P2-08(b): los almacenados también se deduplican ENTRE
+            // SÍ por clave de fusión (mismo DLC en .pkg en los dos ux0,
+            // o con el nombre en distinta capitalización): se queda el
+            // primero. Sin esto, un solo DLC guardado en ambos ux0 se
+            // contaba dos veces.
+            val seenStoredKeys = mutableSetOf<String>()
+            val dedupedStored = storedPkgs.filter { dlcMergeKey(it.contentKey) !in extractedKeys && seenStoredKeys.add(dlcMergeKey(it.contentKey)) }
+            return extracted + dedupedStored
         }
 
         /**
@@ -641,8 +794,8 @@ class GameLibraryRepository(private val context: Context) {
     private fun isDlcInstalled(titleId: String, dlcId: String): Boolean =
         (".bak-" !in dlcId && File(addcontDir(titleId), dlcId).exists()) || findPkgDlcFile(dlcId) != null
 
-    /** ¿El update ya está INSTALADO (contenido real en patch/)? Dual: en el ux0 efectivo o en el antiguo. Un .pkg solo guardado NO es instalado (P1-1): el .pkg se instala en el núcleo al pulsar JUGAR, y contarlo como instalado mentía en el informe. R5-A4-9: antes solo se miraba el patch/ efectivo y el update del ux0 antiguo era invisible en estado de conflicto. */
-    private fun isUpdateInstalled(titleId: String): Boolean {
+    /** ¿El update ya está INSTALADO (contenido real en patch/)? Dual: en el ux0 efectivo o en el antiguo. Un .pkg solo guardado NO es instalado (P1-1): el .pkg se instala en el núcleo al pulsar JUGAR, y contarlo como instalado mentía en el informe. R5-A4-9: antes solo se miraba el patch/ efectivo y el update del ux0 antiguo era invisible en estado de conflicto. R6-P2-05: internal (no private) para que installStoredAddonPkgs (Vita3KLauncher) reutilice el mismo criterio en vez de reimplementarlo. */
+    internal fun isUpdateInstalled(titleId: String): Boolean {
         return bothUx0Dirs().any { ux0 ->
             val patch = File(ux0, "patch/$titleId")
             patch.exists() && patch.listFiles()?.isNotEmpty() == true
@@ -736,7 +889,7 @@ class GameLibraryRepository(private val context: Context) {
         }
         if (extracted && !incomingIsPkg) {
             return "El update de $titleId ya está subido (extraído). Si lo subes de nuevo, se reemplaza " +
-                "la copia guardada y no ocupa más espacio. ¿Quieres reemplazarlo?"
+                "la copia instalada y no ocupa más espacio. ¿Quieres reemplazarlo?"
         }
         if (extracted && incomingIsPkg) {
             return "El update de $titleId ya está subido (extraído). Si lo subes como .pkg tendrás " +
@@ -759,7 +912,7 @@ class GameLibraryRepository(private val context: Context) {
         }
         if (extracted && !incomingIsPkg) {
             return "El DLC $dlcId ya está subido (extraído). Si lo subes de nuevo, se reemplaza " +
-                "la copia guardada y no ocupa más espacio. ¿Quieres reemplazarlo?"
+                "la copia instalada y no ocupa más espacio. ¿Quieres reemplazarlo?"
         }
         if (extracted && incomingIsPkg) {
             return "El DLC $dlcId ya está subido (extraído). Si lo subes como .pkg tendrás " +
@@ -803,7 +956,7 @@ class GameLibraryRepository(private val context: Context) {
                 }
             }
             // P2-C10: el temporal del firmware (PSVUPDAT.PUP.tmp, hasta
-            // ~300 MB) también quedaba huérfano si la copia fallaba.
+            // ~134 MB) también quedaba huérfano si la copia fallaba.
             firmwareDir().listFiles()?.forEach { f ->
                 if (f.name.endsWith(".tmp") && f.isFile) f.delete()
             }
@@ -989,6 +1142,10 @@ class GameLibraryRepository(private val context: Context) {
      * necesita para discriminar entre R4-P0-5 (sdk_type leído
      * como header_type) y R4-P0-6 (tamaño). version, sdkType y
      * headerType son "?" cuando el archivo no es un SELF legible.
+     * R6-P0: selfFilesize es el self_filesize declarado por la
+     * cabecera SELF (u64 @32), "-1" cuando no es un SELF legible:
+     * el próximo informe del teléfono lo necesita para decir qué
+     * campo falla en el eboot real, sin adivinarlo.
      */
     data class EbootValidation(
         val path: String,
@@ -998,11 +1155,12 @@ class GameLibraryRepository(private val context: Context) {
         val sdkType: String,
         val headerType: String,
         val reason: EbootInvalidReason,
+        val selfFilesize: String = "-1",
     ) {
         /** Una sola línea de log con todo el diagnóstico. */
         fun logLine(): String =
             "eboot=$path tamaño=$sizeBytes bytes magia=$magic version=$version " +
-                "sdk_type=$sdkType header_type=$headerType motivo=${reason.logName}"
+                "sdk_type=$sdkType header_type=$headerType self_filesize=$selfFilesize motivo=${reason.logName}"
     }
 
     /**
@@ -1024,7 +1182,8 @@ class GameLibraryRepository(private val context: Context) {
         val version = if (header != null && magic == "SEC") u32Le(header, 4).toString() else "?"
         val sdkType = if (header != null && magic == "SEC") u16Le(header, 8).toString() else "?"
         val headerType = if (header != null && magic == "SEC") u16Le(header, 10).toString() else "?"
-        return EbootValidation(eboot.absolutePath, eboot.length(), magic, version, sdkType, headerType, reason)
+        val selfFilesize = if (header != null && magic == "SEC") u64Le(header, 32).toString() else "-1"
+        return EbootValidation(eboot.absolutePath, eboot.length(), magic, version, sdkType, headerType, reason, selfFilesize)
     }
 
     /**
@@ -1108,7 +1267,15 @@ class GameLibraryRepository(private val context: Context) {
         val missing = mutableListOf<MissingPkgLicense>()
         for (candidate in TitleId.entries) {
             val gamePkg = findPkgGameFile(candidate.id)
-            if (gamePkg != null && !findPkgWorkBinFile(gamePkg).isFile) {
+            // R6-P1-04: un .pkg de juego sin work.bin NO es "falta de
+            // licencia" si la licencia ya está instalada en el núcleo
+            // (ux0/license/<TITLE>/<CONTENT_ID>.rif): el juego se
+            // instaló una vez con licencia y el .pkg se puede
+            // reinstalar sin work.bin (findPkgZrif). Sin esto, Importar
+            // pedía el work.bin en cada refresco aunque el juego
+            // corriera. Solo el juego: el update comparte su licencia
+            // pero su caso queda fuera de este arreglo.
+            if (gamePkg != null && !findPkgWorkBinFile(gamePkg).isFile && !isLicenseInstalledInCore(candidate.id)) {
                 missing.add(MissingPkgLicense(candidate, com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME, null))
             }
             val patchPkg = findPkgPatchFile(candidate.id)
@@ -1438,6 +1605,19 @@ class GameLibraryRepository(private val context: Context) {
                         PkgHeaderParser.validateWorkBin(it, header?.contentId)
                     }
                 }.getOrNull()?.isSuccess == true
+            } else {
+                // R6-P2-08(a): la licencia de TODOS los .pkg de juego,
+                // no solo del primero: con dos regiones, el segundo
+                // .pkg sin licencia válida quedaba invisible. pkgLicense
+                // sigue siendo la del primero (la que se muestra).
+                val otherLicenseOk = runCatching {
+                    findPkgWorkBinFile(pkg).inputStream().use {
+                        PkgHeaderParser.validateWorkBin(it, header?.contentId)
+                    }
+                }.getOrNull()?.isSuccess == true
+                if (!otherLicenseOk) {
+                    LauncherLog.append(context, "status", ".pkg de juego ${foundTitle.id} sin licencia válida (work.bin ausente o con Content ID distinto); se muestra el primero.")
+                }
             }
         }
         if (pkgTitlesFound.size > 1) {
@@ -1494,6 +1674,13 @@ class GameLibraryRepository(private val context: Context) {
                         pkgFile.inputStream().use { PkgHeaderParser.parse(it) }
                     }.getOrNull()?.getOrNull()
                     val dlcTitle = header?.titleId ?: title
+                    // R6-P2-04: un DLC guardado de OTRA región no se
+                    // mezcla con el título efectivo: con el juego EU
+                    // extraído y un .pkg de DLC US guardado, el DLC US
+                    // se listaba como del juego EU. Sin título
+                    // efectivo (no hay juego), no se puede filtrar y
+                    // se listan todos.
+                    if (title != null && dlcTitle != null && dlcTitle != title) return@forEach
                     val contentKey = header?.contentName?.takeIf { it.isNotBlank() }
                         ?: pkgFile.nameWithoutExtension
                     storedDlcPkgs.add(DlcInfo(pkgFile.nameWithoutExtension, dlcTitle?.id ?: title?.id ?: "", pkgFile.length(), isPkg = true, contentKey = contentKey))
@@ -1510,7 +1697,9 @@ class GameLibraryRepository(private val context: Context) {
         // que en estado de conflicto el update del ux0 antiguo ya no
         // es invisible; el .pkg guardado sigue sin contar como
         // instalado (ver isUpdateInstalled).
-        val updateInstalled = TitleId.entries.any { isUpdateInstalled(it.id) }
+        // R6-P2-04: por el título EFECTIVO, no por cualquier región:
+        // un update US instalado no es "update instalado" del juego EU.
+        val updateInstalled = title?.let { isUpdateInstalled(it.id) } ?: false
         // Firmware: criterio ÚNICO con FirmwareResolver. "Instalado"
         // significa instalado EN EL NÚCLEO (vs0 extraído o marcador
         // con versión); un PUP solo guardado NO es instalado (es
@@ -1559,6 +1748,9 @@ class GameLibraryRepository(private val context: Context) {
             licenseInstalledInCore = licenseInstalledInCore,
             dlcs = dlcs.sortedBy { it.dlcId },
             updateInstalled = updateInstalled,
+            // R6-P1-05: un update .pkg guardado sin instalar (para la
+            // UI de Importar: avisa de que hay un update pendiente).
+            updateStored = title?.let { findPkgPatchFile(it.id) != null } ?: false,
             firmwareInstalled = firmwareInstalled,
             firmwareName = firmwareName,
             saves = saves,
@@ -1647,6 +1839,50 @@ class GameLibraryRepository(private val context: Context) {
 
     private enum class ImportKind { GAME, DLC, UPDATE }
 
+    /**
+     * R6-P2-02: nombres de las entradas de un .zip/.vpk SIN extraerlo:
+     * se lee el End Of Central Directory de la cola y el directorio
+     * central (dos lecturas pequeñas por FileChannel). Barato frente
+     * a extraer ~2 GB. null si no se puede leer el índice (ZIP64,
+     * directorio central mayor de 4 MB, EOCD ausente o inconsistente):
+     * el llamador deja el comportamiento actual. No bloquea nunca.
+     */
+    private fun listZipEntryNames(uri: Uri): List<String>? {
+        return runCatching {
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                FileInputStream(pfd.fileDescriptor).channel.use { channel ->
+                    // Se lee con run: el escáner confunde la llamada
+                    // FileChannel size con un modificador de Compose.
+                    val fileSize = channel.run { size() }
+                    if (fileSize < 22) return@runCatching null
+                    val tailSize = minOf(fileSize, 65_557L).toInt()
+                    val tail = ByteArray(tailSize)
+                    val tailBuf = ByteBuffer.wrap(tail)
+                    var read = 0
+                    while (read < tailSize) {
+                        val n = channel.read(tailBuf, fileSize - tailSize + read)
+                        if (n < 0) break
+                        read += n
+                    }
+                    if (read < tailSize) return@runCatching null
+                    val eocd = findZipEocd(tail) ?: return@runCatching null
+                    val (count, cdSize, cdOffset) = eocd
+                    if (count <= 0 || cdSize <= 0 || cdSize > 4L * 1024L * 1024L || cdOffset < 0 || cdOffset + cdSize > fileSize) return@runCatching null
+                    val cdBytes = ByteArray(cdSize.toInt())
+                    val cdBuf = ByteBuffer.wrap(cdBytes)
+                    var cdRead = 0
+                    while (cdRead < cdBytes.size) {
+                        val n = channel.read(cdBuf, cdOffset + cdRead)
+                        if (n < 0) break
+                        cdRead += n
+                    }
+                    if (cdRead < cdBytes.size) return@runCatching null
+                    parseZipCentralDirectoryNames(cdBytes, count)
+                }
+            }
+        }.getOrNull()
+    }
+
     private fun importArchive(uri: Uri, fileName: String, kind: ImportKind, force: Boolean = false): ImportResult {
         // P0-2: restaurar respaldos .bak-* huérfanos antes de limpiar
         // nada (un .bak-* puede SER el juego si la app murió antes).
@@ -1702,6 +1938,37 @@ class GameLibraryRepository(private val context: Context) {
             // (y viceversa) sin avisar; un DLC importado como update
             // se guardaba en la ranura equivocada.
             pkgKindMismatch(parsed, pkgKind)?.let { return ImportResult.Rejected(it) }
+            // R6-P1-02(a): un .pkg de JUEGO sospechosamente pequeño
+            // (<200 MB; el juego real es 1,14 GB) parece un UPDATE,
+            // no el juego. Si se importa como juego, el núcleo lo
+            // instala por su SFO en patch/ y cada JUGAR lo reinstala
+            // sin que el juego arranque (bucle loadGame -3). Se avisa
+            // con el mismo flujo de confirmación que los duplicados
+            // (duplicateResult: el usuario confirma y se re-ejecuta
+            // con force = true), saltado con force. Límite: el SFO
+            // del .pkg va cifrado y no se puede distinguir un update
+            // de un juego por su contenido: el tamaño es la única
+            // pista. El tamaño declarado manda; si el header declara
+            // 0, se mide el archivo de origen.
+            if (kind == ImportKind.GAME && !force) {
+                val declaredSize = parsed.declaredTotalSizeBytes
+                val sourceSize = if (declaredSize > 0) {
+                    declaredSize
+                } else {
+                    runCatching {
+                        context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
+                    }.getOrDefault(-1L)
+                }
+                if (sourceSize in 1 until SUSPICIOUS_SMALL_GAME_PKG_BYTES) {
+                    return duplicateResult(
+                        "Este .pkg pesa solo ${formatSizeMb(sourceSize)} y el juego completo pesa ~1,14 GB: " +
+                            "parece un UPDATE, no el juego. Si lo importas como juego, el motor lo instalará " +
+                            "en otro sitio y cada JUGAR lo reinstalará sin que el juego arranque. " +
+                            "¿Quieres importarlo de todos modos como juego? Para importarlo como update, " +
+                            "cancela y usa Importar → Update. (El SFO del .pkg va cifrado: el tamaño es la única pista.)",
+                    )
+                }
+            }
             // Duplicado: si ya está subido, NO se vuelve a copiar en
             // silencio (eso era lo que hacía "engordar" al launcher).
             // Se avisa y el usuario elige Reemplazar o Cancelar.
@@ -1744,13 +2011,29 @@ class GameLibraryRepository(private val context: Context) {
                 // instalar (pkg.cpp: pkg_size < total_size -> false).
                 // Si falta tamaño, se borra el destino y se rechaza
                 // aquí, no minutos después en JUGAR.
+                // R6-P2-08(c): con declared == 0 (header sin ese campo)
+                // se compara con el tamaño del archivo de origen, si se
+                // conoce; sin él, el truncado sigue sin detectarse al
+                // importar y el fallo aparecerá en JUGAR (límite).
                 val declared = parsed.declaredTotalSizeBytes
-                if (declared > 0 && dest.length() < declared) {
+                val sourceSizeForTruncation = if (declared == 0L) {
+                    runCatching {
+                        context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
+                    }.getOrDefault(-1L)
+                } else {
+                    -1L
+                }
+                if (pkgCopyIncomplete(dest.length(), declared, sourceSizeForTruncation)) {
                     val actual = dest.length()
                     dest.delete()
+                    val expectedText = if (declared > 0) {
+                        "su header declara ${formatSizeMb(declared)}"
+                    } else {
+                        "el archivo elegido pesa ${formatSizeMb(sourceSizeForTruncation)}"
+                    }
                     return ImportResult.Rejected(
-                        "El .pkg está incompleto: pesa ${formatSizeMb(actual)} pero su header " +
-                            "declara ${formatSizeMb(declared)}. Vuelve a descargarlo o copiarlo completo.",
+                        "El .pkg está incompleto: pesa ${formatSizeMb(actual)} pero $expectedText. " +
+                            "Vuelve a descargarlo o copiarlo completo.",
                     )
                 }
                 val sizeBytes = dest.length()
@@ -1809,6 +2092,45 @@ class GameLibraryRepository(private val context: Context) {
             val neededBytes = zipImportNeededBytes(zipSizeBytes)
             if (!hasFreeSpace(ux0Dir, neededBytes)) {
                 return ImportResult.Rejected(freeSpaceMessage(neededBytes, freeBytes(ux0Dir)))
+            }
+        }
+        // R6-P2-02: primera pasada barata: listar las entradas del zip
+        // por su directorio central (sin extraer) y comprobar duplicado
+        // y multi-región ANTES de extraer ~2 GB. Si el índice no se
+        // puede leer (ZIP64, directorio central enorme, fallo de
+        // lectura) o el título no se puede determinar barato (juego
+        // plano: el Title ID vive en el SFO, no en los nombres), se
+        // sigue con el comportamiento actual (los chequeos de
+        // duplicado post-extracción quedan como red de seguridad).
+        if (!force) {
+            val zipEntryNames = listZipEntryNames(uri)
+            if (zipEntryNames != null) {
+                val zipTitles = zipTitleDirNames(zipEntryNames).distinct()
+                if (zipTitles.size > 1) {
+                    return ImportResult.Rejected(
+                        "El archivo trae dos regiones (${zipTitles.joinToString(" y ") { it.id }}). " +
+                            "Importa un paquete de una sola región: PCSE00480 (US) o PCSB00598 (EU).",
+                    )
+                }
+                val zipTitle = zipTitles.firstOrNull()
+                if (zipTitle != null) {
+                    when (kind) {
+                        ImportKind.GAME -> {
+                            gameDuplicateMessage(zipTitle.id, incomingIsPkg = false)?.let { return duplicateResult(it) }
+                        }
+                        ImportKind.DLC -> {
+                            val zipDlcIds = zipAddcontDlcIds(zipEntryNames)
+                            val already = zipDlcIds.filter { isDlcInstalled(zipTitle.id, it) }
+                            if (already.isNotEmpty()) {
+                                val messages = already.mapNotNull { dlcDuplicateMessage(zipTitle.id, it, incomingIsPkg = false) }
+                                return duplicateResult(messages.joinToString("\n"))
+                            }
+                        }
+                        ImportKind.UPDATE -> {
+                            updateDuplicateMessage(zipTitle.id, incomingIsPkg = false)?.let { return duplicateResult(it) }
+                        }
+                    }
+                }
             }
         }
         return try {
@@ -2094,6 +2416,17 @@ class GameLibraryRepository(private val context: Context) {
             if (!force) {
                 gameDuplicateMessage(title.id, incomingIsPkg = false)?.let { return duplicateResult(it) }
             }
+            // R6-P2-01: sin espacio no se empieza la copia: el staging
+            // en caché más la instalación en ux0/app/ conviven en la
+            // misma partición (el doble del tamaño del árbol). Si el
+            // tamaño no se puede medir, se avisa en el log y NO se
+            // bloquea: el fallo, si lo hay, lo da la copia.
+            val treeSize = documentTreeSizeBytes(root)
+            if (treeSize < 0) {
+                LauncherLog.append(context, "import", "No se pudo medir el tamaño de la carpeta ${title.id}; se importa sin chequeo de espacio.")
+            } else if (!hasFreeSpace(context.cacheDir, treeSize * 2)) {
+                return ImportResult.Rejected(freeSpaceMessage(treeSize * 2, freeBytes(context.cacheDir)))
+            }
             restoreStaleBackups()
             cleanStaleImportLeftovers()
             val tmp = File(context.cacheDir, "import_folder_${title.id}")
@@ -2168,6 +2501,18 @@ class GameLibraryRepository(private val context: Context) {
                         "con la estructura ${title.id}/addcont/<DLC>/ dentro, o importa el .zip del DLC.",
                 )
             }
+            // R6-P2-01: igual que el juego: el staging en caché más la
+            // instalación en ux0/addcont/ conviven en la misma
+            // partición (el doble del tamaño; el árbol entero es una
+            // cota superior, ya que solo se copia addcont/). Si el
+            // tamaño no se puede medir, se avisa en el log y NO se
+            // bloquea.
+            val treeSize = documentTreeSizeBytes(root)
+            if (treeSize < 0) {
+                LauncherLog.append(context, "import", "No se pudo medir el tamaño de la carpeta de DLCs ${title.id}; se importa sin chequeo de espacio.")
+            } else if (!hasFreeSpace(context.cacheDir, treeSize * 2)) {
+                return ImportResult.Rejected(freeSpaceMessage(treeSize * 2, freeBytes(context.cacheDir)))
+            }
             val tmp = File(context.cacheDir, "import_dlc_folder_${title.id}")
             tmp.deleteRecursively()
             tmp.mkdirs()
@@ -2231,6 +2576,23 @@ class GameLibraryRepository(private val context: Context) {
             }
         }
     }
+
+    /**
+     * R6-P2-01: tamaño estimado de un árbol SAF (suma de
+     * DocumentFile.length(), recursivo). -1 si algún tamaño es
+     * desconocido: el llamador avisa en el log y NO bloquea (mejor
+     * intentar que rechazar por no saber medir).
+     */
+    private fun documentTreeSizeBytes(doc: DocumentFile): Long {
+        if (doc.isFile) return doc.length()
+        var total = 0L
+        for (child in doc.listFiles()) {
+            val childSize = documentTreeSizeBytes(child)
+            if (childSize < 0) return -1L
+            total += childSize
+        }
+        return total
+    }
     fun importFirmware(uri: Uri, fileName: String): ImportResult {
         // Igual que los paquetes: no fiarse solo del nombre del selector.
         val ext = detectArchiveExtension(uri, fileName)
@@ -2253,13 +2615,14 @@ class GameLibraryRepository(private val context: Context) {
             }
             // P1-13: un PUP truncado (p. ej. 5 MB con cabecera SCEUF)
             // se aceptaba y cada JUGAR reintentaba instalarlo entero.
-            // Un PUP real de Vita 3.74 ronda ~300 MB.
+            // Un PUP real de Vita 3.74 ronda los 134 MB (ver
+            // FirmwareResolver.APPROX_PUP_SIZE_TEXT).
             if (tmp.length() < MIN_PUP_SIZE_BYTES) {
                 val pupSize = tmp.length()
                 tmp.delete()
                 return ImportResult.Rejected(
                     "El archivo de firmware parece incompleto (pesa ${formatSizeMb(pupSize)}; " +
-                        "un PSVUPDAT.PUP real ronda los 300 MB). Elige el PUP completo.",
+                        "un PSVUPDAT.PUP real ronda los ${FirmwareResolver.APPROX_PUP_SIZE_TEXT}). Elige el PUP completo.",
                 )
             }
             // El PUP se reconoce por su magia SCEUF, no solo por el
@@ -2283,7 +2646,7 @@ class GameLibraryRepository(private val context: Context) {
             ImportResult.FirmwareSuccess(fileName)
         } catch (e: Exception) {
             // P2-C10: si copyUriToFile lanzó, el PSVUPDAT.PUP.tmp
-            // (hasta ~300 MB) quedaba huérfano en firmware/.
+            // (hasta ~134 MB) quedaba huérfano en firmware/.
             runCatching { File(firmwareDir(), "PSVUPDAT.PUP.tmp").delete() }
             ImportResult.Failed("No se pudo guardar el firmware: ${e.message}")
         }
@@ -2535,15 +2898,104 @@ class GameLibraryRepository(private val context: Context) {
      * valide el juego). Cada decisión queda registrada en el log: en la 0.2.10 el .pkg no se borró
      * y no había ni una línea de log que dijera por qué, así que el
      * fallo era invisible. El work.bin se conserva siempre.
+     * R6-P0: [requireValidEboot] en false SOLO lo usa el borrado
+     * tras loadGame == 0 (tryLaunchEmbedded): el núcleo acaba de
+     * cargar el juego, así que el eboot es válido por definición y
+     * la puerta de ebootValidation (que daba falso negativo con el
+     * SELF real) no debe bloquear el borrado. La limpieza manual
+     * sigue con la puerta puesta (true): sin loadGame que lo
+     * valide, un eboot no válido significa que el .pkg es la única
+     * vía de reinstalación. El .pkg se busca en los dos ux0
+     * (findPkgGameFile dual): puede vivir en el antiguo.
      */
-    fun deleteStoredGamePkg(titleId: String): Boolean {
+    fun deleteStoredGamePkg(titleId: String, requireValidEboot: Boolean = true): Boolean {
         if (titleId.isBlank() || titleId == "." || titleId == ".." || '/' in titleId || '\\' in titleId) {
             LauncherLog.append(context, "delete", ".pkg no borrado: titleId no válido")
             return false
         }
-        val ebootCheck = ebootValidation(titleId)
-        if (ebootCheck.reason != EbootInvalidReason.OK) {
-            LauncherLog.append(context, "delete", ".pkg no borrado: ${ebootCheck.logLine()}")
+        if (requireValidEboot) {
+            val ebootCheck = ebootValidation(titleId)
+            if (ebootCheck.reason != EbootInvalidReason.OK) {
+                LauncherLog.append(context, "delete", ".pkg no borrado: ${ebootCheck.logLine()}")
+                return false
+            }
+        }
+        val pkg = findPkgGameFile(titleId)
+        if (pkg == null) {
+            LauncherLog.append(context, "delete", ".pkg no borrado: no hay .pkg guardado de $titleId")
+            return false
+        }
+        val size = pkg.length()
+        val ok = pkg.delete()
+        if (ok) {
+            val why = if (requireValidEboot) {
+                "el juego ya está extraído"
+            } else {
+                "loadGame validó el juego (sin puerta de eboot)"
+            }
+            LauncherLog.append(context, "delete", ".pkg guardado $titleId borrado ($size bytes): $why")
+        } else {
+            LauncherLog.append(context, "delete", ".pkg NO se pudo borrar: ${pkg.name} ($size bytes)")
+        }
+        return ok
+    }
+
+    /**
+     * R6-P1-06: borra el .pkg guardado de un DLC o update DESPUÉS de
+     * instalarse con éxito, CONSERVANDO su work.bin (igual que el
+     * juego). Guardas: solo se borra si el contenido quedó realmente
+     * instalado (UPDATE: contenido real en patch/; DLC: carpeta en
+     * addcont/ con la misma clave de contenido que el header del
+     * .pkg). Si el header no se lee, la clave es el nombre del
+     * archivo (mejor esfuerzo). El juego NO pasa por aquí: su .pkg se
+     * borra solo tras loadGame == 0 (deleteStoredGamePkg). Lo llaman
+     * installStoredAddonPkgs, installPkgWithEmbeddedCore (Vita3KLauncher)
+     * e installImportedPkg (LauncherViewModel) tras installPkgFile con
+     * éxito.
+     */
+    fun deleteStoredAddonPkg(pkgFile: File, kind: com.danielsnagustin.childoflight.launcher.model.PkgKind, titleId: String): Boolean {
+        if (kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME) return false
+        if (!pkgFile.isFile) return false
+        val installed = when (kind) {
+            com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE -> isUpdateInstalled(titleId)
+            com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC -> {
+                val contentKey = runCatching {
+                    pkgFile.inputStream().use { PkgHeaderParser.parse(it) }
+                }.getOrNull()?.getOrNull()?.contentName?.takeIf { it.isNotBlank() }
+                    ?.let { dlcMergeKey(it) }
+                    ?: dlcMergeKey(pkgFile.nameWithoutExtension)
+                bothUx0Dirs().any { ux0 ->
+                    File(ux0, "addcont/$titleId").listFiles()
+                        ?.any { it.isDirectory && dlcMergeKey(it.name) == contentKey } == true
+                }
+            }
+            com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME -> false
+        }
+        if (!installed) {
+            LauncherLog.append(context, "delete", ".pkg de ${kind.label} no borrado: el contenido no quedó instalado todavía (${pkgFile.name})")
+            return false
+        }
+        val size = pkgFile.length()
+        val ok = pkgFile.delete()
+        if (ok) {
+            LauncherLog.append(context, "delete", ".pkg de ${kind.label} borrado tras instalar ($size bytes): ${pkgFile.name}")
+        } else {
+            LauncherLog.append(context, "delete", ".pkg de ${kind.label} NO se pudo borrar: ${pkgFile.name} ($size bytes)")
+        }
+        return ok
+    }
+
+    /**
+     * R6-P1-02(b): borra el .pkg guardado del juego EN CUALQUIER ESTADO
+     * (sin exigir juego extraído ni eboot válido): es el gancho para el
+     * borrado de un toque del .pkg "update disfrazado de juego" que deja
+     * el lanzamiento en bucle loadGame -3. El work.bin se conserva
+     * siempre. Solo lo llama la UI con confirmación del usuario: sin
+     * juego extraído, este .pkg es la única copia del juego.
+     */
+    fun deleteStoredGamePkgAnyState(titleId: String): Boolean {
+        if (titleId.isBlank() || titleId == "." || titleId == ".." || '/' in titleId || '\\' in titleId) {
+            LauncherLog.append(context, "delete", ".pkg no borrado: titleId no válido")
             return false
         }
         val pkg = findPkgGameFile(titleId)
@@ -2554,7 +3006,7 @@ class GameLibraryRepository(private val context: Context) {
         val size = pkg.length()
         val ok = pkg.delete()
         if (ok) {
-            LauncherLog.append(context, "delete", ".pkg guardado $titleId borrado ($size bytes): el juego ya está extraído")
+            LauncherLog.append(context, "delete", ".pkg guardado $titleId borrado por el usuario ($size bytes): el juego no estaba extraído")
         } else {
             LauncherLog.append(context, "delete", ".pkg NO se pudo borrar: ${pkg.name} ($size bytes)")
         }

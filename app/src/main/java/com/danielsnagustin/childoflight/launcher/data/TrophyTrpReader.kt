@@ -213,36 +213,78 @@ object TrophyTrpReader {
     }
 
     /**
-     * R5-A4-8: lee el TROPHY.TRP instalado por el núcleo en
-     * ux0/user/00/trophy/<TITLE>/TROPHY.TRP. Es el TRP descifrado por
-     * el núcleo al instalar; si el empaquetado sigue cifrado o
-     * comprimido dentro de su contenedor, este es el que sí se puede
-     * leer. Unreadable si el núcleo aún no lo creó (no se ha jugado).
+     * R6-P1-18: lee el TROPCONF.SFM instalado por el núcleo en
+     * ux0/user/00/trophy/data/<NPCOMMID>/TROPCONF.SFM. La ruta vieja
+     * (trophy/<TITLE_ID>/TROPHY.TRP) NO la usa el núcleo: lo
+     * instalado es trophy/data/<NPCOMMID>/ con TROPCONF.SFM,
+     * TROPUSR.DAT y TROPxxx.PNG (psdevwiki "Trophy"; log real de
+     * Vita3K, issue Vita3K-Android #649: trophy/data/NPWR12049_00/
+     * TROPUSR.DAT). El pin no trae el módulo np/trophy/, así que la
+     * ruta no se puede verificar ahí; queda pendiente confirmarla en
+     * el teléfono (R6-S-14). El TROPCONF.SFM instalado es XML en
+     * texto plano tras una cabecera binaria de 0x40 B, formato que
+     * este lector ya busca: se pasan sus bytes al lector existente.
+     * Si se conoce el [npcommid] (del <npcommid> del TRP empaquetado),
+     * se mira primero su carpeta; si no, se escanean TODOS los
+     * directorios bajo trophy/data/ (el launcher es de un solo juego)
+     * y vale el primero cuyo TROPCONF.SFM se parsea. Unreadable si el
+     * núcleo aún no creó nada (no se ha jugado).
      */
-    fun readInstalledTrp(ux0Dir: File, titleId: String): TrpReadResult {
-        val trp = File(ux0Dir, "user/00/trophy/$titleId/TROPHY.TRP")
-        if (!trp.isFile) {
-            return TrpReadResult.Unreadable(
-                reason = "El núcleo aún no creó TROPHY.TRP instalado para $titleId.",
-                detail = "Ruta buscada: ${trp.path}",
-            )
+    fun readInstalledTrp(ux0Dir: File, titleId: String, npcommid: String? = null): TrpReadResult {
+        val dataDir = File(ux0Dir, "user/00/trophy/data")
+        if (!npcommid.isNullOrBlank()) {
+            val direct = File(dataDir, "$npcommid/TROPCONF.SFM")
+            if (direct.isFile) return readFileCached(direct)
         }
-        return readFileCached(trp)
+        val dirs = dataDir.listFiles()?.filter { it.isDirectory }?.sortedBy { it.name }.orEmpty()
+        for (dir in dirs) {
+            val conf = File(dir, "TROPCONF.SFM")
+            if (!conf.isFile) continue
+            val result = readFileCached(conf)
+            if (result is TrpReadResult.Success) return result
+        }
+        return TrpReadResult.Unreadable(
+            reason = "El núcleo aún no creó TROPCONF.SFM instalado para $titleId.",
+            detail = "Ruta buscada: ${dataDir.path}/<NPCOMMID>/TROPCONF.SFM" +
+                (if (dirs.isEmpty()) " (no existe trophy/data/)" else " (carpetas vistas: ${dirs.joinToString { it.name }})"),
+        )
+    }
+
+    /**
+     * R6-P1-18: <npcommid> en texto plano dentro de unos bytes (del
+     * TRP empaquetado o de un TROPCONF.SFM): p. ej. NPWR12049_00.
+     * Null si no aparece en texto plano (contenedor cifrado o
+     * comprimido). Puro (solo bytes): no lee el disco.
+     */
+    fun extractNpcommid(bytes: ByteArray): String? {
+        if (bytes.isEmpty()) return null
+        val text = String(bytes, Charsets.UTF_8)
+        return Regex("<npcommid>([^<]+)</npcommid>").find(text)
+            ?.groupValues?.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() }
     }
 
     /**
      * R5-A4-8: diagnóstico TRP con fallback. Primero el TRP
      * empaquetado del juego; si es Unreadable (cifrado o comprimido
-     * en su contenedor), reintenta con el TRP instalado por el núcleo
-     * (ux0/user/00/trophy/<TITLE>/TROPHY.TRP, derivado de appDir
-     * como ux0/app/<TITLE>). Nunca lanza; nunca inventa un conteo.
+     * en su contenedor), reintenta con el TROPCONF.SFM instalado por
+     * el núcleo (ux0/user/00/trophy/data/<NPCOMMID>/TROPCONF.SFM,
+     * derivado de appDir como ux0/app/<TITLE>). El NPCOMMID se
+     * intenta resolver del <npcommid> del TRP empaquetado (aunque su
+     * XML de trofeos no se parseara, el elemento puede seguir en
+     * texto plano); si no se resuelve, readInstalledTrp escanea
+     * todas las carpetas bajo trophy/data/. Nunca lanza; nunca
+     * inventa un conteo.
      */
     fun readTrpForDiagnosis(appDir: File): TrpReadResult {
         val bundled = readBundledTrp(appDir)
         if (bundled is TrpReadResult.Success) return bundled
         val ux0Dir = appDir.parentFile?.parentFile
         if (ux0Dir == null) return bundled
-        return readInstalledTrp(ux0Dir, appDir.name)
+        val npcommid = runCatching {
+            TrophyStoreReader.gameBundledTrp(appDir)?.takeIf { it.isFile && it.length() <= MAX_TRP_BYTES }
+                ?.readBytes()?.let { extractNpcommid(it) }
+        }.getOrNull()
+        return readInstalledTrp(ux0Dir, appDir.name, npcommid)
     }
 
     fun compareByName(

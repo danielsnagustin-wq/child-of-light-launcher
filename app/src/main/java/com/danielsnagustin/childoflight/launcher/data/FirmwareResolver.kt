@@ -75,6 +75,48 @@ sealed class FirmwareStatus {
 
 object FirmwareResolver {
 
+    /**
+     * R6-P2-06: UN SOLO SITIO para el tamaño del PUP. El repo se
+     * contradecía (GameLibraryRepository decía "~300 MB" y aquí
+     * "133 MB"): el PUP real de Vita 3.74 pesa 133.834.240 B
+     * (~134 MB, ver el ejemplo de size en installedPupSize). Todos
+     * los mensajes al usuario usan APPROX_PUP_SIZE_TEXT. El mínimo
+     * de aceptación (MIN_PUP_SIZE_BYTES en GameLibraryRepository)
+     * sigue en 100 MB: por debajo no es un PUP completo.
+     * Límite conocido (sospecha R6-S-02): el tamaño exacto del PUP
+     * 3.74 solo se dirime con el PUP real del usuario en el teléfono.
+     */
+    const val APPROX_PUP_SIZE_BYTES = 133_834_240L
+    const val APPROX_PUP_SIZE_TEXT = "134 MB"
+
+    /**
+     * R6-P2-06: versión mínima de firmware que necesita el juego:
+     * 3.15. [versionBelowMinimum] es pura (testeable en JVM): true
+     * si la versión es menor que 3.15 o no se puede interpretar
+     * (desconocida). 3.60-3.73 NO se bloquean: son mayores que el
+     * mínimo y el juego los acepta; solo se avisa (sin bloquear)
+     * cuando la versión es menor o desconocida. La comparación es
+     * numérica por componentes (3.9 < 3.15, no al revés: comparar
+     * como texto mentiría).
+     */
+    const val MIN_FIRMWARE_VERSION = "3.15"
+
+    fun versionBelowMinimum(version: String?): Boolean {
+        if (version.isNullOrBlank()) return true
+        val parts = version.trim().split(".")
+        val numbers = parts.map { it.toIntOrNull() ?: return true }
+        if (numbers.isEmpty()) return true
+        val minParts = MIN_FIRMWARE_VERSION.split(".").map { it.toInt() }
+        val length = maxOf(numbers.size, minParts.size)
+        for (i in 0 until length) {
+            val actual = numbers.getOrElse(i) { 0 }
+            val minimum = minParts.getOrElse(i) { 0 }
+            if (actual < minimum) return true
+            if (actual > minimum) return false
+        }
+        return false
+    }
+
     // Ronda 0.2.55 P1-5: caché de resolve(). Listar vita/vs0 (miles
     // de archivos) en cada refresco era el I/O más caro del escaneo
     // después de los tamaños. La marca es barata (mtimes + tamaño del
@@ -295,9 +337,10 @@ object FirmwareResolver {
 
     /**
      * Borra el PUP guardado cuando el firmware YA está instalado en
-     * el núcleo. El PUP (133 MB) solo hace falta para instalar; una
-     * vez instalado, es peso redundante: el usuario solo quiere lo
-     * que pesa el juego y la APK (2026-11-09). Sin marcador (firmware
+     * el núcleo. El PUP (134 MB, ver APPROX_PUP_SIZE_TEXT) solo hace
+     * falta para instalar; una vez instalado, es peso redundante: el
+     * usuario solo quiere lo que pesa el juego y la APK (2026-11-09).
+     * Sin marcador (firmware
      * solo guardado, sin instalar) NO se borra nada: el PUP es la
      * única vía para instalarlo. Si el firmware se borra alguna vez
      * con deleteFirmware, habrá que volver a importar el PUP. El

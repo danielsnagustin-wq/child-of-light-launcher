@@ -482,7 +482,15 @@ object PkgHeaderParser {
                 if (pos + 12 > bytes.size) return null
                 return readU32BE(bytes, pos + 8)
             }
-            if (size < 0 || size > 4096) return null
+            // R6-P2-08(d): el tope era "size > 4096", un límite
+            // arbitrario que no existe en upstream (pkg.cpp): lo que
+            // manda es no salirse del búfer leído (INFO_READ_BYTES).
+            // Una entrada mayor que lo que queda de búfer no se puede
+            // saltar dentro de esta ventana y la tabla no se puede
+            // seguir leyendo: null, igual que antes en ese caso. La
+            // aritmética va en Long: un size u32 grande no debe
+            // desbordar el Int y convertir el salto en negativo.
+            if (size < 0 || pos.toLong() + 8L + size > bytes.size) return null
             pos += 8 + size
         }
         return null
