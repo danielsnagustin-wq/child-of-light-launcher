@@ -248,4 +248,31 @@ class FirmwareResolverTest {
         assertTrue(FirmwareResolver.markInstalled(root, "3.74"))
         assertFalse(FirmwareResolver.deleteSavedPupIfInstalled(root))
     }
+
+    @Test
+    fun `resolve cachea y se invalida al borrar el vs0`() {
+        // Ronda 0.2.55 P1-5: dos resolve() seguidos sin cambios
+        // devuelven lo mismo sin re-listar vs0; borrar el contenido
+        // del vs0 (cambia el mtime del directorio) invalida la caché
+        // y el siguiente resolve ya no es Ready.
+        val root = tmp.newFolder("vitaRoot")
+        File(File(root, "vita"), "vs0/sys").mkdirs()
+        assertTrue(FirmwareResolver.resolve(root).ready)
+        assertTrue(FirmwareResolver.resolve(root).ready)
+        File(File(root, "vita"), "vs0/sys").deleteRecursively()
+        Thread.sleep(10)
+        assertEquals(FirmwareStatus.Missing, FirmwareResolver.resolve(root))
+    }
+
+    @Test
+    fun `resolve se invalida al migrar el vs0 antiguo`() {
+        // Ronda 0.2.55 P1-5: un resolve() anterior (Missing, con el
+        // vs0 en la ruta antigua) no debe quedarse cacheado tras la
+        // migración explícita: el siguiente resolve ya es Ready.
+        val root = tmp.newFolder("vitaRoot")
+        File(File(root, "vs0"), "sys").mkdirs()
+        assertEquals(FirmwareStatus.Missing, FirmwareResolver.resolve(root))
+        assertTrue(FirmwareResolver.migrateLegacyVs0(root))
+        assertTrue(FirmwareResolver.resolve(root).ready)
+    }
 }

@@ -70,6 +70,74 @@ class R5SpaceLicenseTest {
         )
     }
 
+    // --- P0 espacio libre (0.2.55): la sonda y el mensaje no-medible ---
+
+    @Test
+    fun `statFsProbeDir con pkg inexistente devuelve el ux0 existente`() {
+        // El caso real del bug: en instalación limpia ux0/pkg/ aún
+        // no existe; la sonda es ux0/, que sí existe.
+        val root = tmp.newFolder("vitaRoot")
+        val ux0 = File(root, "ux0").apply { mkdirs() }
+        assertEquals(ux0, GameLibraryRepository.statFsProbeDir(File(ux0, "pkg"), root))
+    }
+
+    @Test
+    fun `statFsProbeDir con tres niveles inexistentes sube al ancestro existente`() {
+        val root = tmp.newFolder("vitaRoot")
+        val nested = File(File(File(root, "ux0"), "pkg"), "sub")
+        assertEquals(root, GameLibraryRepository.statFsProbeDir(nested, root))
+    }
+
+    @Test
+    fun `statFsProbeDir devuelve el mismo directorio si ya existe`() {
+        val root = tmp.newFolder("vitaRoot")
+        assertEquals(root, GameLibraryRepository.statFsProbeDir(root, tmp.root))
+    }
+
+    @Test
+    fun `statFsProbeDir sin padre existente devuelve el fallback`() {
+        val fallback = tmp.newFolder("fallback")
+        assertEquals(
+            fallback,
+            GameLibraryRepository.statFsProbeDir(File("solo-nombre-inexistente"), fallback),
+        )
+    }
+
+    @Test
+    fun `freeSpaceMessage con espacio no medible no dice 0 bytes libres`() {
+        assertEquals(
+            "No se pudo medir el espacio libre: hacen falta 2.28 GB",
+            GameLibraryRepository.freeSpaceMessage(2_283_421_152L, -1L),
+        )
+    }
+
+    @Test
+    fun `freeSpaceMessage con 0 bytes libres reales si dice 0 bytes libres`() {
+        // 0 medido de verdad es disco lleno, distinto de no-medible.
+        assertEquals(
+            "Falta espacio: hacen falta 2.28 GB, hay 0 bytes libres",
+            GameLibraryRepository.freeSpaceMessage(2_283_421_152L, 0L),
+        )
+    }
+
+    @Test
+    fun `freeSpaceMessage con declarado explica el pico del pkg`() {
+        assertEquals(
+            "Falta espacio: hacen falta 2.28 GB, hay 1.61 GB libres. " +
+                "El pico incluye el .pkg guardado (1.14 GB) y su extracción (1.14 GB); " +
+                "tras instalarlo, el .pkg se borra solo",
+            GameLibraryRepository.freeSpaceMessage(2_283_421_152L, 1_610_612_736L, 1_141_710_576L),
+        )
+    }
+
+    @Test
+    fun `freeSpaceMessage sin declarado no explica el pico`() {
+        assertEquals(
+            "Falta espacio: hacen falta 2.28 GB, hay 1.61 GB libres",
+            GameLibraryRepository.freeSpaceMessage(2_283_421_152L, 1_610_612_736L, 0L),
+        )
+    }
+
     // --- R5-A4-3: licencia en el núcleo ---
 
     @Test

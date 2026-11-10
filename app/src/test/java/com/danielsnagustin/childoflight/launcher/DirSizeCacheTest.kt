@@ -49,14 +49,37 @@ class DirSizeCacheTest {
         val dir = Files.createTempDirectory("cache-test").toFile()
         val cache = DirSizeCache()
         try {
-            val f = File(dir, "a.bin")
+            File(dir, "sub").mkdir()
+            val f = File(dir, "sub/a.bin")
             f.writeBytes(ByteArray(100))
             assertEquals(100L, cache.sizeOf(dir))
-            // Modificar el contenido en el sitio no cambia el mtime del
-            // directorio: sin invalidate, la caché devuelve el valor viejo.
+            // Modificar el contenido en el sitio de un archivo ANIDADO
+            // no cambia ni el mtime del directorio ni el agregado de
+            // primer nivel: sin invalidate, la caché devuelve el valor
+            // viejo. (Ronda 0.2.55 P2-9: un archivo de primer nivel
+            // que crece SÍ se ve por el agregado; ver el test de abajo.)
             f.writeBytes(ByteArray(200))
             assertEquals(100L, cache.sizeOf(dir))
             cache.invalidate(dir)
+            assertEquals(200L, cache.sizeOf(dir))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun sizeUpdatesWhenTopLevelFileGrowsInPlace() {
+        // Ronda 0.2.55 P2-9: crecer un archivo de primer nivel sin
+        // crear/borrar nada no cambia el mtime del directorio, pero
+        // sí el agregado de primer nivel: la caché debe invalidarse
+        // sola y devolver el tamaño nuevo.
+        val dir = Files.createTempDirectory("cache-test").toFile()
+        val cache = DirSizeCache()
+        try {
+            val f = File(dir, "a.bin")
+            f.writeBytes(ByteArray(100))
+            assertEquals(100L, cache.sizeOf(dir))
+            f.writeBytes(ByteArray(200))
             assertEquals(200L, cache.sizeOf(dir))
         } finally {
             dir.deleteRecursively()
