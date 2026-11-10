@@ -80,8 +80,9 @@ private fun parseHex(hex: String): Color = try {
  * tocar el núcleo. Degradado radial plata en el centro, color del
  * botón en el medio y azul profundo en el borde: el mismo aspecto
  * que el overlay dibuja en el juego (GamepadOverlayView), en vez de
- * un círculo plano de color. La zona Igniculus no lo usa: es una
- * zona, no un botón.
+ * un círculo plano de color. 0.2.56: la zona Igniculus lo usa solo
+ * en su orbe interior (84%): fuera del orbe la zona queda
+ * transparente, como en el juego.
  */
 private fun touchPreviewGlassBrush(base: Color): Brush = Brush.radialGradient(
     listOf(Color(0xFFDCE8F5), base.copy(alpha = 0.85f), Color(0xFF182644)),
@@ -236,8 +237,12 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                     // Antes la rama igniculus devolvía Color
                                     // y la otra Brush: el if quedaba como Any
                                     // y ninguna sobrecarga de background
-                                    // aplicaba (run #159).
-                                    if (control.kind == "igniculus") SolidColor(parseHex(control.colorHex))
+                                    // aplicaba (run #159). 0.2.56: la zona
+                                    // Igniculus es transparente fuera del
+                                    // orbe (como en el juego): el cristal va
+                                    // en el orbe interior (84%), no en toda
+                                    // la zona; el borde queda como anillo.
+                                    if (control.kind == "igniculus") SolidColor(Color.Transparent)
                                     else touchPreviewGlassBrush(parseHex(control.colorHex)),
                                     shape,
                                 )
@@ -297,6 +302,23 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                 },
                             contentAlignment = Alignment.Center,
                         ) {
+                            // 0.2.56: orbe interior como en el juego:
+                            // pomo del stick (42% del tamano) y orbe de
+                            // Igniculus (84% de la zona), con el mismo
+                            // cristal. La etiqueta va encima de todo.
+                            if (control.kind == "stick") {
+                                Box(
+                                    modifier = Modifier.size(size * 0.42f)
+                                        .background(touchPreviewGlassBrush(parseHex(control.colorHex)), CircleShape)
+                                        .border(1.dp, ColIceBlue.copy(alpha = 0.7f), CircleShape),
+                                )
+                            } else if (control.kind == "igniculus") {
+                                Box(
+                                    modifier = Modifier.size(size * 0.84f)
+                                        .background(touchPreviewGlassBrush(parseHex(control.colorHex)), CircleShape)
+                                        .border(1.dp, ColIceBlue.copy(alpha = 0.7f), CircleShape),
+                                )
+                            }
                             Text(control.label, fontWeight = FontWeight.Bold, color = ColNight, style = MaterialTheme.typography.bodySmall)
                         }
                     }
@@ -444,7 +466,22 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                         FilterChip(
                             selected = control.vitaButton == button,
                             onClick = { updateControl(control.copy(vitaButton = button)) },
-                            label = { Text(button.label) },
+                            // R6-P2-24: LEFT_STICK, RIGHT_STICK y NONE
+                            // no llegan al juego (son ejes o sin
+                            // asignar: toSdlButton() devuelve null y el
+                            // botón queda fantasma). No se excluyen del
+                            // remap: el usuario puede quererlas como
+                            // placeholder documentado, pero la opción
+                            // avisa de que no tiene efecto en el juego.
+                            label = {
+                                Text(
+                                    if (button == VitaButton.NONE || button == VitaButton.LEFT_STICK || button == VitaButton.RIGHT_STICK) {
+                                        button.label + " · Sin efecto en el juego"
+                                    } else {
+                                        button.label
+                                    },
+                                )
+                            },
                             modifier = Modifier.padding(end = 6.dp),
                         )
                     }

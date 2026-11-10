@@ -64,6 +64,7 @@ import com.danielsnagustin.childoflight.launcher.ui.settings.extractRecentErrorL
 import com.danielsnagustin.childoflight.launcher.ui.settings.guardTurnipDriver
 import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategorySettings
 import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategoryUiPrefs
+import com.danielsnagustin.childoflight.launcher.ui.settings.turnipKeptNote
 import com.danielsnagustin.childoflight.launcher.model.defaultProfileFor
 import com.danielsnagustin.childoflight.launcher.model.effectiveSettings
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
@@ -203,6 +204,12 @@ internal fun restoreSafeModeSnapshot(snapshot: LauncherSettings, current: Launch
         // el valor anterior (salvo que el usuario lo encendiera durante
         // el modo seguro, que se conserva).
         fpsHack = keepIfTouched(current.fpsHack, forced.fpsHack, snapshot.fpsHack),
+        // R6-P1-09: el modo seguro también neutraliza estos 3
+        // campos experimentales (ver applySafeMode); al salir,
+        // vuelven los valores anteriores con la misma regla.
+        hashlessTextureCache = keepIfTouched(current.hashlessTextureCache, forced.hashlessTextureCache, snapshot.hashlessTextureCache),
+        memoryMapping = keepIfTouched(current.memoryMapping, forced.memoryMapping, snapshot.memoryMapping),
+        fileLoadingDelay = keepIfTouched(current.fileLoadingDelay, forced.fileLoadingDelay, snapshot.fileLoadingDelay),
     )
 }
 
@@ -498,6 +505,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     // tarjeta muestra "Comprobando…" hasta que esto es true.
     private val _statusLoaded = MutableStateFlow(false)
     val statusLoaded: StateFlow<Boolean> = _statusLoaded.asStateFlow()
+
+    // R6-P1-12: true si el último escaneo FALLÓ (disco, etc.): Home
+    // muestra "No se pudo comprobar el estado" + Reintentar en vez
+    // de mentir IMPORTAR con un GameStatus() vacío. Se limpia en el
+    // primer escaneo con éxito.
+    private val _statusError = MutableStateFlow(false)
+    val statusError: StateFlow<Boolean> = _statusError.asStateFlow()
 
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
@@ -865,12 +879,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // estado anterior en vez de tumbar la corrutina.
             val scanStartedMillis = SystemClock.elapsedRealtime()
             runCatching { library.scanStatus(firmware) }
-                .onSuccess { _status.value = it }
-                .onFailure { LauncherLog.append(context, "status", "No se pudo escanear el estado: ${it.message}") }
+                .onSuccess {
+                    _status.value = it
+                    // R6-P1-12: "cargado" solo si el escaneo emitió un
+                    // estado válido. En fallo, _statusLoaded se queda
+                    // en false (Home sigue en "Comprobando…" o en el
+                    // error con reintento) y _status conserva el
+                    // estado anterior, no un vacío que miente IMPORTAR.
+                    _statusLoaded.value = true
+                    _statusError.value = false
+                }
+                .onFailure {
+                    LauncherLog.append(context, "status", "No se pudo escanear el estado: ${it.message}")
+                    _statusError.value = true
+                }
             scanMillis = SystemClock.elapsedRealtime() - scanStartedMillis
-            // Ronda 0.2.55 P0-1: el primer escaneo ya emitió (o lo
-            // intentó): Home deja de mostrar "Comprobando…".
-            _statusLoaded.value = true
             firmware?.let { _firmwareStatus.value = it }
             _externalVita3k.value = cachedExternalVersion()
             // Crash al abrir (#80/#82): NO cargar el .so aquí. `available`
@@ -917,12 +940,30 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // duración por fase. Es una sola línea (el resumen de
             // scanStatus sigue deduplicado aparte) y es lo que
             // permite medir en el teléfono si el refresco es lento.
-            LauncherLog.append(
-                context,
-                "status",
-                "Refresco de estado: ${SystemClock.elapsedRealtime() - refreshStartedMillis} ms " +
-                    "(firmware $firmwareMillis ms, escaneo $scanMillis ms).",
-            )
+            // R6-P2-18: la línea de duración solo se registra si el
+            // refresco supera 500 ms: en el caso normal no aporta
+            // nada y rotaba el log en cada refresco.
+            val refreshMillis = SystemClock.elapsedRealtime() - refreshStartedMillis
+            if (refreshMillis > 500) {
+                LauncherLog.append(
+                    context,
+                    "status",
+                    "Refresco de estado: $refreshMillis ms " +
+                        "(firmware $firmwareMillis ms, escaneo $scanMillis ms).",
+                )
+            }
+    }
+
+    /**
+     * R6-P1-12: reintento explícito tras un escaneo fallido (botón
+     * Reintentar de Home). Marca el pendiente para que la guarda de
+     * recencia no se salte el re-escaneo aunque el fallo fuera hace
+     * menos de 2 s; el escaneo corre por el camino normal de
+     * refreshStatus().
+     */
+    fun retryStatusCheck() {
+        refreshPending.set(true)
+        refreshStatus()
     }
 
     /**
@@ -1013,12 +1054,19 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * Se llama en IO (lee disco y headers de .pkg).
      */
     private fun rebuildPendingLicenseFromDisk() {
+        // R6-P1-04: un .pkg de juego sin work.bin NO genera pendiente
+        // de licencia cuando el juego está extraído y su licencia ya
+        // está registrada en el núcleo: JUGAR funciona sin el work.bin
+        // y la tarjeta "Falta la licencia" mentía pidiéndolo.
+        val gameLicenseInCore = _status.value.gameExtracted && _status.value.licenseInstalledInCore
         val missing = runCatching { library.storedPkgsMissingLicense() }
             .getOrDefault(emptyList())
+            .filterNot { it.kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME && gameLicenseInCore }
         val current = _pendingPkgLicense.value
         if (missing.isEmpty()) {
             if (current != null &&
-                storedPkgFileFor(current.kind, current.titleId, current.dlcId) == null
+                (storedPkgFileFor(current.kind, current.titleId, current.dlcId) == null ||
+                    (current.kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME && gameLicenseInCore))
             ) {
                 _pendingPkgLicense.value = null
             }
@@ -1173,6 +1221,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun applyPreset(profile: GpuProfileId) {
         viewModelScope.launch(Dispatchers.IO) {
             val current = settingsRepo.settingsFlow.first()
+            // R6-P2-10: si el modo seguro está ON, su snapshot queda
+            // invalidado al aplicar un preset: al desactivarlo después,
+            // los campos donde el preset coincide con el valor forzado
+            // se restaurarían a valores viejos (resucitados). Se borra
+            // la copia; al desactivar, los valores del preset quedan
+            // como están y el mensaje lo dice.
+            if (current.safeMode) deleteSettingsSnapshot(safeModeSnapshotFile())
             settingsRepo.applyPreset(profile, current = current)
             // R5-A2-2: la conservación del modo rendimiento y del
             // auto-revert vive ahora dentro de SettingsRepository
@@ -1260,7 +1315,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             val current = settingsRepo.settingsFlow.first()
             if (enabled) {
-                writeSettingsSnapshot(safeModeSnapshotFile(), current)
+                // R6-P2-10: si la copia de seguridad no se pudo
+                // escribir (disco lleno), NO se sobrescriben los
+                // ajustes: la promesa "tus ajustes anteriores quedan
+                // guardados" sería falsa y al desactivar no habría
+                // nada que restaurar.
+                if (!writeSettingsSnapshot(safeModeSnapshotFile(), current)) {
+                    _message.value = "No se pudo guardar la copia de tus ajustes: el modo seguro no se activó. Inténtalo de nuevo."
+                    return@launch
+                }
                 settingsRepo.save(applySafeMode(current))
                 _message.value = "Modo seguro activado: 1x, SDL, High Accuracy OFF. Tus ajustes anteriores quedan guardados: al desactivarlo se restauran los valores que el modo seguro cambió."
             } else {
@@ -1303,8 +1366,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private fun audioFixSnapshotFile() = java.io.File(context.filesDir, "col-audio-fix-snapshot.json")
     private fun safeModeSnapshotFile() = java.io.File(context.filesDir, "col-safe-mode-snapshot.json")
 
-    private fun writeSettingsSnapshot(file: java.io.File, settings: LauncherSettings) {
-        runCatching { file.writeText(encodeSettingsBackup(settings, UiPreferences())) }
+    private fun writeSettingsSnapshot(file: java.io.File, settings: LauncherSettings): Boolean {
+        return runCatching { file.writeText(encodeSettingsBackup(settings, UiPreferences())) }.isSuccess
     }
 
     private fun readSettingsSnapshot(file: java.io.File): LauncherSettings? {
@@ -1461,20 +1524,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
         when (val status = FirmwareResolver.resolve(library.vitaRoot)) {
             is FirmwareStatus.Ready -> {
-                // Listo POR MARCADOR (con versión) = el PUP guardado es
-                // el que ya se instaló: no hay nada que hacer.
-                // Listo SOLO por vs0 (sin marcador) + PUP válido = PUP
-                // NUEVO importado después de instalar otro: importar un
-                // PUP borra el marcador, así que "ya instalado" sería
-                // mentira y el PUP nuevo no se instalaría nunca (el
-                // núcleo seguiría con el firmware viejo). En ese caso
-                // se cae a la instalación del PUP guardado.
-                val markerVersion = FirmwareResolver.installedVersion(library.vitaRoot)
-                val pup = FirmwareResolver.pupFile(library.vitaRoot)
-                if (markerVersion != null || !FirmwareResolver.isValidPupFile(pup)) {
+                // R6-P1-03: "ya instalado" solo si NO hay un PUP
+                // guardado pendiente de instalar (savedPupPendingInstall
+                // es true cuando el PUP guardado difiere en tamaño del
+                // instalado o el marcador no registra tamaño: PUP nuevo
+                // u otra versión). Si hay PUP pendiente, se cae a la
+                // instalación del PUP guardado: el botón "Instalar en
+                // el núcleo embebido" existe justo para ese caso.
+                if (!FirmwareResolver.savedPupPendingInstall(library.vitaRoot)) {
                     return FirmwareCoreResult.Done("Firmware ya instalado en el núcleo (${status.source}).")
                 }
-                // Si no: PUP nuevo pendiente; seguir e instalarlo.
+                // Si no: PUP pendiente; seguir e instalarlo.
             }
             FirmwareStatus.Missing ->
                 return FirmwareCoreResult.NotInstalled(FirmwareResolver.NO_FIRMWARE_MESSAGE)
@@ -1815,11 +1875,23 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             is ImportResult.PkgNeedsLicense -> java.io.File(result.storedPath).nameWithoutExtension
             else -> return result
         }
+        val storedPath = when (result) {
+            is ImportResult.PkgStored -> result.storedPath
+            is ImportResult.PkgNeedsLicense -> result.storedPath
+            else -> return result
+        }
         _installProgress.value = InstallProgress(null, "Instalando en el núcleo…")
         val installed = installStoredPkg(kind, titleId, dlcId)
         return installed.fold(
             onSuccess = {
                 LauncherLog.append(context, "import", "DLC/update instalado en el núcleo: $dlcId (${titleId.id}).")
+                // R6-P1-06: el .pkg guardado ya no hace falta: se borra
+                // (con su guarda: solo si el contenido quedó instalado).
+                // El work.bin se conserva siempre. El .pkg del juego no
+                // pasa por aquí (se borra tras loadGame == 0).
+                runCatching {
+                    library.deleteStoredAddonPkg(java.io.File(storedPath), kind, titleId.id)
+                }
                 if (kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC) {
                     ImportResult.DlcSuccess(titleId, dlcId)
                 } else {
@@ -2750,6 +2822,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         settingsRepo.recordBenchmark(completed)
         val how = if (source == BenchmarkSource.AUTO_MEASURED) "medido automáticamente por el juego" else "registrado a mano"
         if (revert) {
+            // R6-P2-10: igual que al aplicar un preset a mano: con el
+            // modo seguro ON, el snapshot queda invalidado o al
+            // desactivarlo resucitarían los valores viejos.
+            if (settings.safeMode) deleteSettingsSnapshot(safeModeSnapshotFile())
             settingsRepo.applyPreset(GpuProfileId.G99_RECOMMENDED, current = settings)
             _message.value = "FPS medio: $fps ($how). Menos de 28 fps con Calidad 2x: vuelto a 1x automáticamente (preset G99 Recomendado)."
         } else {
@@ -3029,9 +3105,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // volvía a sonar. Se lee ANTES del reset y, si ya estaba
             // vista, se vuelve a marcar DESPUÉS (misma marca atómica
             // que markHomeIntroSeen()).
-            val introSeen = runCatching { uiRepo.uiFlow.first().homeIntroSeen }.getOrDefault(false)
+            // R6-P1-11: lo mismo vale para los presets ocultos con
+            // "Limpiar no usados": resetAll() los borra y el reset
+            // total los re-listaba sin aviso (el reset por categoría
+            // ya los preserva a propósito: CategoryReset.kt). Se leen
+            // ANTES y se reponen DESPUÉS.
+            val beforeReset = runCatching { uiRepo.uiFlow.first() }.getOrNull()
             uiRepo.resetAll()
-            if (introSeen) uiRepo.markHomeIntroSeen()
+            if (beforeReset?.homeIntroSeen == true) uiRepo.markHomeIntroSeen()
+            val hiddenPresets = beforeReset?.hiddenPresets ?: emptySet()
+            if (hiddenPresets.isNotEmpty()) uiRepo.hideGpuPresets(hiddenPresets)
             touchRepo.reset()
             _message.value = "Personalización restablecida: tema, acento, fondo, texto, idioma, portada y controles."
         }
@@ -3066,6 +3149,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             } else {
                 current
             }
+            // R6-P2-10: igual que al aplicar un preset: restablecer
+            // otra categoría con el modo seguro ON y conservar el
+            // snapshot resucitaría los valores viejos al desactivarlo.
+            // (Diagnóstico ya borra el snapshot arriba, al restaurar.)
+            if (current.safeMode && category != SettingsCategory.DIAGNOSTICS) {
+                deleteSettingsSnapshot(safeModeSnapshotFile())
+            }
             val reset = resetCategorySettings(base, category)
             // P1-8: en Mali (o sin Turnip instalado) el reseteo de GPU
             // con el perfil "Calidad / Turnip" activo podía dejar
@@ -3085,7 +3175,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             _message.value = if (category == SettingsCategory.PERSONALIZATION) {
                 "Personalización restablecida a los valores por defecto."
             } else {
-                "Categoría ${category.title} restablecida a los valores del preset ${current.activeProfile.label}.$turnipNote"
+                // R6-P2-12: "valores por defecto / del preset": el reset
+                // pone valores del preset donde el preset los define y
+                // defaults de LauncherSettings() donde no (audioVolume,
+                // performanceMode, campos de Controles...). Decir solo
+                // "valores del preset" era impreciso.
+                // R6-P2-09: avisar si Turnip se conservó aunque el
+                // preset diga Sistema.
+                "Categoría ${category.title} restablecida a los valores por defecto / del preset ${current.activeProfile.label}.$turnipNote${turnipKeptNote(reset, presetSettings(current.activeProfile))}"
             }
         }
     }
@@ -3228,38 +3325,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             withContext(Dispatchers.Main) {
                 _message.value = if (hadFile) "Driver Turnip borrado. Se usa el driver del sistema." else "No había driver Turnip instalado."
             }
-        }
-    }
-
-    fun deleteSavesOnly() {
-        viewModelScope.launch(Dispatchers.IO) {
-            // Solo con el juego extraído: con un .pkg los saves viven en Vita3K.
-            val title = freshExtractedTitleId()
-            if (title == null) {
-                withContext(Dispatchers.Main) {
-                    // R4-P1-11: el extraído ya se leyó arriba (null):
-                    // solo falta la parte .pkg, sin re-leer el extraído.
-                    _message.value = if (freshPkgTitleId() != null) {
-                        "El juego está como .pkg: los saves viven dentro de la app externa, no en el launcher."
-                    } else {
-                        "No hay juego instalado: no hay saves que borrar."
-                    }
-                }
-                return@launch
-            }
-            val result = library.deleteSavesOnly(title)
-            // H6: la copia guardada de la sesión activa solo se borra si
-            // realmente había saves vivos que borrar. Antes se borraba
-            // siempre, incluso cuando el mensaje decía "No había saves".
-            if (result.deleted && !result.failed) sessionManager.clearActiveSessionSavedata()
-            withContext(Dispatchers.Main) {
-                _message.value = when {
-                    result.failed -> "No se pudieron borrar los saves. Revisa el reporte de errores para el motivo exacto."
-                    result.deleted -> "Saves borrados (también de la sesión activa). El juego y los DLCs siguen instalados."
-                    else -> "No había saves que borrar."
-                }
-            }
-            refreshStatus()
         }
     }
 

@@ -39,8 +39,10 @@ import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
  * - Respaldos .bak huérfanos (destino existe: la instalación
  *   completó y el respaldo quedó atrás; se muestran con su tamaño).
  * - DLCs instalados (borra de ux0/addcont/<TITLE>/<DLC>/).
- * - Saves (borra solo los saves, sin tocar juego/DLCs).
  * El borrado en lote pide confirmación y dice exactamente qué borra.
+ * Los saves NO se borran desde aquí (R6-P2-16): la limpieza nunca
+ * borra partidas guardadas (regla del repo). Las partidas se borran
+ * desde Guardados → "Borrar datos del juego".
  */
 @Composable
 fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
@@ -59,7 +61,6 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     // siempre un botón editado a mano o un perfil entero.
     var deleteControlTarget by rememberSaveable { mutableStateOf<String?>(null) }
     var deleteProfileTarget by rememberSaveable { mutableStateOf<String?>(null) }
-    var showDeleteSavesConfirm by rememberSaveable { mutableStateOf(false) }
     // El borrado del driver Turnip también pide confirmación: un toque
     // accidental borraba el .zip instalado sin aviso (el borrado en lote
     // ya tenía su propio diálogo).
@@ -172,14 +173,6 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
             ) { Text("🗑 Borrar DLC: ${dlc.dlcId} (${DownloadsCleanup.formatBytes(dlc.sizeBytes)})") }
         }
-
-        SectionTitle("Saves (${status.saves.size} archivos)")
-        if (status.saves.isEmpty()) Text("No hay saves.")
-        OutlinedButton(
-            onClick = { showDeleteSavesConfirm = true },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = status.saves.isNotEmpty(),
-        ) { Text("🗑 Borrar saves (el juego y los DLCs siguen)") }
 
         SectionTitle("Borrar en lote")
         OutlinedButton(onClick = { showBatchConfirm = true }, modifier = Modifier.fillMaxWidth()) {
@@ -294,17 +287,6 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 TextButton(onClick = { vm.deleteInstalledGamePkgs(); showDeleteInstalledPkgConfirm = false }) { Text("Borrar .pkg") }
             },
             dismissButton = { TextButton(onClick = { showDeleteInstalledPkgConfirm = false }) { Text("Cancelar") } },
-        )
-    }
-    if (showDeleteSavesConfirm) {
-        AlertDialog(
-            onDismissRequest = { showDeleteSavesConfirm = false },
-            title = { Text("¿Borrar los saves?") },
-            text = { Text("Se borran todos los saves de ${status.titleId?.id}. El juego y los DLCs siguen instalados.") },
-            confirmButton = {
-                TextButton(onClick = { vm.deleteSavesOnly(); showDeleteSavesConfirm = false }) { Text("Borrar saves") }
-            },
-            dismissButton = { TextButton(onClick = { showDeleteSavesConfirm = false }) { Text("Cancelar") } },
         )
     }
 }

@@ -117,19 +117,19 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             if (!DeviceCompat.is64BitDevice()) {
                 Text(
                     "⚠ Este teléfono es de 32 bits: el núcleo embebido necesita 64 bits (arm64), así que el juego se abrirá con la app externa.",
-                    color = ColAccent,
+                    color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold,
                 )
             }
             if (!g.vulkanSupported) {
                 Text(
                     "⚠ Sin Vulkan en este teléfono. El núcleo usará OpenGL en su lugar: puede ir más lento o con fallos gráficos. Si el juego no arranca o se ve mal, activa el modo seguro en Ajustes.",
-                    color = ColAccent,
+                    color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold,
                 )
             }
             if (g.isUserVerifiedDevice) {
-                Text("✓ Procesador verificado por el usuario: Child of Light va muy bien en este procesador.", color = ColAccent, fontWeight = FontWeight.Bold)
+                Text("✓ Procesador verificado por el usuario: Child of Light va muy bien en este procesador.", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 NoteText("Por eso el preset por defecto es G99 Recomendado (1x): se optimiza para mantener esa fluidez estable, no para recortar de más.")
             } else if (g.vendor.name == "MALI") {
                 NoteText("Mali: hay cosas que definitivamente no funcionan y es posible que nunca funcionen, pero el núcleo trae arreglos para Mali (vertex fix, Double Buffer mejorado) y Child of Light, al ser 2D UbiArt, es más ligero que un juego 3D: a 1x tiene más chance. No se prometen 60 fps en Mali.")
@@ -226,7 +226,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                         Text(
                             "Escribe un número válido (por ejemplo: 30).",
                             style = MaterialTheme.typography.bodySmall,
-                            color = ColAccent,
+                            color = MaterialTheme.colorScheme.primary,
                         )
                     }
                 }

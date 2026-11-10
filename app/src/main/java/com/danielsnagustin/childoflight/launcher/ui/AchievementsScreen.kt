@@ -168,7 +168,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             "Child of Light",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White,
+                            color = cardTextColor(isDarkUi(uiPrefs)),
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -179,7 +179,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
+                            color = cardTextColor(isDarkUi(uiPrefs)),
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         PrimaryProgressBar(progress = if (total == 0) 0f else unlocked / total.toFloat())

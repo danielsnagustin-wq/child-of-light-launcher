@@ -103,6 +103,11 @@ fun previewSizeForScreen(maxWidth: Dp, maxHeight: Dp): DpSize {
  * rememberUiPreferences las lee directamente de DataStore, así que
  * PremiumCard funciona en todas las pantallas sin tocar sus call
  * sites. El valor del Local, si existe, siempre gana.
+ * R6-P2-15: las pantallas bajo MainActivity ya NO usan este helper:
+ * leen LocalUiPreferences.current directamente (cada llamada creaba
+ * un colector DataStore propio y el "un solo colector" era falso).
+ * Este helper queda solo para pantallas sin Local disponible (fuera
+ * de MainActivity).
  */
 val LocalUiPreferences = staticCompositionLocalOf<UiPreferences?> { null }
 
@@ -288,7 +293,7 @@ fun homeBackgroundBrush(baseHex: String?): Brush = homeBackgroundBrush(baseHex, 
  *
  * Ola 3, Etapa 6: tamaño y transparencia reales desde UiPreferences.
  * R4-P1-15: cardSize y cardTransparency son opcionales (null = leer
- * la preferencia guardada directamente, vía rememberUiPreferences):
+ * la preferencia guardada directamente, vía LocalUiPreferences.current):
  * los call sites que no pasan nada ya no quedan en Normal/Opaco, y
  * los que pasan un valor explícito (Home, General) siguen ganando.
  * R4-P1-14: la superficie y el tema se resuelven con isDarkUi y
@@ -303,7 +308,11 @@ fun PremiumCard(
     content: @Composable () -> Unit,
 ) {
     // Borde con el acento del usuario (0.2.15): antes ColAccent fijo.
-    val uiPrefs = rememberUiPreferences()
+    // R6-P2-15: lee el Local directamente, sin colector propio: cada
+    // PremiumCard suscribía su propio rememberUiPreferences() y el
+    // "un solo colector" era falso. El Local lo alimenta el único
+    // colector de LauncherContent (MainActivity).
+    val uiPrefs = LocalUiPreferences.current
     val dark = isDarkUi(uiPrefs)
     val resolvedSize = resolveCardSize(cardSize, uiPrefs)
     val resolvedTransparency = resolveCardTransparency(cardTransparency, uiPrefs)
@@ -342,7 +351,8 @@ fun PremiumCard(
 /** Encabezado de pantalla: título grande + subtítulo pequeño en gris. R4-P1-14: colores según el tema, no blancos fijos. */
 @Composable
 fun ScreenHeader(title: String, subtitle: String? = null) {
-    val dark = isDarkUi(rememberUiPreferences())
+    // R6-P2-15: Local directo, sin colector propio (ver PremiumCard).
+    val dark = isDarkUi(LocalUiPreferences.current)
     Text(
         text = title,
         style = MaterialTheme.typography.headlineMedium,
@@ -580,10 +590,11 @@ fun NoteText(text: String) {
     // gris oscuro sobre fondo oscuro: ilegible.
     // R4-P1-14: ahora según el tema (claro = gris oscuro sobre fondo
     // claro), porque el fondo de Ajustes ya no es siempre oscuro.
+    // R6-P2-15: Local directo, sin colector propio (ver PremiumCard).
     Text(
         text = text,
         style = MaterialTheme.typography.bodySmall,
-        color = mutedTextColor(isDarkUi(rememberUiPreferences())),
+        color = mutedTextColor(isDarkUi(LocalUiPreferences.current)),
         modifier = Modifier.padding(vertical = 4.dp),
     )
 }
@@ -605,7 +616,8 @@ fun SettingSwitch(
             // vez de onSurfaceVariant (ilegible con Tema Claro sobre el
             // fondo AMOLED fijo).
             // R4-P1-14: ahora según el tema, como NoteText.
-            Text(description, style = MaterialTheme.typography.bodySmall, color = mutedTextColor(isDarkUi(rememberUiPreferences())))
+            // R6-P2-15: Local directo, sin colector propio (ver PremiumCard).
+            Text(description, style = MaterialTheme.typography.bodySmall, color = mutedTextColor(isDarkUi(LocalUiPreferences.current)))
         }
         Spacer(modifier = Modifier.width(8.dp))
         Switch(checked = checked, onCheckedChange = onCheckedChange)

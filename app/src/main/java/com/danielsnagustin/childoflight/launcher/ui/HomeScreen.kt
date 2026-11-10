@@ -179,6 +179,9 @@ private fun GameCard(
     // GameStatus() vacío inicial, Home mentía "pendiente de importar"
     // aunque el juego estuviera instalado.
     val statusLoaded by vm.statusLoaded.collectAsState()
+    // R6-P1-12: si el escaneo FALLÓ, ni "Comprobando…" para siempre
+    // ni IMPORTAR mintiendo: error explícito con reintento.
+    val statusError by vm.statusError.collectAsState()
     // Deshabilitar JUGAR mientras hay un lanzamiento en curso (doble
     // toque = dos launch() a la vez); la guarda vive en el ViewModel.
     val launching by vm.launchingFlow.collectAsState()
@@ -278,15 +281,35 @@ private fun GameCard(
                 // escaneo no terminó: ni JUGAR ni IMPORTAR, porque aún
                 // no se sabe si el juego está instalado. Botón
                 // deshabilitado, sin inventar ningún estado.
+                // R6-P1-12: si el escaneo falló, el error es explícito
+                // y se puede reintentar (antes Home pasaba a IMPORTAR
+                // con un estado vacío que mentía).
                 Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    "Comprobando…",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = accent,
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                PrimaryButton("Comprobando…", onClick = {}, enabled = false)
+                if (statusError) {
+                    Text(
+                        "No se pudo comprobar el estado",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = accent,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "El escaneo del almacenamiento falló. Puedes reintentarlo.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = mutedTextColor(dark),
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    SecondaryButton("Reintentar", onClick = { vm.retryStatusCheck() })
+                } else {
+                    Text(
+                        "Comprobando…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = accent,
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    PrimaryButton("Comprobando…", onClick = {}, enabled = false)
+                }
             } else {
                 if (!gameOk) {
                     Spacer(modifier = Modifier.height(10.dp))
@@ -300,6 +323,16 @@ private fun GameCard(
                 Spacer(modifier = Modifier.height(16.dp))
                 if (gameOk) {
                     PlayButton(vm, status, launching, strings)
+                    // R6-P2-17: UNA línea de estado real bajo JUGAR
+                    // (DLCs, firmware y update, datos que ya trae
+                    // GameStatus). Sin tarjetas ni secciones nuevas: el
+                    // diseño de Home se mantiene mínimo.
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        "DLCs: ${status.dlcCount} · ${status.firmwareName ?: "firmware no instalado"} · Update: ${if (status.updateInstalled) "instalado" else "no instalado"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = mutedTextColor(dark),
+                    )
                 } else {
                     PrimaryButton(strings.importGame.uppercase(), onClick = { onNavigate(Screen.IMPORT) })
                 }

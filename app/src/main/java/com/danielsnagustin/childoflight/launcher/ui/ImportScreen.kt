@@ -70,6 +70,9 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     // ajuste recomponía la pantalla entera. Esos booleanos los recoge
     // ExternalDeliveryBlock dentro de sí (abajo).
     val uiPrefs = LocalUiPreferences.current
+    // R6-P1-10: textos según el tema (en Claro, blanco sobre tarjeta
+    // casi blanca no se lee). Las pantallas de Ajustes ya lo hacen así.
+    val dark = isDarkUi(uiPrefs)
     val strings = stringsFor(uiPrefs?.language ?: AppLanguage.SPANISH)
     val status by vm.status.collectAsState()
     val importing by vm.importing.collectAsState()
@@ -134,14 +137,25 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             "✓ ${strings.installed} · ${status.extractedTitleId?.id ?: status.titleId?.id ?: "—"} · ${DownloadsCleanup.formatBytes(status.gameSizeBytes)}",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
+                            color = cardTextColor(dark),
                         )
                         if (status.pkgInstalled) {
-                            Text(
-                                "Licencia (work.bin): ${if (status.pkgLicensePresent) "guardada ✓" else "falta ✗"}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (status.pkgLicensePresent) ColTurquoise else Color.White,
-                            )
+                            // R6-P1-04: si la licencia ya está registrada
+                            // en el núcleo, no pedir el work.bin: JUGAR
+                            // funciona sin él.
+                            if (status.licenseInstalledInCore) {
+                                Text(
+                                    "Licencia: instalada en el núcleo ✓",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = ColTurquoise,
+                                )
+                            } else {
+                                Text(
+                                    "Licencia (work.bin): ${if (status.pkgLicensePresent) "guardada ✓" else "falta ✗"}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (status.pkgLicensePresent) ColTurquoise else cardTextColor(dark),
+                                )
+                            }
                         }
                         TextButton(onClick = { pickGame.launch("*/*") }, enabled = !importing) { Text("Reemplazar") }
                     } else if (status.pkgInstalled) {
@@ -149,25 +163,35 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             "✓ Guardado · ${status.pkgTitleId?.id ?: "—"} · ${DownloadsCleanup.formatBytes(status.pkgSizeBytes)}",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
+                            color = cardTextColor(dark),
                         )
                         Text(
                             "Se instala solo al pulsar JUGAR.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = ColMutedText,
+                            color = mutedTextColor(dark),
                         )
-                        Text(
-                            "Licencia (work.bin): ${if (status.pkgLicensePresent) "guardada ✓" else "falta ✗"}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (status.pkgLicensePresent) ColTurquoise else Color.White,
-                        )
+                        // R6-P1-04: si la licencia ya está registrada
+                        // en el núcleo, no pedir el work.bin.
+                        if (status.licenseInstalledInCore) {
+                            Text(
+                                "Licencia: instalada en el núcleo ✓",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = ColTurquoise,
+                            )
+                        } else {
+                            Text(
+                                "Licencia (work.bin): ${if (status.pkgLicensePresent) "guardada ✓" else "falta ✗"}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (status.pkgLicensePresent) ColTurquoise else cardTextColor(dark),
+                            )
+                        }
                         TextButton(onClick = { pickGame.launch("*/*") }, enabled = !importing) { Text("Reemplazar") }
                     } else {
                         Text(
                             strings.absent,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
+                            color = cardTextColor(dark),
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         SecondaryButton("Importar juego (.zip / .vpk / .pkg)", onClick = { pickGame.launch("*/*") }, enabled = !importing)
@@ -190,7 +214,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             strings.absent,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
+                            color = cardTextColor(dark),
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         SecondaryButton("Importar DLC (.zip / .pkg)", onClick = { pickDlc.launch("*/*") }, enabled = !importing)
@@ -205,7 +229,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                 Text(
                                     "✓ ${dlc.dlcId} · ${DownloadsCleanup.formatBytes(dlc.sizeBytes)}" + if (dlc.isPkg) " (.pkg)" else "",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = Color.White,
+                                    color = cardTextColor(dark),
                                 )
                             }
                         }
@@ -222,7 +246,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             "✓ ${strings.installed}",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
+                            color = cardTextColor(dark),
                         )
                         // R2-P1-05: con el update ya instalado también
                         // se puede reimportar/reemplazar (pasa por
@@ -230,12 +254,24 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                         // de duplicado si aplica). Antes no había forma
                         // sin borrar todos los datos del juego.
                         TextButton(onClick = { pickUpdate.launch("*/*") }, enabled = !importing) { Text("Reemplazar") }
+                    } else if (status.updateStored) {
+                        // R6-P1-05: el .pkg de update está guardado y se
+                        // instala solo al pulsar JUGAR. Antes decía
+                        // "Ausente" y el usuario creía que la
+                        // importación no había quedado.
+                        Text(
+                            "✓ Guardado · se instala al pulsar JUGAR",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = cardTextColor(dark),
+                        )
+                        TextButton(onClick = { pickUpdate.launch("*/*") }, enabled = !importing) { Text("Reemplazar") }
                     } else {
                         Text(
                             strings.absent,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
+                            color = cardTextColor(dark),
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         SecondaryButton("Importar update (.zip / .vpk / .pkg)", onClick = { pickUpdate.launch("*/*") }, enabled = !importing)
@@ -252,7 +288,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                 "✓ ${FirmwareResolver.label(firmware)}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color.White,
+                                color = cardTextColor(dark),
                             )
                             // P2-29: hay un PUP guardado que no es el
                             // instalado (u otra versión, o una instalación
@@ -264,7 +300,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                 Text(
                                     "Hay un PSVUPDAT.PUP guardado pendiente de instalar: puede ser otra versión que la instalada, o una instalación anterior que falló.",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = ColMutedText,
+                                    color = mutedTextColor(dark),
                                 )
                                 if (firmwareInstalling) {
                                     Spacer(modifier = Modifier.height(8.dp))
@@ -272,7 +308,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                     Text(
                                         "Instalando firmware…",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = ColMutedText,
+                                        color = mutedTextColor(dark),
                                     )
                                 } else if (embeddedCore == true) {
                                     Spacer(modifier = Modifier.height(8.dp))
@@ -289,7 +325,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                 "✓ ${FirmwareResolver.label(firmware)}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color.White,
+                                color = cardTextColor(dark),
                             )
                             if (firmwareInstalling) {
                                 Spacer(modifier = Modifier.height(8.dp))
@@ -297,7 +333,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                 Text(
                                     "Instalando firmware…",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = ColMutedText,
+                                    color = mutedTextColor(dark),
                                 )
                             } else if (embeddedCore == true) {
                                 Spacer(modifier = Modifier.height(8.dp))
@@ -307,7 +343,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                 Text(
                                     "La app externa usa su propio firmware.",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = ColMutedText,
+                                    color = mutedTextColor(dark),
                                 )
                             }
                         }
@@ -316,12 +352,12 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                 strings.absent,
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color.White,
+                                color = cardTextColor(dark),
                             )
                             Text(
                                 "Tu copia del firmware, solo en tu teléfono.",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = ColMutedText,
+                                color = mutedTextColor(dark),
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             SecondaryButton("Importar firmware (.PUP, tu copia)", onClick = { pickFirmware.launch("*/*") }, enabled = !importing)
@@ -338,7 +374,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             "Falta el work.bin del ${pending.kind.label} (${pending.titleId}).",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
+                            color = cardTextColor(dark),
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         SecondaryButton("Elegir work.bin", onClick = { pickWorkBin.launch("*/*") }, enabled = !importing)
@@ -378,6 +414,8 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
 private fun ImportProgressCard(vm: LauncherViewModel, strings: AppStrings, importing: Boolean) {
     val installProgress by vm.installProgress.collectAsState()
     if (!importing && installProgress == null) return
+    // R6-P1-10: textos según el tema, como el resto de la pantalla.
+    val dark = isDarkUi(LocalUiPreferences.current)
     PremiumCard {
         val progress = installProgress
         if (progress?.percent != null) {
@@ -385,7 +423,7 @@ private fun ImportProgressCard(vm: LauncherViewModel, strings: AppStrings, impor
                 "${strings.installingLabel} ${progress.percent}% — ${progress.message}",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = Color.White,
+                color = cardTextColor(dark),
             )
             Spacer(modifier = Modifier.height(12.dp))
             LinearProgressIndicator(
@@ -405,7 +443,7 @@ private fun ImportProgressCard(vm: LauncherViewModel, strings: AppStrings, impor
         Text(
             "No cierres la app mientras dura.",
             style = MaterialTheme.typography.bodySmall,
-            color = ColMutedText,
+            color = mutedTextColor(dark),
         )
     }
 }
