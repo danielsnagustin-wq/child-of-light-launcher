@@ -284,9 +284,9 @@ class TouchOverlayMappingTest {
         val controls = defaultTouchLayout()
         val visible = TouchOverlayMapping.visibleControls(controls)
         assertEquals(controls.size, visible.size)
-        val hidden = controls.map { if (it.id == "btn_a") it.copy(visible = false) else it }
+        val hidden = controls.map { if (it.id == "btn_jump") it.copy(visible = false) else it }
         assertEquals(controls.size - 1, TouchOverlayMapping.visibleControls(hidden).size)
-        assertTrue(TouchOverlayMapping.visibleControls(hidden).none { it.id == "btn_a" })
+        assertTrue(TouchOverlayMapping.visibleControls(hidden).none { it.id == "btn_jump" })
         // Perfil con todo borrado/oculto: no hay nada que mostrar.
         assertTrue(TouchOverlayMapping.visibleControls(emptyList()).isEmpty())
     }

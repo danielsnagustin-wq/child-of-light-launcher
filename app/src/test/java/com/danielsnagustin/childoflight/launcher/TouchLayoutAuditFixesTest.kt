@@ -87,13 +87,13 @@ class TouchLayoutAuditFixesTest {
     fun decodeProfileDedupesDuplicateControlIds() {
         // Dos controles con el mismo id: borrar/editar uno afectaba
         // a los dos. Al leer se queda el primero.
-        val first = defaultTouchLayout().first { it.id == "btn_a" }
+        val first = defaultTouchLayout().first { it.id == "btn_jump" }
         val second = first.copy(label = "Duplicado")
         val profile = ControlProfile("p1", "Test", false, listOf(first, second))
         val decoded = TouchLayoutRepository.decodeProfile(TouchLayoutRepository.encodeProfile(profile))
         assertNotNull(decoded)
         assertEquals(1, decoded!!.controls.size)
-        assertEquals("A", decoded.controls[0].label)
+        assertEquals("Salto", decoded.controls[0].label)
     }
 
     @Test

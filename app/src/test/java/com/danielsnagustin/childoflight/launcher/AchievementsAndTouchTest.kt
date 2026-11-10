@@ -169,9 +169,9 @@ class TouchLayoutTest {
     @Test
     fun defaultLayoutHasStickButtonsAndIgniculus() {
         val layout = defaultTouchLayout()
-        assertEquals(7, layout.size)
+        assertEquals(6, layout.size)
         assertTrue(layout.any { it.kind == "stick" })
-        assertEquals(4, layout.count { it.kind == "button" && it.id.startsWith("btn_") && it.id != "btn_start" })
+        assertEquals(4, layout.count { it.kind == "button" })
         assertTrue(layout.any { it.kind == "igniculus" })
         assertTrue(layout.all { it.visible })
     }
@@ -181,11 +181,16 @@ class TouchLayoutTest {
         val profiles = builtInProfiles()
         assertEquals(3, profiles.size)
         assertEquals(listOf("Por defecto G99", "Una mano", "Mando externo + táctil mínimo"), profiles.map { it.name })
-        // Una mano oculta X/Y/Start; mando externo oculta casi todo salvo Igniculus y Start.
+        // Una mano lleva los mismos 6 controles, todos visibles;
+        // mando externo oculta stick, espada, salto y círculo, y
+        // deja Start e Igniculus.
         val oneHand = profiles[1]
-        assertFalse(oneHand.controls.first { it.id == "btn_x" }.visible)
+        assertTrue(oneHand.controls.all { it.visible })
         val external = profiles[2]
         assertFalse(external.controls.first { it.id == "stick" }.visible)
+        assertFalse(external.controls.first { it.id == "btn_sword" }.visible)
+        assertFalse(external.controls.first { it.id == "btn_jump" }.visible)
+        assertFalse(external.controls.first { it.id == "btn_circle" }.visible)
         assertTrue(external.controls.first { it.id == "igniculus" }.visible)
         assertTrue(external.controls.first { it.id == "btn_start" }.visible)
     }
@@ -197,7 +202,7 @@ class TouchLayoutTest {
         // identidad usa un color de la identidad actual
         // (#6578B8, azul lavanda) y el legacy se cubre aparte
         // en decodeNormalizesLegacyRedToLavender.
-        val original = defaultTouchLayout().first { it.id == "btn_a" }.copy(
+        val original = defaultTouchLayout().first { it.id == "btn_jump" }.copy(
             colorHex = "#6578B8",
             shape = com.danielsnagustin.childoflight.launcher.data.ControlShape.SQUARE,
             vitaButton = com.danielsnagustin.childoflight.launcher.data.VitaButton.R1,

@@ -24,62 +24,64 @@ import org.junit.Test
  * viejos de fábrica SÍ se normalizan al cargar
  * (migrateBuiltInFactoryValues, solo si siguen en el valor de
  * fábrica); ver TouchLayoutDiamondMigrationTest y
- * R5TouchMigrationTest. R5-A1-2: stick unificado en 104 dp en los
- * tres perfiles. R5-A1-8: la paleta ya no lleva el morado rosado
- * #BA68C8; el test endurecido afirma que TODA la paleta está en el
- * conjunto identidad documentado abajo.
+ * R5TouchMigrationTest. 0.2.54: el layout de fábrica ya no es el
+ * rombo con stick de 104 dp, sino el layout limpio (stick de 210 dp
+ * e Igniculus de 156 dp abajo a la derecha); los perfiles viejos
+ * migran a él (migrateBuiltInToCleanLayout, ver
+ * CleanTouchLayoutTest). R5-A1-8: la paleta ya no lleva el morado
+ * rosado #BA68C8; el test endurecido afirma que TODA la paleta
+ * está en el conjunto identidad documentado abajo.
  */
 class R4P2DefaultsTest {
 
     @Test
-    fun defaultStickIsSmallerThanBefore() {
+    fun defaultStickIsBigEnoughForTheThumb() {
         val stick = defaultTouchLayout().first { it.id == "stick" }
-        // Antes 140 dp: ocupaba el tercio inferior izquierdo.
-        assertEquals(104, stick.sizeDp)
+        // 0.2.54: 210 dp de diámetro, como en la captura de
+        // referencia (51% de la altura de la pantalla).
+        assertEquals(210, stick.sizeDp)
         assertTrue("el stick sigue siendo usable", stick.sizeDp >= 80)
-        // Misma posición, solo más pequeño.
-        assertEquals(0.18f, stick.xFraction, 0.001f)
-        assertEquals(0.72f, stick.yFraction, 0.001f)
+        // Pegado al borde izquierdo del juego, abajo.
+        assertEquals(0.05f, stick.xFraction, 0.001f)
+        assertEquals(0.675f, stick.yFraction, 0.001f)
     }
 
     @Test
-    fun defaultIgniculusIsBelowTheTitleLogo() {
+    fun defaultIgniculusIsBottomRightWithTheActionGroup() {
         val zone = defaultTouchLayout().first { it.id == "igniculus" }
-        // Antes y 0.35: el orbe flotaba sobre la "C" de
-        // "CHILD OF LIGHT" tapando el logo. El centro queda ahora
-        // en la mitad inferior, entre el stick y el rombo de cara.
-        assertEquals(0.50f, zone.xFraction, 0.001f)
-        assertEquals(0.55f, zone.yFraction, 0.001f)
-        assertTrue("Igniculus bajo la banda del logo (y > 0.45)", zone.yFraction > 0.45f)
-        // Mismo tamaño y opacidad: solo baja, no se redibuja.
-        assertEquals(220, zone.sizeDp)
+        // 0.2.54: junto a la espada y el salto, abajo a la derecha,
+        // con su orbe grande (zona de 156 dp, orbe dibujado a
+        // 0.42 x ancho = 131 dp).
+        assertEquals(0.82f, zone.xFraction, 0.001f)
+        assertEquals(0.808f, zone.yFraction, 0.001f)
+        assertTrue("Igniculus en la mitad inferior (y > 0.45)", zone.yFraction > 0.45f)
+        assertEquals(156, zone.sizeDp)
         assertEquals(0.25f, zone.opacity, 0.001f)
     }
 
     @Test
-    fun builtInSticksAreUnifiedAt104Dp() {
-        // R5-A1-2: los tres perfiles llevan el stick en 104 dp, en
-        // su posición de fábrica. Antes: una mano 120 dp, externo
-        // 140 dp (oculto, pero resucitaba al mostrarlo).
+    fun builtInSticksAreUnifiedAt210Dp() {
+        // 0.2.54: los tres perfiles llevan el stick en 210 dp, en
+        // su posición de fábrica.
         for (profile in builtInProfiles()) {
             val stick = profile.controls.first { it.id == "stick" }
-            assertEquals("stick del perfil ${profile.id}", 104, stick.sizeDp)
+            assertEquals("stick del perfil ${profile.id}", 210, stick.sizeDp)
         }
-        assertEquals(0.18f, defaultTouchLayout().first { it.id == "stick" }.xFraction, 0.001f)
-        assertEquals(0.20f, oneHandLayout().first { it.id == "stick" }.xFraction, 0.001f)
-        assertEquals(0.18f, externalGamepadLayout().first { it.id == "stick" }.xFraction, 0.001f)
+        assertEquals(0.05f, defaultTouchLayout().first { it.id == "stick" }.xFraction, 0.001f)
+        assertEquals(0.05f, oneHandLayout().first { it.id == "stick" }.xFraction, 0.001f)
+        assertEquals(0.05f, externalGamepadLayout().first { it.id == "stick" }.xFraction, 0.001f)
     }
 
     @Test
-    fun builtInIgniculusZonesAreBelowTheTitleLogo() {
+    fun builtInIgniculusZonesAreBottomRight() {
         val oneHand = oneHandLayout().first { it.id == "igniculus" }
-        // R5-A1-2: x 0.50, coherente con el default (antes 0.55).
-        assertEquals(0.50f, oneHand.xFraction, 0.001f)
-        assertEquals(0.50f, oneHand.yFraction, 0.001f)
+        // 0.2.54: una mano baja con el grupo del pulgar.
+        assertEquals(0.78f, oneHand.xFraction, 0.001f)
+        assertEquals(0.80f, oneHand.yFraction, 0.001f)
         assertTrue(oneHand.yFraction > 0.45f)
         val external = externalGamepadLayout().first { it.id == "igniculus" }
-        assertEquals(0.50f, external.xFraction, 0.001f)
-        assertEquals(0.55f, external.yFraction, 0.001f)
+        assertEquals(0.82f, external.xFraction, 0.001f)
+        assertEquals(0.808f, external.yFraction, 0.001f)
         assertTrue(external.yFraction > 0.45f)
     }
 

@@ -27,6 +27,14 @@ import org.junit.Test
  * NUEVOS; los de migrateBuiltInFaceDiamond sola siguen afirmando
  * solo el rombo (esa pasada no toca stick ni Igniculus).
  *
+ * 0.2.54 (2026-11-09): el layout de fábrica ya NO es el rombo: es
+ * el layout limpio (stick, espada, salto, Start, Igniculus). Los
+ * tests de layout de fábrica de este archivo se reescribieron para
+ * el limpio; los de migrateBuiltInFaceDiamond sola siguen
+ * probando esa pasada (un perfil viejo con el rombo transpuesto
+ * migra al estándar), y los de migración completa ahora afirman
+ * que un perfil viejo entero migra al layout limpio de fábrica.
+ *
  * Rombo estándar, centrado en (0.80, 0.71): TRIANGLE arriba,
  * CIRCLE derecha, CROSS abajo, SQUARE izquierda. Rombo antiguo
  * (transpuesto): TRIANGLE izquierda, SQUARE arriba, CIRCLE abajo,
@@ -71,70 +79,66 @@ class TouchLayoutDiamondMigrationTest {
         }
 
     @Test
-    fun defaultLayoutIsStandardDiamond() {
+    fun defaultLayoutIsCleanLayout() {
+        // 0.2.54: el default ya no es el rombo: stick grande a la
+        // izquierda, espada (SQUARE) y salto (CROSS) a la derecha,
+        // Start arriba e Igniculus abajo a la derecha, y el círculo
+        // (CIRCLE) junto a la pausa para volver/cancelar.
         val controls = defaultTouchLayout()
-        assertEquals(0.80f to 0.62f, facePosition(controls, "btn_y"))
-        assertEquals(0.87f to 0.71f, facePosition(controls, "btn_b"))
-        assertEquals(0.80f to 0.80f, facePosition(controls, "btn_a"))
-        assertEquals(0.73f to 0.71f, facePosition(controls, "btn_x"))
-        // Lo demás no se mueve: stick, Start e Igniculus quedan
-        // donde estaban (R4-P2-1: stick 104 dp, Igniculus en y 0.55
-        // para no tapar el logo).
-        assertEquals(0.18f to 0.72f, facePosition(controls, "stick"))
-        assertEquals(104, controls.first { it.id == "stick" }.sizeDp)
-        assertEquals(0.50f to 0.06f, facePosition(controls, "btn_start"))
-        assertEquals(0.50f to 0.55f, facePosition(controls, "igniculus"))
+        assertEquals(6, controls.size)
+        assertEquals(0.05f to 0.675f, facePosition(controls, "stick"))
+        assertEquals(210, controls.first { it.id == "stick" }.sizeDp)
+        assertEquals(0.864f to 0.576f, facePosition(controls, "btn_sword"))
+        assertEquals(0.93f to 0.752f, facePosition(controls, "btn_jump"))
+        assertEquals(0.50f to 0.07f, facePosition(controls, "btn_start"))
+        assertEquals(0.59f to 0.07f, facePosition(controls, "btn_circle"))
+        assertEquals(44, controls.first { it.id == "btn_circle" }.sizeDp)
+        assertEquals(0.82f to 0.808f, facePosition(controls, "igniculus"))
+        assertEquals(156, controls.first { it.id == "igniculus" }.sizeDp)
     }
 
     @Test
-    fun oneHandLayoutIsStandardDiamondKeepingItsCharacter() {
-        // Mismo rombo estándar, centrado en (0.76, 0.74): conserva
-        // su carácter compacto, sus tamaños y su visibilidad
-        // (TRIANGLE y SQUARE ocultos, CIRCLE y CROSS visibles).
+    fun oneHandLayoutIsCleanLayoutWithThumbGroup() {
+        // 0.2.54: mismos 6 controles, grupo derecho desplazado
+        // para el pulgar, todos visibles.
         val controls = oneHandLayout()
-        assertEquals(0.76f to 0.65f, facePosition(controls, "btn_y"))
-        assertEquals(0.83f to 0.74f, facePosition(controls, "btn_b"))
-        assertEquals(0.76f to 0.83f, facePosition(controls, "btn_a"))
-        assertEquals(0.69f to 0.74f, facePosition(controls, "btn_x"))
-        assertEquals(false, controls.first { it.id == "btn_y" }.visible)
-        assertEquals(false, controls.first { it.id == "btn_x" }.visible)
-        assertEquals(true, controls.first { it.id == "btn_b" }.visible)
-        assertEquals(true, controls.first { it.id == "btn_a" }.visible)
-        assertEquals(72, controls.first { it.id == "btn_a" }.sizeDp)
-        assertEquals(0.20f to 0.75f, facePosition(controls, "stick"))
-        // R5-A1-2: stick unificado en 104 dp (antes 120 dp) e
-        // Igniculus en x 0.50 (antes 0.55), coherente con el default.
-        assertEquals(104, controls.first { it.id == "stick" }.sizeDp)
-        assertEquals(0.50f to 0.50f, facePosition(controls, "igniculus"))
+        assertEquals(6, controls.size)
+        assertEquals(0.05f to 0.70f, facePosition(controls, "stick"))
+        assertEquals(210, controls.first { it.id == "stick" }.sizeDp)
+        assertEquals(0.83f to 0.63f, facePosition(controls, "btn_sword"))
+        assertEquals(0.91f to 0.79f, facePosition(controls, "btn_jump"))
+        assertEquals(0.50f to 0.07f, facePosition(controls, "btn_start"))
+        assertEquals(0.59f to 0.07f, facePosition(controls, "btn_circle"))
+        assertEquals(0.78f to 0.80f, facePosition(controls, "igniculus"))
+        assertTrue(controls.all { it.visible })
     }
 
     @Test
-    fun externalGamepadLayoutIsStandardDiamond() {
+    fun externalGamepadLayoutIsCleanLayoutWithActionHidden() {
+        // 0.2.54: mismo layout limpio; stick, espada, salto y
+        // círculo ocultos, Start e Igniculus visibles.
         val controls = externalGamepadLayout()
-        assertEquals(0.80f to 0.62f, facePosition(controls, "btn_y"))
-        assertEquals(0.87f to 0.71f, facePosition(controls, "btn_b"))
-        assertEquals(0.80f to 0.80f, facePosition(controls, "btn_a"))
-        assertEquals(0.73f to 0.71f, facePosition(controls, "btn_x"))
-        assertTrue(controls.filter { it.id.startsWith("btn_") && it.id != "btn_start" }.all { !it.visible })
+        assertEquals(6, controls.size)
+        assertEquals(0.864f to 0.576f, facePosition(controls, "btn_sword"))
+        assertEquals(0.93f to 0.752f, facePosition(controls, "btn_jump"))
+        assertTrue(controls.filter { it.id == "stick" || it.id == "btn_sword" || it.id == "btn_jump" || it.id == "btn_circle" }.all { !it.visible })
         assertEquals(true, controls.first { it.id == "btn_start" }.visible)
-        // R5-A1-2: stick unificado en 104 dp (antes 140 dp, oculto).
-        assertEquals(104, controls.first { it.id == "stick" }.sizeDp)
-        assertEquals(0.50f to 0.55f, facePosition(controls, "igniculus"))
+        assertEquals(210, controls.first { it.id == "stick" }.sizeDp)
+        assertEquals(0.82f to 0.808f, facePosition(controls, "igniculus"))
     }
 
     @Test
     fun migratesSavedBuiltInDefaultProfile() {
         val saved = ControlProfile("default-g99", "Por defecto G99", true, oldDefaultLayout())
         val migrated = TouchLayoutRepository.migrateBuiltInProfile(saved)
-        // R5-A1-1: la migración completa mueve el rombo Y normaliza
-        // el stick (140 dp -> 104 dp) y la Igniculus (y 0.35 -> 0.55)
-        // guardados con los valores viejos de fábrica. El perfil
-        // migrado iguala al default nuevo entero.
+        // 0.2.54: un perfil viejo entero (rombo transpuesto, stick
+        // 140 dp, Igniculus en y 0.35) migra al layout limpio de
+        // fábrica, no al rombo estándar.
         assertEquals(defaultTouchLayout(), migrated.controls)
-        assertEquals(0.80f to 0.62f, facePosition(migrated.controls, "btn_y"))
-        assertEquals(0.80f to 0.80f, facePosition(migrated.controls, "btn_a"))
-        assertEquals(104, migrated.controls.first { it.id == "stick" }.sizeDp)
-        assertEquals(0.50f to 0.55f, facePosition(migrated.controls, "igniculus"))
+        assertEquals(0.864f to 0.576f, facePosition(migrated.controls, "btn_sword"))
+        assertEquals(0.93f to 0.752f, facePosition(migrated.controls, "btn_jump"))
+        assertEquals(210, migrated.controls.first { it.id == "stick" }.sizeDp)
+        assertEquals(0.82f to 0.808f, facePosition(migrated.controls, "igniculus"))
         assertEquals("default-g99", migrated.id)
         assertTrue(migrated.isBuiltIn)
     }
@@ -143,28 +147,24 @@ class TouchLayoutDiamondMigrationTest {
     fun migratesSavedBuiltInOneHandProfile() {
         val saved = ControlProfile("one-hand", "Una mano", true, oldOneHandLayout())
         val migrated = TouchLayoutRepository.migrateBuiltInProfile(saved)
-        // R5-A1-1/A1-2: rombo + stick (120 dp -> 104 dp) + Igniculus
-        // ((0.55, 0.28) -> (0.50, 0.50)). El perfil migrado iguala
-        // al layout nuevo de una mano entero.
+        // 0.2.54: migra al layout limpio de una mano entero.
         assertEquals(oneHandLayout(), migrated.controls)
-        assertEquals(0.76f to 0.65f, facePosition(migrated.controls, "btn_y"))
-        assertEquals(0.76f to 0.83f, facePosition(migrated.controls, "btn_a"))
-        assertEquals(104, migrated.controls.first { it.id == "stick" }.sizeDp)
-        assertEquals(0.50f to 0.50f, facePosition(migrated.controls, "igniculus"))
+        assertEquals(0.83f to 0.63f, facePosition(migrated.controls, "btn_sword"))
+        assertEquals(0.91f to 0.79f, facePosition(migrated.controls, "btn_jump"))
+        assertEquals(210, migrated.controls.first { it.id == "stick" }.sizeDp)
+        assertEquals(0.78f to 0.80f, facePosition(migrated.controls, "igniculus"))
     }
 
     @Test
     fun migratesSavedBuiltInExternalProfile() {
         val saved = ControlProfile("external-gamepad", "Mando externo + táctil mínimo", true, oldExternalLayout())
         val migrated = TouchLayoutRepository.migrateBuiltInProfile(saved)
-        // R5-A1-1/A1-2: rombo + stick (140 dp -> 104 dp) + Igniculus
-        // (y 0.35 -> 0.55). El perfil migrado iguala al layout nuevo
-        // de mando externo entero.
+        // 0.2.54: migra al layout limpio de mando externo entero.
         assertEquals(externalGamepadLayout(), migrated.controls)
-        assertEquals(0.80f to 0.62f, facePosition(migrated.controls, "btn_y"))
-        assertEquals(0.80f to 0.80f, facePosition(migrated.controls, "btn_a"))
-        assertEquals(104, migrated.controls.first { it.id == "stick" }.sizeDp)
-        assertEquals(0.50f to 0.55f, facePosition(migrated.controls, "igniculus"))
+        assertEquals(0.864f to 0.576f, facePosition(migrated.controls, "btn_sword"))
+        assertEquals(0.93f to 0.752f, facePosition(migrated.controls, "btn_jump"))
+        assertEquals(210, migrated.controls.first { it.id == "stick" }.sizeDp)
+        assertEquals(0.82f to 0.808f, facePosition(migrated.controls, "igniculus"))
     }
 
     @Test
@@ -215,13 +215,12 @@ class TouchLayoutDiamondMigrationTest {
         val decoded = TouchLayoutRepository.decodeProfile(raw)
         assertEquals(saved, decoded)
         val migrated = TouchLayoutRepository.migrateBuiltInProfile(decoded!!)
-        // R5-A1-1: tras el round-trip, la migración completa
-        // normaliza el stick y la Igniculus guardados (140 dp, y
-        // 0.35) a los valores de fábrica actuales.
-        assertEquals(0.80f to 0.62f, facePosition(migrated.controls, "btn_y"))
-        assertEquals(0.80f to 0.80f, facePosition(migrated.controls, "btn_a"))
-        assertEquals(104, migrated.controls.first { it.id == "stick" }.sizeDp)
-        assertEquals(0.50f to 0.55f, facePosition(migrated.controls, "igniculus"))
+        // 0.2.54: tras el round-trip, la migración completa lleva
+        // el perfil viejo al layout limpio de fábrica.
+        assertEquals(0.864f to 0.576f, facePosition(migrated.controls, "btn_sword"))
+        assertEquals(0.93f to 0.752f, facePosition(migrated.controls, "btn_jump"))
+        assertEquals(210, migrated.controls.first { it.id == "stick" }.sizeDp)
+        assertEquals(0.82f to 0.808f, facePosition(migrated.controls, "igniculus"))
         val redecoded = TouchLayoutRepository.decodeProfile(TouchLayoutRepository.encodeProfile(migrated))
         assertEquals(migrated, redecoded)
     }
@@ -235,22 +234,20 @@ class TouchLayoutDiamondMigrationTest {
             ControlProfile("custom-1", "Mío", false, oldDefaultLayout()),
         )
         val migrated = TouchLayoutRepository.migrateBuiltInProfiles(saved)
-        // R5-A1-1: en los tres, el rombo migra Y el stick y la
-        // Igniculus guardados se normalizan a los valores de
-        // fábrica actuales (ver los tests individuales). El
+        // 0.2.54: los tres migran al layout limpio de fábrica; el
         // personalizado no se toca.
-        assertEquals(0.80f to 0.62f, facePosition(migrated[0].controls, "btn_y"))
-        assertEquals(0.80f to 0.80f, facePosition(migrated[0].controls, "btn_a"))
-        assertEquals(104, migrated[0].controls.first { it.id == "stick" }.sizeDp)
-        assertEquals(0.50f to 0.55f, facePosition(migrated[0].controls, "igniculus"))
-        assertEquals(0.76f to 0.65f, facePosition(migrated[1].controls, "btn_y"))
-        assertEquals(0.76f to 0.83f, facePosition(migrated[1].controls, "btn_a"))
-        assertEquals(104, migrated[1].controls.first { it.id == "stick" }.sizeDp)
-        assertEquals(0.50f to 0.50f, facePosition(migrated[1].controls, "igniculus"))
-        assertEquals(0.80f to 0.62f, facePosition(migrated[2].controls, "btn_y"))
-        assertEquals(0.80f to 0.80f, facePosition(migrated[2].controls, "btn_a"))
-        assertEquals(104, migrated[2].controls.first { it.id == "stick" }.sizeDp)
-        assertEquals(0.50f to 0.55f, facePosition(migrated[2].controls, "igniculus"))
+        assertEquals(0.864f to 0.576f, facePosition(migrated[0].controls, "btn_sword"))
+        assertEquals(0.93f to 0.752f, facePosition(migrated[0].controls, "btn_jump"))
+        assertEquals(210, migrated[0].controls.first { it.id == "stick" }.sizeDp)
+        assertEquals(0.82f to 0.808f, facePosition(migrated[0].controls, "igniculus"))
+        assertEquals(0.83f to 0.63f, facePosition(migrated[1].controls, "btn_sword"))
+        assertEquals(0.91f to 0.79f, facePosition(migrated[1].controls, "btn_jump"))
+        assertEquals(210, migrated[1].controls.first { it.id == "stick" }.sizeDp)
+        assertEquals(0.78f to 0.80f, facePosition(migrated[1].controls, "igniculus"))
+        assertEquals(0.864f to 0.576f, facePosition(migrated[2].controls, "btn_sword"))
+        assertEquals(0.93f to 0.752f, facePosition(migrated[2].controls, "btn_jump"))
+        assertEquals(210, migrated[2].controls.first { it.id == "stick" }.sizeDp)
+        assertEquals(0.82f to 0.808f, facePosition(migrated[2].controls, "igniculus"))
         assertEquals(saved[3], migrated[3])
         assertEquals(builtInProfiles().map { it.id }, migrated.take(3).map { it.id })
     }
