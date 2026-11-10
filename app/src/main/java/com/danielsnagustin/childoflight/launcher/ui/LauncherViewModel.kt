@@ -63,6 +63,8 @@ import com.danielsnagustin.childoflight.launcher.ui.settings.guardTurnipDriver
 import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategorySettings
 import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategoryUiPrefs
 import com.danielsnagustin.childoflight.launcher.model.defaultProfileFor
+import com.danielsnagustin.childoflight.launcher.model.effectiveSettings
+import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 import com.danielsnagustin.childoflight.launcher.model.shouldAutoRevertTo1x
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -1676,7 +1678,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     ): Result<Unit> {
         _installProgress.value = InstallProgress(null, "Instalando en el núcleo…")
         val installer = EmbeddedPkgInstaller(library)
-        return if (kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC) {
+        val result = if (kind == com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC) {
             installer.installDlcPkg(dlcId) { percent, status ->
                 _installProgress.value = InstallProgress(percent, status)
             }
@@ -1685,6 +1687,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 _installProgress.value = InstallProgress(percent, status)
             }
         }
+        // R4-P2-7: el núcleo acaba de escribir en ux0/addcont/ o
+        // ux0/patch/: el tamaño cacheado ya no vale.
+        return result.onSuccess { library.invalidateInstalledSizes(titleId.id) }
     }
 
     // --- .pkg + Vita3K externo ---
@@ -2828,6 +2833,20 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { uiRepo.save(prefs) }
     }
 
+    /**
+     * R4-P2-6: marca la intro de Home como ya vista EN ESTA INSTALACIÓN
+     * (UiPreferences.homeIntroSeen, persistente en DataStore). La llama
+     * HomeScreen al terminar su intro de ~900 ms (onIntroDone). Si ya
+     * estaba marcada, no se escribe nada: la escritura DataStore solo
+     * ocurre una vez por instalación.
+     */
+    fun markHomeIntroSeen() {
+        viewModelScope.launch {
+            val current = uiRepo.uiFlow.first()
+            if (!current.homeIntroSeen) uiRepo.save(current.copy(homeIntroSeen = true))
+        }
+    }
+
     fun resetAllCustomization() {
         viewModelScope.launch {
             uiRepo.resetAll()
@@ -3295,15 +3314,37 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             appendLine("Pulsaciones táctiles: botones ${overlayStats.buttonsOk} entregados / ${overlayStats.buttonsLost} perdidos | ejes ${overlayStats.axesOk} entregados / ${overlayStats.axesLost} perdidos")
             appendLine("Última pulsación: botón SDL ${overlayStats.lastButtonSdl} pressed=${overlayStats.lastButtonPressed} entregado=${overlayStats.lastButtonDelivered} | último eje: SDL ${overlayStats.lastAxisSdl} valor=${overlayStats.lastAxisValue} entregado=${overlayStats.lastAxisDelivered}")
             appendLine()
-            appendLine("--- Ajustes activos ---")
-            appendLine("Perfil: ${settings.activeProfile.label}")
-            appendLine("Backend: ${settings.backend} | Resolución: ${settings.resolutionLabel} | Filtro: ${settings.screenFilter}")
-            appendLine("Aniso: ${settings.anisotropicFiltering}x | VSync: ${settings.vSync} | Async: ${settings.asyncPipelineCompilation}")
-            appendLine("High Accuracy: ${settings.highAccuracy} | Surface Sync: ${settings.surfaceSyncEnabled} | Memory Mapping: ${settings.memoryMapping}")
-            appendLine("Audio: ${settings.audioBackend} | Volumen: ${settings.audioVolume} | NGS: ${settings.ngsEnable}")
-            appendLine("CPU opt (JIT): ${settings.cpuOpt} | FPS hack: ${settings.fpsHack}")
-            appendLine("Modo seguro: ${settings.safeMode}")
-            appendLine("Driver: ${settings.gpuDriver} | Turnip: ${settings.turnipVersion} (instalado: ${settings.turnipInstalled})")
+            // R4-P2-9: "Ajustes activos" muestra los valores EFECTIVOS
+            // (los que corre el juego y emite config.yml), no los
+            // guardados: effectiveSettings() aplica el Modo seguro (1x,
+            // SDL, High Accuracy OFF) y el paquete del modo 60 FPS
+            // (1x, VSync ON, cachés ON), y resolveBackend() el fallback
+            // Vulkan→OpenGL. Es el mismo patrón que la pantalla de
+            // Diagnóstico ("Configuración efectiva",
+            // SettingsDiagnosticsScreen). Antes, con 60 FPS ON el
+            // reporte decía "VSync: false" mientras el config.yml del
+            // mismo reporte emitía v-sync: true. La RAM total va aquí
+            // (DeviceMemory, la misma fuente que Diagnóstico) para
+            // cerrar el misterio de los 4 GB sin preguntar.
+            appendLine("--- Ajustes activos (efectivos) ---")
+            val effective = effectiveSettings(settings)
+            if (settings.safeMode) {
+                appendLine("Modo seguro activo: los valores de abajo son los efectivos (1x, SDL, High Accuracy OFF), no los guardados.")
+            } else if (settings.fpsHack) {
+                appendLine("Modo 60 FPS activo: los valores de abajo son los efectivos (fps-hack + 1x, VSync ON, cachés ON), no los guardados.")
+            }
+            appendLine("Perfil: ${effective.activeProfile.label}")
+            appendLine("Backend: ${resolveBackend(effective, gpu).label} | Resolución: ${effective.resolutionLabel} | Filtro: ${effective.screenFilter}")
+            appendLine("Aniso: ${effective.anisotropicFiltering}x | VSync: ${effective.vSync} | Async: ${effective.asyncPipelineCompilation}")
+            appendLine("High Accuracy: ${effective.highAccuracy} | Surface Sync: ${effective.surfaceSyncEnabled} | Memory Mapping: ${effective.memoryMapping}")
+            appendLine("Audio: ${effective.audioBackend} | Volumen: ${effective.audioVolume} | NGS: ${effective.ngsEnable}")
+            appendLine("CPU opt (JIT): ${effective.cpuOpt} | FPS hack: ${effective.fpsHack}")
+            appendLine("Modo seguro: ${effective.safeMode}")
+            appendLine("Driver: ${effective.gpuDriver} | Turnip: ${effective.turnipVersion} (instalado: ${effective.turnipInstalled})")
+            appendLine("Caché de texturas: ${effective.textureCache} | Caché de shaders: ${effective.shaderCache} | Caché sin hash: ${effective.hashlessTextureCache}")
+            appendLine("Overlay de FPS: ${effective.showFpsOverlay} (detalle ${effective.performanceOverlayDetail.label}, posición ${effective.performanceOverlayPosition.label}) | Overlay táctil: ${effective.showTouchOverlayInGame}")
+            val totalRamGb = DeviceMemory.totalRamBytes(context)?.let { it / 1_073_741_824.0 }
+            appendLine("RAM total: ${totalRamGb?.let { "%.1f GB".format(it) } ?: "no detectada"}")
             appendLine()
             appendLine("--- config.yml generado ---")
             // P1-14: igual que en refreshConfigPreview: generate()

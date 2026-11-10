@@ -6,6 +6,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Log propio del launcher (no es el log de Vita3K).
@@ -14,6 +15,70 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Si el archivo supera 200 KB se rota (se conserva la mitad reciente).
  */
 object LauncherLog {
+
+    /** Tamaño a partir del cual el log se rota (se conservan las 200 líneas recientes). */
+    const val MAX_LOG_BYTES: Long = 200 * 1024
+
+    /** Líneas que conserva una rotación. */
+    const val KEEP_LINES_AFTER_ROTATION: Int = 200
+
+    /**
+     * R4-P2-5: intervalo mínimo entre intentos de rotación. La rotación
+     * (readLines + writeText del archivo entero) corría DENTRO del
+     * candado de cada append y en CADA append mientras el archivo
+     * superara 200 KB: cada onResume (scanStatus) pagaba la rotación
+     * entera en el hilo que llamaba. Ahora el intento se hace como
+     * mucho una vez por minuto: el coste por append vuelve a ser solo
+     * el appendText, y la rotación sigue ocurriendo (tarde o temprano,
+     * el siguiente append tras el minuto rota). El candado se mantiene
+     * para no perder líneas entre lectores/escritores concurrentes.
+     */
+    const val ROTATION_MIN_INTERVAL_MILLIS: Long = 60_000
+
+    private val lastRotationAttemptMillis = AtomicLong(0L)
+
+    /**
+     * R4-P2-5: true si el archivo es lo bastante grande como para
+     * rotar. Puro (solo el tamaño), testeable en JVM.
+     */
+    fun shouldRotate(fileLengthBytes: Long): Boolean = fileLengthBytes > MAX_LOG_BYTES
+
+    /**
+     * R4-P2-5: true si ya pasó el intervalo mínimo desde el último
+     * intento de rotación. Puro, testeable en JVM.
+     */
+    fun shouldAttemptRotation(nowMillis: Long, lastAttemptMillis: Long): Boolean =
+        nowMillis - lastAttemptMillis >= ROTATION_MIN_INTERVAL_MILLIS
+
+    /**
+     * R4-P2-5: rota [file] si supera MAX_LOG_BYTES: conserva solo las
+     * KEEP_LINES_AFTER_ROTATION líneas recientes. Devuelve true si
+     * rotó y false si no hacía falta o no se pudo leer/escribir.
+     * Pura salvo File, para poder probarla en la JVM sin Android
+     * (el mismo patrón que writeConfigIfChanged).
+     */
+    fun rotateLogFile(file: File): Boolean {
+        return try {
+            if (!file.isFile || file.length() <= MAX_LOG_BYTES) return false
+            val lines = file.readLines()
+            file.writeText(lines.takeLast(KEEP_LINES_AFTER_ROTATION).joinToString("\n") + "\n")
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * R4-P2-5: true si el resumen de scanStatus debe registrarse: solo
+     * cuando CAMBIÓ respecto al último registrado (o no hay anterior).
+     * scanStatus() se llama en init, en cada onResume y al volver del
+     * juego, y antes añadía una línea idéntica por cada llamada: las
+     * ráfagas llenaban el log y aceleraban la rotación. Puro y
+     * testeable en JVM; el último resumen vive en
+     * GameLibraryRepository (un solo llamador de esta línea).
+     */
+    fun shouldLogScanStatus(lastLoggedSummary: String?, currentSummary: String): Boolean =
+        lastLoggedSummary != currentSummary
 
     private fun logFile(context: Context): File {
         val dir = File(context.filesDir, "vita3k")
@@ -25,12 +90,19 @@ object LauncherLog {
     fun append(context: Context, tag: String, message: String) {
         try {
             val file = logFile(context)
-            if (file.exists() && file.length() > 200 * 1024) {
-                val lines = file.readLines()
-                file.writeText(lines.takeLast(200).joinToString("\n") + "\n")
-            }
             val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
             file.appendText("[$time] [$tag] $message\n")
+            // R4-P2-5: la rotación ya no corre en cada append: solo se
+            // intenta si el archivo supera el tope Y pasó el intervalo
+            // mínimo desde el último intento (como mucho una vez por
+            // minuto). El append de arriba ya quedó escrito; la
+            // rotación conserva las 200 líneas recientes, incluida esta.
+            if (shouldRotate(file.length()) &&
+                shouldAttemptRotation(System.currentTimeMillis(), lastRotationAttemptMillis.get())
+            ) {
+                lastRotationAttemptMillis.set(System.currentTimeMillis())
+                rotateLogFile(file)
+            }
         } catch (_: Exception) {
             // El log nunca debe romper el launcher.
         }

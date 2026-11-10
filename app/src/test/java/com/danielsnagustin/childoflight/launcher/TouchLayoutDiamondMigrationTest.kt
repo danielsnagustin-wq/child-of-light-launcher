@@ -70,10 +70,13 @@ class TouchLayoutDiamondMigrationTest {
         assertEquals(0.87f to 0.71f, facePosition(controls, "btn_b"))
         assertEquals(0.80f to 0.80f, facePosition(controls, "btn_a"))
         assertEquals(0.73f to 0.71f, facePosition(controls, "btn_x"))
-        // Lo demás no se mueve: stick, Start e Igniculus quedan donde estaban.
+        // Lo demás no se mueve: stick, Start e Igniculus quedan
+        // donde estaban (R4-P2-1: stick 104 dp, Igniculus en y 0.55
+        // para no tapar el logo).
         assertEquals(0.18f to 0.72f, facePosition(controls, "stick"))
+        assertEquals(104, controls.first { it.id == "stick" }.sizeDp)
         assertEquals(0.50f to 0.06f, facePosition(controls, "btn_start"))
-        assertEquals(0.50f to 0.35f, facePosition(controls, "igniculus"))
+        assertEquals(0.50f to 0.55f, facePosition(controls, "igniculus"))
     }
 
     @Test
@@ -109,7 +112,16 @@ class TouchLayoutDiamondMigrationTest {
     fun migratesSavedBuiltInDefaultProfile() {
         val saved = ControlProfile("default-g99", "Por defecto G99", true, oldDefaultLayout())
         val migrated = TouchLayoutRepository.migrateBuiltInFaceDiamond(saved)
-        assertEquals(defaultTouchLayout(), migrated.controls)
+        // R4-P2-1: la migración solo mueve el rombo de cara. El
+        // stick (140 dp) y la Igniculus (y 0.35) guardados se
+        // conservan: son del perfil guardado, no del default de
+        // fábrica, así que el migrado ya no iguala al default nuevo.
+        assertEquals(defaultTouchLayout().first { it.id == "btn_y" }.let { it.xFraction to it.yFraction }, facePosition(migrated.controls, "btn_y"))
+        assertEquals(defaultTouchLayout().first { it.id == "btn_b" }.let { it.xFraction to it.yFraction }, facePosition(migrated.controls, "btn_b"))
+        assertEquals(defaultTouchLayout().first { it.id == "btn_a" }.let { it.xFraction to it.yFraction }, facePosition(migrated.controls, "btn_a"))
+        assertEquals(defaultTouchLayout().first { it.id == "btn_x" }.let { it.xFraction to it.yFraction }, facePosition(migrated.controls, "btn_x"))
+        assertEquals(140, migrated.controls.first { it.id == "stick" }.sizeDp)
+        assertEquals(0.50f to 0.35f, facePosition(migrated.controls, "igniculus"))
         assertEquals("default-g99", migrated.id)
         assertTrue(migrated.isBuiltIn)
     }
@@ -118,14 +130,27 @@ class TouchLayoutDiamondMigrationTest {
     fun migratesSavedBuiltInOneHandProfile() {
         val saved = ControlProfile("one-hand", "Una mano", true, oldOneHandLayout())
         val migrated = TouchLayoutRepository.migrateBuiltInFaceDiamond(saved)
-        assertEquals(oneHandLayout(), migrated.controls)
+        // R4-P2-1: igual que el default: solo el rombo migra; el
+        // stick (120 dp) y la Igniculus (0.55, 0.28) guardados quedan.
+        assertEquals(oneHandLayout().first { it.id == "btn_y" }.let { it.xFraction to it.yFraction }, facePosition(migrated.controls, "btn_y"))
+        assertEquals(oneHandLayout().first { it.id == "btn_b" }.let { it.xFraction to it.yFraction }, facePosition(migrated.controls, "btn_b"))
+        assertEquals(oneHandLayout().first { it.id == "btn_a" }.let { it.xFraction to it.yFraction }, facePosition(migrated.controls, "btn_a"))
+        assertEquals(oneHandLayout().first { it.id == "btn_x" }.let { it.xFraction to it.yFraction }, facePosition(migrated.controls, "btn_x"))
+        assertEquals(120, migrated.controls.first { it.id == "stick" }.sizeDp)
+        assertEquals(0.55f to 0.28f, facePosition(migrated.controls, "igniculus"))
     }
 
     @Test
     fun migratesSavedBuiltInExternalProfile() {
         val saved = ControlProfile("external-gamepad", "Mando externo + táctil mínimo", true, oldExternalLayout())
         val migrated = TouchLayoutRepository.migrateBuiltInFaceDiamond(saved)
-        assertEquals(externalGamepadLayout(), migrated.controls)
+        // R4-P2-1: igual que el default: solo el rombo migra; la
+        // Igniculus guardada (0.50, 0.35) queda.
+        assertEquals(externalGamepadLayout().first { it.id == "btn_y" }.let { it.xFraction to it.yFraction }, facePosition(migrated.controls, "btn_y"))
+        assertEquals(externalGamepadLayout().first { it.id == "btn_b" }.let { it.xFraction to it.yFraction }, facePosition(migrated.controls, "btn_b"))
+        assertEquals(externalGamepadLayout().first { it.id == "btn_a" }.let { it.xFraction to it.yFraction }, facePosition(migrated.controls, "btn_a"))
+        assertEquals(externalGamepadLayout().first { it.id == "btn_x" }.let { it.xFraction to it.yFraction }, facePosition(migrated.controls, "btn_x"))
+        assertEquals(0.50f to 0.35f, facePosition(migrated.controls, "igniculus"))
     }
 
     @Test
@@ -176,7 +201,12 @@ class TouchLayoutDiamondMigrationTest {
         val decoded = TouchLayoutRepository.decodeProfile(raw)
         assertEquals(saved, decoded)
         val migrated = TouchLayoutRepository.migrateBuiltInFaceDiamond(decoded!!)
-        assertEquals(defaultTouchLayout(), migrated.controls)
+        // R4-P2-1: solo el rombo migra; el stick y la Igniculus
+        // guardados (140 dp, y 0.35) se conservan.
+        assertEquals(0.80f to 0.62f, facePosition(migrated.controls, "btn_y"))
+        assertEquals(0.80f to 0.80f, facePosition(migrated.controls, "btn_a"))
+        assertEquals(140, migrated.controls.first { it.id == "stick" }.sizeDp)
+        assertEquals(0.50f to 0.35f, facePosition(migrated.controls, "igniculus"))
         val redecoded = TouchLayoutRepository.decodeProfile(TouchLayoutRepository.encodeProfile(migrated))
         assertEquals(migrated, redecoded)
     }
@@ -190,9 +220,17 @@ class TouchLayoutDiamondMigrationTest {
             ControlProfile("custom-1", "Mío", false, oldDefaultLayout()),
         )
         val migrated = TouchLayoutRepository.migrateBuiltInProfiles(saved)
-        assertEquals(defaultTouchLayout(), migrated[0].controls)
-        assertEquals(oneHandLayout(), migrated[1].controls)
-        assertEquals(externalGamepadLayout(), migrated[2].controls)
+        // R4-P2-1: en los tres, solo el rombo migra; stick e
+        // Igniculus guardados se conservan (ver los tests
+        // individuales). El personalizado no se toca.
+        assertEquals(0.80f to 0.62f, facePosition(migrated[0].controls, "btn_y"))
+        assertEquals(0.80f to 0.80f, facePosition(migrated[0].controls, "btn_a"))
+        assertEquals(140, migrated[0].controls.first { it.id == "stick" }.sizeDp)
+        assertEquals(0.76f to 0.65f, facePosition(migrated[1].controls, "btn_y"))
+        assertEquals(0.76f to 0.83f, facePosition(migrated[1].controls, "btn_a"))
+        assertEquals(120, migrated[1].controls.first { it.id == "stick" }.sizeDp)
+        assertEquals(0.80f to 0.62f, facePosition(migrated[2].controls, "btn_y"))
+        assertEquals(0.80f to 0.80f, facePosition(migrated[2].controls, "btn_a"))
         assertEquals(saved[3], migrated[3])
         assertEquals(builtInProfiles().map { it.id }, migrated.take(3).map { it.id })
     }

@@ -130,6 +130,14 @@ class CategoryResetTest {
         val withHidden = changedUi.copy(hiddenPresets = setOf(GpuProfileId.G99_QUALITY))
         val reset = resetCategoryUiPrefs(withHidden, SettingsCategory.PERSONALIZATION)
         assertEquals(UiPreferences(hiddenPresets = setOf(GpuProfileId.G99_QUALITY)), reset)
+        // R4-P2-6: restablecer la personalización NO hace sonar la
+        // intro otra vez: homeIntroSeen se conserva como los presets
+        // ocultos (no es apariencia).
+        val seen = withHidden.copy(homeIntroSeen = true)
+        val resetSeen = resetCategoryUiPrefs(seen, SettingsCategory.PERSONALIZATION)
+        assertEquals(true, resetSeen.homeIntroSeen)
+        assertEquals(setOf(GpuProfileId.G99_QUALITY), resetSeen.hiddenPresets)
+        assertEquals(AccentColor.ICE_BLUE, resetSeen.accent)
         // Las demás categorías no tocan UiPreferences.
         assertEquals(withHidden, resetCategoryUiPrefs(withHidden, SettingsCategory.GPU))
         // Y Personalización no toca LauncherSettings.

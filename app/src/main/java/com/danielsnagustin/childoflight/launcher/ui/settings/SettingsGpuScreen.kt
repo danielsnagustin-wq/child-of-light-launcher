@@ -72,7 +72,11 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
                 EnumChips("Filtro de pantalla", ScreenFilter.entries, s.screenFilter, { it.vita3kValue }) { vm.saveSettings(s.copy(screenFilter = it)) }
                 NoteText("FSR solo funciona con Vulkan y solo si la GPU lo soporta: si no, el núcleo vuelve solo a Bilinear. En OpenGL, FSR se comporta como Bilinear. Verificado en el código del núcleo (pin 3e43bc80).")
                 EnumChips("Anisotrópico", listOf(1, 2, 4, 8, 16), s.anisotropicFiltering, { "${it}x" }) { vm.saveSettings(s.copy(anisotropicFiltering = it)) }
-                SettingSwitch("V-Sync", "Sincronización vertical. OFF en Rendimiento, ON en Calidad Adreno.", s.vSync) { vm.saveSettings(s.copy(vSync = it)) }
+                // R4-P2-8: la etiqueta anterior mentía: decía "OFF en
+                // Rendimiento, ON en Calidad Adreno", pero G99_QUALITY
+                // también lleva vSync false; solo el preset
+                // Calidad/Turnip (Adreno) lleva true.
+                SettingSwitch("V-Sync", "Sincronización vertical. ON solo en el preset Calidad/Turnip (Adreno).", s.vSync) { vm.saveSettings(s.copy(vSync = it)) }
                 // R2-P2-08: sin "ON siempre": el interruptor lo puede
                 // apagar el usuario (los presets lo ponen ON por
                 // defecto, pero nada lo fuerza).

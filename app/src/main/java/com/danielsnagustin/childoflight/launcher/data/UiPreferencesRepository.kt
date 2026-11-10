@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.MutablePreferences
@@ -52,6 +53,7 @@ class UiPreferencesRepository(private val context: Context) {
         val CARD_SIZE = stringPreferencesKey("ui_card_size")
         val CARD_TRANSPARENCY = stringPreferencesKey("ui_card_transparency")
         val ICON_SIZE = stringPreferencesKey("ui_icon_size")
+        val HOME_INTRO_SEEN = booleanPreferencesKey("ui_home_intro_seen")
     }
 
     val uiFlow: Flow<UiPreferences> = context.uiDataStore.data.map { p ->
@@ -68,6 +70,9 @@ class UiPreferencesRepository(private val context: Context) {
             cardSize = runCatching { CardSize.valueOf(p[Keys.CARD_SIZE] ?: "NORMAL") }.getOrDefault(CardSize.NORMAL),
             cardTransparency = runCatching { CardTransparency.valueOf(p[Keys.CARD_TRANSPARENCY] ?: "OPAQUE") }.getOrDefault(CardTransparency.OPAQUE),
             iconSize = runCatching { IconSize.valueOf(p[Keys.ICON_SIZE] ?: "MEDIUM") }.getOrDefault(IconSize.MEDIUM),
+            // R4-P2-6: clave nueva (Etapa 6): ausente = false (la intro
+            // suena en la primera entrada por instalación).
+            homeIntroSeen = p[Keys.HOME_INTRO_SEEN] ?: false,
         )
     }.catch { e ->
         Log.w("ChildOfLight", "DataStore ui_prefs ilegible, usando defaults: ${e.message}")
@@ -103,6 +108,7 @@ class UiPreferencesRepository(private val context: Context) {
             p[Keys.CARD_SIZE] = prefs.cardSize.name
             p[Keys.CARD_TRANSPARENCY] = prefs.cardTransparency.name
             p[Keys.ICON_SIZE] = prefs.iconSize.name
+            p[Keys.HOME_INTRO_SEEN] = prefs.homeIntroSeen
         }
     }
 

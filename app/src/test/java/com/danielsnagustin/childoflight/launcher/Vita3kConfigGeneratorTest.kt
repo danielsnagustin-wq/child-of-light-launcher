@@ -286,6 +286,25 @@ class Vita3kConfigGeneratorTest {
     }
 
     @Test
+    fun psnSignedInComesFromEffectiveSettings() {
+        // R4-P2-10: psn-signed-in se emite desde el effective (s), no
+        // desde settings directo. Hoy ninguna transformación lo toca
+        // (ni modo seguro ni 60 FPS), así que el valor pasa igual, pero
+        // el generador debe seguir emitiéndolo bajo ambas
+        // transformaciones: es la guarda de regresión de la
+        // unificación en el effective.
+        val safeOn = Vita3kConfigGenerator.generate(
+            LauncherSettings(safeMode = true, psnSignedIn = true), "/data/vita3k",
+        )
+        assertTrue(safeOn.contains("psn-signed-in: 1"))
+        val fpsOff = Vita3kConfigGenerator.generate(
+            LauncherSettings(fpsHack = true, psnSignedIn = false), "/data/vita3k",
+        )
+        assertTrue(fpsOff.contains("psn-signed-in: 0"))
+        assertFalse(fpsOff.contains("psn-signed-in: 1"))
+    }
+
+    @Test
     fun prefPathIsVitaFsNotStorageRoot() {
         // Bug -3 (2026-11-08): pref-path ES el vita_fs en upstream
         // (config.h:182 del pin 3e43bc80: pref-path es

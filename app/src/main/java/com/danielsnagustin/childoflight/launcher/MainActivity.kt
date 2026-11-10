@@ -48,6 +48,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import com.danielsnagustin.childoflight.launcher.data.GameActivityState
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.launcher.Vita3KLauncher
@@ -144,8 +147,14 @@ class MainActivity : ComponentActivity() {
         // "Núcleo embebido: juego lanzado". La Activity anota el fallo
         // en Vita3KLauncher (bandera consumible) y aquí se corrige al
         // volver, con el motivo exacto. Sin tocar LauncherViewModel.
+        // R4-P2-5: el append de log es I/O de disco y onResume corre en
+        // Main: va por IO (el Toast sí queda en Main, es UI). Antes el
+        // append (con su rotación bajo candado) corría en el hilo
+        // principal en cada vuelta al launcher.
         Vita3KLauncher.takeEmbeddedLaunchFailure()?.let { reason ->
-            LauncherLog.append(this, "launch", "El juego no llegó a arrancar: $reason")
+            lifecycleScope.launch(Dispatchers.IO) {
+                LauncherLog.append(applicationContext, "launch", "El juego no llegó a arrancar: $reason")
+            }
             Toast.makeText(this, "El juego no llegó a arrancar. $reason", Toast.LENGTH_LONG).show()
         }
     }
@@ -165,13 +174,27 @@ private fun LauncherContent(vm: LauncherViewModel) {
         Color(0xFF8CCBEB)
     }
     val scale = uiPrefs?.textSize?.scale ?: 1.0f
+    // R4-P2-10: el tamaño de texto escala TODOS los estilos, no solo
+    // 6: antes labelSmall/labelMedium y los display* quedaban a tamaño
+    // fijo (Material3 por defecto) y el ajuste no los tocaba. Los
+    // tamaños base son los defaults de Material3 (display 57/45/36,
+    // headline 32/28/24, title 22/16/14, body 16/14/12, label 14/12/11).
     val typography = Typography(
+        displayLarge = TextStyle(fontSize = (57 * scale).sp),
+        displayMedium = TextStyle(fontSize = (45 * scale).sp),
+        displaySmall = TextStyle(fontSize = (36 * scale).sp),
+        headlineLarge = TextStyle(fontSize = (32 * scale).sp),
         headlineMedium = TextStyle(fontSize = (28 * scale).sp),
+        headlineSmall = TextStyle(fontSize = (24 * scale).sp),
         titleLarge = TextStyle(fontSize = (22 * scale).sp),
         titleMedium = TextStyle(fontSize = (16 * scale).sp),
+        titleSmall = TextStyle(fontSize = (14 * scale).sp),
         bodyLarge = TextStyle(fontSize = (16 * scale).sp),
         bodyMedium = TextStyle(fontSize = (14 * scale).sp),
         bodySmall = TextStyle(fontSize = (12 * scale).sp),
+        labelLarge = TextStyle(fontSize = (14 * scale).sp),
+        labelMedium = TextStyle(fontSize = (12 * scale).sp),
+        labelSmall = TextStyle(fontSize = (11 * scale).sp),
     )
     val colorScheme = if (dark) {
         darkColorScheme(primary = accent, secondary = accent)
@@ -229,11 +252,20 @@ private fun LauncherApp(vm: LauncherViewModel) {
             screenName = Screen.HOME.name
         }
     }
-    // La animación de entrada de Home solo se reproduce una vez por sesión:
-    // AnimatedContent descarta y recrea la composición de Home en cada
-    // navegación, así que sin esta bandera la portada (650 ms) y las
-    // tarjetas (450 ms + retardos) se repetían en cada vuelta a Home.
-    var homeIntroDone by rememberSaveable { mutableStateOf(false) }
+    // R4-P2-6: la intro de Home se decide por la marca persistente
+    // (UiPreferences.homeIntroSeen): hay que recoger uiFlow aquí,
+    // en LauncherApp, no solo en LauncherContent (tema/texto).
+    val uiPrefs by vm.uiFlow.collectAsState(initial = null)
+    // La animación de entrada de Home solo se reproduce una vez por
+    // INSTALACIÓN (R4-P2-6): la marca vive en UiPreferences
+    // (homeIntroSeen, persistente en DataStore), no en rememberSaveable.
+    // Antes la bandera era por sesión/proceso: cada vez que el sistema
+    // mataba el proceso, la portada (650 ms) y las tarjetas (450 ms +
+    // retardos) volvían a sonar al abrir la app, y eso es lo que "se
+    // siente lenta al navegar" describía. Con la marca persistente, a
+    // partir de la segunda apertura Home aparece al instante. La
+    // transición entre pantallas (150 ms) no se toca.
+    val homeIntroDone = uiPrefs?.homeIntroSeen == true
     val screen = runCatching { Screen.valueOf(screenName) }.getOrDefault(Screen.HOME)
     // Atrás: desapilar (ver pila de arriba). Si la pila está vacía
     // (no debería pasar fuera de Home), volver a Home.
@@ -316,7 +348,7 @@ private fun LauncherApp(vm: LauncherViewModel) {
                 label = "screenTransition",
             ) { target ->
                 when (target) {
-                    Screen.HOME -> HomeScreen(vm, introDone = homeIntroDone, onIntroDone = { homeIntroDone = true }) { navigateTo(it) }
+                    Screen.HOME -> HomeScreen(vm, introDone = homeIntroDone, onIntroDone = { vm.markHomeIntroSeen() }) { navigateTo(it) }
                     Screen.IMPORT -> ImportScreen(vm) { goBack() }
                     Screen.SETTINGS -> SettingsScreen(vm, { goBack() }, { navigateTo(it) })
                     Screen.SETTINGS_GENERAL -> SettingsGeneralScreen(vm, { goBack() }, { navigateTo(it) })

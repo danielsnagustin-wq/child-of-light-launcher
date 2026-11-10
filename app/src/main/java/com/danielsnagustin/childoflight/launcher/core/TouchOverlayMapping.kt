@@ -74,11 +74,32 @@ enum class FaceGlyph { CROSS, CIRCLE, SQUARE, TRIANGLE }
  *   identidad (vita3k/app/src/app.cpp: reset_controller_binding) y
  *   app::init los restaura si config.yml no los trae (vita3k/app/src/
  *   app_init.cpp): nuestro config.yml NO necesita emitirlos.
- * - L2/R2 no existen en el modelo del launcher (VitaButton no los
- *   tiene): el núcleo los lee como ejes (trigger > 0x3FFF) y el
- *   overlay de upstream los manda con botón negativo (input_overlay.
- *   cpp: button < 0 -> SDL_SetJoystickVirtualAxis(-button, ...)).
- *   Como no hay botón Vita L2/R2 que asignar, esta vía no se usa.
+ * - L2/R2 SÍ existen en el modelo del launcher desde R4-P2-11
+ *   (VitaButton.L2/R2): el núcleo los lee como ejes (trigger >
+ *   0x3FFF, ctrl.cpp: apply_controller, vía ext) y el overlay de
+ *   upstream los manda con botón negativo (input_overlay.cpp:104-108:
+ *   button < 0 -> SDL_SetJoystickVirtualAxis(-button, value ?
+ *   SDL_MAX_SINT16 : 0). Los binds de ejes por defecto son la
+ *   identidad (app.cpp:105-112 reset_controller_binding:
+ *   axis_binds[4] = LEFT_TRIGGER, [5] = RIGHT_TRIGGER), así que
+ *   -4 es L2 y -5 es R2. [toSdlButton] los codifica así; el puente
+ *   (Vita3kCoreBridge.overlaySetButton -> input_overlay_bridge.cpp)
+ *   pasa el entero tal cual al setButton nativo, que aplica la vía
+ *   negativa. Child of Light no los usa en el título: solo están
+ *   disponibles para asignar en el editor, nunca en el layout por
+ *   defecto.
+ * - GUIDE (botón PS, SDL 5) existe desde R4-P2-13: el bucle del
+ *   núcleo (session.cpp:401-403: SDL_EVENT_GAMEPAD_BUTTON_DOWN +
+ *   GUIDE -> hooks.on_guide_button; main_android.cpp:101 ->
+ *   openPauseMenuFromController) abre el menú de pausa. Un botón
+ *   táctil asignado a GUIDE manda el botón 5 del mando virtual; que
+ *   SDL genere el evento de gamepad desde el joystick virtual es lo
+ *   que falta por probar en el teléfono (TODO-VERIFY, sin CI que lo
+ *   cubra). También solo en el editor, nunca por defecto.
+ * - L3/R3 (R4-P2-12) ya existían como asignación en el editor:
+ *   SDL 7/8 (LEFT_STICK/RIGHT_STICK -> SCE_CTRL_L3/R3 en
+ *   ctrl.cpp: get_controller_bindings_ext). Los StickView no tienen
+ *   click (no se añade): L3/R3 se asignan a un botón táctil normal.
  *
  * La personalización (posición, tamaño, opacidad, color, forma,
  * visibilidad, perfil activo) vive TODA en el launcher: el núcleo
@@ -132,9 +153,9 @@ object TouchOverlayMapping {
 
     /**
      * R4-P0-2: glifo PlayStation del botón, o null si no es un botón
-     * de cara (D-Pad, START, L1/R1, sticks y NONE se dibujan con
-     * flechas, pausa o etiqueta, no con un glifo). CROSS tiene su
-     * glifo propio y ya no comparte icono con DPAD_UP.
+     * de cara (D-Pad, START, L1/R1, L2/R2, GUIDE, sticks y NONE se
+     * dibujan con flechas, pausa, etiqueta o nada, no con un glifo).
+     * CROSS tiene su glifo propio y ya no comparte icono con DPAD_UP.
      */
     fun faceGlyphFor(button: VitaButton): FaceGlyph? = when (button) {
         VitaButton.CROSS -> FaceGlyph.CROSS
@@ -174,6 +195,13 @@ object TouchOverlayMapping {
      * (fantasma, sin icono) y el toque lo recibe la superficie SDL
      * (táctil frontal del juego) en vez de quedarse en un botón que
      * no hace nada (P2-23).
+     *
+     * R4-P2-11: L2/R2 se codifican como botón NEGATIVO (-eje): es la
+     * convención de upstream (input_overlay.cpp:104-108, button < 0
+     * -> SDL_SetJoystickVirtualAxis(-button, ...)). L2 = -4 (eje
+     * LEFT_TRIGGER), R2 = -5 (eje RIGHT_TRIGGER). El valor negativo
+     * NO es un botón SDL real: solo lo entiende el setButton nativo.
+     * R4-P2-13: GUIDE = SDL_BUTTON_GUIDE (5), el botón PS.
      */
     fun VitaButton.toSdlButton(): Int? = when (this) {
         VitaButton.CROSS -> SDL_BUTTON_SOUTH
@@ -181,9 +209,12 @@ object TouchOverlayMapping {
         VitaButton.SQUARE -> SDL_BUTTON_WEST
         VitaButton.TRIANGLE -> SDL_BUTTON_NORTH
         VitaButton.SELECT -> SDL_BUTTON_BACK
+        VitaButton.GUIDE -> SDL_BUTTON_GUIDE
         VitaButton.START -> SDL_BUTTON_START
         VitaButton.L1 -> SDL_BUTTON_LEFT_SHOULDER
+        VitaButton.L2 -> -SDL_AXIS_LEFT_TRIGGER
         VitaButton.R1 -> SDL_BUTTON_RIGHT_SHOULDER
+        VitaButton.R2 -> -SDL_AXIS_RIGHT_TRIGGER
         VitaButton.L3 -> SDL_BUTTON_LEFT_STICK
         VitaButton.R3 -> SDL_BUTTON_RIGHT_STICK
         VitaButton.DPAD_UP -> SDL_BUTTON_DPAD_UP
@@ -194,6 +225,15 @@ object TouchOverlayMapping {
         VitaButton.RIGHT_STICK -> null
         VitaButton.NONE -> null
     }
+
+    /**
+     * R4-P2-11: true si el valor que devuelve [VitaButton.toSdlButton]
+     * es un gatillo codificado como botón negativo (L2/R2). El
+     * setButton nativo lo traduce a eje (input_overlay.cpp:104-108);
+     * cualquier otro consumidor que espere un botón SDL real (0..14)
+     * debe tratarlo aparte, no indexar con él.
+     */
+    fun isTriggerSdlButton(sdlButton: Int): Boolean = sdlButton < 0
 
     /** Ejes SDL del stick: izquierdo (LEFTX, LEFTY) o derecho (RIGHTX, RIGHTY). */
     fun stickAxesFor(rightStick: Boolean): Pair<Int, Int> =

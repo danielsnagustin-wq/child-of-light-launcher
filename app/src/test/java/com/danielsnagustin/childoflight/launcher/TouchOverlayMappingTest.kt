@@ -8,11 +8,13 @@ import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.contro
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.dpadForStick
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.faceGlyphFor
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.gameRect
+import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.isTriggerSdlButton
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.stickAxes
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.toSdlButton
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayVisibility
 import com.danielsnagustin.childoflight.launcher.data.TouchControl
 import com.danielsnagustin.childoflight.launcher.data.VitaButton
+import com.danielsnagustin.childoflight.launcher.data.builtInProfiles
 import com.danielsnagustin.childoflight.launcher.data.defaultTouchLayout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -62,6 +64,60 @@ class TouchOverlayMappingTest {
         assertNull(VitaButton.NONE.toSdlButton())
         assertNull(VitaButton.LEFT_STICK.toSdlButton())
         assertNull(VitaButton.RIGHT_STICK.toSdlButton())
+    }
+
+    @Test
+    fun triggersMapToNegativeAxisCodes() {
+        // R4-P2-11: L2/R2 no son botones SDL: upstream los manda con
+        // botón negativo (input_overlay.cpp:104-108, button < 0 ->
+        // SDL_SetJoystickVirtualAxis(-button, ...)). -4 = eje
+        // LEFT_TRIGGER (L2), -5 = eje RIGHT_TRIGGER (R2); los binds
+        // de ejes por defecto son la identidad (app.cpp:105-112) y
+        // el núcleo los lee como trigger > 0x3FFF (ctrl.cpp:
+        // apply_controller, vía ext).
+        assertEquals(-TouchOverlayMapping.SDL_AXIS_LEFT_TRIGGER, VitaButton.L2.toSdlButton())
+        assertEquals(-TouchOverlayMapping.SDL_AXIS_RIGHT_TRIGGER, VitaButton.R2.toSdlButton())
+        assertEquals(-4, VitaButton.L2.toSdlButton())
+        assertEquals(-5, VitaButton.R2.toSdlButton())
+        assertTrue(isTriggerSdlButton(VitaButton.L2.toSdlButton()!!))
+        assertTrue(isTriggerSdlButton(VitaButton.R2.toSdlButton()!!))
+        // Los botones reales (0..14) no son gatillos codificados.
+        assertFalse(isTriggerSdlButton(VitaButton.CROSS.toSdlButton()!!))
+        assertFalse(isTriggerSdlButton(VitaButton.GUIDE.toSdlButton()!!))
+        assertFalse(isTriggerSdlButton(0))
+    }
+
+    @Test
+    fun guideMapsToSdlGuideButton() {
+        // R4-P2-13: GUIDE = SDL_BUTTON_GUIDE (5). El bucle del núcleo
+        // (session.cpp:401-403) lo traduce a on_guide_button ->
+        // openPauseMenuFromController (main_android.cpp:101).
+        assertEquals(5, VitaButton.GUIDE.toSdlButton())
+        assertEquals(TouchOverlayMapping.SDL_BUTTON_GUIDE, VitaButton.GUIDE.toSdlButton())
+    }
+
+    @Test
+    fun newButtonsAreAssignableButNotInDefaultLayouts() {
+        // R4-P2-11/12/13: L2, R2 y GUIDE existen en el enum, así que
+        // el editor los lista (TouchLayoutScreen itera
+        // VitaButton.entries) y se pueden asignar a un botón táctil.
+        // Pero NINGÚN perfil predefinido los lleva: la pantalla sigue
+        // limpia y todo es opcional y OFF por defecto (Child of Light
+        // no usa L2/R2/L3/R3 en el título).
+        assertTrue(VitaButton.entries.contains(VitaButton.L2))
+        assertTrue(VitaButton.entries.contains(VitaButton.R2))
+        assertTrue(VitaButton.entries.contains(VitaButton.GUIDE))
+        val newButtons = setOf(VitaButton.L2, VitaButton.R2, VitaButton.GUIDE, VitaButton.L3, VitaButton.R3)
+        for (profile in builtInProfiles()) {
+            assertTrue(
+                "perfil ${profile.id} no debe llevar L2/R2/GUIDE/L3/R3 por defecto",
+                profile.controls.none { it.vitaButton in newButtons },
+            )
+        }
+        // L2/R2/GUIDE no tienen glifo: se dibujan con su etiqueta.
+        assertNull(faceGlyphFor(VitaButton.L2))
+        assertNull(faceGlyphFor(VitaButton.R2))
+        assertNull(faceGlyphFor(VitaButton.GUIDE))
     }
 
     @Test

@@ -182,6 +182,17 @@ class GameLibraryRepository(private val context: Context) {
     // tamaño; el contenido (qué hay instalado) se sigue leyendo siempre.
     private val dirSizeCache = DirSizeCache()
 
+    /**
+     * R4-P2-5: último resumen de scanStatus registrado en el log.
+     * scanStatus() corre siempre bajo el mutex de refreshStatus() del
+     * ViewModel (o en importaciones, en el mismo hilo IO), así que un
+     * @Volatile basta: solo se registra la línea cuando el resumen
+     * CAMBIA (ver LauncherLog.shouldLogScanStatus). Sin esto, cada
+     * onResume añadía una línea idéntica y el log rotaba en ráfagas.
+     */
+    @Volatile
+    private var lastScanStatusSummary: String? = null
+
     companion object {
         /**
          * Prefijo de ImportResult.Rejected cuando el juego/DLC/update ya
@@ -496,6 +507,26 @@ class GameLibraryRepository(private val context: Context) {
             val short = raw.substringAfter("_00-", raw)
             return short.uppercase()
         }
+
+        /**
+         * R4-P2-7: directorios cuyos tamaños cacheados quedan obsoletos
+         * al instalar o importar contenido del [titleId]: el juego
+         * (app/), el update (patch/) y los DLCs (addcont/), en cada
+         * ux0 dado. scanStatus() solo lee tamaños de la caché para
+         * app/<id> y para cada carpeta de DLC bajo addcont/<id>
+         * (DirSizeCache.sizeOf), así que invalidar addcont/<id> solo
+         * no bastaría: invalidateDirSizes() invalida además sus hijos
+         * directos (las carpetas de DLC). Puro (solo File) para poder
+         * probarlo en la JVM sin Context.
+         */
+        fun installedSizeDirs(titleId: String, ux0Dirs: List<File>): List<File> =
+            ux0Dirs.flatMap { ux0 ->
+                listOf(
+                    File(ux0, "app/$titleId"),
+                    File(ux0, "patch/$titleId"),
+                    File(ux0, "addcont/$titleId"),
+                )
+            }
     }
 
     /** ¿El juego ya está subido (extraído en ux0/app/ o como .pkg)? Dual: en el ux0 efectivo o en el antiguo. */
@@ -1311,10 +1342,15 @@ class GameLibraryRepository(private val context: Context) {
         // Diagnóstico (2026-11-08): la ruta ux0 resuelta puede voltear
         // entre legacy y embebido; si JUGAR dice que el juego no está
         // instalado, esta línea dice dónde se buscó y qué se encontró.
-        LauncherLog.append(
-            context, "status",
-            "scanStatus ux0=${ux0Dir.absolutePath} extraído=${extractedTitle?.id} pkg=${pkgTitle?.id} instalado=${extractedTitle != null || pkgTitle != null}",
-        )
+        // R4-P2-5: solo se registra cuando el resumen CAMBIA: antes
+        // cada scanStatus (init, cada onResume, al volver del juego)
+        // añadía la misma línea y el log rotaba en ráfagas.
+        val scanSummary =
+            "scanStatus ux0=${ux0Dir.absolutePath} extraído=${extractedTitle?.id} pkg=${pkgTitle?.id} instalado=${extractedTitle != null || pkgTitle != null}"
+        if (LauncherLog.shouldLogScanStatus(lastScanStatusSummary, scanSummary)) {
+            lastScanStatusSummary = scanSummary
+            LauncherLog.append(context, "status", scanSummary)
+        }
         return GameStatus(
             titleId = title,
             extractedTitleId = extractedTitle,
@@ -1727,6 +1763,10 @@ class GameLibraryRepository(private val context: Context) {
             dest.parentFile?.mkdirs()
             src.copyRecursively(dest)
             if (hadDest) backup.deleteRecursively()
+            // R4-P2-7: el tamaño cacheado de este directorio ya no
+            // vale tras instalar (la copia puede dejar el lastModified
+            // sin cambiar si solo se tocan archivos anidados).
+            invalidateDirSizes(dest)
         } catch (e: Exception) {
             dest.deleteRecursively()
             if (hadDest) backup.renameTo(dest)
@@ -1749,6 +1789,10 @@ class GameLibraryRepository(private val context: Context) {
         try {
             srcDlcDir.copyRecursively(existingDlc, overwrite = true)
             if (hadDlc) dlcBackup.deleteRecursively()
+            // R4-P2-7: invalida addcont/<title> y sus hijos directos
+            // (las carpetas de DLC, que son las entradas cacheadas
+            // que lee scanStatus).
+            invalidateDirSizes(destBase)
         } catch (e: Exception) {
             existingDlc.deleteRecursively()
             if (hadDlc) dlcBackup.renameTo(existingDlc)
@@ -2068,11 +2112,28 @@ class GameLibraryRepository(private val context: Context) {
      * directos (tras un borrado, el tamaño guardado quedaría viejo:
      * scanStatus leería el tamaño de antes de borrar). Se llama en
      * los borrados de juego y DLC, que son los tamaños que scanStatus
-     * lee de la caché.
+     * lee de la caché, y en las instalaciones (R4-P2-7).
      */
     private fun invalidateDirSizes(dir: File) {
         dirSizeCache.invalidate(dir)
         dir.listFiles()?.filter { it.isDirectory }?.forEach { dirSizeCache.invalidate(it) }
+    }
+
+    /**
+     * R4-P2-7 (2026-11-09): olvida los tamaños cacheados del juego, el
+     * update y los DLCs de [titleId] en los dos ux0, al COMPLETAR una
+     * instalación o importación. La instalación la hace a veces el
+     * núcleo (vía .pkg), así que este es el punto que conocen los
+     * llamadores externos (Vita3KLauncher, LauncherViewModel) cuando
+     * el núcleo confirma el éxito; las instalaciones que copia el
+     * propio repo invalidan además dentro de installDirAtomic /
+     * installDlcDir. Sin esto, el primer scanStatus tras instalar
+     * leía el tamaño viejo de la caché (la clave es el lastModified
+     * del dir y solo cambian archivos anidados). La clave del caché
+     * NO cambia: esto es solo invalidación explícita.
+     */
+    fun invalidateInstalledSizes(titleId: String) {
+        installedSizeDirs(titleId, bothUx0Dirs()).forEach { invalidateDirSizes(it) }
     }
 
     /** Borra juego + update + DLCs + saves del Title ID. Requiere confirmación en la UI. */

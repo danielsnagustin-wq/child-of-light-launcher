@@ -71,6 +71,11 @@ private val uiPreferencesDraftSaver = Saver<UiPreferences?, Map<String, Any>>(
                 "cardSize" to it.cardSize.name,
                 "cardTransparency" to it.cardTransparency.name,
                 "iconSize" to it.iconSize.name,
+                // R4-P2-6: la marca de intro vista viaja en el borrador:
+                // sin ella, restaurar el borrador tras matar el proceso
+                // la perdía y "Aplicar" la guardaba en false (la intro
+                // volvía a sonar una vez).
+                "homeIntroSeen" to it.homeIntroSeen,
             )
         }
     },
@@ -92,6 +97,7 @@ private val uiPreferencesDraftSaver = Saver<UiPreferences?, Map<String, Any>>(
             cardSize = enumOrDefault(CardSize.entries.toTypedArray(), map["cardSize"], CardSize.NORMAL),
             cardTransparency = enumOrDefault(CardTransparency.entries.toTypedArray(), map["cardTransparency"], CardTransparency.OPAQUE),
             iconSize = enumOrDefault(IconSize.entries.toTypedArray(), map["iconSize"], IconSize.MEDIUM),
+            homeIntroSeen = map["homeIntroSeen"] as? Boolean ?: false,
         )
     },
 )

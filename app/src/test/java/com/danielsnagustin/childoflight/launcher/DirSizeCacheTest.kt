@@ -62,4 +62,25 @@ class DirSizeCacheTest {
             dir.deleteRecursively()
         }
     }
+
+    @Test
+    fun invalidateAfterNestedChangeForcesRescan() {
+        // R4-P2-7: el peligro real es el cambio anidado: añadir un
+        // archivo dentro de una subcarpeta cambia el mtime de la
+        // subcarpeta, no el del directorio cacheado, así que sin
+        // invalidate la caché devuelve el tamaño viejo.
+        val dir = Files.createTempDirectory("cache-test").toFile()
+        val cache = DirSizeCache()
+        try {
+            File(dir, "sub").mkdir()
+            File(dir, "sub/a.bin").writeBytes(ByteArray(100))
+            assertEquals(100L, cache.sizeOf(dir))
+            File(dir, "sub/b.bin").writeBytes(ByteArray(50))
+            assertEquals(100L, cache.sizeOf(dir))
+            cache.invalidate(dir)
+            assertEquals(150L, cache.sizeOf(dir))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
 }

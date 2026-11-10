@@ -206,7 +206,11 @@ object Vita3kConfigGenerator {
         // EmbeddedPkgInstaller.installDlcPkg): esto no la sustituye,
         // la complementa. Se lee en el init del núcleo: el cambio
         // aplica en el siguiente lanzamiento en proceso fresco.
-        sb.appendLine("psn-signed-in: ${if (settings.psnSignedIn) 1 else 0}")
+        // R4-P2-10: se emite desde el effective (s), no desde settings
+        // directo: hoy ninguna transformación lo toca (modo seguro y
+        // 60 FPS no cambian psnSignedIn), pero el generador debe emitir
+        // siempre valores efectivos, no una mezcla.
+        sb.appendLine("psn-signed-in: ${if (s.psnSignedIn) 1 else 0}")
         // --- Rutas ---
         sb.appendLine("pref-path: \"${escapeYamlDoubleQuoted(vitaFsPath)}\"")
         return sb.toString()

@@ -36,9 +36,25 @@ enum class VitaButton(val label: String) {
     SQUARE("Cuadrado (□)"),
     TRIANGLE("Triángulo (△)"),
     L1("L"),
+    // R4-P2-11: L2/R2 no son botones SDL: el núcleo los lee como
+    // ejes (trigger > 0x3FFF) y el overlay de upstream los manda con
+    // botón negativo (input_overlay.cpp: button < 0 ->
+    // SDL_SetJoystickVirtualAxis(-button, ...)). toSdlButton() los
+    // codifica así (-4/-5); el editor los lista porque itera
+    // VitaButton.entries. Child of Light no los usa en el título:
+    // solo están disponibles para asignar, nunca en el layout por
+    // defecto.
+    L2("L2"),
     R1("R"),
+    R2("R2"),
     START("Start"),
     SELECT("Select"),
+    // R4-P2-13: botón guía (PS): SDL 5. Pulsarlo manda el botón
+    // GUIDE del mando virtual y el bucle del núcleo (session.cpp:
+    // SDL_EVENT_GAMEPAD_BUTTON_DOWN + GUIDE -> on_guide_button ->
+    // main_android.cpp:101 openPauseMenuFromController) abre el menú
+    // de pausa. También disponible solo en el editor, no por defecto.
+    GUIDE("Guía (PS)"),
     DPAD_UP("D-Pad arriba"),
     DPAD_DOWN("D-Pad abajo"),
     DPAD_LEFT("D-Pad izquierda"),
@@ -95,15 +111,19 @@ data class ControlProfile(
  * izquierda, SQUARE arriba, CIRCLE abajo, CROSS a la derecha), así
  * que el botón de abajo — el que todo el mundo pulsa para confirmar
  * en la pantalla de título — era CIRCLE (atrás), no CROSS.
+ * R4-P2-1: stick de 104 dp (antes 140 dp, ocupaba el tercio
+ * inferior izquierdo) e Igniculus en y 0.55 (antes 0.35, su orbe
+ * flotaba sobre la "C" de "CHILD OF LIGHT" tapando el logo). Solo
+ * el default de fábrica: los perfiles ya guardados no se tocan.
  */
 fun defaultTouchLayout(): List<TouchControl> = listOf(
-    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.18f, 0.72f, 140, 0.70f),
+    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.18f, 0.72f, 104, 0.70f),
     TouchControl("btn_y", "Y", "button", VitaButton.TRIANGLE, 0.80f, 0.62f, 64, 0.80f),
     TouchControl("btn_x", "X", "button", VitaButton.SQUARE, 0.73f, 0.71f, 64, 0.80f),
     TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.87f, 0.71f, 64, 0.80f),
     TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.80f, 0.80f, 64, 0.85f),
     TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.06f, 56, 0.70f),
-    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.50f, 0.35f, 220, 0.25f, colorHex = "#7FB3D5"),
+    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.50f, 0.55f, 220, 0.25f, colorHex = "#7FB3D5"),
 )
 
 fun oneHandLayout(): List<TouchControl> = listOf(
@@ -113,7 +133,9 @@ fun oneHandLayout(): List<TouchControl> = listOf(
     TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.83f, 0.74f, 64, 0.80f),
     TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.76f, 0.83f, 72, 0.85f),
     TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.06f, 56, 0.70f, visible = false),
-    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.55f, 0.28f, 160, 0.25f, colorHex = "#7FB3D5"),
+    // R4-P2-1: Igniculus en y 0.50 (antes 0.28, tapaba el logo
+    // igual que en el perfil por defecto); solo fábrica.
+    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.55f, 0.50f, 160, 0.25f, colorHex = "#7FB3D5"),
 )
 
 fun externalGamepadLayout(): List<TouchControl> = listOf(
@@ -123,7 +145,9 @@ fun externalGamepadLayout(): List<TouchControl> = listOf(
     TouchControl("btn_b", "B", "button", VitaButton.CIRCLE, 0.87f, 0.71f, 64, 0.80f, visible = false),
     TouchControl("btn_a", "A", "button", VitaButton.CROSS, 0.80f, 0.80f, 64, 0.85f, visible = false),
     TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.06f, 56, 0.70f),
-    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.50f, 0.35f, 220, 0.25f, colorHex = "#7FB3D5"),
+    // R4-P2-1: Igniculus en y 0.55 (antes 0.35, tapaba el logo);
+    // mismo default de fábrica que el perfil por defecto.
+    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.50f, 0.55f, 220, 0.25f, colorHex = "#7FB3D5"),
 )
 
 fun builtInProfiles(): List<ControlProfile> = listOf(

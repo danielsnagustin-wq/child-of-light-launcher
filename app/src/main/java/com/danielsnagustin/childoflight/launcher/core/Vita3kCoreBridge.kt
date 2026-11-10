@@ -483,7 +483,18 @@ object Vita3kCoreBridge {
         }
     }
 
-    /** Táctil frontal (false, defecto) o trasero (true) de Vita. */
+    /**
+     * Táctil frontal (false, defecto) o trasero (true) de Vita.
+     *
+     * R4-P2-16 (verificado-sin-cambio): el oficial solo lo llama al
+     * pulsar su botón de cambio táctil (legacyId 1024); el launcher
+     * lo fuerza a false (frontal) tras cada attach/rebind del mando
+     * virtual. Equivalente en la práctica: el launcher no expone
+     * táctil trasero y Child of Light usa el frontal (Igniculus). El
+     * valor por defecto del flag no se pudo verificar: el módulo
+     * touch/ no está en el pin (touch/functions.h ausente; solo la
+     * referencia en input_overlay.cpp:117).
+     */
     fun overlaySetTouchState(isBack: Boolean): Boolean {
         if (!available) return false
         return try {

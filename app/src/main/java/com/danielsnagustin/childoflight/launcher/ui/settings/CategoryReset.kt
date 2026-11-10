@@ -105,8 +105,10 @@ fun resetCategoryUiPrefs(current: UiPreferences, category: SettingsCategory): Ui
     if (category == SettingsCategory.PERSONALIZATION) {
         // Los presets ocultos se conservan: son de "Limpiar no usados",
         // no de la apariencia; restablecer el tema no debe re-listar
-        // presets que el usuario ocultó a propósito.
-        UiPreferences(hiddenPresets = current.hiddenPresets)
+        // presets que el usuario ocultó a propósito. Igual
+        // homeIntroSeen (R4-P2-6): no es apariencia; restablecer la
+        // personalización no debe hacer sonar la intro otra vez.
+        UiPreferences(hiddenPresets = current.hiddenPresets, homeIntroSeen = current.homeIntroSeen)
     } else {
         current
     }

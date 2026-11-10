@@ -167,6 +167,19 @@ data class LauncherSettings(
     val resolutionMultiplier: Float = 1f,
     val screenFilter: ScreenFilter = ScreenFilter.BILINEAR,
     val anisotropicFiltering: Int = 1, // 1, 2, 4, 8, 16
+    /**
+     * R4-P2-8: VSync OFF por defecto DELIBERADO, no un descuido: el
+     * default de upstream en config.h:155 es true, pero en Mali
+     * (G99/Mali-G57, el teléfono objetivo) la sincronización vertical
+     * cuesta frames en un juego 2D que ya va muy bien sin ella, y NO
+     * hay evidencia medida en dispositivo de que ON mejore nada aquí:
+     * sin esa evidencia no se cambia el default ni se alinean los
+     * presets con upstream. Solo el preset Calidad/Turnip (Adreno)
+     * lleva true, y el modo 60 FPS fuerza true mientras está activo
+     * (apply60FpsMode) aunque el valor guardado siga false. El
+     * interruptor en Ajustes → GPU lo cambia a mano en cualquier
+     * momento; la etiqueta de esa pantalla dice dónde está ON.
+     */
     val vSync: Boolean = false,
     val asyncPipelineCompilation: Boolean = true,
     val highAccuracy: Boolean = false,

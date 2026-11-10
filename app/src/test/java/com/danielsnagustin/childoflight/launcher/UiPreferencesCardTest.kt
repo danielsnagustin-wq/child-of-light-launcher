@@ -28,6 +28,18 @@ class UiPreferencesCardTest {
     }
 
     @Test
+    fun homeIntroSeenDefaultsToFalse() {
+        // R4-P2-6: en una instalación nueva la intro de Home aún no se
+        // ha visto: suena una sola vez y markHomeIntroSeen persiste
+        // true en DataStore. El default false es el comportamiento de
+        // primera entrada; un valor guardado ausente también cae a
+        // false (UiPreferencesRepository).
+        val prefs = UiPreferences()
+        assertEquals(false, prefs.homeIntroSeen)
+        assertEquals(true, prefs.copy(homeIntroSeen = true).homeIntroSeen)
+    }
+
+    @Test
     fun cardSizeScalesPaddingAndCorner() {
         assertEquals(10, CardSize.COMPACT.paddingDp)
         assertEquals(14, CardSize.COMPACT.cornerDp)

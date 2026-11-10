@@ -61,7 +61,12 @@ import com.danielsnagustin.childoflight.launcher.data.TouchControl
 import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
 import com.danielsnagustin.childoflight.launcher.data.VitaButton
 
-private val CONTROL_COLORS = listOf("#8CCBEB", "#7FB3D5", "#4CAF50", "#E57373", "#BA68C8", "#FFFFFF")
+// R4-P2-2: paleta solo con la identidad azul/lavanda/turquesa/
+// plata (antes incluía un verde y un rojo, fuera de la identidad).
+// internal para que el test R4P2 la pueda verificar; ningún default
+// de control usa verde ni rojo (verificado por grep en main: solo
+// esta paleta los tenía).
+internal val CONTROL_COLORS = listOf("#8CCBEB", "#7FB3D5", "#75D6CE", "#A99ACD", "#BA68C8", "#FFFFFF")
 
 private fun parseHex(hex: String): Color = try {
     Color(android.graphics.Color.parseColor(hex))

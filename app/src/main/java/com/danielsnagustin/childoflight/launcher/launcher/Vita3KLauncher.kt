@@ -799,6 +799,9 @@ class Vita3KLauncher(private val context: Context) {
         val progress: EmbeddedPkgInstaller.ProgressListener =
             onInstallProgress ?: EmbeddedPkgInstaller.ProgressListener { _, _ -> }
         val result = installer.installPkgFile(pkgFile, library.findPkgWorkBinFile(pkgFile), progress)
+        // R4-P2-7: el núcleo acaba de escribir en ux0/app/<titleId>:
+        // el tamaño cacheado ya no vale.
+        result.onSuccess { library.invalidateInstalledSizes(titleId) }
         result.onFailure {
             LauncherLog.append(context, "pkg", "Reinstalación .pkg embebida falló: ${it.message}")
         }
@@ -865,6 +868,11 @@ class Vita3KLauncher(private val context: Context) {
                 .onSuccess { LauncherLog.append(context, "pkg", "DLC embebido instalado: $dlcId") }
                 .onFailure { LauncherLog.append(context, "pkg", "Instalación del DLC $dlcId embebido falló: ${it.message}") }
         }
+        // R4-P2-7: el núcleo acaba de instalar juego + update + DLCs
+        // en ux0: los tamaños cacheados ya no valen. Un fallo de
+        // update/DLC no bloquea el lanzamiento, pero lo que sí se
+        // instaló también invalida; forzar el re-escaneo es inocuo.
+        library.invalidateInstalledSizes(titleId.id)
         return Result.success(Unit)
     }
 

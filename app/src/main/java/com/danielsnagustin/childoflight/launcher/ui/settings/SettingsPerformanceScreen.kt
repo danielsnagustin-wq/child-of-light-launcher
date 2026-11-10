@@ -49,7 +49,14 @@ fun SettingsPerformanceScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
             }
             item {
                 SectionTitle("Cachés")
-                SettingSwitch("Caché de texturas", "texture-cache en config.yml. ON recomendado: sin ella las texturas se recargan al cambiar de escena. En teléfonos con 4 GB o menos, OFF libera RAM a cambio de ese tirón.", s.textureCache) { vm.saveSettings(s.copy(textureCache = it)) }
+                // R4-P2-10: la descripción anterior decía "ON
+                // recomendado" sin decir que en teléfonos con 4 GB o
+                // menos el primer arranque lo deja OFF (perfil
+                // conservador, applyLowRamDefaults): el interruptor
+                // parecía contradecir su propio estado inicial. Ahora
+                // dice que en poca RAM arranca OFF y que se puede
+                // volver a poner ON aquí.
+                SettingSwitch("Caché de texturas", "texture-cache en config.yml. ON recomendado cuando hay RAM de sobra: sin ella las texturas se recargan al cambiar de escena. En teléfonos con 4 GB o menos arranca OFF en el primer arranque (perfil conservador, para liberar RAM); puedes volver a ponerlo ON aquí.", s.textureCache) { vm.saveSettings(s.copy(textureCache = it)) }
                 // R2-P2-08: sin "ON siempre": el interruptor lo puede
                 // apagar el usuario (los presets lo ponen ON por
                 // defecto, pero nada lo fuerza).

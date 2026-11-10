@@ -48,9 +48,10 @@ import org.libsdl.app.SDLActivity
  *   "vita3k", OUTPUT_NAME "Vita3K"). SDL3 va ESTÁTICO dentro de
  *   libVita3K.so (libSDL3.a, sin .so aparte ni DT_NEEDED): NO añadir
  *   "SDL3" a getLibraries().
- * - getArguments() -> {"-r", titleId}: es EXACTAMENTE lo que
- *   SDL_main (vita3k/android/jni/main_android.cpp) espera para
- *   arrancar el juego con AppLaunchRequest{.app_path = titleId}.
+ * - getArguments() -> el extra AppStartParameters si existe, si no
+ *   {"-r", titleId}: es EXACTAMENTE lo que SDL_main
+ *   (vita3k/android/jni/main_android.cpp) espera para arrancar el
+ *   juego con AppLaunchRequest{.app_path = titleId}.
  * - onCreate: prepareFrontend() ANTES de super.onCreate (igual que
  *   upstream, que lo llama desde MainActivity antes de Emulator) y
  *   luego init(storagePath) DESPUÉS de super.onCreate y ANTES de
@@ -107,6 +108,13 @@ class EmbeddedGameActivity : SDLActivity() {
     companion object {
         const val EXTRA_TITLE_ID = "title_id"
         const val EXTRA_GAME_TITLE = "game_title"
+        /**
+         * R4-P2-14: nombre del extra con argv propios para SDL_main
+         * (String[]), igual que el oficial (Emulator.getArguments):
+         * si existe, getArguments() lo devuelve tal cual; si no,
+         * {"-r", titleId}. Nada en nuestro flujo lo envía hoy.
+         */
+        const val EXTRA_APP_START_PARAMETERS = "AppStartParameters"
         /** true = prueba de 30 s: muestrear el FPS del núcleo y guardarlo al salir. */
         const val EXTRA_BENCHMARK = "benchmark"
         /** Muestras válidas de la prueba de 30 s: 1 por segundo de juego real. */
@@ -201,11 +209,12 @@ class EmbeddedGameActivity : SDLActivity() {
         return EmuSurface(context)
     }
 
-    /** argv de SDL_main: {"-r", titleId}. Sin Title ID, SDL_main devuelve -1. */
+    /** argv de SDL_main: el extra AppStartParameters si existe, si no {"-r", titleId} (ver [resolveLaunchArguments]). */
     override fun getArguments(): Array<String> {
-        val titleId = intent.getStringExtra(EXTRA_TITLE_ID).orEmpty()
-        if (titleId.isEmpty()) return emptyArray()
-        return arrayOf("-r", titleId)
+        return resolveLaunchArguments(
+            intent.getStringArrayExtra(EXTRA_APP_START_PARAMETERS),
+            intent.getStringExtra(EXTRA_TITLE_ID).orEmpty(),
+        )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -400,6 +409,18 @@ class EmbeddedGameActivity : SDLActivity() {
      * listo, no crea nada y overlayIsAttached() lo dice: se reintenta
      * en setCurrentGameId / onResume. El táctil se deja en frontal
      * (false): es lo que usa Child of Light para Igniculus.
+     *
+     * R4-P2-16 (verificado-sin-cambio): el oficial solo llama a
+     * setTouchState al pulsar su botón de cambio táctil (legacyId
+     * 1024, InputOverlay.onTouch); nosotros lo forzamos a false tras
+     * cada attach/rebind. En la práctica es equivalente: el launcher
+     * no expone táctil trasero en ningún sitio, así que forzar
+     * frontal solo fija el estado que el juego necesita, y el valor
+     * por defecto del flag no se pudo verificar (el módulo touch/ no
+     * está en el pin: touch/functions.h no existe ahí, solo se
+     * referencia desde input_overlay.cpp:117, y la definición de
+     * set_rear_touchscreen no aparece en ningún .cpp/.h del pin).
+     * No se toca el comportamiento sin evidencia de diferencia real.
      */
     private fun maybeAttachOverlayController() {
         // R4-P1-2: cada early-return deja su motivo en el log. Antes
@@ -427,7 +448,13 @@ class EmbeddedGameActivity : SDLActivity() {
             return
         }
         overlayAttached = true
-        Vita3kCoreBridge.overlaySetTouchState(false)
+        // R4-P2-2: el retorno ya no se ignora: si el táctil no queda
+        // en frontal, Igniculus (toque directo) puede no llegar al
+        // juego y antes no quedaba ningún aviso. El default del
+        // núcleo ya es frontal, así que es solo registro, no reintento.
+        if (!Vita3kCoreBridge.overlaySetTouchState(false)) {
+            LauncherLog.append(this, "overlay", "táctil frontal no confirmado (overlaySetTouchState devolvió false); si el núcleo lo dejó en trasero, el toque de Igniculus puede no llegar")
+        }
         LauncherLog.append(this, "overlay", "mando virtual del overlay activo")
     }
 
@@ -484,7 +511,11 @@ class EmbeddedGameActivity : SDLActivity() {
             val existsInSdl = Vita3kCoreBridge.overlayIsAttached()
             if (attachOk && existsInSdl) {
                 overlayAttached = true
-                Vita3kCoreBridge.overlaySetTouchState(false)
+                // R4-P2-2: igual que en maybeAttachOverlayController:
+                // un false queda en el log en vez de ignorarse.
+                if (!Vita3kCoreBridge.overlaySetTouchState(false)) {
+                    LauncherLog.append(this, "overlay", "on_launch: táctil frontal no confirmado (overlaySetTouchState devolvió false); si el núcleo lo dejó en trasero, el toque de Igniculus puede no llegar")
+                }
                 LauncherLog.append(this, "overlay", "on_launch: mando virtual re-creado (intento $attempt/$OVERLAY_REBIND_MAX_ATTEMPTS)")
                 attached = true
                 break
@@ -617,13 +648,17 @@ class EmbeddedGameActivity : SDLActivity() {
         // Soltar todo lo pulsado al pausar: sin botones atascados al volver.
         overlayView?.releaseAll()
         stopBenchmarkSamplingAndSave()
-        super.onPause()
+        // R4-P2-15: el motivo de pausa BACKGROUND se fija ANTES de
+        // super.onPause(), como el oficial (suspendForBackgroundIfNeeded
+        // antes de super.onPause()): antes se fijaba después y el juego
+        // corría unos frames sin pausar al salir a segundo plano.
         runCatching {
             Vita3kCoreBridge.setPauseReasonEnabled(
                 Vita3kCoreBridge.PAUSE_REASON_BACKGROUND,
                 true,
             )
         }
+        super.onPause()
     }
 
     /**

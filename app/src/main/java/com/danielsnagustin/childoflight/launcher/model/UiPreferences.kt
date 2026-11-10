@@ -98,4 +98,15 @@ data class UiPreferences(
     val cardTransparency: CardTransparency = CardTransparency.OPAQUE,
     /** Tamaño de los iconos vectoriales (Etapa 6). Default = 24 dp, como hoy. */
     val iconSize: IconSize = IconSize.MEDIUM,
+    /**
+     * R4-P2-6: la intro de Home (portada + tarjetas, ~900 ms) ya se vio
+     * ALGUNA VEZ en esta instalación. Antes la bandera vivía en
+     * rememberSaveable (una vez por sesión/proceso): cada vez que el
+     * sistema mataba el proceso, la intro volvía a sonar al abrir la
+     * app. Persistente en DataStore: la intro solo suena en la primera
+     * entrada por INSTALACIÓN. "Restablecer personalización" la pone
+     * a false (UiPreferences() por defecto) y la intro vuelve a sonar
+     * una vez: es el comportamiento honesto de un reseteo.
+     */
+    val homeIntroSeen: Boolean = false,
 )

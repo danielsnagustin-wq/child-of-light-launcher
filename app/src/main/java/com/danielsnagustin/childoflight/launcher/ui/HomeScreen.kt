@@ -80,7 +80,8 @@ import kotlinx.coroutines.flow.StateFlow
  *   del juego y su importación viven solo en la tarjeta superior:
  *   sin duplicados.
  * - Movimiento: la portada entra con fundido + zoom suave (una sola vez
- *   por sesión) y un brillo estático en su borde inferior; las
+ *   por instalación, R4-P2-6: marca persistente homeIntroSeen en
+ *   UiPreferences) y un brillo estático en su borde inferior; las
  *   tarjetas entran en cascada (FadeSlideIn, solo la primera vez). En las
  *   vueltas a Home la pantalla aparece al instante, sin esperar ~800 ms
  *   de animaciones. Nada de bucles infinitos ni animaciones que mantengan
@@ -101,10 +102,14 @@ fun HomeScreen(
     val uiPrefs by vm.uiFlow.collectAsState(initial = null)
     val strings = stringsFor(uiPrefs?.language ?: com.danielsnagustin.childoflight.launcher.model.AppLanguage.SPANISH)
 
-    // La intro (portada + tarjetas) solo se reproduce una vez por sesión:
-    // AnimatedContent descarta y recrea la composición de Home en cada
-    // navegación, así que sin esta bandera la entrada se repetía (~800 ms)
-    // en cada vuelta a Home. 900 ms = portada 650 ms + último retardo 180 ms.
+    // La intro (portada + tarjetas) solo se reproduce una vez por
+    // instalación (R4-P2-6): introDone viene de la marca persistente
+    // UiPreferences.homeIntroSeen (MainActivity), no de una bandera por
+    // sesión. AnimatedContent descarta y recrea la composición de Home
+    // en cada navegación, así que sin esta bandera la entrada se
+    // repetía (~800 ms) en cada vuelta a Home. 900 ms = portada 650 ms
+    // + último retardo 180 ms. Al terminar, onIntroDone() persiste la
+    // marca (ViewModel.markHomeIntroSeen) y la intro no vuelve a sonar.
     if (!introDone) {
         LaunchedEffect(Unit) {
             delay(900)
@@ -128,7 +133,7 @@ fun HomeScreen(
         ) {
             // El orden de secciones lo elige el usuario (GAME_CARD / LOGROS_CARD).
             // Aparición progresiva: cada bloque entra con fundido + subida,
-            // con ~90 ms entre ellos. Solo la primera vez por sesión. La
+            // con ~90 ms entre ellos. Solo la primera vez por instalación. La
             // tarjeta de Logros vive dentro de la sección LOGROS_CARD.
             val order = uiPrefs?.sectionOrder ?: HomeSection.entries.toList()
             order.forEach { section ->
