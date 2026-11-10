@@ -8,7 +8,9 @@ import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.effectiveSettings
 import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 import java.io.File
-import java.nio.file.Files
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
+import java.nio.charset.StandardCharsets
 
 /**
  * Generador de config.yml de Vita3K a partir de los ajustes del launcher.
@@ -341,12 +343,16 @@ object Vita3kConfigGenerator {
      * y documentado (IllegalStateException con la ruta): antes era un
      * FileNotFoundException incidental de writeText. El llamador lo
      * muestra como bloqueo, no como crash. La lectura es UTF-8
-     * estricta (Files.readString: los bytes inválidos lanzan
-     * MalformedInputException): si falla, el contenido previo se
-     * trata como desconocido (no como "vacío") y se reintenta
-     * escribir; el informe marca previousReadFailed para que
-     * writeConfig lo registre en el log. (File.readText() NO vale
-     * aquí: sustituye los bytes inválidos por U+FFFD sin lanzar.)
+     * estricta (decodificador con CodingErrorAction.REPORT: los
+     * bytes inválidos lanzan MalformedInputException): si falla, el
+     * contenido previo se trata como desconocido (no como "vacío")
+     * y se reintenta escribir; el informe marca previousReadFailed
+     * para que writeConfig lo registre en el log. (File.readText()
+     * NO vale aquí: sustituye los bytes inválidos por U+FFFD sin
+     * lanzar. Tampoco vale Files.readString: no existe en el
+     * android.jar — run #198 — ni Files.readAllBytes, que es API
+     * 33+ y el minSdk es 28; se leen los bytes con file.readBytes()
+     * y se decodifican a mano, APIs presentes desde API 1.)
      */
     fun writeConfigIfChangedDetailed(file: File, content: String): ConfigWriteReport {
         if (file.isDirectory) {
@@ -355,7 +361,11 @@ object Vita3kConfigGenerator {
         var previousReadFailed = false
         val existing = if (file.isFile) {
             try {
-                Files.readString(file.toPath())
+                StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(file.readBytes()))
+                    .toString()
             } catch (e: Exception) {
                 previousReadFailed = true
                 null
