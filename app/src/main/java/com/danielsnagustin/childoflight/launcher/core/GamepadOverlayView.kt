@@ -321,26 +321,14 @@ class GamepadOverlayView @JvmOverloads constructor(
         x: Float,
         y: Float,
     ): MotionEvent {
-        val properties = MotionEvent.PointerProperties().apply {
-            id = pointerId
-            toolType = MotionEvent.TOOL_TYPE_FINGER
-        }
-        val coords = MotionEvent.PointerCoords().apply {
-            this.x = x
-            this.y = y
-            pressure = 1f
-            size = 1f
-        }
-        // R4-P1-16: las matrices van en variables con tipo explícito.
-        // Con arrayOf(...) en línea, el compilador resolvía la
-        // sobrecarga obtain(..., x: Float, y: Float, ...) y fallaba
-        // con "Argument type mismatch" (run #159).
-        val propsArray: Array<MotionEvent.PointerProperties> = arrayOf(properties)
-        val coordsArray: Array<MotionEvent.PointerCoords> = arrayOf(coords)
-        return MotionEvent.obtain(
-            downTime, eventTime, action, 1,
-            propsArray, coordsArray,
-            0, 0, 1f, 1f, 0, 0,
+        // R4-P1-16: la llamada directa a MotionEvent.obtain(...) con
+        // matrices NO compila en Kotlin: el compilador resuelve la
+        // sobrecarga de un solo puntero (x/y Float) y rechaza las
+        // matrices, incluso con tipo explícito (runs #159 y #160).
+        // MotionEventHelper (Java) sí resuelve la sobrecarga de 12
+        // argumentos y conserva el pointerId real del dedo.
+        return MotionEventHelper.obtainSinglePointer(
+            downTime, eventTime, action, pointerId, x, y,
         )
     }
 
