@@ -23,6 +23,7 @@ import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
 import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
 import com.danielsnagustin.childoflight.launcher.data.LARGE_FILE_COPY_BUFFER_BYTES
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
+import com.danielsnagustin.childoflight.launcher.data.ImportTreeSearch
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.data.PkgHeaderParser
 import com.danielsnagustin.childoflight.launcher.data.SessionManager
@@ -33,6 +34,7 @@ import com.danielsnagustin.childoflight.launcher.model.GameStatus
 import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
+import com.danielsnagustin.childoflight.launcher.model.PkgKind
 import org.libsdl.app.SDLActivity
 import com.danielsnagustin.childoflight.launcher.model.TitleId
 import kotlinx.coroutines.Dispatchers
@@ -199,6 +201,48 @@ class Vita3KLauncher(private val context: Context) {
                 "El motor integrado no se pudo iniciar (código $rc). Vuelve a intentarlo; si sigue igual, repórtalo."
             }
         }
+
+        /**
+         * Código de loadGame cuando el núcleo no encuentra el juego
+         * instalado (Vita3kCoreBridge.loadGame: -3; -2 es sin sesión,
+         * -1 es sin núcleo). Solo el -3 lo arregla una reinstalación.
+         */
+        const val LOAD_GAME_NOT_INSTALLED = -3
+
+        /**
+         * R6-P0: ¿reinstalar el .pkg guardado y reintentar loadGame
+         * UNA vez? Pura (testeable en JVM). Solo el -3 ("no
+         * instalado") lo arregla una reinstalación: con -1 (sin
+         * núcleo) o -2 (sin sesión) instalar no cambia nada, y sin
+         * .pkg guardado reintentar es repetir lo mismo. [alreadyRetried]
+         * acota a un solo reintento por lanzamiento: un .pkg que no
+         * es el juego (p. ej. un update guardado como juego) no
+         * entra en bucle, falla una vez y el motivo explica cómo
+         * salir de él (ver tryLaunchEmbedded).
+         */
+        internal fun shouldReinstallAndRetryLoadGame(
+            loadRc: Int,
+            storedPkgPresent: Boolean,
+            alreadyRetried: Boolean,
+        ): Boolean {
+            return loadRc == LOAD_GAME_NOT_INSTALLED && storedPkgPresent && !alreadyRetried
+        }
+
+        /**
+         * R6-P2-07: ¿los artefactos que afirma un escaneo cacheado
+         * siguen en disco? Barato (un listado de carpeta por
+         * artefacto): si el juego extraído o el .pkg guardado
+         * desaparecieron entre medias, el escaneo miente y hay que
+         * re-escanear. No es testeable en JVM (necesita el
+         * repositorio, que necesita Context): solo-teléfono.
+         */
+        internal fun cachedArtifactsExist(library: GameLibraryRepository, status: GameStatus): Boolean {
+            val extractedId = status.extractedTitleId?.id
+            if (extractedId != null && ImportTreeSearch.findEboot(library.appDir(extractedId)) == null) return false
+            val pkgId = status.pkgTitleId?.id
+            if (pkgId != null && library.findPkgGameFile(pkgId) == null) return false
+            return true
+        }
     }
 
     sealed class LaunchOutcome {
@@ -271,9 +315,14 @@ class Vita3KLauncher(private val context: Context) {
         // 2 s (misma ventana que la guarda P1-9). Si no, escanear de
         // disco y guardar el instante: JUGAR necesita el estado
         // correcto, y un escaneo viejo no lo es.
+        // R6-P2-07: el escaneo cacheado puede mentir si el disco cambió
+        // (se borró el .pkg o el juego entre medias): antes de
+        // reutilizarlo, verificar barato (File.exists / un listado)
+        // que los artefactos que el estado afirma sigan existiendo.
+        // Si falta alguno, re-escanear.
         val nowMillis = SystemClock.elapsedRealtime()
         val cachedStatus = lastScannedStatus
-        val status = if (cachedStatus != null && nowMillis - lastScannedAtMillis < 2000L) {
+        val status = if (cachedStatus != null && nowMillis - lastScannedAtMillis < 2000L && cachedArtifactsExist(library, cachedStatus)) {
             cachedStatus
         } else {
             library.scanStatus().also {
@@ -545,33 +594,18 @@ class Vita3KLauncher(private val context: Context) {
         // decide(), nunca antes.
         when (val decision = EmbeddedGameLauncher.decide(pre.status, Vita3kCoreBridge.available, pre.firmwareStatus.ready, settings.allowExternalVita3k)) {
             is EmbeddedGameLauncher.Decision.UseEmbedded -> {
-                // Red de seguridad (bug -3, 2026-11-08): si el eboot
-                // instalado NO es un archivo válido (ni ELF ni SELF),
-                // la instalación del .pkg se interrumpió a mitad (la
-                // app se cerró a mitad: 1,14 GB) y el juego no
-                // arrancaría aunque loadGame lo viera. Un eboot bien
-                // instalado es un SELF en disco (el núcleo lo descifra
-                // en memoria al cargarlo), así que SELF también vale
-                // (GameLibraryRepository.ebootValidation). Si el .pkg
-                // sigue guardado, se reinstala antes de validar, por
-                // el mismo camino que UseEmbeddedPkg.
-                val ebootCheck = library.ebootValidation(titleId)
-                if (ebootCheck.reason != GameLibraryRepository.EbootInvalidReason.OK) {
-                    val pkgFile = library.findPkgGameFile(titleId)
-                    if (pkgFile != null) {
-                        LauncherLog.append(context, "pkg", "Eboot no válido en $titleId (ni ELF ni SELF): reinstalando el .pkg guardado. ${ebootCheck.logLine()}")
-                        val reinstalled = reinstallGamePkg(library, titleId, pkgFile, onInstallProgress)
-                        if (reinstalled.isFailure) {
-                            // P1-12: instalado pero sin licencia (no es
-                            // un fallo de instalación; no reinstalar).
-                            installedWithoutLicenseFailure(reinstalled.exceptionOrNull())?.let { return it }
-                            val reason = reinstalled.exceptionOrNull()?.message ?: "No se pudo reinstalar el .pkg."
-                            LauncherLog.append(context, "launch", "Reinstalación del .pkg falló: $reason")
-                            return LaunchOutcome.EmbeddedFailed("No se pudo preparar el juego en el motor integrado: $reason")
-                        }
-                    } else {
-                        LauncherLog.append(context, "pkg", "Eboot sin descifrar en $titleId y no hay .pkg guardado para reinstalar. ${ebootCheck.logLine()}")
-                    }
+                // R6-P0: SIN disparo preventivo por ebootValidation
+                // antes de loadGame. La validación estructural SELF
+                // daba falso negativo con el eboot real instalado y
+                // cada JUGAR reinstalaba el .pkg desde 0 (y el .pkg
+                // nunca se borraba). Ahora manda loadGame: si dice
+                // -3 y hay .pkg guardado, tryLaunchEmbedded
+                // reinstala UNA vez y reintenta loadGame UNA vez.
+                // La validación del eboot queda solo como diagnóstico
+                // en el log (motivo + campos, para el próximo informe
+                // del teléfono si el eboot real sigue fallando).
+                runCatching {
+                    LauncherLog.append(context, "pkg", "Eboot instalado en $titleId (solo diagnóstico, no bloquea JUGAR): ${library.ebootValidation(titleId).logLine()}")
                 }
                 // P0-1 (2026-11-09): el .pkg guardado ya NO se borra
                 // aquí. Se borra después de que loadGame valide el
@@ -584,7 +618,7 @@ class Vita3KLauncher(private val context: Context) {
                 // installStoredAddonPkgs): con el juego ya extraído,
                 // ningún camino los instalaba nunca.
                 installStoredAddonPkgs(library, titleId, onInstallProgress)
-                return when (val attempt = tryLaunchEmbedded(library, titleId, configFile.absolutePath, benchmark)) {
+                return when (val attempt = tryLaunchEmbedded(library, titleId, configFile.absolutePath, benchmark, onInstallProgress)) {
                     is EmbeddedAttempt.Ok -> attempt.outcome
                     is EmbeddedAttempt.Failed -> {
                         LauncherLog.append(context, "launch", "Intento embebido falló: ${attempt.reason}")
@@ -624,7 +658,7 @@ class Vita3KLauncher(private val context: Context) {
                         )
                     }
                 }
-                return when (val attempt = tryLaunchEmbedded(library, titleId, configFile.absolutePath, benchmark)) {
+                return when (val attempt = tryLaunchEmbedded(library, titleId, configFile.absolutePath, benchmark, onInstallProgress)) {
                     is EmbeddedAttempt.Ok -> attempt.outcome
                     is EmbeddedAttempt.Failed -> {
                         LauncherLog.append(context, "launch", "Intento embebido falló tras instalar el .pkg: ${attempt.reason}")
@@ -707,6 +741,7 @@ class Vita3KLauncher(private val context: Context) {
         titleId: String,
         configPath: String,
         benchmark: Boolean = false,
+        onInstallProgress: EmbeddedPkgInstaller.ProgressListener? = null,
     ): EmbeddedAttempt {
         return try {
             when (val migration = EmbeddedCoreLayout.migrateToEmbeddedLayout(library.vitaRoot)) {
@@ -756,27 +791,88 @@ class Vita3KLauncher(private val context: Context) {
             // upstream tras instalar; sin núcleo es no-op.
             Vita3kCoreBridge.refreshAppsList()
             LauncherLog.append(context, "launch", "Lista de apps del núcleo re-escaneada; validando $titleId")
-            val loadRc = Vita3kCoreBridge.loadGame(titleId)
+            var loadRc = Vita3kCoreBridge.loadGame(titleId)
             LauncherLog.append(context, "launch", formatLoadGameResult(titleId, loadRc))
+            // R6-P0: loadGame manda. Si dice -3 (no instalado) y hay
+            // .pkg guardado, reinstalar UNA vez y reintentar loadGame
+            // UNA vez (shouldReinstallAndRetryLoadGame, puro). Es el
+            // único reintento del lanzamiento: antes la reinstalación
+            // la disparaba ebootValidation antes de loadGame en CADA
+            // JUGAR, con su falso negativo del SELF real. Un .pkg
+            // que no es el juego (un update guardado como juego) no
+            // entra en bucle: falla tras el único reintento y el
+            // motivo de abajo dice cómo salir de él.
+            var loadRetried = false
+            while (shouldReinstallAndRetryLoadGame(loadRc, library.findPkgGameFile(titleId) != null, loadRetried)) {
+                loadRetried = true
+                val pkgFile = library.findPkgGameFile(titleId) ?: break
+                LauncherLog.append(context, "pkg", "loadGame devolvió -3 con .pkg guardado: reinstalando $titleId una vez y reintentando.")
+                val reinstalled = reinstallGamePkg(library, titleId, pkgFile, onInstallProgress)
+                if (reinstalled.isFailure) {
+                    // P1-12: instalado pero sin licencia (no es un
+                    // fallo de instalación; no reinstalar, ofrecer
+                    // work.bin). El motivo es el mismo que en
+                    // launchImpl para este caso.
+                    val withoutLicense = reinstalled.exceptionOrNull() as? InstalledWithoutLicenseException
+                    if (withoutLicense != null) {
+                        return EmbeddedAttempt.Failed(
+                            "El juego quedó instalado en el motor integrado pero sin licencia: ${withoutLicense.message}",
+                        )
+                    }
+                    val reason = reinstalled.exceptionOrNull()?.message ?: "No se pudo reinstalar el .pkg."
+                    LauncherLog.append(context, "launch", "Reinstalación del .pkg falló: $reason")
+                    return EmbeddedAttempt.Failed("No se pudo preparar el juego en el motor integrado: $reason")
+                }
+                loadRc = Vita3kCoreBridge.loadGame(titleId)
+                LauncherLog.append(context, "launch", formatLoadGameResult(titleId, loadRc))
+            }
             if (loadRc != Vita3kCoreBridge.OK) {
+                val storedPkg = if (loadRc == LOAD_GAME_NOT_INSTALLED) library.findPkgGameFile(titleId) else null
                 val detail = when (loadRc) {
                     -1 -> "el núcleo no está presente en esta APK (código -1)"
                     -2 -> "el motor integrado no encontró la sesión activa"
-                    -3 -> "el motor integrado no encontró el juego instalado ($titleId)"
+                    -3 -> "el motor integrado no encontró el juego instalado ($titleId)" +
+                        if (storedPkg != null) {
+                            // R6-P1-02(b): el .pkg guardado se instaló
+                            // en otro sitio (parece un update, no el
+                            // juego: el núcleo lo instala por su SFO
+                            // en patch/ y loadGame sigue sin ver el
+                            // juego). Reinstalarlo otra vez no cambia
+                            // nada: hay que borrarlo. La ruta exacta
+                            // va en el mensaje y la vía de borrado
+                            // existe (Ajustes → Almacenamiento →
+                            // Sesiones y guardados → Borrar datos del
+                            // juego → Borrar todo: borra también los
+                            // DLCs; en este caso el juego nunca llegó
+                            // a arrancar, así que no hay partidas que
+                            // perder). No hay botón de un toque para
+                            // este caso todavía: es trabajo pendiente
+                            // de la UI (ver informe de la ronda).
+                            ". El .pkg guardado (${storedPkg.absolutePath}) parece un update, no el juego: " +
+                                "cada JUGAR lo reinstala igual sin que el juego arranque. " +
+                                "Para salir del bucle, borra ese .pkg en Ajustes → Almacenamiento → " +
+                                "Sesiones y guardados → Borrar datos del juego → Borrar todo " +
+                                "(borra también los DLCs; el juego nunca llegó a arrancar, así que no hay partidas que perder) " +
+                                "y vuelve a importar el juego completo (no el update)."
+                        } else {
+                            ""
+                        }
                     else -> "el motor integrado devolvió el código $loadRc al validar el juego"
                 }
                 return EmbeddedAttempt.Failed(
                     "El motor integrado no pudo arrancar el juego: $detail. Vuelve a intentarlo; si sigue igual, repórtalo.",
                 )
             }
-            // P0-1 (2026-11-09): el núcleo validó el juego
-            // (loadGame == 0) y el eboot pasó la validación fuerte
-            // (tamaño + cabecera): el .pkg guardado (1,14 GB) ya es
-            // redundante y se borra solo. Es el ÚNICO punto donde se
-            // borra: antes se borraba en el install, antes de saber
-            // si el juego arranca. deleteStoredGamePkg registra
-            // siempre su decisión en el log.
-            runCatching { library.deleteStoredGamePkg(titleId) }
+            // R6-P0: el núcleo validó el juego (loadGame == 0): el
+            // eboot es válido por definición y el .pkg guardado
+            // (1,14 GB) ya es redundante y se borra solo, SIN la
+            // puerta de ebootValidation (su falso negativo con el
+            // SELF real era lo que dejaba el .pkg para siempre).
+            // Es el ÚNICO punto donde se borra el .pkg del juego:
+            // antes se borraba en el install, antes de saber si el
+            // juego arranca. deleteStoredGamePkg registra siempre
+            // su decisión en el log. El work.bin se conserva siempre.
+            runCatching { library.deleteStoredGamePkg(titleId, requireValidEboot = false) }
             // Peso del juego (2026-11-09): el PUP guardado (133 MB)
             // también es redundante cuando el firmware ya está
             // instalado en el núcleo (hay marcador): solo hace falta
@@ -819,9 +915,12 @@ class Vita3KLauncher(private val context: Context) {
     /**
      * Reinstala el .pkg del juego desde un archivo concreto (puede
      * vivir en el ux0 antiguo: findPkgGameFile lo busca en los dos).
-     * Es la red de seguridad del UseEmbedded cuando el eboot
-     * instalado no es un ELF válido: installGamePkg no sirve aquí
-     * porque busca el .pkg solo en el ux0 efectivo.
+     * R6-P0: es el reintento acotado de tryLaunchEmbedded cuando
+     * loadGame dice -3 y hay .pkg guardado (UNA vez por lanzamiento):
+     * ya NO es el disparo preventivo del UseEmbedded por
+     * ebootValidation (su falso negativo reinstalaba en cada JUGAR).
+     * installGamePkg no sirve aquí porque busca el .pkg solo en el
+     * ux0 efectivo.
      */
     private suspend fun reinstallGamePkg(
         library: GameLibraryRepository,
@@ -833,11 +932,13 @@ class Vita3KLauncher(private val context: Context) {
         val installer = EmbeddedPkgInstaller(library)
         val progress: EmbeddedPkgInstaller.ProgressListener =
             onInstallProgress ?: EmbeddedPkgInstaller.ProgressListener { _, _ -> }
-        // R5-A4-1: sin espacio no se empieza la reinstalación (mismo
-        // motivo que en installPkgWithEmbeddedCore).
-        val neededBytes = pkgFile.length()
+        // R6-P1-01: sin espacio no se empieza la reinstalación: el
+        // .pkg ya guardado más su extracción son ~2,28 GB de pico
+        // (mismo motivo que en installPkgWithEmbeddedCore). Antes se
+        // exigía solo el .pkg y la extracción fallaba a mitad.
+        val neededBytes = pkgFile.length() + GameLibraryRepository.PKG_EXTRACTION_MARGIN_BYTES
         if (!library.hasFreeSpace(library.ux0Dir, neededBytes)) {
-            val reason = GameLibraryRepository.freeSpaceMessage(neededBytes, library.freeBytes(library.ux0Dir))
+            val reason = GameLibraryRepository.freeSpaceMessage(neededBytes, library.freeBytes(library.ux0Dir), pkgFile.length())
             LauncherLog.append(context, "pkg", "Reinstalación .pkg embebida bloqueada: $reason")
             return Result.failure(IllegalStateException(reason))
         }
@@ -885,18 +986,28 @@ class Vita3KLauncher(private val context: Context) {
         val progress: EmbeddedPkgInstaller.ProgressListener =
             onInstallProgress ?: EmbeddedPkgInstaller.ProgressListener { _, _ -> }
         // Update guardado, solo si no está ya instalado (extraído).
-        val patchInstalled = library.patchDir(title.id).let { patch ->
-            patch.exists() && patch.listFiles()?.isNotEmpty() == true
-        }
-        if (!patchInstalled && library.findPkgPatchFile(title.id) != null) {
-            installer.installUpdatePkg(title, progress)
-                .onSuccess {
-                    LauncherLog.append(context, "pkg", "Update guardado instalado antes de jugar: ${title.id}")
-                    library.invalidateInstalledSizes(title.id)
-                }
-                .onFailure {
-                    LauncherLog.append(context, "pkg", "Update guardado no se pudo instalar antes de jugar: ${it.message}")
-                }
+        // R6-P2-05: mismo criterio que scanStatus (isUpdateInstalled,
+        // patch/ de AMBOS ux0), no solo el patch/ efectivo.
+        val patchPkg = library.findPkgPatchFile(title.id)
+        if (!library.isUpdateInstalled(title.id) && patchPkg != null) {
+            // R6-P2-01: sin espacio para este addon se salta con log,
+            // sin bloquear el lanzamiento del juego base.
+            val patchNeeded = GameLibraryRepository.pkgInstallNeededBytes(patchPkg.length())
+            if (!library.hasFreeSpace(library.ux0Dir, patchNeeded)) {
+                LauncherLog.append(context, "pkg", "Update guardado no se instala antes de jugar: ${GameLibraryRepository.freeSpaceMessage(patchNeeded, library.freeBytes(library.ux0Dir), patchPkg.length())}")
+            } else {
+                installer.installUpdatePkg(title, progress)
+                    .onSuccess {
+                        LauncherLog.append(context, "pkg", "Update guardado instalado antes de jugar: ${title.id}")
+                        library.invalidateInstalledSizes(title.id)
+                        // R6-P1-06: el .pkg de update ya no hace falta:
+                        // se borra (con su guarda: solo si quedó instalado).
+                        library.deleteStoredAddonPkg(patchPkg, PkgKind.UPDATE, title.id)
+                    }
+                    .onFailure {
+                        LauncherLog.append(context, "pkg", "Update guardado no se pudo instalar antes de jugar: ${it.message}")
+                    }
+            }
         }
         // DLCs en .pkg en AMBOS ux0 (efectivo y antiguo), sin duplicar
         // el mismo DLC: el efectivo manda si está en los dos. Solo los
@@ -904,10 +1015,14 @@ class Vita3KLauncher(private val context: Context) {
         // por clave de contenido (el nombre del archivo del .pkg puede
         // ser un hash; la carpeta en addcont/ lleva el nombre corto
         // del contenido, leído del header del .pkg).
-        val installedDlcKeys = library.addcontDir(title.id).listFiles()
-            ?.filter { it.isDirectory }
-            ?.map { GameLibraryRepository.dlcMergeKey(it.name) }
-            ?.toSet() ?: emptySet()
+        // R6-P2-05: las carpetas instaladas se leen de AMBOS ux0 (antes
+        // solo del efectivo: un DLC instalado en el antiguo se
+        // reinstalaba en cada JUGAR).
+        val installedDlcKeys = listOf(library.ux0Dir, EmbeddedCoreLayout.legacyUx0Dir(library.vitaRoot))
+            .flatMap { ux0 -> File(ux0, "addcont/${title.id}").listFiles().orEmpty() }
+            .filter { it.isDirectory }
+            .map { GameLibraryRepository.dlcMergeKey(it.name) }
+            .toSet()
         val dlcPkgs = linkedMapOf<String, File>()
         for (ux0 in listOf(library.ux0Dir, EmbeddedCoreLayout.legacyUx0Dir(library.vitaRoot))) {
             File(File(ux0, "pkg"), "dlc").listFiles()
@@ -920,10 +1035,20 @@ class Vita3KLauncher(private val context: Context) {
             }.getOrNull()?.getOrNull()?.contentName?.let { GameLibraryRepository.dlcMergeKey(it) }
                 ?: GameLibraryRepository.dlcMergeKey(dlcId)
             if (contentKey in installedDlcKeys) return@forEach
+            // R6-P2-01: sin espacio para este addon se salta con log,
+            // sin bloquear el lanzamiento del juego base.
+            val dlcNeeded = GameLibraryRepository.pkgInstallNeededBytes(pkg.length())
+            if (!library.hasFreeSpace(library.ux0Dir, dlcNeeded)) {
+                LauncherLog.append(context, "pkg", "DLC guardado $dlcId no se instala antes de jugar: ${GameLibraryRepository.freeSpaceMessage(dlcNeeded, library.freeBytes(library.ux0Dir), pkg.length())}")
+                return@forEach
+            }
             installer.installPkgFile(pkg, library.findPkgWorkBinFile(pkg), progress)
                 .onSuccess {
                     LauncherLog.append(context, "pkg", "DLC guardado instalado antes de jugar: $dlcId")
                     library.invalidateInstalledSizes(title.id)
+                    // R6-P1-06: el .pkg de DLC ya no hace falta: se
+                    // borra (con su guarda: solo si quedó instalado).
+                    library.deleteStoredAddonPkg(pkg, PkgKind.DLC, title.id)
                 }
                 .onFailure {
                     LauncherLog.append(context, "pkg", "DLC guardado $dlcId no se pudo instalar antes de jugar: ${it.message}")
@@ -962,9 +1087,11 @@ class Vita3KLauncher(private val context: Context) {
         // R5-A4-1: sin espacio no se empieza la instalación en el
         // núcleo: el .pkg ya guardado más su extracción son ~2,28 GB
         // de pico y un fallo a mitad dejaría el juego a medias.
-        val neededBytes = gamePkg.length()
+        // R6-P1-01: antes se exigía solo gamePkg.length() y la
+        // extracción fallaba a mitad.
+        val neededBytes = gamePkg.length() + GameLibraryRepository.PKG_EXTRACTION_MARGIN_BYTES
         if (!library.hasFreeSpace(library.ux0Dir, neededBytes)) {
-            val reason = GameLibraryRepository.freeSpaceMessage(neededBytes, library.freeBytes(library.ux0Dir))
+            val reason = GameLibraryRepository.freeSpaceMessage(neededBytes, library.freeBytes(library.ux0Dir), gamePkg.length())
             LauncherLog.append(context, "pkg", "Instalación .pkg embebida bloqueada: $reason")
             return Result.failure(IllegalStateException(reason))
         }
@@ -980,7 +1107,12 @@ class Vita3KLauncher(private val context: Context) {
         val patchPkg = library.findPkgPatchFile(titleId.id)
         if (patchPkg != null) {
             installer.installPkgFile(patchPkg, library.findPkgWorkBinFile(patchPkg), progress)
-                .onSuccess { LauncherLog.append(context, "pkg", "Update embebido instalado: ${titleId.id}") }
+                .onSuccess {
+                    LauncherLog.append(context, "pkg", "Update embebido instalado: ${titleId.id}")
+                    // R6-P1-06: el .pkg de update ya no hace falta: se
+                    // borra (con su guarda: solo si quedó instalado).
+                    library.deleteStoredAddonPkg(patchPkg, PkgKind.UPDATE, titleId.id)
+                }
                 .onFailure { LauncherLog.append(context, "pkg", "Instalación del update embebido falló: ${it.message}") }
         }
         // DLCs en .pkg en AMBOS ux0 (efectivo y antiguo), sin duplicar
@@ -993,7 +1125,12 @@ class Vita3KLauncher(private val context: Context) {
         }
         dlcPkgs.forEach { (dlcId, pkg) ->
             installer.installPkgFile(pkg, library.findPkgWorkBinFile(pkg), progress)
-                .onSuccess { LauncherLog.append(context, "pkg", "DLC embebido instalado: $dlcId") }
+                .onSuccess {
+                    LauncherLog.append(context, "pkg", "DLC embebido instalado: $dlcId")
+                    // R6-P1-06: el .pkg de DLC ya no hace falta: se
+                    // borra (con su guarda: solo si quedó instalado).
+                    library.deleteStoredAddonPkg(pkg, PkgKind.DLC, titleId.id)
+                }
                 .onFailure { LauncherLog.append(context, "pkg", "Instalación del DLC $dlcId embebido falló: ${it.message}") }
         }
         // R4-P2-7: el núcleo acaba de instalar juego + update + DLCs
