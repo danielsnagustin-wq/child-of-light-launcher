@@ -81,6 +81,10 @@ enum class IconSize(val label: String, val sizeDp: Int) {
 enum class HomeSection(val label: String) {
     GAME_CARD("Tarjeta del juego"),
     LOGROS_CARD("Tarjeta Logros"),
+    // R7-P1-07: resumen de sesiones en Home (datos reales del índice
+    // de sesiones, con navegación a Guardados/Sesiones). Es la última
+    // por defecto; el usuario puede reordenarla como las demás.
+    SESSIONS_CARD("Sesiones y guardados"),
 }
 
 data class UiPreferences(
