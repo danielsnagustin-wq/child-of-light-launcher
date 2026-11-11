@@ -113,6 +113,17 @@ data class GameStatus(
     val dlcCount: Int get() = dlcs.size
     /** true si hay un .pkg de juego guardado (con o sin licencia). */
     val pkgInstalled: Boolean get() = pkgTitleId != null
+    /**
+     * R6-P1-02(b): true si hay un .pkg de juego GUARDADO pero el juego
+     * NO está extraído. Es el estado del ".pkg update disfrazado de
+     * juego": un update importado con "Importar juego" se guarda como
+     * .pkg de juego y JUGAR entra en bucle, y el botón de borrar .pkg
+     * de "Limpiar no usados" solo aparecía con el juego extraído, así
+     * que no había forma de borrarlo. Ojo: también es el estado de un
+     * .pkg de juego legítimo recién importado, aún sin instalar: el
+     * diálogo de borrado debe avisar de que es la única copia.
+     */
+    val storedGamePkgWithoutExtracted: Boolean get() = pkgTitleId != null && !gameExtracted
     val installedLabel: String
         get() = when {
             !gameInstalled -> "No instalado"
