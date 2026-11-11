@@ -19,7 +19,7 @@ import java.io.File
  * Por eso este lector es honesto y limitado: informa SI existe el
  * directorio y si vino un TROPCONF.SFM instalado. NO afirma
  * cuántos trofeos desbloqueó Vita3K ni inventa un parseo. La lista
- * bundled de 27 trofeos se usa como referencia y el progreso que se
+ * bundled de 20 trofeos se usa como referencia y el progreso que se
  * MUESTRA es el local del launcher (DataStore).
  *
  * R2-P2-37: el campo `files` de TrophyStoreScan se eliminó: se
