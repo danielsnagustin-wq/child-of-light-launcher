@@ -679,8 +679,11 @@ class SessionManager(
             // R2-P1-14: el conteo de logros del zip NO se confía: un zip
             // manipulado podía traer 20/20 con logros vacíos. Se
             // recomputa desde el achievements.txt importado.
+            // R7-P2-01: el recompute usa decodeVerified (firma válida):
+            // un achievements.txt fabricado a mano cuenta 0, igual que
+            // el restore (replaceAll) que viene después lo descarta.
             val importedText = repo.readAchievementsText(imported.id)
-            val recomputedUnlocked = AchievementRepository.decode(importedText)
+            val recomputedUnlocked = achievements.decodeVerified(importedText)
                 .keys.count { n -> TROPHIES_20.any { it.number == n } }
             val clean = imported.copy(
                 name = imported.name.trim().take(40).ifBlank { "Sesión importada" },
@@ -736,8 +739,9 @@ class SessionManager(
      * R2-P2-30: recomputa el contador `unlockedTrophies` de la sesión
      * activa desde el almacén global de logros y persiste el índice
      * (y el achievements.txt de la sesión). Lo llama el ViewModel tras
-     * `resetTrophies` e `importAchievements`: sin esto la lista de
-     * sesiones mostraba "Logros: X/20" viejo hasta el próximo snapshot.
+     * `resetTrophies`, `importAchievements` y (R7-P2-05) al final de
+     * `syncTrophiesFromGame`: sin esto la lista de sesiones mostraba
+     * "Logros: X/20" viejo hasta el próximo snapshot.
      * Best-effort: si falla, el contador queda viejo pero la app sigue.
      */
     suspend fun refreshActiveTrophyCount() {
