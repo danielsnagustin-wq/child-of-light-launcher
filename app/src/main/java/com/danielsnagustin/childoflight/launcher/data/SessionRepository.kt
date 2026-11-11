@@ -411,7 +411,9 @@ class SessionRepository(private val vitaRoot: File) {
                 val bytes = parts[8].toLong()
                 val trophies = parts[9].toInt()
                 if (created < 0 || lastPlayed < 0 || playTime < 0 || files < 0 || bytes < 0) return null
-                if (trophies !in 0..27) return null
+                // R9-P2-01: hay 20 trofeos (TROPHIES_20), no 27: el
+                // tope viejo era un resto de la lista anterior.
+                if (trophies !in 0..20) return null
                 GameSession(
                     id = id,
                     name = unescape(parts[1]),
