@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.model.CardSize
 import com.danielsnagustin.childoflight.launcher.model.CardTransparency
+import com.danielsnagustin.childoflight.launcher.model.GameLanguage
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.divergesFromPreset
@@ -32,6 +33,7 @@ import com.danielsnagustin.childoflight.launcher.model.isLowRamConservativeVaria
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import com.danielsnagustin.childoflight.launcher.ui.ColLavenderBlue
 import com.danielsnagustin.childoflight.launcher.ui.ColTurquoise
+import com.danielsnagustin.childoflight.launcher.ui.EnumChips
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.LocalUiPreferences
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
@@ -62,6 +64,14 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
     // ConfigPreviewDialog dentro de sí.
     var showConfig by rememberSaveable { mutableStateOf(false) }
     var showResetConfirm by rememberSaveable { mutableStateOf(false) }
+    // 0.2.63 (F): "Borrar progreso de logros" vivía en la pantalla
+    // de Logros, a un toque de borrarlos por error. Ahora vive aquí,
+    // en General junto a "Restablecer ajustes", lejos de un toque
+    // accidental, con su doble confirmación (R2-P2-02: el primer
+    // diálogo avisa y el segundo deja explícito que borrará los
+    // trofeos ganados jugando).
+    var showTrophiesResetConfirm by rememberSaveable { mutableStateOf(false) }
+    var showTrophiesResetConfirm2 by rememberSaveable { mutableStateOf(false) }
     // Ola 3, Etapa 9a: copia de seguridad de ajustes (JSON por SAF).
     val exportBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) vm.exportSettingsBackup(uri)
@@ -88,6 +98,28 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                         TextButton(onClick = { vm.resetSettings(); showResetConfirm = false }) { Text("Restablecer") }
                     },
                     dismissButton = { TextButton(onClick = { showResetConfirm = false }) { Text("Cancelar") } },
+                )
+            }
+            if (showTrophiesResetConfirm) {
+                AlertDialog(
+                    onDismissRequest = { showTrophiesResetConfirm = false },
+                    title = { Text("¿Borrar el progreso de logros?") },
+                    text = { Text("Se borran los 20 trofeos desbloqueados en este launcher. Es solo local: no afecta a PSN porque nunca se sincroniza.") },
+                    confirmButton = {
+                        TextButton(onClick = { showTrophiesResetConfirm = false; showTrophiesResetConfirm2 = true }) { Text("Continuar") }
+                    },
+                    dismissButton = { TextButton(onClick = { showTrophiesResetConfirm = false }) { Text("Cancelar") } },
+                )
+            }
+            if (showTrophiesResetConfirm2) {
+                AlertDialog(
+                    onDismissRequest = { showTrophiesResetConfirm2 = false },
+                    title = { Text("¿Seguro? Se borrarán los trofeos ganados") },
+                    text = { Text("Esto borrará los trofeos ganados jugando, con sus fechas, y no se pueden recuperar. Si quieres conservarlos, expórtalos antes desde Guardados → Exportar progreso de logros.") },
+                    confirmButton = {
+                        TextButton(onClick = { vm.resetTrophies(); showTrophiesResetConfirm2 = false }) { Text("Sí, borrar los trofeos ganados") }
+                    },
+                    dismissButton = { TextButton(onClick = { showTrophiesResetConfirm2 = false }) { Text("Cancelar") } },
                 )
             }
         },
@@ -214,6 +246,13 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                     "Encendido: el juego cree que hay sesión iniciada y los DLC se activan. No es una conexión real a PSN: no hay cuenta, ni red, ni sincronización. Apagado: el juego ve la sesión cerrada y los DLC pueden no activarse. Aplica en el siguiente lanzamiento.",
                     s.psnSignedIn,
                 ) { vm.saveSettings(s.copy(psnSignedIn = it)) }
+                // 0.2.63 (E): idioma del juego. Es el idioma del
+                // sistema emulado (sys-lang en config.yml), no el de
+                // la interfaz del launcher: con Español, el juego
+                // muestra sus menús, diálogos y subtítulos en
+                // español. Aplica en el siguiente lanzamiento.
+                EnumChips("Idioma del juego", GameLanguage.entries, s.gameLanguage, { it.label }) { vm.saveSettings(s.copy(gameLanguage = it)) }
+                NoteText("El juego se guarda en este idioma: con Español, los menús, diálogos y subtítulos salen en español. Aplica en el siguiente lanzamiento (sal y vuelve a entrar con JUGAR).")
                 Text(
                     if (externalVita3k != null) "✓ App externa instalada ($externalVita3k)" else "✗ App externa no instalada",
                     style = MaterialTheme.typography.bodyMedium,
@@ -249,6 +288,15 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                     onClick = { showResetConfirm = true },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Restablecer ajustes (preset de tu GPU)") }
+                // 0.2.63 (F): el borrado de trofeos vive aquí desde
+                // esta versión (antes estaba en la pantalla de
+                // Logros): mismo botón, misma doble confirmación,
+                // lejos de un toque accidental.
+                OutlinedButton(
+                    onClick = { showTrophiesResetConfirm = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Borrar progreso de logros") }
+                NoteText("Borra los trofeos ganados jugando, con sus fechas. Pide dos confirmaciones y no se puede deshacer: expórtalos antes desde Guardados → Exportar progreso de logros si quieres conservarlos.")
             }
             item {
                 // Ola 3, Etapa 9a: copia de seguridad de ajustes
