@@ -363,15 +363,22 @@ object TouchOverlayMapping {
      * juego, con parte del botón sobre la barra negra. Ahora el
      * centro es (gameLeft + xFraction * gameW, gameTop + yFraction
      * * gameH) y el control ENTERO queda dentro del rect del juego
-     * (el centro se limita a [mitad, tamaño - mitad] del rect).
+     * (el centro se limita a [mitad, tamaño - mitad] del rect),
+     * SALVO el stick y el salto (ver [controlRectInGameRect]): el
+     * borde izquierdo del stick puede pisar la barra negra
+     * izquierda y el borde derecho del salto la derecha, como en
+     * el mockup.
      *
      * Coherencia con el editor (ui/TouchLayoutScreen.kt): la
      * fracción significa lo mismo en el juego y en la vista previa
-     * SOLO si la previa tiene el mismo aspecto 16:9 que el juego.
-     * Hoy la previa es fillMaxWidth x 200/300 dp (no 16:9), así que
-     * el mismo valor numérico se ve con otro espaciado en el
-     * editor que en el juego; eso lo arregla la previa 16:9 real
-     * (R4-P1-4, fuera de este lote) y no se toca aquí.
+     * porque la previa es 16:9 real (previewSizeForScreen,
+     * TouchLayoutScreen.kt:205-208, 960x544 como el juego; R4-P1-4
+     * ya existe). Pero la previa recorta cada control a su propio
+     * rect (no tiene barra negra que pisar), así que el stick se
+     * ve pegado a su borde izquierdo y el salto colgando de su
+     * borde derecho, mientras en el juego pisan la barra: editor
+     * y juego ya no coinciden en el stick (R7-P1-05) ni en el
+     * salto (R7, decisión del coordinador).
      */
     fun controlRect(control: TouchControl, viewWidthPx: Float, viewHeightPx: Float, density: Float): ControlRect =
         controlRectInGameRect(control, gameRect(viewWidthPx, viewHeightPx), density)
@@ -381,12 +388,54 @@ object TouchOverlayMapping {
      * [gameRect] (densidad [density]). Es la misma matemática que
      * [controlRect], con el rect ya calculado: útil para tests y
      * para no recalcular el rect por control.
+     *
+     * 0.2.58 (R7-P1-05): SOLO el stick (kind "stick") puede pisar
+     * la barra negra lateral izquierda como en el mockup: su borde
+     * izquierdo puede quedar fuera del rect del juego, hasta
+     * gameLeft - mitad (su CENTRO sigue dentro del rect, nunca a
+     * la izquierda de gameLeft) y nunca fuera de la vista (tope
+     * en x 0). En el teléfono el stick guardado en 0.05 queda con
+     * el centro en 228 px y el borde en 65 px, 99 px dentro de la
+     * barra. 0.2.58 (R7, decisión del coordinador): TAMBIÉN el
+     * salto puede pisar la barra negra derecha, simétrico al
+     * stick: su borde derecho puede quedar fuera del rect, con el
+     * centro hasta 1.012 del juego (su maxRight puede superar
+     * gameRight) y nunca fuera de la vista (tope en el borde
+     * derecho: el rect del juego está centrado, así que el borde
+     * derecho de la vista es gameLeft + gameRight). En el teléfono
+     * el salto guardado en 1.012 queda con el centro en 1450,6 px
+     * y el borde en 1531 px, 96 px dentro de la barra y 69 px
+     * dentro de la vista. Se identifica POR ID (btn_jump), NO por
+     * kind "button": la espada comparte kind y NO se relaja. Los
+     * demás controles siguen con el control ENTERO dentro del
+     * rect: la espada en 0.914 queda entera dentro sin recorte.
      */
     fun controlRectInGameRect(control: TouchControl, gameRect: GameRect, density: Float): ControlRect {
         val sizePx = control.sizeDp * density
         val half = sizePx / 2f
+        // 0.2.58 (R7-P1-05): solo el stick pisa la barra negra
+        // izquierda: su borde izquierdo puede bajar hasta gameLeft
+        // - half (centro en gameLeft) y nunca fuera de la vista
+        // (tope en 0). 0.2.58 (R7, decisión del coordinador):
+        // TAMBIÉN el salto pisa la barra negra derecha, simétrico
+        // al stick: su borde derecho puede subir hasta el borde de
+        // la vista (gameLeft + gameRight, el rect está centrado) y
+        // su centro hasta 1.012 del juego. Solo por id btn_jump,
+        // no por kind "button": la espada comparte kind y NO se
+        // relaja. Los demás controles siguen con el control ENTERO
+        // dentro del rect.
+        val minLeft = if (control.kind == "stick") {
+            (gameRect.left - half).coerceAtLeast(0f)
+        } else {
+            gameRect.left
+        }
+        val maxLeft = if (control.id == "btn_jump") {
+            (gameRect.left + gameRect.right - sizePx).coerceAtLeast(gameRect.left)
+        } else {
+            (gameRect.right - sizePx).coerceAtLeast(gameRect.left)
+        }
         val left = (gameRect.left + control.xFraction * gameRect.width() - half)
-            .coerceIn(gameRect.left, (gameRect.right - sizePx).coerceAtLeast(gameRect.left))
+            .coerceIn(minLeft, maxLeft)
         val top = (gameRect.top + control.yFraction * gameRect.height() - half)
             .coerceIn(gameRect.top, (gameRect.bottom - sizePx).coerceAtLeast(gameRect.top))
         return ControlRect(left, top, left + sizePx, top + sizePx)
