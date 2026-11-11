@@ -303,7 +303,7 @@ data class InstallProgress(val percent: Int?, val message: String)
  */
 internal fun downloadsCopyConfirmText(fileNames: List<String>, totalBytes: Long): String {
     val files = fileNames.joinToString("\n") { "• $it" }
-    return "El juego, los DLCs, los updates y la licencia viven en el almacenamiento interno del launcher (privado, sin carpeta visible).\n\n" +
+    return "El juego, los DLCs, las actualizaciones y la licencia viven en el almacenamiento interno del launcher (privado, sin carpeta visible).\n\n" +
         "La app externa no puede leerlos desde ahí: para instalarlos hay que copiarlos a la carpeta compartida Descargas/ChildOfLight/ (${DownloadsCleanup.formatBytes(totalBytes)}).\n\n" +
         "Archivos que se copiarán:\n$files\n\n" +
         "Esto solo hace falta mientras el núcleo embebido no esté listo: cuando lo esté, JUGAR instalará el juego sin copiar nada a Descargas. " +
@@ -1865,13 +1865,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private fun importResultMessage(result: ImportResult): String = when (result) {
         is ImportResult.Success -> result.detail
         is ImportResult.DlcSuccess -> "DLC ${result.dlcId} instalado para ${result.titleId.id}."
-        is ImportResult.UpdateSuccess -> "Update instalado para ${result.titleId.id}."
+        is ImportResult.UpdateSuccess -> "Actualización instalada para ${result.titleId.id}."
         is ImportResult.FirmwareSuccess -> "Firmware ${result.fileName} guardado."
         is ImportResult.PkgStored -> {
             val what = when (result.kind) {
                 com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME -> "El juego"
                 com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC -> "El DLC"
-                com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE -> "El update"
+                com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE -> "La actualización"
             }
             // El motor integrado instala el .pkg del JUEGO al pulsar
             // JUGAR (UseEmbeddedPkg). Para DLC/update, PkgStored ya
@@ -1890,7 +1890,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val what = when (result.kind) {
                 com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME -> "El juego"
                 com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC -> "El DLC"
-                com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE -> "El update"
+                com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE -> "La actualización"
             }
             "$what se guardó como .pkg (${result.titleId.id} · ${DownloadsCleanup.formatBytes(result.sizeBytes)}), " +
                 "pero falta su licencia (work.bin de 512 B): sin ella no se puede instalar.\n\n" +
