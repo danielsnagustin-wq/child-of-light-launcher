@@ -269,24 +269,24 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                         Text(
                             "${item.trophy.number}. ${item.displayName}",
                             fontWeight = FontWeight.Bold,
-                            color = if (item.unlocked) Color.White else ColMutedText,
+                            color = if (item.unlocked) Color.White else mutedTextColor(isDarkUi(uiPrefs)),
                         )
                         Text(
                             item.displayDescription,
                             style = MaterialTheme.typography.bodySmall,
-                            color = ColMutedText,
+                            color = if (item.unlocked) ColMutedText else mutedTextColor(isDarkUi(uiPrefs)),
                         )
-                        if (item.trophy.tier != null) Text("Grado: ${item.trophy.tier}", style = MaterialTheme.typography.bodySmall, color = ColMutedText)
+                        if (item.trophy.tier != null) Text("Grado: ${item.trophy.tier}", style = MaterialTheme.typography.bodySmall, color = if (item.unlocked) ColMutedText else mutedTextColor(isDarkUi(uiPrefs)))
                         if (item.trophy.onlineRequired) {
                             Text("⚠ Puede no desbloquearse sin la función online de Vita (enviar Oculi a un amigo).", style = MaterialTheme.typography.bodySmall, color = ColAccent)
                         }
                         item.unlockedAtMillis?.let { at ->
                             val date = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(at))
-                            Text("Desbloqueado: $date", style = MaterialTheme.typography.bodySmall, color = ColMutedText)
+                            Text("Desbloqueado: $date", style = MaterialTheme.typography.bodySmall, color = if (item.unlocked) ColMutedText else mutedTextColor(isDarkUi(uiPrefs)))
                         }
                     }
                     if (!item.unlocked) {
-                        Text("🔒", style = MaterialTheme.typography.bodyMedium, color = ColMutedText)
+                        Text("🔒", style = MaterialTheme.typography.bodyMedium, color = mutedTextColor(isDarkUi(uiPrefs)))
                     }
                 }
             }
