@@ -2,7 +2,7 @@ package com.danielsnagustin.childoflight.launcher.data
 
 import android.content.Context
 import com.danielsnagustin.childoflight.launcher.model.GameSession
-import com.danielsnagustin.childoflight.launcher.model.TROPHIES_27
+import com.danielsnagustin.childoflight.launcher.model.TROPHIES_20
 import com.danielsnagustin.childoflight.launcher.model.TitleId
 import java.io.InputStream
 import java.io.OutputStream
@@ -267,7 +267,7 @@ class SessionManager(
         }
         repo.setActiveSessionId(session.id)
         _activeSessionId.value = session.id
-        // 3. La viva queda vacía (nuevo juego desde cero) y los logros a 0/27.
+        // 3. La viva queda vacía (nuevo juego desde cero) y los logros a 0/20.
         if (titleId.isNotBlank()) repo.clearLiveSavedata(titleId)
         repo.writeSessionExtras(session.id, "", currentProfile)
         achievements.resetAll()
@@ -677,11 +677,11 @@ class SessionManager(
                 )
             }
             // R2-P1-14: el conteo de logros del zip NO se confía: un zip
-            // manipulado podía traer 27/27 con logros vacíos. Se
+            // manipulado podía traer 20/20 con logros vacíos. Se
             // recomputa desde el achievements.txt importado.
             val importedText = repo.readAchievementsText(imported.id)
             val recomputedUnlocked = AchievementRepository.decode(importedText)
-                .keys.count { n -> TROPHIES_27.any { it.number == n } }
+                .keys.count { n -> TROPHIES_20.any { it.number == n } }
             val clean = imported.copy(
                 name = imported.name.trim().take(40).ifBlank { "Sesión importada" },
                 unlockedTrophies = recomputedUnlocked,
@@ -737,7 +737,7 @@ class SessionManager(
      * activa desde el almacén global de logros y persiste el índice
      * (y el achievements.txt de la sesión). Lo llama el ViewModel tras
      * `resetTrophies` e `importAchievements`: sin esto la lista de
-     * sesiones mostraba "Logros: X/27" viejo hasta el próximo snapshot.
+     * sesiones mostraba "Logros: X/20" viejo hasta el próximo snapshot.
      * Best-effort: si falla, el contador queda viejo pero la app sigue.
      */
     suspend fun refreshActiveTrophyCount() {
