@@ -3644,6 +3644,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             }
             val deleted = library.deleteGameData(title)
             sessionManager.deleteAllSessions()
+            // R9-P1-01: el borrado nuclear también resetea el progreso
+            // global de logros. Antes sobrevivía y la "Partida 1" nueva
+            // heredaba X/20 sin haber jugado (snapshotExtras copia el
+            // progreso global vigente), y esos trofeos ya no se podían
+            // volver a ganar porque syncTrophiesFromGame solo desbloquea.
+            achievementsRepo.resetAll()
             _pendingPkgLicense.value = null
             val current = settingsRepo.settingsFlow.first()
             settingsRepo.save(current.copy(pkgDeliveredToVita3k = false, pkgInstalledInVita3k = false))
