@@ -30,6 +30,7 @@ import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.divergesFromPreset
 import com.danielsnagustin.childoflight.launcher.model.isLowRamConservativeVariant
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
+import com.danielsnagustin.childoflight.launcher.ui.ColLavenderBlue
 import com.danielsnagustin.childoflight.launcher.ui.ColTurquoise
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.LocalUiPreferences
@@ -139,7 +140,7 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                             profileStatusText,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold,
-                            color = ColTurquoise,
+                            color = if (dark) ColTurquoise else ColLavenderBlue,
                         )
                     }
                 }
@@ -216,7 +217,7 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                 Text(
                     if (externalVita3k != null) "✓ App externa instalada ($externalVita3k)" else "✗ App externa no instalada",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (externalVita3k != null) ColTurquoise else cardTextColor(dark),
+                    color = if (externalVita3k != null) { if (dark) ColTurquoise else ColLavenderBlue } else cardTextColor(dark),
                 )
             }
             item {
