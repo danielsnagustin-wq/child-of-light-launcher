@@ -278,7 +278,7 @@ object Vita3kConfigGenerator {
     fun vitaFsPathFor(vitaRoot: File): File = File(vitaRoot, "vita")
 
     /**
-     * Escribe config.yml en <vitaFs>/config.yml y devuelve el archivo.
+     * Escribe config.yml en <vitaRoot>/config.yml y devuelve el archivo.
      *
      * R4-P0-7 + R4-P2-4: IDEMPOTENTE. Si el archivo ya tiene el mismo
      * contenido, NO se reescribe (ni se registra la línea de log):
