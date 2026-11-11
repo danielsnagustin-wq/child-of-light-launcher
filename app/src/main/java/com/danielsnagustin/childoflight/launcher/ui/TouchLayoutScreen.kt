@@ -369,7 +369,7 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 onClick = { vm.setActiveControlProfile(profile.id) },
                 modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
             ) {
-                Text("${profile.name}${if (profile.id == activeProfileId) "  ← activo" else ""}${if (profile.isBuiltIn) " (predefinido)" else ""}")
+                Text("${profile.name}${if (profile.isBuiltIn) " (predefinido)" else ""}${if (profile.id == activeProfileId) "  ← activo" else ""}")
             }
             FlowRow(modifier = Modifier.fillMaxWidth()) {
                 TextButton(onClick = { vm.duplicateControlProfile(profile.id) }) { Text("Duplicar") }
