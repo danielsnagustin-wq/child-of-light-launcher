@@ -205,7 +205,7 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                 SectionTitle("Motor")
                 SettingSwitch(
                     "Permitir app externa (solo casos especiales)",
-                    "Apagado: JUGAR siempre abre el juego dentro de este launcher. Encendido: si el motor integrado no está disponible, el juego se abre en otra app instalada.",
+                    "Encendido: si el motor integrado no está disponible, el juego se abre en otra app instalada. Apagado: JUGAR siempre abre el juego dentro de este launcher.",
                     s.allowExternalVita3k,
                 ) { vm.saveSettings(s.copy(allowExternalVita3k = it)) }
                 SettingSwitch(
