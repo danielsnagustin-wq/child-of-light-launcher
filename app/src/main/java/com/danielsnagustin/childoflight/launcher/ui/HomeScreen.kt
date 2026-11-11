@@ -51,6 +51,7 @@ import com.danielsnagustin.childoflight.launcher.model.CardTransparency
 import com.danielsnagustin.childoflight.launcher.model.GameStatus
 import com.danielsnagustin.childoflight.launcher.model.HomeSection
 import com.danielsnagustin.childoflight.launcher.model.IconSize
+import com.danielsnagustin.childoflight.launcher.model.TROPHIES_20
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 
@@ -71,12 +72,16 @@ import kotlinx.coroutines.flow.StateFlow
  * - Botón principal azul hielo: JUGAR con subtítulo (Title ID ·
  *   resolución) e icono vectorial si está importado, IMPORTAR JUEGO
  *   si no (va a la pantalla de Importación, no a Configuración).
- * - Tarjeta Logros (X de 27 + porcentaje real + barra), a todo lo
+ * - Tarjeta Logros (X de 20 + porcentaje real + barra), a todo lo
  *   ancho, PULSABLE: abre la pantalla de Logros. Es la segunda tarjeta
  *   del Inicio (la primera es la del juego): el estado (juego/DLCs/
  *   firmware) vive en Importar y en Diagnóstico, Rendimiento en
- *   Ajustes, y las sesiones en Ajustes → General → "Sesiones y
+ *   Ajustes, y las sesiones en Ajustes → Almacenamiento → "Sesiones y
  *   guardados". Sin duplicados.
+ * - Sección "Sesiones y guardados" (R7-P1-07): resumen real del índice
+ *   de sesiones (sesión activa, nº de sesiones, logros y saves) con
+ *   navegación a Guardados/Sesiones; el editor completo vive ahí, no
+ *   se duplica en Home.
  * - Fila "Configuración avanzada" que abre Configuración. El estado
  *   del juego y su importación viven solo en la tarjeta superior:
  *   sin duplicados.
@@ -145,7 +150,7 @@ fun HomeScreen(
                 .align(Alignment.TopCenter),
             verticalArrangement = Arrangement.Top,
         ) {
-            // El orden de secciones lo elige el usuario (GAME_CARD / LOGROS_CARD).
+            // El orden de secciones lo elige el usuario (GAME_CARD / LOGROS_CARD / SESSIONS_CARD).
             // Aparición progresiva: cada bloque entra con fundido + subida,
             // con ~90 ms entre ellos. Solo la primera vez por instalación. La
             // tarjeta de Logros vive dentro de la sección LOGROS_CARD.
@@ -154,6 +159,7 @@ fun HomeScreen(
                 when (section) {
                     HomeSection.GAME_CARD -> { FadeSlideIn(0, play = !introDone) { GameCard(vm, uiPrefs, strings, introDone, onNavigate) }; Spacer(modifier = Modifier.height(16.dp)) }
                     HomeSection.LOGROS_CARD -> { FadeSlideIn(90, play = !introDone) { InfoRow(vm, uiPrefs, strings, onNavigate) }; Spacer(modifier = Modifier.height(8.dp)) }
+                    HomeSection.SESSIONS_CARD -> { FadeSlideIn(135, play = !introDone) { SessionsSummaryRow(vm, uiPrefs, onNavigate) }; Spacer(modifier = Modifier.height(8.dp)) }
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
@@ -481,9 +487,9 @@ private fun InfoRow(
     strings: AppStrings,
     onNavigate: (Screen) -> Unit,
 ) {
-    // P2-11: sin "0 de 27 · 0%" transitorio: antes de la primera emisión
+    // P2-11: sin "0 de 20 · 0%" transitorio: antes de la primera emisión
     // del flujo la tarjeta mentía (0 trofeos) aunque el usuario los
-    // tuviera. El total se deriva de la lista (no hardcodeado a 27).
+    // tuviera. El total se deriva de la lista (no hardcodeado a 20).
     val achievements by vm.achievementsFlow.collectAsState(initial = null)
     val unlocked = achievements?.count { it.unlocked } ?: 0
     val total = achievements?.size ?: 0
@@ -522,6 +528,57 @@ private fun InfoRow(
                 PrimaryProgressBar(progress = if (total == 0) 0f else unlocked / total.toFloat())
             }
         }
+}
+
+// Resumen de "Sesiones y guardados" (R7-P1-07, pedida por el usuario
+// el 2026-11-08): SOLO un resumen con datos reales del índice de
+// sesiones — las mismas fuentes que SessionsSection (sessionsFlow /
+// activeSessionIdFlow) — y navegación a Guardados/Sesiones, donde vive
+// el editor completo (crear, continuar, renombrar, duplicar, exportar,
+// importar, borrar). No se duplica nada del editor aquí. PULSABLE:
+// abre la pantalla de Guardados.
+@Composable
+private fun SessionsSummaryRow(
+    vm: LauncherViewModel,
+    uiPrefs: com.danielsnagustin.childoflight.launcher.model.UiPreferences?,
+    onNavigate: (Screen) -> Unit,
+) {
+    val sessions by vm.sessionsFlow.collectAsState(initial = emptyList())
+    val activeId by vm.activeSessionIdFlow.collectAsState(initial = null)
+    val dark = isDarkUi(uiPrefs)
+    val tap = rememberTapHaptic()
+    val active = sessions.firstOrNull { it.id == activeId } ?: sessions.firstOrNull()
+    HalfCard(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = { tap(); onNavigate(Screen.SAVES) },
+        cardSize = uiPrefs?.cardSize ?: CardSize.NORMAL,
+        cardTransparency = uiPrefs?.cardTransparency ?: CardTransparency.OPAQUE,
+        uiPrefs = uiPrefs,
+    ) {
+        Text("Sesiones y guardados", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = cardTextColor(dark))
+        Spacer(modifier = Modifier.height(4.dp))
+        if (sessions.isEmpty()) {
+            Text(
+                "Sin sesiones todavía · Se crea sola al importar el juego",
+                style = MaterialTheme.typography.bodySmall,
+                color = mutedTextColor(dark),
+            )
+        } else {
+            Text(
+                "${sessions.size} ${if (sessions.size == 1) "sesión" else "sesiones"} · Activa: ${active?.name ?: "—"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = mutedTextColor(dark),
+            )
+            if (active != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Logros: ${active.unlockedTrophies} de ${TROPHIES_20.size} · Saves: ${active.savedataFiles} archivos",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = mutedTextColor(dark),
+                )
+            }
+        }
+    }
 }
 
 @Composable
