@@ -129,7 +129,7 @@ object Vita3kCoreBridge {
     }
 
     /**
-     * Inicializa el núcleo con la ruta de almacenamiento (pref-path).
+     * Inicializa el núcleo con la ruta de almacenamiento.
      * Equivale a NativeLib.init(storagePath) de upstream: crea
      * config/log/cache/patch/cheats, lee config.yml y enumera GPUs.
      */
