@@ -62,10 +62,13 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
                 EnumChips("Backend", GpuBackend.entries, s.backend, { it.label }) { vm.saveSettings(s.copy(backend = it)) }
                 EnumChips(
                     "Resolución interna",
-                    listOf(1f, 2f, 3f, 4f),
+                    listOf(0.5f, 1f, 2f, 3f, 4f),
                     s.resolutionMultiplier,
-                    { m -> when (m) { 1f -> "1x (960x544)"; 2f -> "2x (1920x1088)"; 3f -> "3x (2880x1632)"; else -> "4x (3840x2176)" } },
+                    { m -> when (m) { 0.5f -> "0.5x (480x272)"; 1f -> "1x (960x544)"; 2f -> "2x (1920x1088)"; 3f -> "3x (2880x1632)"; else -> "4x (3840x2176)" } },
                 ) { vm.saveSettings(s.copy(resolutionMultiplier = it)) }
+                if (s.resolutionMultiplier == 0.5f) {
+                    NoteText("0.5x baja la resolución interna a la mitad (480x272): el juego se ve más borroso, pero es la opción más ligera si una escena va lenta. El núcleo lo acepta (resolution-multiplier es float sin límite en el núcleo).")
+                }
                 if (gpu?.vendor == GpuVendor.MALI && s.resolutionMultiplier > 1f) {
                     NoteText("⚠ En Mali no se recomienda 2x/3x/4x. Es una opción manual: si el FPS cae, vuelve a 1x. En el G99, usa la prueba de 30 s.")
                 }
