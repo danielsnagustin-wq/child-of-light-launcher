@@ -61,11 +61,11 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Logros: los 27 trofeos de la versión Vita, más ilustrativos.
+ * Logros: los 20 trofeos de la versión Vita, más ilustrativos.
  *
  * Rediseño 2026-11-07 (referencia del usuario: lista con cabecera y
  * filas con icono circular): cabecera con mini portada + "Child of
- * Light" + "X / 27 desbloqueados" con barra azul hielo; cada fila lleva un
+ * Light" + "X / 20 desbloqueados" con barra azul hielo; cada fila lleva un
  * icono circular azul acuarela pálido con un símbolo blanco dibujado
  * (estrella, luna, sol, corona...) según el trofeo, nombre y
  * descripción. Desbloqueado: color pleno. Bloqueado: atenuado + 🔒.
@@ -73,9 +73,7 @@ import kotlin.math.sin
  *
  * - Son logros LOCALES: no se sincronizan con PSN ni con Steam.
  * - No hay platino: el juego no tiene platino en PS4 ni en Vita.
- * - "A través del cristal" (EN: Through the Looking Glass) avisa que puede no desbloquearse sin
- *   la función online de Vita (enviar Oculi a un amigo).
- * - Los nombres y descripciones son los 27 trofeos locales que ya lee
+ * - Los nombres y descripciones son los 20 trofeos locales que ya lee
  *   la app (TrophyStoreReader): no se inventa ni se renombra ninguno.
  * - El popup de desbloqueo lo muestra MainActivity (vm.justUnlocked)
  *   con sonido de notificación del sistema.
@@ -88,44 +86,39 @@ import kotlin.math.sin
  * porque borraría los trofeos ganados.
  */
 
-// R2-S01: nombres en inglés de los 27 trofeos del launcher (de los
+// R2-S01: nombres en inglés de los 20 trofeos del launcher (de los
 // comentarios EN de Achievements.kt), para comparar por nombre con el
-// TROPHY.TRP real del juego. La lista del launcher NO cambia sin prueba.
+// TROPHY.TRP real del juego. S14: el juego original tiene 20 trofeos
+// en Vita (19 bronce + 1 plata); la lista anterior era la de Xbox y se
+// corrigió. La lista del launcher NO cambia sin prueba.
 private val TROPHY_ENGLISH_NAMES: Map<Int, String> = mapOf(
     1 to "Starcatcher",
     2 to "Over the Moon",
     3 to "Sunrise",
     4 to "Coronation",
     5 to "Comedy",
-    6 to "The Girl and the Firefly",
-    7 to "Capilli Catch",
-    8 to "Sweet Sister",
-    9 to "Bolmus Bond",
-    10 to "Kategida Kindred",
-    11 to "Piscean Promise",
-    12 to "Tragedy",
-    13 to "Tenth Birthday",
-    14 to "Perfectionist",
-    15 to "Master Oculist",
-    16 to "Scene Stealer",
-    17 to "Showstopper",
-    18 to "Through the Looking Glass",
-    19 to "Winged Fury",
-    20 to "Explorer",
-    21 to "Perfect Sonnet",
-    22 to "Grassroots",
-    23 to "General of Light",
-    24 to "Guardians of Lemuria",
-    25 to "Aurora Borealis",
-    26 to "When Pigs Fly",
-    27 to "Golden Apple",
+    6 to "Capilli Catch",
+    7 to "Sweet Sister",
+    8 to "Bolmus Bond",
+    9 to "Kategida Kindred",
+    10 to "Piscean Promise",
+    11 to "Tragedy",
+    12 to "Tenth Birthday",
+    13 to "Perfectionist",
+    14 to "Master Oculist",
+    15 to "Scene Stealer",
+    16 to "Showstopper",
+    17 to "Winged Fury",
+    18 to "Explorer",
+    19 to "Perfect Sonnet",
+    20 to "Grassroots",
 )
 
 @Composable
 fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
-    // P2-11: sin "0 / 27" transitorio: antes de la primera emisión del
+    // P2-11: sin "0 / 20" transitorio: antes de la primera emisión del
     // flujo la cabecera mentía (0 trofeos). El total se deriva de la
-    // lista (no hardcodeado a 27).
+    // lista (no hardcodeado a 20).
     val progress by vm.achievementsFlow.collectAsState(initial = null)
     val scan by vm.trophyScan.collectAsState()
     val trpRead by vm.trpRead.collectAsState()
@@ -191,18 +184,20 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 NoteText("Trofeos del núcleo (ux0/user/00/trophy/): ${s.note}")
             }
             // R2-S01: diagnóstico del TROPHY.TRP real del juego instalado
-            // (sce_sys/trophy/). Si dice 20 y la lista trae 27, la lista
-            // es la de Xbox y habrá que corregirla; si dice 27, la lista
-            // queda confirmada. Nunca se inventa un conteo: si no se puede
-            // leer, se muestra el motivo.
+            // (sce_sys/trophy/). S14 resolvió la duda: el juego tiene
+            // 20 trofeos en Vita y la lista del launcher trae 20. Si el
+            // TRP dice otro número, la lista o el TRP no cuadran y hay
+            // que mirarlo; si dice 20, la lista queda confirmada. Nunca
+            // se inventa un conteo: si no se puede leer, se muestra el
+            // motivo.
             trpRead?.let { result ->
                 when (result) {
                     is TrpReadResult.Success -> {
                         // P1-15: si el TRP no trae nombres, comparar por
                         // nombre es falso por definición (coinciden 0 y
-                        // los 27 saldrían como "ausentes"). En ese caso
+                        // los 20 saldrían como "ausentes"). En ese caso
                         // la comparación es SOLO por cantidad, que es el
-                        // dato que decide 20 vs 27 (R2-S01).
+                        // dato que confirma los 20 (R2-S01).
                         if (!result.value.hasNames) {
                             val launcherSize = TROPHY_ENGLISH_NAMES.size
                             val diff = launcherSize - result.value.trophyCount
@@ -223,7 +218,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             val namedInTrp = result.value.trophies.count { it.name != null }
                             NoteText(
                                 "TRP real del juego: ${result.value.trophyCount} trofeos. " +
-                                    "Coinciden ${comparison.matchedLauncherNumbers.size} de 27 nombres con la lista del launcher." +
+                                    "Coinciden ${comparison.matchedLauncherNumbers.size} de ${comparison.launcherCount} nombres con la lista del launcher." +
                                     if (comparison.launcherOnlyNumbers.isNotEmpty()) {
                                         " No están en el TRP: ${comparison.launcherOnlyNumbers.joinToString(", ")}."
                                     } else {
@@ -326,7 +321,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { showResetConfirm = false },
             title = { Text("¿Borrar el progreso de logros?") },
-            text = { Text("Se borran los 27 trofeos desbloqueados en este launcher. Es solo local: no afecta a PSN porque nunca se sincroniza.") },
+            text = { Text("Se borran los 20 trofeos desbloqueados en este launcher. Es solo local: no afecta a PSN porque nunca se sincroniza.") },
             confirmButton = {
                 TextButton(onClick = { showResetConfirm = false; showResetConfirm2 = true }) { Text("Continuar") }
             },
@@ -354,11 +349,11 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
 // "?" en vez del símbolo (el nombre y la descripción ya se ocultan).
 // ---------------------------------------------------------------------------
 
-/** Símbolo blanco de cada trofeo (por número, 1..27). */
+/** Símbolo blanco de cada trofeo (por número, 1..20). */
 private enum class TrophySymbol {
-    STAR, MOON, SUN, CROWN, MASK, SPARKLE, FEATHER, HEART, SHIELD, SWORD,
-    DROPLET, ARROW_UP, GEM, EYE, BURST, FLAME, KEY, WINGS, CHEST, SCROLL,
-    LEAF, APPLE,
+    STAR, MOON, SUN, CROWN, MASK, FEATHER, HEART, SHIELD, SWORD,
+    DROPLET, ARROW_UP, GEM, EYE, BURST, FLAME, WINGS, CHEST, SCROLL,
+    LEAF,
 }
 
 private fun symbolFor(number: Int): TrophySymbol = when (number) {
@@ -367,28 +362,21 @@ private fun symbolFor(number: Int): TrophySymbol = when (number) {
     3 -> TrophySymbol.SUN // Sunrise: recupera el sol.
     4 -> TrophySymbol.CROWN // Coronation: destrona a la Reina.
     5 -> TrophySymbol.MASK // Comedy: Rubella se une (bufona).
-    6 -> TrophySymbol.SPARKLE // The Girl and the Firefly: Igniculus.
-    7 -> TrophySymbol.FEATHER // Capilli Catch: Finn se une.
-    8 -> TrophySymbol.HEART // Sweet Sister: Norah se une.
-    9 -> TrophySymbol.SHIELD // Bolmus Bond: Robert se une.
-    10 -> TrophySymbol.SWORD // Kategida Kindred: Óengus se une.
-    11 -> TrophySymbol.DROPLET // Piscean Promise: Gen se une.
-    12 -> TrophySymbol.MASK // Tragedy: Tristis se une (máscara trágica).
-    13 -> TrophySymbol.ARROW_UP // Tenth Birthday: nivel 10 con Aurora.
-    14 -> TrophySymbol.GEM // Perfectionist: habilidad al máximo.
-    15 -> TrophySymbol.EYE // Master Oculist: fabrica Oculi.
-    16 -> TrophySymbol.BURST // Scene Stealer: 3 ataques sorpresa.
-    17 -> TrophySymbol.FLAME // Showstopper: interrumpe a 3 enemigos.
-    18 -> TrophySymbol.KEY // Through the Looking Glass: envía Oculi.
-    19 -> TrophySymbol.WINGS // Winged Fury: devasta a 5 enemigos.
-    20 -> TrophySymbol.CHEST // Explorer: 30 cofres.
-    21 -> TrophySymbol.SCROLL // Perfect Sonnet: todas las Confesiones.
-    22 -> TrophySymbol.LEAF // Grassroots: peticiones lemurianas.
-    23 -> TrophySymbol.SHIELD // General of Light: batalla sin perder PS.
-    24 -> TrophySymbol.SWORD // Guardians of Lemuria: batalla sin Aurora.
-    25 -> TrophySymbol.SPARKLE // Aurora Borealis: 5 depósitos de polvo.
-    26 -> TrophySymbol.WINGS // When Pigs Fly: la odisea de Aquiles.
-    27 -> TrophySymbol.APPLE // Golden Apple: libre comercio.
+    6 -> TrophySymbol.FEATHER // Capilli Catch: Finn se une.
+    7 -> TrophySymbol.HEART // Sweet Sister: Norah se une.
+    8 -> TrophySymbol.SHIELD // Bolmus Bond: Robert se une.
+    9 -> TrophySymbol.SWORD // Kategida Kindred: Óengus se une.
+    10 -> TrophySymbol.DROPLET // Piscean Promise: Gen se une.
+    11 -> TrophySymbol.MASK // Tragedy: Tristis se une (máscara trágica).
+    12 -> TrophySymbol.ARROW_UP // Tenth Birthday: nivel 10 con Aurora.
+    13 -> TrophySymbol.GEM // Perfectionist: habilidad al máximo.
+    14 -> TrophySymbol.EYE // Master Oculist: fabrica Oculi.
+    15 -> TrophySymbol.BURST // Scene Stealer: 3 ataques sorpresa.
+    16 -> TrophySymbol.FLAME // Showstopper: interrumpe a 3 enemigos.
+    17 -> TrophySymbol.WINGS // Winged Fury: devasta a 5 enemigos.
+    18 -> TrophySymbol.CHEST // Explorer: 30 cofres.
+    19 -> TrophySymbol.SCROLL // Perfect Sonnet: todas las Confesiones.
+    20 -> TrophySymbol.LEAF // Grassroots: peticiones lemurianas.
     else -> TrophySymbol.STAR
 }
 
@@ -434,7 +422,7 @@ private fun TrophyIcon(item: TrophyProgress, modifier: Modifier = Modifier) {
     }
 }
 
-/** Estrella de N puntas (para STAR, SPARKLE de 4 y BURST de 8). */
+/** Estrella de N puntas (para STAR de 5 y BURST de 8). */
 private fun starPath(center: Offset, outer: Float, inner: Float, points: Int): Path {
     val path = Path()
     val step = 360f / points / 2
@@ -458,7 +446,6 @@ private fun DrawScope.drawTrophySymbol(kind: TrophySymbol, color: Color) {
     val detail = Color(0xFF8FA8CC)
     when (kind) {
         TrophySymbol.STAR -> drawPath(starPath(c, r, r * 0.45f, 5), color)
-        TrophySymbol.SPARKLE -> drawPath(starPath(c, r, r * 0.18f, 4), color)
         TrophySymbol.BURST -> drawPath(starPath(c, r, r * 0.5f, 8), color)
         TrophySymbol.MOON -> {
             // Luna creciente: dos óvalos con relleno par-impar.
@@ -600,12 +587,6 @@ private fun DrawScope.drawTrophySymbol(kind: TrophySymbol, color: Color) {
             }
             drawPath(path, color)
         }
-        TrophySymbol.KEY -> {
-            drawCircle(color, radius = r * 0.42f, center = Offset(c.x - r * 0.45f, c.y - r * 0.45f), style = Stroke(width = s * 0.09f))
-            drawLine(color, Offset(c.x - r * 0.15f, c.y - r * 0.15f), Offset(c.x + r * 0.85f, c.y + r * 0.85f), strokeWidth = s * 0.09f, cap = StrokeCap.Round)
-            drawLine(color, Offset(c.x + r * 0.45f, c.y + r * 0.45f), Offset(c.x + r * 0.75f, c.y + r * 0.15f), strokeWidth = s * 0.09f, cap = StrokeCap.Round)
-            drawLine(color, Offset(c.x + r * 0.65f, c.y + r * 0.65f), Offset(c.x + r * 0.95f, c.y + r * 0.35f), strokeWidth = s * 0.09f, cap = StrokeCap.Round)
-        }
         TrophySymbol.WINGS -> {
             val left = Path().apply {
                 moveTo(c.x, c.y + r * 0.3f)
@@ -662,18 +643,6 @@ private fun DrawScope.drawTrophySymbol(kind: TrophySymbol, color: Color) {
                 drawPath(path, color)
                 drawLine(detail, Offset(c.x, c.y - r * 0.8f), Offset(c.x, c.y + r * 0.8f), strokeWidth = s * 0.05f, cap = StrokeCap.Round)
             }
-        }
-        TrophySymbol.APPLE -> {
-            drawCircle(color, radius = r * 0.72f, center = Offset(c.x - r * 0.28f, c.y + r * 0.15f))
-            drawCircle(color, radius = r * 0.72f, center = Offset(c.x + r * 0.28f, c.y + r * 0.15f))
-            drawLine(color, Offset(c.x, c.y - r * 0.55f), Offset(c.x + r * 0.1f, c.y - r * 0.95f), strokeWidth = s * 0.08f, cap = StrokeCap.Round)
-            val leaf = Path().apply {
-                moveTo(c.x + r * 0.1f, c.y - r * 0.8f)
-                quadraticTo(c.x + r * 0.6f, c.y - r * 1.0f, c.x + r * 0.75f, c.y - r * 0.55f)
-                quadraticTo(c.x + r * 0.3f, c.y - r * 0.5f, c.x + r * 0.1f, c.y - r * 0.8f)
-                close()
-            }
-            drawPath(leaf, color)
         }
     }
 }
