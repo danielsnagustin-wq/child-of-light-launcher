@@ -97,7 +97,7 @@ fun SettingsStorageScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
             SectionTitle("Almacenamiento")
             PremiumCard {
                 Text(
-                    "El juego, los DLCs, los updates y la licencia viven en el almacenamiento interno del launcher (privado, sin carpeta visible en Descargas ni en el almacenamiento compartido).",
+                    "El juego, los DLCs, las actualizaciones y la licencia viven en el almacenamiento interno del launcher (privado, sin carpeta visible en Descargas ni en el almacenamiento compartido).",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = cardTextColor(dark),
