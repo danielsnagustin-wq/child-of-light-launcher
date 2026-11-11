@@ -70,9 +70,9 @@ static bool prepare_frontend_runtime() {
     SDL_SetMainReady();
 
     // R5-A3-4: la versión es un literal manual: subirla con cada
-    // release (0.2.62). Mejora futura: generarla desde
+    // release (0.2.63). Mejora futura: generarla desde
     // BuildConfig.VERSION_NAME pasándola por JNI a prepareFrontend.
-    SDL_SetAppMetadata("Child of Light Launcher", "0.2.62",
+    SDL_SetAppMetadata("Child of Light Launcher", "0.2.63",
                        "com.danielsnagustin.childoflight.launcher");
 
     if (SDL_WasInit(SDL_INIT_CAMERA) & SDL_INIT_CAMERA)
