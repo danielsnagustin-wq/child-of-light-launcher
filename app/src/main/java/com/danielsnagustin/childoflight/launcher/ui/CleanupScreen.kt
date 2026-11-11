@@ -95,7 +95,7 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
     ) {
-        ScreenHeader("Limpiar no usados", "Todo lo que se borra aquí se puede volver a crear o importar, salvo los saves.")
+        ScreenHeader("Limpiar no usados", "Todo lo que se borra aquí se puede volver a crear o importar, salvo las partidas guardadas.")
 
         SectionTitle("Botones táctiles ocultos (${hiddenButtons.size})")
         if (hiddenButtons.isEmpty()) Text("Ninguno: todos los botones están visibles.")
@@ -200,7 +200,7 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         OutlinedButton(onClick = { showBatchConfirm = true }, modifier = Modifier.fillMaxWidth()) {
             Text("Borrar todo lo no usado de esta pantalla")
         }
-        NoteText("En lote: borra botones ocultos, perfiles sin usar, oculta presets sin usar y borra el Turnip sin usar. NO borra DLCs ni saves: esos siempre se borran uno a uno con confirmación.")
+        NoteText("En lote: borra botones ocultos, perfiles sin usar, oculta presets sin usar y borra el Turnip sin usar. NO borra DLCs ni partidas guardadas: esas siempre se borran una a una con confirmación.")
 
         BackButton(onBack)
     }
@@ -214,7 +214,7 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 Text(
                     "Se borrarán: ${hiddenButtons.size} botones ocultos, ${unusedProfiles.size} perfiles sin usar, " +
                         "${unusedPresets.size} presets se ocultarán, y el Turnip sin usar si lo hay. " +
-                        "DLCs y saves NO se tocan en lote.",
+                        "DLCs y partidas guardadas NO se tocan en lote.",
                 )
             },
             confirmButton = {
