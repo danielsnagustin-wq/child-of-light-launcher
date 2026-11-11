@@ -129,7 +129,7 @@ fun CategoryRow(category: SettingsCategory, onClick: () -> Unit) {
             color = mutedTextColor(dark),
         )
     }
-    Spacer(modifier = Modifier.height(10.dp))
+    Spacer(modifier = Modifier.height(12.dp))
 }
 
 /** Fila de resultado del buscador: título del ajuste + categoría a la que lleva (sin "En:" cuando el destino no es una categoría de ajustes, como Logros, que vive en el Inicio). R4-P1-14: colores de texto según el tema. */
