@@ -95,7 +95,7 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
     ) {
-        ScreenHeader("Limpiar no usados", "Todo lo que se borra aquí se puede volver a crear o importar, salvo DLCs y saves.")
+        ScreenHeader("Limpiar no usados", "Todo lo que se borra aquí se puede volver a crear o importar, salvo los saves.")
 
         SectionTitle("Botones táctiles ocultos (${hiddenButtons.size})")
         if (hiddenButtons.isEmpty()) Text("Ninguno: todos los botones están visibles.")
