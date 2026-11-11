@@ -136,10 +136,18 @@ fun HomeScreen(
         }
     }
 
+    // P-C4: el fondo de la pantalla entera se memoriza por sus dos
+    // entradas exactas (hex del fondo elegido y tema oscuro/claro).
+    val homeBackgroundHex = uiPrefs?.homeBackground?.hex
+    val homeDark = isDarkUi(uiPrefs)
+    val homeBackground = remember(homeBackgroundHex, homeDark) {
+        homeBackgroundBrush(homeBackgroundHex, homeDark)
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(homeBackgroundBrush(uiPrefs?.homeBackground?.hex, isDarkUi(uiPrefs))),
+            .background(homeBackground),
     ) {
         Column(
             modifier = Modifier
@@ -194,7 +202,7 @@ private fun GameCard(
     // Personalización que funciona (0.2.15): el acento y el tema
     // elegidos por el usuario; antes el inicio pintaba Col* fijos.
     val dark = isDarkUi(uiPrefs)
-    val accent = userAccent(uiPrefs)
+    val accent = rememberedUserAccent(uiPrefs)
     // P1-16: el progreso de instalación NO se recoge aquí arriba:
     // cada % recomponía TODO el Inicio. Lo recoge LaunchProgressCard
     // dentro de sí (le pasamos el flujo), así solo la tarjeta se
@@ -437,7 +445,7 @@ private fun LaunchProgressCard(
     // Personalización que funciona (0.2.15): fondo y textos según el
     // tema, acento del usuario en el texto pulsante.
     val dark = isDarkUi(uiPrefs)
-    val accent = userAccent(uiPrefs)
+    val accent = rememberedUserAccent(uiPrefs)
     Column(
         modifier = Modifier.fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
@@ -588,7 +596,7 @@ private fun SessionsSummaryRow(
             if (active != null) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    "Logros: ${active.unlockedTrophies} de ${TROPHIES_20.size} · Saves: ${active.savedataFiles} archivos",
+                    "Logros: ${active.unlockedTrophies} de ${TROPHIES_20.size} · Partidas guardadas: ${active.savedataFiles} archivos",
                     style = MaterialTheme.typography.bodySmall,
                     color = mutedTextColor(dark),
                 )
@@ -671,7 +679,7 @@ private fun HalfCard(
     uiPrefs: com.danielsnagustin.childoflight.launcher.model.UiPreferences? = null,
     content: @Composable () -> Unit,
 ) {
-    val border = BorderStroke(1.dp, userAccent(uiPrefs).copy(alpha = 0.22f))
+    val border = BorderStroke(1.dp, rememberedUserAccent(uiPrefs).copy(alpha = 0.22f))
     val shape = RoundedCornerShape(cardSize.cornerDp.dp)
     val containerColor = cardElevatedColor(isDarkUi(uiPrefs)).copy(alpha = cardTransparency.alpha)
     val innerPadding = cardSize.paddingDp.dp
