@@ -70,6 +70,26 @@ class LogicAuditFixesTest {
         assertNull(SessionRepository.parseLine(line))
     }
 
+    @Test
+    fun parseLine_aceptaVeinteTrofeos() {
+        // R9-P2-01: el tope es 20 (TROPHIES_20), no 27: una sesión con
+        // los 20 trofeos es válida y no se descarta del índice.
+        val parsed = SessionRepository.parseLine(
+            SessionRepository.formatLine(validSession().copy(unlockedTrophies = 20)),
+        )
+        assertNotNull(parsed)
+        assertEquals(20, parsed!!.unlockedTrophies)
+    }
+
+    @Test
+    fun parseLine_rechazaVeintiunTrofeos() {
+        // R9-P2-01: 21 ya no cabe en 20 trofeos: un index.txt editado
+        // a mano con 21 (antes aceptado por el tope viejo 0..27) se
+        // descarta en vez de mostrar "21/20".
+        val line = SessionRepository.formatLine(validSession().copy(unlockedTrophies = 21))
+        assertNull(SessionRepository.parseLine(line))
+    }
+
     // --- GpuDetector.classify (M24) ---
 
     @Test
