@@ -19,6 +19,9 @@
 #   removeCustomDriver (Turnip, solo Adreno)
 # - input_overlay_bridge.cpp: overlay táctil -> mando virtual SDL de
 #   upstream (attach/detach/setButton/setAxis/setTouchState)
+# - trophy_bridge.cpp: getTrophyCollections (solo lectura del TRP
+#   real: el juego desbloquea, el launcher solo observa; exige sesión
+#   viva, se lee ANTES de destroySession)
 # - driver_bridge.cpp: installCustomDriver/getInstalledCustomDrivers/
 #   removeCustomDriver (drivers Turnip; sin este puente el
 #   custom-driver-name del config.yml no apuntaba a ningún driver
@@ -37,6 +40,7 @@ target_sources(vita3k PRIVATE
     src/session_bridge.cpp
     src/driver_bridge.cpp
     src/input_overlay_bridge.cpp
+    src/trophy_bridge.cpp
 )
 
 target_include_directories(vita3k PRIVATE
