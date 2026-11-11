@@ -1,7 +1,9 @@
 package com.danielsnagustin.childoflight.launcher.core
 
 import android.content.Context
+import android.util.Log
 import java.io.File
+import org.vita3k.emulator.data.NativeTrophyCollection
 
 /**
  * Puente JNI con el núcleo Vita3K embebido (Etapa 2).
@@ -547,6 +549,32 @@ object Vita3kCoreBridge {
         }
     }
 
+    // --- Trofeos (Ronda 0.2.57, puente JNI de trofeos) ---
+    // Solo lectura: el juego desbloquea, el launcher solo observa.
+    // Reenvía a Java_org_vita3k_emulator_NativeLib_getTrophyCollections
+    // de upstream (native_trophies.cpp:206-207, compilado dentro de
+    // libVita3K.so: pin CMakeLists.txt:167) vía trophy_bridge.cpp.
+    // Exige sesión viva: getTrophyCollections devuelve vacío si no hay
+    // emuenv (native_trophies.cpp:224-226), y destroySession lo
+    // destruye (runtime_bridge.cpp: session.emuenv.reset()). Por eso
+    // el único llamador lee ANTES de destroySession
+    // (EmbeddedGameActivity.onDestroy) y la sincronización consume ese
+    // resultado al volver (LauncherViewModel.syncTrophiesFromGame).
+    // Sin .so devuelve vacío; nunca lanza: cualquier fallo nativo o
+    // JNI se convierte en vacío con log, para que un puente roto no
+    // tumbe nunca la vuelta a Home.
+    fun getTrophyCollections(): Array<NativeTrophyCollection> {
+        if (!available) return emptyArray()
+        return try {
+            nativeGetTrophyCollections()
+        } catch (_: UnsatisfiedLinkError) {
+            emptyArray()
+        } catch (e: Exception) {
+            Log.w("ChildOfLight", "getTrophyCollections falló, se devuelve vacío: ${e.message}")
+            emptyArray()
+        }
+    }
+
     private external fun nativeInit(storagePath: String): Int
     private external fun nativeLoadGame(titleId: String): Int
     private external fun nativeGetFps(): Float
@@ -578,4 +606,5 @@ object Vita3kCoreBridge {
     private external fun nativeOverlaySetButton(sdlButton: Int, pressed: Boolean): Boolean
     private external fun nativeOverlaySetAxis(sdlAxis: Int, value: Short): Boolean
     private external fun nativeOverlaySetTouchState(isBack: Boolean): Boolean
+    private external fun nativeGetTrophyCollections(): Array<NativeTrophyCollection>
 }
