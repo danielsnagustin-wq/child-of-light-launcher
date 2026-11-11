@@ -58,7 +58,7 @@ import kotlin.math.sqrt
  * stick o un botón. Sin esto, Igniculus mientras se mueve el stick
  * — el gameplay central de Child of Light — queda roto por diseño.
  * La zona Igniculus se DIBUJA (orbe a 0.42 x ancho, anillo a 0.45 x
- * ancho, zona táctil de 156 dp en el layout limpio 0.2.54) y en los
+ * ancho, zona táctil de 115 dp en el layout limpio 0.2.57) y en los
  * dos modos de Igniculus consume el toque y lo reenvía a la
  * superficie SDL como toque sintético (P1-12), ADEMÁS de mandar el
  * brillo al mantener (hombro L + eje L2, ver glowSdlButtons):
@@ -1313,9 +1313,9 @@ class GamepadOverlayView @JvmOverloads constructor(
      * (R6-P2-23, zoneFingerIds).
      * Desde 0.2.14 se dibuja solo como orbe + anillo tenue:
      * dibujar el cristal sobre todo el rect (220 dp) era una rueda
-     * oscura gigante en el centro de la pantalla. En 0.2.54 la
-     * zona es de 156 dp y el orbe se dibuja a 0.42 x ancho (2 x
-     * 0.42 x 156 = 131 dp de diámetro, como en la captura de
+     * oscura gigante en el centro de la pantalla. En 0.2.57 la
+     * zona es de 115 dp y el orbe se dibuja a 0.42 x ancho (2 x
+     * 0.42 x 115 = 97 dp de diámetro, como en la captura de
      * referencia) con el anillo a 0.45 x ancho, fuera del halo
      * del icono (que llega a 0.357 x ancho).
      */
