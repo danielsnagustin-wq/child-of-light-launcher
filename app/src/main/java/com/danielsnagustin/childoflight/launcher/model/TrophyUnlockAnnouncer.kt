@@ -19,7 +19,7 @@ package com.danielsnagustin.childoflight.launcher.model
  *   secuencia menor o igual que la última aceptada es un desbloqueo
  *   anterior que terminó tarde y se IGNORA: el popup siempre nombra
  *   el trofeo del desbloqueo más reciente.
- * - El progreso anunciado se construye directamente desde TROPHIES_27
+ * - El progreso anunciado se construye directamente desde TROPHIES_20
  *   con el número y el instante del desbloqueo: nunca se relee de un
  *   flujo, así que no puede nombrar otro trofeo ni llegar con el
  *   estado equivocado.
@@ -51,7 +51,7 @@ class TrophyUnlockAnnouncer {
      */
     fun announce(number: Int, atMillis: Long, seq: Long): TrophyProgress? {
         if (seq <= lastSeq) return null
-        val trophy = TROPHIES_27.firstOrNull { it.number == number } ?: return null
+        val trophy = TROPHIES_20.firstOrNull { it.number == number } ?: return null
         lastSeq = seq
         return TrophyProgress(trophy, unlocked = true, unlockedAtMillis = atMillis)
             .also { current = it }
