@@ -510,6 +510,15 @@ class GamepadOverlayView @JvmOverloads constructor(
         ARROW_UP, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, GLYPH_CROSS, GLYPH_CIRCLE, GLYPH_SQUARE, GLYPH_TRIANGLE, PAUSE, IGNICULUS, TEXT_PS, SWORD
     }
 
+    /**
+     * P-C2: clave del gradiente cacheado de drawGlassBody (centro + radio
+     * + tinte + alfa). Vive aquí (clase externa, no inner): Kotlin
+     * PROHÍBE las class dentro de una inner class ("'Class' is
+     * prohibited here", run #296, 2026-11-11) igual que las enum class
+     * (run #86). Por eso no puede vivir en OverlayControlView.
+     */
+    private data class GlassGradientKey(val cx: Float, val cy: Float, val radius: Float, val tint: Int, val alpha: Float)
+
     private abstract inner class OverlayControlView(
         context: Context,
         protected val control: TouchControl,
@@ -598,8 +607,6 @@ class GamepadOverlayView @JvmOverloads constructor(
         private val tintColor: Int = parseHex(control.colorHex)
         /** P-C2: rect reutilizable de drawGlassBody (halo, brillo y anillos): sin RectF nuevo por frame. */
         private val tmpRect = RectF()
-        /** P-C2: clave del gradiente cacheado (centro + radio + tinte + alfa). */
-        private data class GlassGradientKey(val cx: Float, val cy: Float, val radius: Float, val tint: Int, val alpha: Float)
         /** P-C2: gradiente radial cacheado de drawGlassBody; null hasta el primer dibujado. */
         private var cachedGradient: RadialGradient? = null
         private var cachedGradientKey: GlassGradientKey? = null
