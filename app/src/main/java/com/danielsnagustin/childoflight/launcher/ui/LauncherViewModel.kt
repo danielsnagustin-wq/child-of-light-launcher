@@ -16,6 +16,7 @@ import com.danielsnagustin.childoflight.launcher.core.EmbeddedCoreLayout
 import com.danielsnagustin.childoflight.launcher.core.EmbeddedPkgInstaller
 import com.danielsnagustin.childoflight.launcher.core.Vita3kCoreBridge
 import com.danielsnagustin.childoflight.launcher.core.OverlayInputStats
+import com.danielsnagustin.childoflight.launcher.core.TouchStats
 import com.danielsnagustin.childoflight.launcher.data.AchievementRepository
 import com.danielsnagustin.childoflight.launcher.data.BundledTurnipDriver
 import com.danielsnagustin.childoflight.launcher.data.ControlProfile
@@ -74,6 +75,7 @@ import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 import com.danielsnagustin.childoflight.launcher.model.shouldAutoRevertTo1x
 import kotlinx.coroutines.Dispatchers
+import com.danielsnagustin.childoflight.launcher.data.TouchControl
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -328,6 +330,23 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val touchLayoutFlow = touchRepo.layoutFlow
     val profilesFlow = touchRepo.profilesFlow
     val activeProfileIdFlow = touchRepo.activeProfileIdFlow
+
+    /**
+     * 0.2.63 (G): último perfil táctil y layout vistos, para el
+     * reporte de bug (perfil + fracciones del stick). Se actualizan
+     * en init desde los flows del repositorio; buildBugReportText
+     * los lee tal cual (pueden ser "sin dato" si el reporte se
+     * exporta antes de que el primer valor llegue: el DataStore
+     * emite al instante, así que en la práctica siempre hay dato).
+     * Son la fuente de verdad guardada: si el stick se ve
+     * desplazado en pantalla pero aquí dice (0.05, 0.675), el dato
+     * está bien y la vista horneó márgenes de un tamaño viejo.
+     */
+    @Volatile
+    private var lastTouchProfileId: String? = null
+
+    @Volatile
+    private var lastTouchLayout: List<TouchControl> = emptyList()
     val achievementsFlow = achievementsRepo.progressFlow
     val uiFlow = uiRepo.uiFlow
     val sessionsFlow = sessionManager.sessionsFlow
@@ -735,6 +754,19 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         refreshLog()
         loadCoverBitmap()
         viewModelScope.launch(Dispatchers.IO) { sessionManager.ensureDefaultSession() }
+        // 0.2.63 (G): caché del perfil táctil activo + layout para
+        // el reporte de bug (ver lastTouchProfileId). Best-effort:
+        // si el DataStore falla, se quedan en "sin dato".
+        viewModelScope.launch {
+            runCatching {
+                touchRepo.activeProfileIdFlow.collect { lastTouchProfileId = it }
+            }
+        }
+        viewModelScope.launch {
+            runCatching {
+                touchRepo.layoutFlow.collect { lastTouchLayout = it }
+            }
+        }
         // El snapshot de "Corregir audio" vive en un archivo privado:
         // si la app muere, "Deshacer" sigue disponible al volver.
         viewModelScope.launch(Dispatchers.IO) { _audioFixSnapshot.value = readSettingsSnapshot(audioFixSnapshotFile()) }
@@ -3754,6 +3786,32 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val overlayStats = OverlayInputStats.snapshot()
             appendLine("Pulsaciones táctiles: botones ${overlayStats.buttonsOk} entregados / ${overlayStats.buttonsLost} perdidos | ejes ${overlayStats.axesOk} entregados / ${overlayStats.axesLost} perdidos")
             appendLine("Última pulsación: botón SDL ${overlayStats.lastButtonSdl} pressed=${overlayStats.lastButtonPressed} entregado=${overlayStats.lastButtonDelivered} | último eje: SDL ${overlayStats.lastAxisSdl} valor=${overlayStats.lastAxisValue} entregado=${overlayStats.lastAxisDelivered}")
+            // 0.2.63 (D): táctil libre del juego (TouchStats).
+            // lastEventMillis 0 = ningún toque todavía en este
+            // proceso: un 0/0 con "ninguno todavía" no se puede
+            // confundir con un reporte viejo (D-P2-2).
+            val touchStats = TouchStats.snapshot()
+            appendLine("Toques libres en el juego: ${touchStats.freeDownOk} DOWN entregados / ${touchStats.freeDownLost} perdidos | ${touchStats.freeUpOk} UP entregados | reenviados (2º dedo / zona Igniculus): ${touchStats.forwardedDownOk} DOWN entregados / ${touchStats.forwardedDownLost} perdidos | ${touchStats.forwardedUpOk} UP entregados")
+            if (touchStats.lastEventMillis == TouchStats.NO_EVENT_MILLIS) {
+                appendLine("Último toque: ninguno todavía en este proceso")
+            } else {
+                val ageMs = System.currentTimeMillis() - touchStats.lastEventMillis
+                appendLine("Último toque: ${touchStats.lastAction} en (${touchStats.lastX}, ${touchStats.lastY}) entregado=${touchStats.lastDelivered} hace ${ageMs} ms")
+            }
+            // D-P1-2: el botón SDL 9 que cuentan las pulsaciones NO
+            // es un botón del mando: es el brillo de Igniculus
+            // (sendGlow envía SDL 9 + eje -4 al mantener la zona; en
+            // lecturas v2 del juego el 9 es L1 colateral). El log lo
+            // distingue ("brillo Igniculus pressed=...").
+            appendLine("Nota: el botón SDL 9 de las pulsaciones es el brillo de Igniculus (no un botón del mando): ver log \"brillo Igniculus\".")
+            // 0.2.63 (G): perfil táctil activo + fracciones del
+            // stick guardadas (fuente de verdad). Si el stick se ve
+            // desplazado en pantalla pero aquí dice (0.05, 0.675),
+            // el dato está bien y la vista horneó márgenes de un
+            // tamaño viejo; la línea "overlay construido" del logcat
+            // dice con qué tamaño de vista se montó.
+            val reportStick = lastTouchLayout.firstOrNull { it.kind == "stick" }
+            appendLine("Perfil táctil: ${lastTouchProfileId ?: "sin dato"} | ${lastTouchLayout.size} controles | stick: ${reportStick?.let { "(${it.xFraction}, ${it.yFraction}) ${it.sizeDp} dp" } ?: "sin stick"}")
             appendLine()
             // R4-P2-9: "Ajustes activos" muestra los valores EFECTIVOS
             // (los que corre el juego y emite config.yml), no los
