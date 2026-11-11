@@ -109,6 +109,24 @@ class TouchLayoutAuditFixesTest {
     }
 
     @Test
+    fun clampCenterFractionJumpKeepsMockupPosition() {
+        // 0.2.58 (R7): el salto admite x hasta 1.1 en el editor
+        // (arrastre y slider X): su centro de fábrica es 1.012
+        // (mockup, sobre la barra negra derecha). Sin maxFraction
+        // el editor lo devolvería a 1 - half y perdería el arreglo.
+        val half = 0.0634f // 92 dp en el teléfono (80.5 px / 1270.6 px)
+        assertEquals(1.012f, TouchLayoutRepository.clampCenterFraction(1.012f, half, TouchLayoutRepository.JUMP_MAX_X_FRACTION), 0.001f)
+        assertEquals(1.1f, TouchLayoutRepository.clampCenterFraction(1.5f, half, TouchLayoutRepository.JUMP_MAX_X_FRACTION), 0.001f)
+        assertEquals(0.9366f, TouchLayoutRepository.clampCenterFraction(1.012f, half), 0.001f)
+        // El round-trip de fábrica sobrevive a encode/decode: el
+        // perfil migrado a 1.012 no se deshace al releerlo.
+        val jump = defaultTouchLayout().first { it.id == "btn_jump" }
+        val decoded = TouchLayoutRepository.decodeControl(TouchLayoutRepository.encodeControl(jump))
+        assertNotNull(decoded)
+        assertEquals(1.012f, decoded!!.xFraction, 0.001f)
+    }
+
+    @Test
     fun sanitizeNameStripsSlashes() {
         // Un '/' en el nombre del perfil rompía el nombre de archivo
         // de exportación ("perfil-a/b.txt").
