@@ -444,6 +444,36 @@ object TouchOverlayMapping {
     /** Controles que aparecen en el juego: solo los visibles. Un botón borrado no está en la lista; uno oculto tampoco. */
     fun visibleControls(controls: List<TouchControl>): List<TouchControl> =
         controls.filter { it.visible }
+
+    /**
+     * Layout en píxeles de un hijo del overlay para una vista de
+     * [viewWidthPx]x[viewHeightPx] con densidad [density]: el tamaño
+     * (cuadrado) y los márgenes que GamepadOverlayView pone en los
+     * LayoutParams del hijo. Puro Kotlin, testeable en JVM.
+     *
+     * 0.2.63 (G): rebuild() y onLayout() usan EXACTAMENTE este
+     * cálculo. Antes, rebuild() calculaba los márgenes una vez y
+     * nada los re-verificaba: si un rebuild corría con un tamaño
+     * transitorio (p. ej. tras "Corregir audio", que no toca el
+     * layout pero sí dispara refrescos), los márgenes quedaban
+     * horneados para ese tamaño y el stick aparecía desplazado
+     * (captura 52166: stick en ~(0.28, 0.52) en vez de (0.05,
+     * 0.675)) sin que ningún onSizeChanged posterior los
+     * corrigiera. Con este helper centralizado, cada onLayout
+     * re-deriva los márgenes desde las fracciones del control y
+     * los corrige si difieren; las fracciones guardadas (la
+     * fuente de verdad) no se tocan nunca.
+     */
+    data class OverlayChildLayout(val sizePx: Int, val leftMargin: Int, val topMargin: Int)
+
+    fun childLayout(control: TouchControl, viewWidthPx: Float, viewHeightPx: Float, density: Float): OverlayChildLayout {
+        val rect = controlRect(control, viewWidthPx, viewHeightPx, density)
+        return OverlayChildLayout(
+            sizePx = rect.width().toInt().coerceAtLeast(1),
+            leftMargin = rect.left.toInt(),
+            topMargin = rect.top.toInt(),
+        )
+    }
 }
 
 /**
