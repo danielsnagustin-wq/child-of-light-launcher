@@ -66,6 +66,10 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     // ya tenía su propio diálogo).
     var showDeleteTurnipConfirm by rememberSaveable { mutableStateOf(false) }
     var showDeleteInstalledPkgConfirm by rememberSaveable { mutableStateOf(false) }
+    // R6-P1-02(b): confirmación del borrado del .pkg guardado SIN
+    // juego extraído (update importado como juego por error): mismo
+    // patrón que showDeleteInstalledPkgConfirm (booleano + AlertDialog).
+    var showDeleteUnextractedPkgConfirm by rememberSaveable { mutableStateOf(false) }
 
     val hiddenButtons = layout.filter { !it.visible }
     val unusedProfiles = profiles.filter { it.id != activeProfileId }
@@ -146,6 +150,24 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             OutlinedButton(onClick = { showDeleteInstalledPkgConfirm = true }, modifier = Modifier.fillMaxWidth()) { Text("🗑 Borrar .pkg guardado (${DownloadsCleanup.formatBytes(status.pkgSizeBytes)})") }
         }
         NoteText("Solo se borra el .pkg. La licencia (work.bin) no se borra y el juego extraído no se toca.")
+
+        // R6-P1-02(b): .pkg de juego guardado SIN juego extraído. El
+        // botón de arriba solo aparece con el juego extraído, así que
+        // un update importado como juego (JUGAR entra en bucle) no se
+        // podía borrar desde ningún sitio. Este botón usa el gancho
+        // sin puertas de estado (deleteStoredGamePkgAnyState). Ojo: es
+        // también el estado de un .pkg de juego legítimo recién
+        // importado, aún sin instalar: el diálogo avisa de que es la
+        // única copia. Juego y update comparten content_type 0x15 y el
+        // mismo Content ID, así que la app no puede distinguirlos por
+        // el header: la decisión es del usuario, con el aviso claro.
+        SectionTitle(".pkg guardado sin instalar")
+        if (!status.storedGamePkgWithoutExtracted) Text("Ninguno: no hay .pkg de juego guardado sin instalar.")
+        else {
+            Text("Hay un .pkg de juego guardado (${DownloadsCleanup.formatBytes(status.pkgSizeBytes)}) y el juego no está extraído. Si es un update que se importó como juego por error, JUGAR entra en bucle: bórralo aquí e importa de nuevo el juego y el update por separado.", fontWeight = FontWeight.SemiBold)
+            OutlinedButton(onClick = { showDeleteUnextractedPkgConfirm = true }, modifier = Modifier.fillMaxWidth()) { Text("🗑 Borrar .pkg guardado sin instalar (${DownloadsCleanup.formatBytes(status.pkgSizeBytes)})") }
+        }
+        NoteText("Solo se borra el .pkg. La licencia (work.bin) no se borra. Como el juego no está extraído, este .pkg es la única copia: si es el juego de verdad, tendrás que importarlo de nuevo.")
 
         // P2-31: respaldos .bak huérfanos: la instalación completó y
         // el respaldo viejo quedó atrás ocupando espacio (pueden ser
@@ -276,6 +298,17 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 TextButton(onClick = { vm.deleteDlc(dlcId); deleteDlcTarget = null }) { Text("Borrar DLC") }
             },
             dismissButton = { TextButton(onClick = { deleteDlcTarget = null }) { Text("Cancelar") } },
+        )
+    }
+    if (showDeleteUnextractedPkgConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteUnextractedPkgConfirm = false },
+            title = { Text("¿Borrar el .pkg guardado sin instalar?") },
+            text = { Text("Se borra el .pkg guardado de ${status.pkgTitleId?.id} (${DownloadsCleanup.formatBytes(status.pkgSizeBytes)}). El juego NO está extraído, así que este .pkg es su única copia: bórralo solo si es un update que se importó como juego por error y JUGAR entra en bucle. No se borra ningún juego instalado ni partidas (no hay juego extraído) y la licencia no se toca. Solo vuelve si importas de nuevo tu copia del .pkg.") },
+            confirmButton = {
+                TextButton(onClick = { vm.deleteStoredGamePkgAnyState(); showDeleteUnextractedPkgConfirm = false }) { Text("Borrar .pkg") }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteUnextractedPkgConfirm = false }) { Text("Cancelar") } },
         )
     }
     if (showDeleteInstalledPkgConfirm) {
