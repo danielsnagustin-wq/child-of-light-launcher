@@ -395,6 +395,7 @@ class EmbeddedGameActivity : SDLActivity() {
             controls = controls,
             settingsOpacity = settings.touchOverlayOpacity,
             neon = settings.touchOverlayNeonGlow,
+            profileId = activeProfileId,
         )
     }
 
@@ -404,6 +405,11 @@ class EmbeddedGameActivity : SDLActivity() {
         controls: List<com.danielsnagustin.childoflight.launcher.data.TouchControl>,
         settingsOpacity: Float,
         neon: Boolean,
+        // 0.2.63 (G): id del perfil activo, para la línea de
+        // diagnóstico que GamepadOverlayView escribe al construir
+        // el overlay (perfil + tamaño de vista + fracciones del
+        // stick). null = desconocido (la vista lo dice así).
+        profileId: String? = null,
     ) {
         overlayShouldShow = show
         if (!show) {
@@ -421,7 +427,7 @@ class EmbeddedGameActivity : SDLActivity() {
         // invalidan, no reconstruyen). Si la vista aún no tiene hijos
         // (primer montaje con ancho 0), sí se monta.
         if (!view.hasSameControls(controls) || view.childCount == 0) {
-            view.setControls(controls)
+            view.setControls(controls, profileId)
         }
         view.visibility = View.VISIBLE
         maybeAttachOverlayController()
