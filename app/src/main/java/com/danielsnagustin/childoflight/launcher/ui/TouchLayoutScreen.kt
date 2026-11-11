@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
@@ -32,6 +34,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,13 +46,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -120,11 +126,15 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     // argumentos fijaba dark=true: con Tema Claro esta pantalla
     // quedaba con el fondo AMOLED oscuro mientras las categorías
     // de Ajustes se aclaraban.
-    val uiPrefs = rememberUiPreferences()
+    val uiPrefs = LocalUiPreferences.current
     // B11: selectedId y los textos de los diálogos se pierden al
     // rotar/recrear (eran remember): el usuario editaba un botón y
     // al girar el teléfono volvía al stick y perdía lo escrito.
     var selectedId by rememberSaveable { mutableStateOf("stick") }
+    // P-C1 (0.2.61): espejo del tamaño medido por TouchPreview (lo
+    // comunica con onPreviewSizeChanged): los sliders de posición de
+    // abajo lo usan para activarse y para el clamp. El tamaño que
+    // usa el arrastre vive dentro de TouchPreview.
     var previewSize by remember { mutableStateOf(IntSize.Zero) }
     // R4-P1-4: modo "probar mando" del editor: tocar un botón en la
     // vista previa lo resalta y muestra su etiqueta y su asignación,
@@ -142,12 +152,11 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     var renameText by rememberSaveable { mutableStateOf("") }
     var exportTarget by remember { mutableStateOf<ControlProfile?>(null) }
 
-    // B5 (auditoría UI): durante el arrastre los cambios van a un layout
-    // local (dragLayout) y solo se guardan en DataStore al soltar
-    // (onDragEnd). Antes cada evento de arrastre escribía en DataStore.
-    var dragLayout by remember { mutableStateOf<List<TouchControl>?>(null) }
-    val displayLayout = dragLayout ?: layout
-    val selected = displayLayout.firstOrNull { it.id == selectedId } ?: displayLayout.firstOrNull()
+    // P-C1 (0.2.61): el layout en arrastre (dragLayout) vive dentro de
+    // TouchPreview; aquí solo llega el layout confirmado del flujo.
+    // Durante un arrastre el editor muestra las posiciones confirmadas
+    // (no las del arrastre en curso) y al soltar el flujo trae el final.
+    val selected = layout.firstOrNull { it.id == selectedId } ?: layout.firstOrNull()
     // B3: los mandos se leen como flujo y se refrescan al entrar en la
     // pantalla (antes remember una sola vez: obsoleto si se conectaba
     // un mando después).
@@ -171,16 +180,24 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     var isDragging by remember { mutableStateOf(false) }
 
     fun updateControl(newControl: TouchControl) {
-        vm.saveTouchLayout(displayLayout.map { if (it.id == newControl.id) newControl else it })
+        vm.saveTouchLayout(layout.map { if (it.id == newControl.id) newControl else it })
     }
 
+    // P-C4 (0.2.61): el brush del fondo se memoriza por sus entradas
+    // (hex del fondo + tema oscuro): antes se reconstruía en cada
+    // recomposición. isDarkUi es @Composable: se resuelve fuera del
+    // remember y dentro solo entran valores planos.
+    val backgroundHex = uiPrefs?.homeBackground?.hex
+    val backgroundDark = isDarkUi(uiPrefs)
+    val backgroundBrush = remember(backgroundHex, backgroundDark) { premiumBackgroundBrush(backgroundDark, backgroundHex) }
+
     Box(
-        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush(isDarkUi(uiPrefs), uiPrefs?.homeBackground?.hex)),
+        modifier = Modifier.fillMaxSize().background(backgroundBrush),
     ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState(), enabled = !isDragging).padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
     ) {
-        ScreenHeader("Controles táctiles", "Arrastra los botones en la vista previa para moverlos. Toca uno en la lista para editarlo: tamaño, opacidad, color, forma, etiqueta, remap y visibilidad.")
+        ScreenHeader("Controles táctiles", "Arrastra los botones en la vista previa para moverlos. Toca uno en la lista para editarlo: tamaño, opacidad, color, forma, etiqueta, reasignación y visibilidad.")
         NoteText(
             "Estos botones son los que aparecen sobre el juego embebido. Arrastra para moverlos; los cambios se aplican al reiniciar el juego.",
         )
@@ -192,146 +209,18 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         // ningún botón del panel con el mando conectado. El ajuste
         // solo afecta al juego, no al editor.
         val hideAll = settings?.hideTouchWhenGamepadConnected == true && gamepads.isNotEmpty()
-        // B14: la zona Igniculus (115 dp, opacidad 0.25) se dibuja
-        // PRIMERO, detrás de los botones. Antes iba la última y
-        // tapaba por completo el botón Start (y parte de Y/X): en
-        // la vista previa Start no se podía ni tocar ni arrastrar,
-        // porque el toque lo recibía la zona Igniculus.
-        val previewControls = displayLayout.filter { it.visible }
-            .sortedBy { if (it.kind == "igniculus") 0 else 1 }
-        // La altura se adapta a la pantalla (BoxWithConstraints): en
-        // horizontal la vista previa fija de 300 dp se comía casi toda
-        // la altura y no cabían ni la cabecera ni los botones.
-        // R4-P1-4: previa 16:9 real (previewSizeForScreen, 960x544
-        // como el juego): cabe en ancho y alto, sin altura fija.
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val previewSizeDp = previewSizeForScreen(maxWidth, maxHeight)
-            Box(
-                modifier = Modifier.width(previewSizeDp.width).height(previewSizeDp.height).align(Alignment.Center).background(ColCard)
-                    .clipToBounds()
-                    .onSizeChanged { previewSize = it },
-            ) {
-                previewControls.forEach { control ->
-                        val size = control.sizeDp.dp
-                        val shape = if (control.shape == ControlShape.CIRCLE) CircleShape else RoundedCornerShape(8.dp)
-                        val density = LocalDensity.current
-                        val sizePx = with(density) { size.toPx() }
-                        val isTested = testMode && lastTestedId == control.id
-                        Box(
-                            modifier = Modifier
-                                .offset {
-                                    // B4 (auditoría UI): antes solo había tope
-                                    // izquierdo/superior y el botón se salía por
-                                    // derecha/abajo (hasta sizePx/2 fuera).
-                                    IntOffset(
-                                        x = ((control.xFraction * previewSize.width) - sizePx / 2).toInt()
-                                            .coerceIn(0, (previewSize.width - sizePx).toInt().coerceAtLeast(0)),
-                                        y = ((control.yFraction * previewSize.height) - sizePx / 2).toInt()
-                                            .coerceIn(0, (previewSize.height - sizePx).toInt().coerceAtLeast(0)),
-                                    )
-                                }
-                                .size(size)
-                                .alpha(control.opacity)
-                                .background(
-                                    // R4-P1-4: ambas ramas devuelven Brush.
-                                    // Antes la rama igniculus devolvía Color
-                                    // y la otra Brush: el if quedaba como Any
-                                    // y ninguna sobrecarga de background
-                                    // aplicaba (run #159). 0.2.56: la zona
-                                    // Igniculus es transparente fuera del
-                                    // orbe (como en el juego): el cristal va
-                                    // en el orbe interior (84%), no en toda
-                                    // la zona; el borde queda como anillo.
-                                    if (control.kind == "igniculus") SolidColor(Color.Transparent)
-                                    else touchPreviewGlassBrush(parseHex(control.colorHex)),
-                                    shape,
-                                )
-                                .border(
-                                    width = if (isTested) 2.dp else 1.dp,
-                                    color = if (isTested) ColTurquoise else ColIceBlue.copy(alpha = 0.7f),
-                                    shape = shape,
-                                )
-                                .pointerInput(control.id, testMode) {
-                                    if (testMode) {
-                                        // R4-P1-4: en modo prueba el toque
-                                        // no arrastra: resalta el botón y
-                                        // lo selecciona para editarlo.
-                                        detectTapGestures(onTap = {
-                                            lastTestedId = control.id
-                                            selectedId = control.id
-                                        })
-                                    } else {
-                                        detectDragGestures(
-                                        onDragStart = { isDragging = true },
-                                        onDragEnd = {
-                                            isDragging = false
-                                            dragLayout?.let { vm.saveTouchLayout(it) }
-                                            dragLayout = null
-                                        },
-                                        onDragCancel = { isDragging = false; dragLayout = null },
-                                    ) { change, dragAmount ->
-                                        change.consume()
-                                        if (previewSize.width > 0 && previewSize.height > 0) {
-                                            val base = dragLayout ?: layout
-                                            val current = base.firstOrNull { it.id == control.id } ?: control
-                                            // B7: la fracción se fija con el
-                                            // centro del botón entero dentro
-                                            // de la vista previa (ver
-                                            // clampCenterFraction). Antes se
-                                            // fijaba en 0..1 y el dibujado
-                                            // recortaba: al llegar al borde
-                                            // el botón dejaba de moverse
-                                            // pero la fracción seguía
-                                            // cambiando, y al volver los
-                                            // primeros píxeles no movían nada.
-                                            // 0.2.58 (R7): el salto (btn_jump) admite
-                                            // x hasta 1.1 (JUMP_MAX_X_FRACTION): su
-                                            // centro de fábrica es 1.012 (mockup,
-                                            // sobre la barra negra derecha); con el
-                                            // tope normal el arrastre lo devolvería
-                                            // a 0.937 y perdería el arreglo. La Y
-                                            // sigue con el tope normal.
-                                            val nx = TouchLayoutRepository.clampCenterFraction(
-                                                current.xFraction + dragAmount.x / previewSize.width,
-                                                (sizePx / 2f) / previewSize.width,
-                                                if (control.id == "btn_jump") TouchLayoutRepository.JUMP_MAX_X_FRACTION else null,
-                                            )
-                                            val ny = TouchLayoutRepository.clampCenterFraction(
-                                                current.yFraction + dragAmount.y / previewSize.height,
-                                                (sizePx / 2f) / previewSize.height,
-                                            )
-                                            selectedId = control.id
-                                            dragLayout = base.map {
-                                                if (it.id == control.id) it.copy(xFraction = nx, yFraction = ny) else it
-                                            }
-                                        }
-                                    }
-                                    }
-                                },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            // 0.2.56: orbe interior como en el juego:
-                            // pomo del stick (42% del tamano) y orbe de
-                            // Igniculus (84% de la zona), con el mismo
-                            // cristal. La etiqueta va encima de todo.
-                            if (control.kind == "stick") {
-                                Box(
-                                    modifier = Modifier.size(size * 0.42f)
-                                        .background(touchPreviewGlassBrush(parseHex(control.colorHex)), CircleShape)
-                                        .border(1.dp, ColIceBlue.copy(alpha = 0.7f), CircleShape),
-                                )
-                            } else if (control.kind == "igniculus") {
-                                Box(
-                                    modifier = Modifier.size(size * 0.84f)
-                                        .background(touchPreviewGlassBrush(parseHex(control.colorHex)), CircleShape)
-                                        .border(1.dp, ColIceBlue.copy(alpha = 0.7f), CircleShape),
-                                )
-                            }
-                            Text(control.label, fontWeight = FontWeight.Bold, color = ColNight, style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-            }
-        }
+        // P-C1 (0.2.61): la vista previa vive en TouchPreview (abajo),
+        // dueño de dragLayout, previewSize y el pointerInput.
+        TouchPreview(
+            layout = layout,
+            testMode = testMode,
+            lastTestedId = lastTestedId,
+            onSelect = { selectedId = it },
+            onTested = { lastTestedId = it; selectedId = it },
+            onDraggingChanged = { isDragging = it },
+            onPreviewSizeChanged = { previewSize = it },
+            onDragEnd = { vm.saveTouchLayout(it) },
+        )
         if (hideAll) {
             NoteText("Mando conectado (${gamepads.firstOrNull() ?: ""}): en el juego el overlay táctil quedará oculto por tu ajuste. Aquí se sigue viendo para poder editarlo.")
         }
@@ -348,7 +237,7 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             if (!it) lastTestedId = null
         }
         if (testMode) {
-            val testedControl = displayLayout.firstOrNull { it.id == lastTestedId }
+            val testedControl = layout.firstOrNull { it.id == lastTestedId }
             if (testedControl != null) {
                 Text(
                     "Probado: ${touchControlTestLabel(testedControl)}",
@@ -416,11 +305,30 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         // --- Editar el seleccionado ---
         selected?.let { control ->
             SectionTitle("Editar: ${control.label}")
+            // P-C7 (0.2.61): la etiqueta vive en un borrador local y
+            // solo se guarda al perder el foco, pulsar Done, cambiar
+            // de seleccionado o salir de la pantalla (ver saveLabel).
+            // Antes cada tecla llamaba a updateControl -> saveTouchLayout
+            // -> reescritura de todos los perfiles en DataStore.
+            // Patron B5 (SettingSlider en ColTheme.kt): estado local
+            // mientras se edita, guardar solo al terminar.
+            var labelDraft by rememberSaveable(control.id, control.label) { mutableStateOf(control.label) }
+            val focusManager = LocalFocusManager.current
+            fun saveLabel() {
+                val trimmed = labelDraft.take(12)
+                if (trimmed != control.label) updateControl(control.copy(label = trimmed))
+            }
+            DisposableEffect(control.id) {
+                onDispose { saveLabel() }
+            }
             OutlinedTextField(
-                value = control.label,
-                onValueChange = { updateControl(control.copy(label = it.take(12))) },
+                value = labelDraft,
+                onValueChange = { labelDraft = it.take(12) },
                 label = { Text("Etiqueta (máx. 12)") },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth()
+                    .onFocusChanged { if (!it.isFocused) saveLabel() },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { saveLabel(); focusManager.clearFocus() }),
             )
             SettingSwitch("Visible en el overlay", "Oculto = no aparece ni estorba en el juego.", control.visible) {
                 updateControl(control.copy(visible = it))
@@ -474,7 +382,7 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 }
             }
             if (control.kind == "button") {
-                Text("Remapear a botón de Vita", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Text("Reasignar a botón del juego", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                 FlowRow {
                     VitaButton.entries.forEach { button ->
                         FilterChip(
@@ -605,5 +513,174 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             },
             dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Cancelar") } },
         )
+    }
+}
+
+/**
+ * P-C1 (0.2.61): vista previa del editor, extraida de TouchLayoutScreen.
+ * Dueña de dragLayout, previewSize, previewControls y el pointerInput:
+ * cada pixel arrastrado solo recompone esta vista, no la pantalla entera
+ * (perfiles, chooser y editor). La raiz pasa el layout confirmado y
+ * recibe el final con onDragEnd; el arrastre, la selección y el tamaño
+ * medido se le comunican con onDraggingChanged / onSelect / onTested /
+ * onPreviewSizeChanged. Semantica preservada: onDragStart desactiva el
+ * scroll de la raiz (via onDraggingChanged) y onDragCancel resetea el
+ * arrastre y el layout local, igual que antes.
+ */
+@Composable
+private fun TouchPreview(
+    layout: List<TouchControl>,
+    testMode: Boolean,
+    lastTestedId: String?,
+    onSelect: (String) -> Unit,
+    onTested: (String) -> Unit,
+    onDraggingChanged: (Boolean) -> Unit,
+    onPreviewSizeChanged: (IntSize) -> Unit,
+    onDragEnd: (List<TouchControl>) -> Unit,
+) {
+    // B5 (auditoría UI): durante el arrastre los cambios van a un layout
+    // local (dragLayout) y solo se guardan en DataStore al soltar
+    // (onDragEnd). Antes cada evento de arrastre escribía en DataStore.
+    var dragLayout by remember { mutableStateOf<List<TouchControl>?>(null) }
+    val displayLayout = dragLayout ?: layout
+    var previewSize by remember { mutableStateOf(IntSize.Zero) }
+    // B14: la zona Igniculus (115 dp, opacidad 0.25) se dibuja
+    // PRIMERO, detrás de los botones. Antes iba la última y
+    // tapaba por completo el botón Start (y parte de Y/X): en
+    // la vista previa Start no se podía ni tocar ni arrastrar,
+    // porque el toque lo recibía la zona Igniculus.
+    val previewControls = displayLayout.filter { it.visible }
+        .sortedBy { if (it.kind == "igniculus") 0 else 1 }
+    // La altura se adapta a la pantalla (BoxWithConstraints): en
+    // horizontal la vista previa fija de 300 dp se comía casi toda
+    // la altura y no cabían ni la cabecera ni los botones.
+    // R4-P1-4: previa 16:9 real (previewSizeForScreen, 960x544
+    // como el juego): cabe en ancho y alto, sin altura fija.
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val previewSizeDp = previewSizeForScreen(maxWidth, maxHeight)
+        Box(
+            modifier = Modifier.width(previewSizeDp.width).height(previewSizeDp.height).align(Alignment.Center).background(ColCard)
+                .clipToBounds()
+                .onSizeChanged { previewSize = it; onPreviewSizeChanged(it) },
+        ) {
+            previewControls.forEach { control ->
+                    val size = control.sizeDp.dp
+                    val shape = if (control.shape == ControlShape.CIRCLE) CircleShape else RoundedCornerShape(8.dp)
+                    val density = LocalDensity.current
+                    val sizePx = with(density) { size.toPx() }
+                    val isTested = testMode && lastTestedId == control.id
+                    Box(
+                        modifier = Modifier
+                            .offset {
+                                // B4 (auditoría UI): antes solo había tope
+                                // izquierdo/superior y el botón se salía por
+                                // derecha/abajo (hasta sizePx/2 fuera).
+                                IntOffset(
+                                    x = ((control.xFraction * previewSize.width) - sizePx / 2).toInt()
+                                        .coerceIn(0, (previewSize.width - sizePx).toInt().coerceAtLeast(0)),
+                                    y = ((control.yFraction * previewSize.height) - sizePx / 2).toInt()
+                                        .coerceIn(0, (previewSize.height - sizePx).toInt().coerceAtLeast(0)),
+                                )
+                            }
+                            .size(size)
+                            .alpha(control.opacity)
+                            .background(
+                                // R4-P1-4: ambas ramas devuelven Brush.
+                                // Antes la rama igniculus devolvía Color
+                                // y la otra Brush: el if quedaba como Any
+                                // y ninguna sobrecarga de background
+                                // aplicaba (run #159). 0.2.56: la zona
+                                // Igniculus es transparente fuera del
+                                // orbe (como en el juego): el cristal va
+                                // en el orbe interior (84%), no en toda
+                                // la zona; el borde queda como anillo.
+                                if (control.kind == "igniculus") SolidColor(Color.Transparent)
+                                else touchPreviewGlassBrush(parseHex(control.colorHex)),
+                                shape,
+                            )
+                            .border(
+                                width = if (isTested) 2.dp else 1.dp,
+                                color = if (isTested) ColTurquoise else ColIceBlue.copy(alpha = 0.7f),
+                                shape = shape,
+                            )
+                            .pointerInput(control.id, testMode) {
+                                if (testMode) {
+                                    // R4-P1-4: en modo prueba el toque
+                                    // no arrastra: resalta el botón y
+                                    // lo selecciona para editarlo.
+                                    detectTapGestures(onTap = {
+                                        onTested(control.id)
+                                    })
+                                } else {
+                                    detectDragGestures(
+                                    onDragStart = { onDraggingChanged(true) },
+                                    onDragEnd = {
+                                        onDraggingChanged(false)
+                                        dragLayout?.let { onDragEnd(it) }
+                                        dragLayout = null
+                                    },
+                                    onDragCancel = { onDraggingChanged(false); dragLayout = null },
+                                ) { change, dragAmount ->
+                                    change.consume()
+                                    if (previewSize.width > 0 && previewSize.height > 0) {
+                                        val base = dragLayout ?: layout
+                                        val current = base.firstOrNull { it.id == control.id } ?: control
+                                        // B7: la fracción se fija con el
+                                        // centro del botón entero dentro
+                                        // de la vista previa (ver
+                                        // clampCenterFraction). Antes se
+                                        // fijaba en 0..1 y el dibujado
+                                        // recortaba: al llegar al borde
+                                        // el botón dejaba de moverse
+                                        // pero la fracción seguía
+                                        // cambiando, y al volver los
+                                        // primeros píxeles no movían nada.
+                                        // 0.2.58 (R7): el salto (btn_jump) admite
+                                        // x hasta 1.1 (JUMP_MAX_X_FRACTION): su
+                                        // centro de fábrica es 1.012 (mockup,
+                                        // sobre la barra negra derecha); con el
+                                        // tope normal el arrastre lo devolvería
+                                        // a 0.937 y perdería el arreglo. La Y
+                                        // sigue con el tope normal.
+                                        val nx = TouchLayoutRepository.clampCenterFraction(
+                                            current.xFraction + dragAmount.x / previewSize.width,
+                                            (sizePx / 2f) / previewSize.width,
+                                            if (control.id == "btn_jump") TouchLayoutRepository.JUMP_MAX_X_FRACTION else null,
+                                        )
+                                        val ny = TouchLayoutRepository.clampCenterFraction(
+                                            current.yFraction + dragAmount.y / previewSize.height,
+                                            (sizePx / 2f) / previewSize.height,
+                                        )
+                                        onSelect(control.id)
+                                        dragLayout = base.map {
+                                            if (it.id == control.id) it.copy(xFraction = nx, yFraction = ny) else it
+                                        }
+                                    }
+                                }
+                                }
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        // 0.2.56: orbe interior como en el juego:
+                        // pomo del stick (42% del tamano) y orbe de
+                        // Igniculus (84% de la zona), con el mismo
+                        // cristal. La etiqueta va encima de todo.
+                        if (control.kind == "stick") {
+                            Box(
+                                modifier = Modifier.size(size * 0.42f)
+                                    .background(touchPreviewGlassBrush(parseHex(control.colorHex)), CircleShape)
+                                    .border(1.dp, ColIceBlue.copy(alpha = 0.7f), CircleShape),
+                            )
+                        } else if (control.kind == "igniculus") {
+                            Box(
+                                modifier = Modifier.size(size * 0.84f)
+                                    .background(touchPreviewGlassBrush(parseHex(control.colorHex)), CircleShape)
+                                    .border(1.dp, ColIceBlue.copy(alpha = 0.7f), CircleShape),
+                            )
+                        }
+                        Text(control.label, fontWeight = FontWeight.Bold, color = ColNight, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+        }
     }
 }
