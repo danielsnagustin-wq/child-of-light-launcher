@@ -109,8 +109,20 @@ data class ControlProfile(
  * original de Vita usa de verdad. Conversión desde la captura de
  * referencia 1847x851 (rect del juego x 172.5-1674.5, y 0-851):
  * fracJuego = (fracVentana * anchoVentana - 172.5) / 1502 en x,
- * igual en y. Densidad de la captura aprox 2.07 (51% de la altura
- * son 434 px = 210 dp; 32% son 272 px = 131 dp).
+ * igual en y. Medición 0.2.57 de la misma captura (componentes
+ * conexos por brillo, no a ojo): el stick mide 434 px de adorno a
+ * adorno, pero su círculo de cristal es de unos 385 px (45% de la
+ * altura); la espada y el salto son círculos de unos 190 px (22%);
+ * el orbe de Igniculus, unos 200 px (23,5%); la pausa, unos 115 px
+ * (13,5%). La 0.2.54 tomó el adorno a adorno (434 px) como diámetro
+ * y lo convirtió con densidad 2.07, así que en el teléfono el stick
+ * salía con el círculo a 210 dp MÁS los adornos encima, y el orbe
+ * a 131 dp: los dos gigantes que reporta el usuario. En 0.2.57 el
+ * tamaño en dp ES el círculo de cristal (los adornos van aparte) y
+ * se convierte con la densidad lógica del teléfono (720x1600,
+ * 280 dpi, factor 1.75): stick 186 dp (326 px en 720 de alto, 45%),
+ * orbe dibujado 97 dp (zona 115 dp, 0.84 x zona), pausa 56 dp y
+ * espada/salto 82 dp, que ya caían en su sitio.
  * - btn_start (START, pausa): (0.50, 0.07), 56 dp, 0.70. Igual que antes.
  * - btn_circle (CIRCLE = volver/cancelar en menús y batalla):
  *   junto a la pausa, a su derecha: pausa de 56 dp (0.0772 de
@@ -119,7 +131,7 @@ data class ControlProfile(
  *   0.07, 44 dp, 0.70. Glifo ○ (drawGlyphCircle), mismo cristal
  *   y misma gota al presionar que los demás botones.
  * - stick izquierdo (mover a Aurora): centro en ventana (0.134,
- *   0.675) -> juego (0.05, 0.675), 210 dp de diámetro, 0.70.
+ *   0.675) -> juego (0.05, 0.675), 186 dp de diámetro, 0.70.
  *   Desviación documentada: en la captura el stick pisa la barra
  *   negra lateral (pillarbox), pero controlRectInGameRect limita el
  *   centro a media anchura dentro del rect del juego, así que en
@@ -135,7 +147,7 @@ data class ControlProfile(
  *   0.80. Icono flecha arriba por id de control.
  * - igniculus (táctil directo, brillo al mantener): centro en
  *   ventana (0.760, 0.808) -> juego (0.82, 0.808). Zona táctil de
- *   156 dp y orbe dibujado a 0.42 x ancho (2 x 0.42 x 156 = 131 dp
+ *   115 dp y orbe dibujado a 0.42 x ancho (2 x 0.42 x 115 = 97 dp
  *   de diámetro, como en la captura): la zona de 220 dp no cabía a
  *   y 0.808 sin que el recorte la subiera, así que se achica la
  *   zona y crece el ratio de dibujo, no al revés.
@@ -146,12 +158,12 @@ data class ControlProfile(
  * default es btn_circle junto a la pausa, no el btn_b del rombo.
  */
 fun defaultTouchLayout(): List<TouchControl> = listOf(
-    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 210, 0.70f),
+    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 186, 0.70f),
     TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.864f, 0.576f, 82, 0.80f),
     TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 0.93f, 0.752f, 82, 0.80f),
     TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 56, 0.70f),
     TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 44, 0.70f),
-    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 156, 0.25f, colorHex = "#7FB3D5"),
+    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 115, 0.25f, colorHex = "#7FB3D5"),
 )
 
 fun oneHandLayout(): List<TouchControl> = listOf(
@@ -161,24 +173,24 @@ fun oneHandLayout(): List<TouchControl> = listOf(
     // con ellos; el stick baja un poco y queda en 0.70) y Start
     // visible, a diferencia de la una mano vieja, que lo ocultaba
     // junto con dos botones del rombo. Todos visibles.
-    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.70f, 210, 0.75f),
+    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.70f, 186, 0.75f),
     TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.83f, 0.63f, 82, 0.80f),
     TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 0.91f, 0.79f, 82, 0.80f),
     TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 56, 0.70f),
     TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 44, 0.70f),
-    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.78f, 0.80f, 156, 0.25f, colorHex = "#7FB3D5"),
+    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.78f, 0.80f, 115, 0.25f, colorHex = "#7FB3D5"),
 )
 
 fun externalGamepadLayout(): List<TouchControl> = listOf(
     // Mando externo: mismas posiciones que el default; stick,
     // espada, salto y círculo ocultos (los pone el mando físico),
     // Start e Igniculus visibles, como antes.
-    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 210, 0.70f, visible = false),
+    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 186, 0.70f, visible = false),
     TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.864f, 0.576f, 82, 0.80f, visible = false),
     TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 0.93f, 0.752f, 82, 0.80f, visible = false),
     TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 56, 0.70f),
     TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 44, 0.70f, visible = false),
-    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 156, 0.25f, colorHex = "#7FB3D5"),
+    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 115, 0.25f, colorHex = "#7FB3D5"),
 )
 
 fun builtInProfiles(): List<ControlProfile> = listOf(
@@ -258,12 +270,13 @@ class TouchLayoutRepository(private val context: Context) {
     }
 
     /**
-     * R4-P0-1/R5-A1-1/0.2.54: reescribe en DataStore los perfiles
+     * R4-P0-1/R5-A1-1/0.2.54/0.2.57: reescribe en DataStore los perfiles
      * predefinidos guardados con su layout viejo de fábrica (los
      * sustituye por el layout limpio) y, si el usuario los
      * modificó, con el rombo transpuesto (lo deja con el rombo
      * estándar) y con los valores viejos de fábrica del stick y
-     * la Igniculus (los normaliza a 104 dp y a y 0.55).
+     * la Igniculus (los normaliza a 104 dp y a y 0.55, o a los
+     * tamaños nuevos 0.2.57: stick 186 dp, zona 115 dp).
      * Solo corre una vez por instancia; es idempotente
      * (la segunda vez ya no hay nada que migrar y no escribe).
      * La lectura, la migración y la escritura ocurren dentro de un
@@ -280,7 +293,7 @@ class TouchLayoutRepository(private val context: Context) {
                 val migrated = migrateBuiltInProfiles(profiles)
                 if (migrated != profiles) {
                     prefs[Keys.PROFILES] = migrated.joinToString("\n###\n") { encodeProfile(it) }
-                    Log.i("ChildOfLight", "0.2.54: perfil predefinido migrado (layout limpio + rombo + valores de fábrica) en DataStore")
+                    Log.i("ChildOfLight", "0.2.57: perfil predefinido migrado (layout limpio + tamaños nuevos) en DataStore")
                 }
             }
         }
@@ -579,16 +592,21 @@ class TouchLayoutRepository(private val context: Context) {
          * de fábrica. También migra un perfil que ya lleva el
          * layout limpio de 5 controles (sin btn_circle, forma en
          * la que pudo quedar guardado en 0.2.54 antes del círculo):
-         * recibe el ○ junto a la pausa. Solo actúa si el perfil es
-         * predefinido Y sus controles son EXACTAMENTE uno de los
-         * layouts viejos de fábrica de su id o el limpio de 5: si
-         * el usuario movió, redimensionó, remapeó, ocultó o añadió
-         * aunque sea un control, el perfil es suyo y no se toca (y
-         * siguen sus migraciones actuales: rombo + valores de
-         * fábrica, que se mantienen). Idempotente: un perfil ya
-         * limpio de 6 no coincide con ningún layout viejo ni con
-         * el de 5 y se devuelve tal cual. Puro Kotlin, sin
-         * Context: testeable.
+         * recibe el ○ junto a la pausa. 0.2.57: también migra un
+         * perfil que ya lleva el layout limpio de 0.2.54/0.2.55/
+         * 0.2.56 con los tamaños viejos (stick 210 dp, zona
+         * Igniculus 156 dp, en 6 controles o en 5 sin círculo) a
+         * los tamaños nuevos (stick 186 dp, zona 115 dp; espada,
+         * salto, pausa y círculo no cambian). Solo actúa si el
+         * perfil es predefinido Y sus controles son EXACTAMENTE
+         * uno de los layouts viejos de fábrica de su id o el limpio
+         * de 5 o el limpio con tamaños viejos: si el usuario movió,
+         * redimensionó, remapeó, ocultó o añadió aunque sea un
+         * control, el perfil es suyo y no se toca (y siguen sus
+         * migraciones actuales: rombo + valores de fábrica, que se
+         * mantienen). Idempotente: un perfil ya limpio con los
+         * tamaños nuevos no coincide con ningún layout viejo y se
+         * devuelve tal cual. Puro Kotlin, sin Context: testeable.
          */
         fun migrateBuiltInToCleanLayout(profile: ControlProfile): ControlProfile {
             if (!profile.isBuiltIn) return profile
@@ -599,8 +617,12 @@ class TouchLayoutRepository(private val context: Context) {
                 else -> return profile
             }
             val withoutCircle = cleanLayoutWithoutCircle(profile.id)
+            val oldSizesClean = cleanLayoutWithOldSizes(profile.id)
+            val oldSizesWithoutCircle = oldSizesClean?.filter { it.id != "btn_circle" }
             if (legacyFactoryLayouts(profile.id).none { it == profile.controls } &&
-                withoutCircle != profile.controls
+                withoutCircle != profile.controls &&
+                oldSizesClean != profile.controls &&
+                oldSizesWithoutCircle != profile.controls
             ) return profile
             return profile.copy(controls = clean)
         }
@@ -623,6 +645,32 @@ class TouchLayoutRepository(private val context: Context) {
                 else -> return null
             }
             return clean.filter { it.id != "btn_circle" }
+        }
+
+        /**
+         * 0.2.57: el layout limpio de 6 controles con los tamaños
+         * viejos de 0.2.54/0.2.55/0.2.56 (stick 210 dp, zona
+         * Igniculus 156 dp; espada, salto, pausa y círculo iguales
+         * que ahora). Se construye desde el layout nuevo con los
+         * dos tamaños vueltos atrás, así no se duplica la lista:
+         * posiciones, visibilidades y opacidades son las mismas en
+         * las dos versiones. Null para ids desconocidos (nunca
+         * coincide con un perfil guardado).
+         */
+        private fun cleanLayoutWithOldSizes(profileId: String): List<TouchControl>? {
+            val clean = when (profileId) {
+                "default-g99" -> defaultTouchLayout()
+                "one-hand" -> oneHandLayout()
+                "external-gamepad" -> externalGamepadLayout()
+                else -> return null
+            }
+            return clean.map { control ->
+                when (control.id) {
+                    "stick" -> control.copy(sizeDp = 210)
+                    "igniculus" -> control.copy(sizeDp = 156)
+                    else -> control
+                }
+            }
         }
 
         /**
@@ -711,6 +759,16 @@ class TouchLayoutRepository(private val context: Context) {
          *   104 dp, con su posición de fábrica intacta.
          * - Igniculus (0.50, 0.35) -> y 0.55 (default/externo);
          *   (0.55, 0.28) -> (0.50, 0.50) (una mano).
+         * 0.2.57: tercera pasada, misma guarda por control: el
+         * stick del layout limpio que sigue en 210 dp en su
+         * posición limpia (0.05, 0.675; una mano 0.70) -> 186 dp,
+         * y la zona Igniculus que sigue en 156 dp en su posición
+         * limpia (0.82, 0.808; una mano 0.78, 0.80) -> 115 dp. Es
+         * para el perfil predefinido que el usuario editó a medias
+         * (movió un botón pero dejó el stick o la zona en fábrica):
+         * el perfil entero ya no coincide con el layout viejo y no
+         * pasa por la primera pasada, pero sus controles en fábrica
+         * sí se achican.
          * Si el usuario movió o redimensionó el control, no se
          * toca. Idempotente y puro: testeable.
          */
@@ -723,11 +781,21 @@ class TouchLayoutRepository(private val context: Context) {
                             val oldSize = if (profile.id == "one-hand") 120 else 140
                             val oldX = if (profile.id == "one-hand") 0.20f else 0.18f
                             val oldY = if (profile.id == "one-hand") 0.75f else 0.72f
+                            val cleanX = 0.05f
+                            val cleanY = if (profile.id == "one-hand") 0.70f else 0.675f
                             if (control.kind == "stick" && control.sizeDp == oldSize &&
                                 abs(control.xFraction - oldX) <= FACE_SLOT_EPSILON &&
                                 abs(control.yFraction - oldY) <= FACE_SLOT_EPSILON
                             ) {
                                 control.copy(sizeDp = 104)
+                            } else if (control.kind == "stick" && control.sizeDp == 210 &&
+                                abs(control.xFraction - cleanX) <= FACE_SLOT_EPSILON &&
+                                abs(control.yFraction - cleanY) <= FACE_SLOT_EPSILON
+                            ) {
+                                // 0.2.57: stick del layout limpio con
+                                // el tamaño viejo de fábrica (210 dp)
+                                // en su posición limpia: 186 dp.
+                                control.copy(sizeDp = 186)
                             } else {
                                 control
                             }
@@ -740,6 +808,13 @@ class TouchLayoutRepository(private val context: Context) {
                                     abs(control.yFraction - 0.28f) <= FACE_SLOT_EPSILON
                                 ) {
                                     control.copy(xFraction = 0.50f, yFraction = 0.50f)
+                                } else if (control.sizeDp == 156 &&
+                                    abs(control.xFraction - 0.78f) <= FACE_SLOT_EPSILON &&
+                                    abs(control.yFraction - 0.80f) <= FACE_SLOT_EPSILON
+                                ) {
+                                    // 0.2.57: zona del layout limpio
+                                    // con el tamaño viejo (156 dp).
+                                    control.copy(sizeDp = 115)
                                 } else {
                                     control
                                 }
@@ -748,6 +823,13 @@ class TouchLayoutRepository(private val context: Context) {
                                     abs(control.yFraction - 0.35f) <= FACE_SLOT_EPSILON
                                 ) {
                                     control.copy(yFraction = 0.55f)
+                                } else if (control.sizeDp == 156 &&
+                                    abs(control.xFraction - 0.82f) <= FACE_SLOT_EPSILON &&
+                                    abs(control.yFraction - 0.808f) <= FACE_SLOT_EPSILON
+                                ) {
+                                    // 0.2.57: zona del layout limpio
+                                    // con el tamaño viejo (156 dp).
+                                    control.copy(sizeDp = 115)
                                 } else {
                                     control
                                 }
@@ -763,9 +845,11 @@ class TouchLayoutRepository(private val context: Context) {
          * R5-A1-1: migración completa de un perfil predefinido
          * guardado: primero el layout limpio 0.2.54 (si sigue
          * exactamente en su layout viejo de fábrica o en el limpio
-         * de 5 controles sin círculo), y después las pasadas
-         * viejas (rombo de cara + valores de fábrica del stick y
-         * la Igniculus), que se mantienen para los perfiles que el
+         * de 5 controles sin círculo) o el limpio con los tamaños
+         * viejos de 0.2.57 (stick 210 dp, zona 156 dp), y después
+         * las pasadas viejas (rombo de cara + valores de fábrica
+         * del stick y la Igniculus, incluida la pasada 0.2.57 por
+         * control), que se mantienen para los perfiles que el
          * usuario modificó y no pasan por la primera. Las pasadas
          * son independientes: un perfil con el rombo ya migrado
          * pero el stick viejo sigue normalizando el stick.
