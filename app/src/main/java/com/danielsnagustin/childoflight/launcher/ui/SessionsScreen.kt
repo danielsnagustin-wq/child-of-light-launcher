@@ -106,7 +106,7 @@ fun SessionsSection(vm: LauncherViewModel) {
                     Text("Capítulo: ${session.chapter}", style = MaterialTheme.typography.bodyMedium)
                 }
                 Text(
-                    "Saves: ${session.savedataFiles} archivos (${DownloadsCleanup.formatBytes(session.savedataBytes)}) · Logros: ${session.unlockedTrophies}/27",
+                    "Saves: ${session.savedataFiles} archivos (${DownloadsCleanup.formatBytes(session.savedataBytes)}) · Logros: ${session.unlockedTrophies}/20",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
