@@ -311,6 +311,28 @@ private fun GameCard(
                     PrimaryButton("Comprobando…", onClick = {}, enabled = false)
                 }
             } else {
+                // R7-P1-12 parcial (0.2.57): un refresco POSTERIOR
+                // fallido conserva el estado viejo, pero ya no lo
+                // esconde: se avisa que está desactualizado, con
+                // reintento, sin bloquear JUGAR ni IMPORTAR sobre el
+                // último estado conocido.
+                if (statusError) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        "⚠ No se pudo actualizar el estado",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = accent,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "Se muestra el último estado conocido, que puede estar desactualizado.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = mutedTextColor(dark),
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    SecondaryButton("Reintentar", onClick = { vm.retryStatusCheck() })
+                }
                 if (!gameOk) {
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
@@ -448,7 +470,7 @@ private fun InstallProgressContent(
     }
 }
 
-// Tarjeta Logros (X/27 + porcentaje real + barra), a todo lo ancho:
+// Tarjeta Logros (X/20 + porcentaje real + barra), a todo lo ancho:
 // siempre se muestra (2026-11-08: los trofeos se quedan en el inicio;
 // Rendimiento vive en Ajustes y en Diagnóstico). PULSABLE: abre la
 // pantalla de Logros.
