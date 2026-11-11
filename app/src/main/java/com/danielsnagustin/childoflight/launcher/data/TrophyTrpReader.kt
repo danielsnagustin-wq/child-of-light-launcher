@@ -36,7 +36,8 @@ import java.io.File
  *
  * Aviso sobre los ids: los ids del TRP son 000..N-1 en el orden del
  * XML (el 000 es el platino si existe), mientras que los números
- * 1..27 del launcher son el orden de la lista de GameFAQs. Son dos
+ * 1..20 del launcher son el orden de la lista verificada de Vita
+ * (S14: 20 trofeos, 19 bronce + 1 plata, sin platino). Son dos
  * numeraciones distintas, así que comparar ids con números del
  * launcher sería falso. La comparación honesta es por NOMBRE
  * (inglés) y por CANTIDAD: ver [compareByName].
