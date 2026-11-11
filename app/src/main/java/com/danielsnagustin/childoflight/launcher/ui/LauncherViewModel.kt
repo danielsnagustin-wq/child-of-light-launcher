@@ -55,6 +55,7 @@ import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.ImportResult
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.TrophyProgress
+import com.danielsnagustin.childoflight.launcher.model.TrophyPopupQueue
 import com.danielsnagustin.childoflight.launcher.model.TrophyUnlockAnnouncer
 import com.danielsnagustin.childoflight.launcher.model.TitleId
 import com.danielsnagustin.childoflight.launcher.model.UiPreferences
@@ -613,10 +614,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * sincronización automática con el TROPHY.TRP del núcleo.
      * R2-P2-11/R2-P2-37: el mutex de desbloqueo y la secuencia
      * (unlockTrophyMutex, unlockSeq) ya no tenían llamador y se
-     * eliminaron; solo queda el anunciador. */
+     * eliminaron; solo queda el anunciador.
+     * R7-P1-06 (0.2.58): este hueco ya NO es el único sitio donde
+     * viven los desbloqueos: es solo la CABEZA de la cola
+     * [unlockPopupQueue]. Si una partida desbloquea varios trofeos,
+     * se encolan todos y MainActivity muestra un popup tras otro (al
+     * descartar uno aparece el siguiente); antes cada desbloqueo
+     * sobrescribía este hueco y solo el último tenía popup. */
     private val _justUnlocked = MutableStateFlow<TrophyProgress?>(null)
     val justUnlocked: StateFlow<TrophyProgress?> = _justUnlocked.asStateFlow()
     private val unlockAnnouncer = TrophyUnlockAnnouncer()
+    /** Cola de popups de trofeos (R7-P1-06): en orden numérico, uno tras otro. */
+    private val unlockPopupQueue = TrophyPopupQueue()
 
     // Ronda 0.2.57 (puente JNI de trofeos): la sincronización al volver
     // del juego anuncia por aquí. Se declaran ANTES del init (misma
@@ -747,8 +756,22 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /**
+     * R7-P1-06: cerrar el popup muestra el SIGUIENTE de la cola (si
+     * la partida desbloqueó varios trofeos), no lo descarta todo. La
+     * llama MainActivity al descartar el popup. Para vaciar la cola
+     * entera (borrar el progreso) es clearUnlockQueue.
+     */
     fun clearJustUnlocked() {
         unlockAnnouncer.clear()
+        unlockPopupQueue.dismiss()
+        _justUnlocked.value = unlockPopupQueue.current
+    }
+
+    /** R7-P1-06: vacía TODA la cola de popups de logros (al borrar el progreso): no queda ningún popup pendiente de trofeos que ya no existen. */
+    fun clearUnlockQueue() {
+        unlockAnnouncer.clear()
+        unlockPopupQueue.clear()
         _justUnlocked.value = null
     }
 
@@ -969,7 +992,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // R2-S01: el TRP del juego instalado, leído del .pkg ya
             // extraído (appDir del ux0 efectivo). Unreadable si no trae
             // TRP o el XML no se puede interpretar: nunca se inventa un
-            // conteo; la lista de 27 no cambia sin esta prueba.
+            // conteo; la lista de 20 no cambia sin esta prueba.
             // R5-A4-8: readTrpForDiagnosis reintenta con el TRP
             // instalado por el núcleo si el empaquetado es ilegible, y
             // un fallo del lector se convierte en Unreadable (antes el
@@ -1441,7 +1464,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun fixAudio() {
         viewModelScope.launch(Dispatchers.IO) {
             val current = settingsRepo.settingsFlow.first()
-            writeSettingsSnapshot(audioFixSnapshotFile(), current)
+            // R7-P2-02: mismo patrón que setSafeMode: si la copia de
+            // seguridad no se pudo escribir (disco lleno), NO se aplica
+            // el cambio: el diálogo ya prometió que se puede deshacer
+            // y sin snapshot en disco el deshacer no existiría tras
+            // reiniciar. Antes se descartaba el resultado y se aplicaba
+            // igualmente, dejando solo la copia en memoria.
+            if (!writeSettingsSnapshot(audioFixSnapshotFile(), current)) {
+                _message.value = "No se pudo guardar la copia de tus ajustes: «Corregir audio» no se aplicó. Inténtalo de nuevo."
+                return@launch
+            }
             _audioFixSnapshot.value = current
             settingsRepo.save(audioFixTarget(current))
             val cleared = turnipRepo.clearShaderCache()
@@ -2663,10 +2695,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * embebida (vía externa, primer arranque) no hay nada pendiente
      * y vuelve sin hacer nada.
      *
-     * Límite heredado del popup (un solo hueco en _justUnlocked): si
-     * en una partida se ganan varios trofeos nuevos, se anuncian en
-     * orden por número y el popup visible es el último; los demás
-     * quedan guardados y el contador de Logros sube por todos.
+     * R7-P1-06: si en una partida se ganan varios trofeos nuevos, se
+     * encolan en orden por número (unlockPopupQueue) y el popup
+     * muestra uno tras otro: al descartar uno aparece el siguiente
+     * hasta vaciar la cola. Ningún desbloqueo pierde su popup.
      */
     fun syncTrophiesFromGame() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -2680,12 +2712,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     for (entry in result.unlocked) {
                         if (achievementsRepo.unlock(entry.number, entry.unlockedAtMillis)) {
                             unlockAnnouncer.announce(entry.number, entry.unlockedAtMillis, trophySyncSeq.incrementAndGet())
-                                ?.let { _justUnlocked.value = it }
+                                ?.let {
+                                    unlockPopupQueue.enqueue(it)
+                                    _justUnlocked.value = unlockPopupQueue.current
+                                }
                         }
                     }
                 }.onFailure { e ->
                     LauncherLog.append(context, "trophies", "Sincronización de trofeos fallida (el progreso local no cambia): ${e.javaClass.simpleName}: ${e.message}")
                 }
+                // R7-P2-05: el contador "Logros: X/20" de la sesión
+                // activa se recalcula DESPUÉS de desbloquear (antes
+                // solo se refrescaba tras reset/import: tras una
+                // partida con desbloqueos quedaba viejo hasta el
+                // próximo snapshot). Best-effort, nunca tumba la sync.
+                sessionManager.refreshActiveTrophyCount()
             }
         }
     }
@@ -2951,7 +2992,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun resetTrophies() {
         viewModelScope.launch {
             achievementsRepo.resetAll()
-            clearJustUnlocked()
+            clearUnlockQueue()
             // R2-P2-30: el contador unlockedTrophies del índice de
             // sesiones se actualiza ya (antes quedaba viejo hasta el
             // próximo snapshot).
@@ -3011,6 +3052,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             try {
                 val text = readTextCapped(uri)
                 val result = achievementsRepo.importText(text)
+                // R7-P2-01: un archivo sin firma válida (escrito a mano,
+                // manipulado o respaldo viejo pre-0.2.58) se rechaza
+                // entero: no se toca el progreso y se dice claro.
+                if (result.rejectedInvalidSignature) {
+                    withContext(Dispatchers.Main) {
+                        _message.value = "Ese archivo no es un respaldo válido de logros: le falta la firma o fue modificado. Solo se pueden importar respaldos exportados por esta app."
+                    }
+                    return@launch
+                }
                 // R2-P2-30: actualizar el contador unlockedTrophies del
                 // índice de sesiones.
                 sessionManager.refreshActiveTrophyCount()
@@ -3226,7 +3276,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val hiddenPresets = beforeReset?.hiddenPresets ?: emptySet()
             if (hiddenPresets.isNotEmpty()) uiRepo.hideGpuPresets(hiddenPresets)
             touchRepo.reset()
-            _message.value = "Personalización restablecida: tema, acento, fondo, texto, idioma, portada y controles."
+            _message.value = "Personalización restablecida: tema, acento, fondo, texto, idioma, portada y controles. Los perfiles de control creados por ti se borraron; solo quedan los predefinidos."
         }
     }
 
