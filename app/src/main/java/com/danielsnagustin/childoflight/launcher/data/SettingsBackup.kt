@@ -29,7 +29,7 @@ import com.danielsnagustin.childoflight.launcher.model.UiPreferences
  * Formato: {"format":"col-settings-backup","version":1, ...campos...}.
  * Al importar se aplican los MISMOS clamps que ya existen en
  * SettingsRepository (resolución 1-4, aniso válido, opacidad 0.1-1,
- * volumen 0-100, retraso >= 0): un
+ * volumen 0-100, retraso 0-30 ms): un
  * archivo editado a mano no puede pasar valores fuera de rango al
  * config.yml. Un archivo inválido devuelve failure con un mensaje
  * claro y NO se aplica nada parcial: la decodificación construye los
@@ -148,7 +148,7 @@ fun decodeSettingsBackup(
         shaderCache = boolValue(map["shaderCache"], current.shaderCache),
         cpuOpt = boolValue(map["cpuOpt"], current.cpuOpt),
         fpsHack = boolValue(map["fpsHack"], current.fpsHack),
-        fileLoadingDelay = intValue(map["fileLoadingDelay"], current.fileLoadingDelay).coerceAtLeast(0),
+        fileLoadingDelay = SettingsRepository.clampFileLoadingDelay(intValue(map["fileLoadingDelay"], current.fileLoadingDelay)),
         audioVolume = intValue(map["audioVolume"], current.audioVolume).coerceIn(0, 100),
         audioBackend = enumValue(map["audioBackend"], AudioBackend.entries.toTypedArray(), current.audioBackend),
         ngsEnable = boolValue(map["ngsEnable"], current.ngsEnable),
