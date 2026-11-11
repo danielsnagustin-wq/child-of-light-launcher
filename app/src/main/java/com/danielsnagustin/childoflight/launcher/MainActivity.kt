@@ -146,7 +146,13 @@ class MainActivity : ComponentActivity() {
         // cerrar aquí cortaba el tiempo de lo que se siguiera jugando.
         // En el primer arranque (sin partida) la bandera es false y el
         // comportamiento no cambia: notePlayEnded es no-op sin medición.
-        if (!GameActivityState.gameActivityAlive) vm.noteReturnedFromGame()
+        if (!GameActivityState.gameActivityAlive) {
+            vm.noteReturnedFromGame()
+            // Ronda 0.2.57: sincronizar los trofeos ganados en la
+            // partida (las colecciones ya se capturaron en
+            // EmbeddedGameActivity.onDestroy antes de destroySession).
+            vm.syncTrophiesFromGame()
+        }
         // P2-A4a: si EmbeddedGameActivity falló su init DESPUÉS de que
         // launch() devolviera LaunchedEmbedded, el ViewModel ya puso
         // "Núcleo embebido: juego lanzado". La Activity anota el fallo
