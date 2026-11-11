@@ -137,7 +137,10 @@ object DownloadsCleanup {
  * - DLC:     ux0/addcont/<TITLE_ID>/<DLC_ID>/
  * - Update:  ux0/patch/<TITLE_ID>/
  * - Saves:   ux0/user/00/savedata/<TITLE_ID>/
- * - Trofeos: ux0/user/00/trophy/<TITLE_ID>/ (ver TrophyStoreReader)
+ * - Trofeos: ux0/user/00/trophy/data/<NPCOMMID>/ (TROPCONF.SFM,
+ *   TROPUSR.DAT, TROPxxx.PNG; ver TrophyDeletePaths y
+ *   TrophyStoreReader). La ruta vieja trophy/<TITLE_ID>/ nunca la
+ *   usa el núcleo: solo queda como limpieza extra en el borrado.
  * - Firmware: <vita_fs>/firmware/PSVUPDAT.PUP (+ marcador installed.json)
  * - Config:  <vitaRoot>/config.yml (config_path = storage_path; pref-path apunta a <vitaRoot>/vita)
  *
@@ -176,6 +179,108 @@ object DownloadsCleanup {
  * (eboot.bin en la raíz con sce_sys/param.sfo que diga el Title ID).
  * La extensión se resuelve por nombre, tipo MIME o magia del archivo.
  */
+/**
+ * Rutas de borrado de los datos de trofeos (ronda 0.2.57, trabajador E).
+ * Lógica pura (solo java.io.File): testeable en JVM sin Android
+ * (TrophyDeletePathsTest).
+ *
+ * Ruta REAL (R6-P1-18): el núcleo instala los trofeos en
+ * ux0/user/00/trophy/data/<NPCOMMID>/, con TROPCONF.SFM, TROPUSR.DAT
+ * y TROPxxx.PNG. La misma disposición la documenta psdevwiki
+ * ("Trophy": home/userid/trophy/NPCOMMID/ con TROPCONF.SFM y
+ * TROPUSR.DAT; el NPCOMMID va en formato NPWRxxyyy_zz) y la confirma
+ * el log real de Vita3K del issue Vita3K-Android #649
+ * (trophy/data/NPWR12049_00/TROPUSR.DAT), citados en
+ * TrophyStoreReader. El pin local NO trae el módulo np/trophy/ del
+ * núcleo, así que la ruta no se puede verificar ahí; queda pendiente
+ * confirmarla en el teléfono (igual que en R6-P1-18).
+ *
+ * El NPCOMMID se resuelve del <npcommid> del TROPHY.TRP empaquetado
+ * del juego (igual que TrophyStoreReader.scan): no se inventa ni se
+ * fija ningún NPCOMMID en el código, porque depende de la copia del
+ * juego instalada. Si el TRP no se puede leer (contenedor cifrado o
+ * comprimido, o juego sin TRP visible), el borrado no sabe cuál es
+ * la carpeta de este juego: en ese caso valen TODAS las subcarpetas
+ * directas de trophy/data/. Es seguro porque el launcher es de un
+ * solo juego (trophy/data/ solo guarda sets de este juego) y porque
+ * deleteGameData borra las dos regiones juntas (P2-C9). Nunca se
+ * sube de trophy/data/: solo se listan sus hijas directas, y nunca
+ * se toca ux0 entero ni otros títulos.
+ *
+ * Ruta VIEJA (trophy/<TITLE_ID>/): el núcleo nunca la usa; se
+ * mantiene como limpieza extra por si quedó algo de versiones viejas.
+ */
+object TrophyDeletePaths {
+
+    /** Ruta vieja de trofeos (limpieza extra, nunca la usa el núcleo). */
+    fun legacyTrophyDir(ux0: File, titleId: String): File =
+        File(ux0, "user/00/trophy/$titleId")
+
+    /** Carpeta real de datos de trofeos del núcleo. */
+    fun trophyDataDir(ux0: File): File = File(ux0, "user/00/trophy/data")
+
+    /** Carpeta real de un set de trofeos: trophy/data/<NPCOMMID>/. */
+    fun trophyDataDirFor(ux0: File, npcommid: String): File =
+        File(trophyDataDir(ux0), npcommid)
+
+    private val NPCOMMID_REGEX = Regex("^[A-Za-z0-9_]{1,32}$")
+
+    /**
+     * ¿Es un NPCOMMID usable como nombre de carpeta? Solo letras,
+     * dígitos y guion bajo (el formato real es NPWRxxyyy_zz, p. ej.
+     * NPWR12049_00). Un valor con separadores o puntos (p. ej. un
+     * <npcommid> manipulado con "../") NO vale: construir una ruta
+     * con él escaparía de trophy/data/.
+     */
+    fun isValidNpcommid(value: String?): Boolean =
+        value != null && NPCOMMID_REGEX.matches(value)
+
+    /**
+     * Resuelve el NPCOMMID del TROPHY.TRP empaquetado en [appDir]
+     * (ux0/app/<TITLE>/sce_sys/trophy/TROPHY.TRP). Null si no hay TRP,
+     * si es demasiado grande, si no se puede leer o si su
+     * <npcommid> no es un nombre de carpeta válido. Nunca lanza.
+     */
+    fun resolveNpcommid(appDir: File): String? {
+        val bytes = runCatching {
+            TrophyStoreReader.gameBundledTrp(appDir)
+                ?.takeIf { it.isFile && it.length() <= TrophyTrpReader.MAX_TRP_BYTES }
+                ?.readBytes()
+        }.getOrNull() ?: return null
+        return TrophyTrpReader.extractNpcommid(bytes)?.takeIf { isValidNpcommid(it) }
+    }
+
+    /**
+     * Carpetas de trofeos a borrar en [ux0] para este juego. Solo
+     * devuelve carpetas que EXISTEN (el llamador las borra y etiqueta
+     * "trofeos" si borró al menos una):
+     * - La real: trophy/data/<NPCOMMID>/ (más su respaldo _BU_ si
+     *   existe: psdevwiki documenta que al reinstalar un set, el
+     *   anterior se renombra a _BU_<NPCOMMID>).
+     * - La vieja: trophy/<TITLE_ID>/ (limpieza extra).
+     * Si el NPCOMMID no se pudo resolver, todas las subcarpetas
+     * directas de trophy/data/ (ver el comentario del objeto). Los
+     * archivos sueltos directamente bajo trophy/data/ no son datos
+     * de un set y no se listan.
+     */
+    fun trophyDirsToDelete(ux0: File, appDir: File, titleId: String): List<File> {
+        val found = mutableListOf<File>()
+        val legacy = legacyTrophyDir(ux0, titleId)
+        if (legacy.isDirectory) found.add(legacy)
+        val dataDir = trophyDataDir(ux0)
+        val npcommid = resolveNpcommid(appDir)
+        if (npcommid != null) {
+            val real = trophyDataDirFor(ux0, npcommid)
+            if (real.isDirectory) found.add(real)
+            val backup = trophyDataDirFor(ux0, "_BU_$npcommid")
+            if (backup.isDirectory) found.add(backup)
+        } else {
+            dataDir.listFiles()?.filter { it.isDirectory }?.let { found.addAll(it) }
+        }
+        return found.distinct()
+    }
+}
+
 class GameLibraryRepository(private val context: Context) {
 
     /** Context de la app, para el log de diagnóstico desde el instalador (EmbeddedPkgInstaller). */
@@ -1103,6 +1208,12 @@ class GameLibraryRepository(private val context: Context) {
     fun addcontDir(titleId: String): File = File(ux0Dir, "addcont/$titleId")
     fun patchDir(titleId: String): File = File(ux0Dir, "patch/$titleId")
     fun saveDir(titleId: String): File = File(ux0Dir, "user/00/savedata/$titleId")
+    /**
+     * Ruta VIEJA de trofeos (trophy/<TITLE_ID>/): el núcleo nunca la
+     * usa, lo instalado vive en trophy/data/<NPCOMMID>/ (ver
+     * TrophyDeletePaths). Se conserva solo como objetivo de limpieza
+     * extra en deleteGameData, por si quedó algo de versiones viejas.
+     */
     fun trophyDir(titleId: String): File = File(ux0Dir, "user/00/trophy/$titleId")
     fun firmwareDir(): File = File(vitaRoot, "firmware")
     fun driversDir(): File = File(vitaRoot, "drivers/turnip")
@@ -1273,13 +1384,19 @@ class GameLibraryRepository(private val context: Context) {
             // instaló una vez con licencia y el .pkg se puede
             // reinstalar sin work.bin (findPkgZrif). Sin esto, Importar
             // pedía el work.bin en cada refresco aunque el juego
-            // corriera. Solo el juego: el update comparte su licencia
-            // pero su caso queda fuera de este arreglo.
+            // corriera. R7-P1-04 parcial: lo mismo vale para el
+            // update (rama de abajo): comparte el Content ID del
+            // juego y por tanto su licencia.
             if (gamePkg != null && !findPkgWorkBinFile(gamePkg).isFile && !isLicenseInstalledInCore(candidate.id)) {
                 missing.add(MissingPkgLicense(candidate, com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME, null))
             }
             val patchPkg = findPkgPatchFile(candidate.id)
-            if (patchPkg != null && !findPkgWorkBinFile(patchPkg).isFile) {
+            // R7-P1-04 parcial (0.2.57): igual que el juego: el update
+            // comparte el Content ID del juego (pin pkg.cpp: el patch
+            // se distingue por la CATEGORY "gp" del param.sfo, no por
+            // Content ID), así que su licencia ES la del juego y
+            // findPkgZrif la resuelve sin work.bin.
+            if (patchPkg != null && !findPkgWorkBinFile(patchPkg).isFile && !isLicenseInstalledInCore(candidate.id)) {
                 missing.add(MissingPkgLicense(candidate, com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE, null))
             }
         }
@@ -1292,10 +1409,29 @@ class GameLibraryRepository(private val context: Context) {
         }
         dlcPkgs.forEach { (dlcId, pkg) ->
             if (!findPkgWorkBinFile(pkg).isFile) {
-                val title = runCatching {
+                val header = runCatching {
                     pkg.inputStream().use { PkgHeaderParser.parse(it) }
-                }.getOrNull()?.getOrNull()?.titleId ?: TitleId.US
-                missing.add(MissingPkgLicense(title, com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC, dlcId))
+                }.getOrNull()?.getOrNull()
+                val title = header?.titleId ?: TitleId.US
+                // R7-P1-04 resto (0.2.57): igual que el juego y el
+                // update, un .pkg de DLC sin work.bin NO es "falta de
+                // licencia" si su PROPIO .rif ya está instalado en el
+                // núcleo: installPkgFile lo reinstala sin work.bin vía
+                // findPkgZrif (pin pkg.cpp: el zRIF se busca por el
+                // Content ID del propio .pkg). OJO: NO vale
+                // isLicenseInstalledInCore(title): su fallback
+                // "cualquier .rif en license/<TITLE>/" eximiría todos
+                // los DLCs en cuanto existiera el .rif del juego. Aquí
+                // solo vale el .rif con el Content ID propio de ESTE
+                // .pkg de DLC (ver isDlcLicenseInstalledInCore). Sin
+                // header legible no hay Content ID que comprobar: se
+                // sigue marcando falta (lo honesto).
+                val dlcContentId = header?.contentId?.trim()?.takeIf { it.isNotBlank() }
+                val licensedInCore = dlcContentId != null &&
+                    isDlcLicenseInstalledInCore(ux0Dir, title.id, dlcContentId)
+                if (!licensedInCore) {
+                    missing.add(MissingPkgLicense(title, com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC, dlcId))
+                }
             }
         }
         return missing
@@ -2203,7 +2339,7 @@ class GameLibraryRepository(private val context: Context) {
                     val detail = if (trp != null) {
                         "Juego instalado. Traía su TROPHY.TRP (${trp.length()} bytes); su contenido se verifica contra la lista en Logros (diagnóstico TRP)."
                     } else {
-                        "Juego instalado. No traía TROPHY.TRP visible; se usa la lista bundled de 27 trofeos."
+                        "Juego instalado. No traía TROPHY.TRP visible; se usa la lista bundled de 20 trofeos."
                     }
                     LauncherLog.append(context, "import", "Juego ${title.id} instalado (${dest.length()} bytes aprox.)")
                     ImportResult.Success(title, detail)
@@ -2766,16 +2902,23 @@ class GameLibraryRepository(private val context: Context) {
                     File(ux0, "patch/${target.id}") to "update$suffix",
                     File(ux0, "addcont/${target.id}") to "DLCs$suffix",
                     File(ux0, "user/00/savedata/${target.id}") to "saves$suffix",
-                    // P2-30: los trofeos también son datos del juego:
-                    // sin esto, borrar el juego dejaba el TROPHY.TRP
-                    // y los trofeos ganados en ux0/user/00/trophy/.
-                    File(ux0, "user/00/trophy/${target.id}") to "trofeos$suffix",
                 ).forEach { (dir, label) ->
                     if (dir.exists()) {
                         dir.deleteRecursively()
                         if (label !in deleted) deleted.add(label)
                     }
                 }
+                // Ronda 0.2.57, trabajador E: los trofeos REALES viven
+                // en trophy/data/<NPCOMMID>/ (ver TrophyDeletePaths):
+                // la ruta vieja trophy/<TITLE>/ nunca la usa el núcleo
+                // y borrar solo ella dejaba los datos reales (el
+                // TROPCONF.SFM y el progreso en TROPUSR.DAT). La ruta
+                // vieja se sigue borrando como limpieza extra.
+                TrophyDeletePaths.trophyDirsToDelete(ux0, File(ux0, "app/${target.id}"), target.id)
+                    .forEach { dir ->
+                        dir.deleteRecursively()
+                        if ("trofeos$suffix" !in deleted) deleted.add("trofeos$suffix")
+                    }
                 // .pkg guardados (juego + update + licencia) en este ux0.
                 var pkgDeleted = false
                 listOf(
@@ -2832,6 +2975,13 @@ class GameLibraryRepository(private val context: Context) {
                 // datos del título: si solo quedaran ellos, el título
                 // seguiría contando como objetivo del borrado total.
                 File(ux0, "user/00/trophy/$titleId").exists() ||
+                // Ronda 0.2.57, trabajador E: los datos REALES de
+                // trofeos (trophy/data/<NPCOMMID>/) también son datos
+                // del título. No se resuelve el NPCOMMID aquí: el
+                // launcher es de un solo juego y cualquier subcarpeta
+                // bajo trophy/data/ es de este juego (las dos regiones
+                // se borran juntas, P2-C9).
+                File(ux0, "user/00/trophy/data").listFiles()?.any { it.isDirectory } == true ||
                 File(File(ux0, "pkg"), "$titleId.pkg").isFile ||
                 hasTitleBackups(ux0, titleId)
         }
@@ -3179,3 +3329,20 @@ class GameLibraryRepository(private val context: Context) {
         }
     }
 }
+
+/**
+ * R7-P1-04 resto (0.2.57): ¿el .rif PROPIO de un DLC ya está
+ * instalado en el núcleo? El núcleo guarda cada licencia en
+ * ux0/license/<TITLE>/<CONTENT_ID>.rif (pin license.cpp:
+ * copy_license deriva título y nombre del Content ID del .rif) y
+ * find_pkg_zrif la busca por el Content ID del propio .pkg (pin
+ * pkg.cpp). El Content ID del DLC es distinto al del juego, así que
+ * la comprobación es EXACTA por ese Content ID: el fallback de
+ * isLicenseInstalledInCore ("cualquier .rif en license/<TITLE>/")
+ * NO vale aquí, porque el .rif del juego vive en esa misma carpeta
+ * y eximiría todos los DLCs. Solo mira el ux0 efectivo, igual que
+ * isLicenseInstalledInCore. Top-level internal para testear la
+ * lógica pura sin instanciar el repositorio (que pide Context).
+ */
+internal fun isDlcLicenseInstalledInCore(ux0Dir: File, titleId: String, contentId: String): Boolean =
+    File(ux0Dir, "license/$titleId/$contentId.rif").isFile
