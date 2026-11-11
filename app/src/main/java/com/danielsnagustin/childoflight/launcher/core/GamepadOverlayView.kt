@@ -173,6 +173,22 @@ class GamepadOverlayView @JvmOverloads constructor(
         isFocusable = false
     }
 
+    companion object {
+        // P-C2: colores del cristal de drawGlassBody como constantes
+        // Int (paleta, sin amarillo/dorado): antes se parseaban con
+        // Color.parseColor en cada frame y por botón. El valor es el
+        // entero con signo del ARGB 0xFF...... (verificado: vuelve al
+        // mismo hex).
+        /** Azul hielo #8CCBEB. */
+        private const val GLASS_ICE_BLUE: Int = -7549973
+        /** Azul hielo pálido #BFE6F7 (borde luminoso). */
+        private const val GLASS_PALE_BLUE: Int = -4200713
+        /** Plata #DCE8F5 (filo interior). */
+        private const val GLASS_SILVER: Int = -2299659
+        /** Turquesa #75D6CE (brillo al pulsar). */
+        private const val GLASS_TURQUOISE: Int = -9054514
+    }
+
     /** Controles del perfil activo (solo se muestran los visibles). Suelta todo lo pulsado antes de reconstruir. */
     fun setControls(newControls: List<TouchControl>) {
         releaseAll()
@@ -398,7 +414,7 @@ class GamepadOverlayView @JvmOverloads constructor(
     }
 
     private fun forwardPointerMovesToSdl(event: MotionEvent): Boolean {
-        if (multiTouchRouter.forwardedPointerIds.isEmpty()) return false
+        if (!multiTouchRouter.hasForwardedPointers) return false
         val surface = findSdlSurface() ?: return false
         var forwarded = false
         for (i in 0 until event.pointerCount) {
@@ -578,6 +594,27 @@ class GamepadOverlayView @JvmOverloads constructor(
         protected val rippleClipPath = Path()
         /** Rect reutilizable del orbe Igniculus (ZoneView): sin RectF nuevo por frame. */
         protected val rippleRect = RectF()
+        /** P-C2: tinte del control parseado una sola vez al crear la vista (el color solo cambia con rebuild). */
+        private val tintColor: Int = parseHex(control.colorHex)
+        /** P-C2: rect reutilizable de drawGlassBody (halo, brillo y anillos): sin RectF nuevo por frame. */
+        private val tmpRect = RectF()
+        /** P-C2: clave del gradiente cacheado (centro + radio + tinte + alfa). */
+        private data class GlassGradientKey(val cx: Float, val cy: Float, val radius: Float, val tint: Int, val alpha: Float)
+        /** P-C2: gradiente radial cacheado de drawGlassBody; null hasta el primer dibujado. */
+        private var cachedGradient: RadialGradient? = null
+        private var cachedGradientKey: GlassGradientKey? = null
+        /** P-C3: Paths reutilizables de adornos e iconos (reset() antes de reconstruir, como rippleClipPath). */
+        private val diamondPath = Path()
+        private val leftLeafPath = Path()
+        private val rightLeafPath = Path()
+        private val arrowPath = Path()
+        private val trianglePath = Path()
+        private val upperLeafPath = Path()
+        private val lowerLeafPath = Path()
+        private val bladePath = Path()
+        private val starPath = Path()
+        private val bodyPath = Path()
+        private val wispPath = Path()
 
         protected fun startRipple(x: Float, y: Float) {
             rippleState.start(x, y, SystemClock.uptimeMillis())
@@ -679,49 +716,67 @@ class GamepadOverlayView @JvmOverloads constructor(
             val radius = rect.width() / 2f
             // Halo neón: un poco más grande y muy translúcido, detrás.
             if (neonGlow) {
-                glowPaint.color = parseHex(control.colorHex)
+                glowPaint.color = tintColor
                 glowPaint.alpha = (alpha * 0.16f * 255).toInt()
-                drawShapeInto(canvas, RectF(rect).apply { inset(-6f * density, -6f * density) }, glowPaint)
+                tmpRect.set(rect)
+                tmpRect.inset(-6f * density, -6f * density)
+                drawShapeInto(canvas, tmpRect, glowPaint)
             }
             // Brillo al pulsar: turquesa, crece con pressAmount.
             val glowAlpha = alpha * (0.10f + 0.55f * pressAmount)
             if (glowAlpha > 0.01f) {
-                glowPaint.color = Color.parseColor("#75D6CE")
+                glowPaint.color = GLASS_TURQUOISE
                 glowPaint.alpha = (glowAlpha * 255).toInt()
-                drawShapeInto(canvas, RectF(rect).apply { inset(-4f * density * pressAmount, -4f * density * pressAmount) }, glowPaint)
+                tmpRect.set(rect)
+                tmpRect.inset(-4f * density * pressAmount, -4f * density * pressAmount)
+                drawShapeInto(canvas, tmpRect, glowPaint)
             }
             // Cristal: degradado radial con el color del control en medio.
-            val tint = parseHex(control.colorHex)
-            val gradient = RadialGradient(
-                cx, cy, radius,
-                intArrayOf(
-                    Color.argb((alpha * 0.34f * 255).toInt(), 226, 238, 248),
-                    Color.argb((alpha * 0.30f * 255).toInt(), Color.red(tint), Color.green(tint), Color.blue(tint)),
-                    Color.argb((alpha * 0.62f * 255).toInt(), 24, 38, 68),
-                ),
-                floatArrayOf(0f, 0.55f, 1f),
-                Shader.TileMode.CLAMP,
-            )
+            // P-C2: el gradiente se cachea por (centro, radio, tinte, alfa):
+            // un botón quieto no reconstruye RadialGradient ni sus arrays
+            // en cada frame. La clave incluye cx/cy: al girar el teléfono
+            // (rebuild) o al moverse el pomo del stick / el orbe de
+            // Igniculus, el cristal se recentra en vez de quedar descentrado.
+            val gradientKey = GlassGradientKey(cx, cy, radius, tintColor, alpha)
+            var gradient = cachedGradient
+            if (cachedGradientKey != gradientKey || gradient == null) {
+                gradient = RadialGradient(
+                    cx, cy, radius,
+                    intArrayOf(
+                        Color.argb((alpha * 0.34f * 255).toInt(), 226, 238, 248),
+                        Color.argb((alpha * 0.30f * 255).toInt(), Color.red(tintColor), Color.green(tintColor), Color.blue(tintColor)),
+                        Color.argb((alpha * 0.62f * 255).toInt(), 24, 38, 68),
+                    ),
+                    floatArrayOf(0f, 0.55f, 1f),
+                    Shader.TileMode.CLAMP,
+                )
+                cachedGradient = gradient
+                cachedGradientKey = gradientKey
+            }
             fillPaint.shader = gradient
             drawShapeInto(canvas, rect, fillPaint)
             fillPaint.shader = null
             // Anillo suave exterior: halo azul hielo que ensancha el
             // borde luminoso, como el resplandor del cristal 51025.
-            strokePaint.color = Color.parseColor("#8CCBEB")
+            strokePaint.color = GLASS_ICE_BLUE
             strokePaint.alpha = (alpha * 0.30f * 255).toInt()
             strokePaint.strokeWidth = 3.5f * density
-            drawShapeInto(canvas, RectF(rect).apply { inset(-1.5f * density, -1.5f * density) }, strokePaint)
+            tmpRect.set(rect)
+            tmpRect.inset(-1.5f * density, -1.5f * density)
+            drawShapeInto(canvas, tmpRect, strokePaint)
             // Borde luminoso azul hielo.
-            strokePaint.color = Color.parseColor("#BFE6F7")
+            strokePaint.color = GLASS_PALE_BLUE
             strokePaint.alpha = (alpha * 0.95f * 255).toInt()
             strokePaint.strokeWidth = 2f * density
             drawShapeInto(canvas, rect, strokePaint)
             // Filo interior: linea fina plata que separa el cristal
             // del borde y da el brillo de bola de cristal.
-            strokePaint.color = Color.parseColor("#DCE8F5")
+            strokePaint.color = GLASS_SILVER
             strokePaint.alpha = (alpha * 0.45f * 255).toInt()
             strokePaint.strokeWidth = 1f * density
-            drawShapeInto(canvas, RectF(rect).apply { inset(3f * density, 3f * density) }, strokePaint)
+            tmpRect.set(rect)
+            tmpRect.inset(3f * density, 3f * density)
+            drawShapeInto(canvas, tmpRect, strokePaint)
             if (ornaments) drawOrnaments(canvas, cx, cy, radius, alpha, fourWayOrnaments)
         }
 
@@ -755,31 +810,34 @@ class GamepadOverlayView @JvmOverloads constructor(
 
         /** Un adorno de diamante: rombo vertical, dos hojitas laterales y punto plata central. */
         protected fun drawDiamondOrnament(canvas: Canvas, x: Float, y: Float, s: Float) {
-            val diamond = Path().apply {
+            diamondPath.reset()
+            diamondPath.apply {
                 moveTo(x, y - s)
                 lineTo(x + 0.55f * s, y)
                 lineTo(x, y + s)
                 lineTo(x - 0.55f * s, y)
                 close()
             }
-            canvas.drawPath(diamond, ornamentPaint)
+            canvas.drawPath(diamondPath, ornamentPaint)
             val leaf = 0.45f * s
-            val leftLeaf = Path().apply {
+            leftLeafPath.reset()
+            leftLeafPath.apply {
                 moveTo(x - s, y - leaf)
                 lineTo(x - s + leaf, y)
                 lineTo(x - s, y + leaf)
                 lineTo(x - s - leaf, y)
                 close()
             }
-            canvas.drawPath(leftLeaf, ornamentPaint)
-            val rightLeaf = Path().apply {
+            canvas.drawPath(leftLeafPath, ornamentPaint)
+            rightLeafPath.reset()
+            rightLeafPath.apply {
                 moveTo(x + s, y - leaf)
                 lineTo(x + s + leaf, y)
                 lineTo(x + s, y + leaf)
                 lineTo(x + s - leaf, y)
                 close()
             }
-            canvas.drawPath(rightLeaf, ornamentPaint)
+            canvas.drawPath(rightLeafPath, ornamentPaint)
             canvas.drawCircle(x, y, 0.22f * s, iconPaint)
         }
 
@@ -865,7 +923,8 @@ class GamepadOverlayView @JvmOverloads constructor(
         private fun drawArrowIcon(canvas: Canvas, cx: Float, cy: Float, r: Float, degrees: Float) {
             canvas.save()
             canvas.rotate(degrees, cx, cy)
-            val path = Path().apply {
+            arrowPath.reset()
+            arrowPath.apply {
                 moveTo(cx, cy - 0.58f * r)
                 quadTo(cx + 0.10f * r, cy - 0.10f * r, cx + 0.42f * r, cy + 0.02f * r)
                 lineTo(cx + 0.14f * r, cy + 0.02f * r)
@@ -876,7 +935,7 @@ class GamepadOverlayView @JvmOverloads constructor(
                 quadTo(cx - 0.10f * r, cy - 0.10f * r, cx, cy - 0.58f * r)
                 close()
             }
-            canvas.drawPath(path, iconPaint)
+            canvas.drawPath(arrowPath, iconPaint)
             canvas.restore()
         }
 
@@ -906,13 +965,14 @@ class GamepadOverlayView @JvmOverloads constructor(
 
         private fun drawGlyphTriangle(canvas: Canvas, cx: Float, cy: Float, r: Float) {
             iconStrokePaint.strokeWidth = 0.12f * r
-            val path = Path().apply {
+            trianglePath.reset()
+            trianglePath.apply {
                 moveTo(cx, cy - 0.48f * r)
                 lineTo(cx + 0.45f * r, cy + 0.36f * r)
                 lineTo(cx - 0.45f * r, cy + 0.36f * r)
                 close()
             }
-            canvas.drawPath(path, iconStrokePaint)
+            canvas.drawPath(trianglePath, iconStrokePaint)
         }
 
         private fun drawPauseIcon(canvas: Canvas, cx: Float, cy: Float, r: Float, alpha: Float) {
@@ -935,21 +995,23 @@ class GamepadOverlayView @JvmOverloads constructor(
         private fun drawPauseWings(canvas: Canvas, cx: Float, cy: Float, r: Float, alpha: Float) {
             ornamentPaint.alpha = (alpha * 0.85f * 255).toInt()
             iconPaint.alpha = (alpha * 0.95f * 255).toInt()
-            for (s in listOf(-1f, 1f)) {
-                val upperLeaf = Path().apply {
+            for (s in floatArrayOf(-1f, 1f)) {
+                upperLeafPath.reset()
+                upperLeafPath.apply {
                     moveTo(cx + s * 0.80f * r, cy - 0.70f * r)
                     quadTo(cx + s * 1.30f * r, cy - 1.15f * r, cx + s * 1.52f * r, cy - 0.85f * r)
                     quadTo(cx + s * 1.15f * r, cy - 0.62f * r, cx + s * 0.80f * r, cy - 0.70f * r)
                     close()
                 }
-                canvas.drawPath(upperLeaf, ornamentPaint)
-                val lowerLeaf = Path().apply {
+                canvas.drawPath(upperLeafPath, ornamentPaint)
+                lowerLeafPath.reset()
+                lowerLeafPath.apply {
                     moveTo(cx + s * 0.80f * r, cy + 0.70f * r)
                     quadTo(cx + s * 1.30f * r, cy + 1.15f * r, cx + s * 1.52f * r, cy + 0.85f * r)
                     quadTo(cx + s * 1.15f * r, cy + 0.62f * r, cx + s * 0.80f * r, cy + 0.70f * r)
                     close()
                 }
-                canvas.drawPath(lowerLeaf, ornamentPaint)
+                canvas.drawPath(lowerLeafPath, ornamentPaint)
                 drawSparkle(canvas, cx + s * 1.52f * r, cy - 0.85f * r, 0.09f * r)
                 drawSparkle(canvas, cx + s * 1.52f * r, cy + 0.85f * r, 0.07f * r)
             }
@@ -967,7 +1029,8 @@ class GamepadOverlayView @JvmOverloads constructor(
             canvas.save()
             canvas.rotate(45f, cx, cy)
             // Hoja: rectángulo con punta triangular arriba.
-            val blade = Path().apply {
+            bladePath.reset()
+            bladePath.apply {
                 moveTo(cx, cy - 0.58f * r)
                 lineTo(cx + 0.10f * r, cy - 0.30f * r)
                 lineTo(cx + 0.10f * r, cy + 0.02f * r)
@@ -975,7 +1038,7 @@ class GamepadOverlayView @JvmOverloads constructor(
                 lineTo(cx - 0.10f * r, cy - 0.30f * r)
                 close()
             }
-            canvas.drawPath(blade, iconPaint)
+            canvas.drawPath(bladePath, iconPaint)
             // Guarda: barra horizontal bajo la hoja.
             canvas.drawRoundRect(
                 RectF(cx - 0.26f * r, cy + 0.04f * r, cx + 0.26f * r, cy + 0.12f * r),
@@ -997,7 +1060,8 @@ class GamepadOverlayView @JvmOverloads constructor(
 
         /** Estrella de 4 puntas (destello) centrada en (x, y) con radio s. */
         private fun drawSparkle(canvas: Canvas, x: Float, y: Float, s: Float) {
-            val star = Path().apply {
+            starPath.reset()
+            starPath.apply {
                 moveTo(x, y - s)
                 lineTo(x + 0.25f * s, y - 0.25f * s)
                 lineTo(x + s, y)
@@ -1008,7 +1072,7 @@ class GamepadOverlayView @JvmOverloads constructor(
                 lineTo(x - 0.25f * s, y - 0.25f * s)
                 close()
             }
-            canvas.drawPath(star, iconPaint)
+            canvas.drawPath(starPath, iconPaint)
         }
 
         private fun drawIgniculusIcon(canvas: Canvas, cx: Float, cy: Float, r: Float, alpha: Float) {
@@ -1017,7 +1081,8 @@ class GamepadOverlayView @JvmOverloads constructor(
             glowPaint.alpha = (alpha * 0.35f * 255).toInt()
             canvas.drawCircle(cx, cy, r * 0.85f, glowPaint)
             // Cuerpo: gotita/llama azul hielo.
-            val body = Path().apply {
+            bodyPath.reset()
+            bodyPath.apply {
                 moveTo(cx, cy - 0.62f * r)
                 quadTo(cx + 0.34f * r, cy - 0.10f * r, cx + 0.30f * r, cy + 0.18f * r)
                 quadTo(cx + 0.24f * r, cy + 0.48f * r, cx, cy + 0.48f * r)
@@ -1025,17 +1090,18 @@ class GamepadOverlayView @JvmOverloads constructor(
                 quadTo(cx - 0.34f * r, cy - 0.10f * r, cx, cy - 0.62f * r)
                 close()
             }
-            canvas.drawPath(body, iconPaint)
+            canvas.drawPath(bodyPath, iconPaint)
             // Llamita turquesa encima de la cabeza (diseno 51025).
             glowPaint.color = Color.parseColor("#75D6CE")
             glowPaint.alpha = (alpha * 0.85f * 255).toInt()
-            val wisp = Path().apply {
+            wispPath.reset()
+            wispPath.apply {
                 moveTo(cx, cy - 0.88f * r)
                 quadTo(cx + 0.11f * r, cy - 0.68f * r, cx, cy - 0.58f * r)
                 quadTo(cx - 0.11f * r, cy - 0.68f * r, cx, cy - 0.88f * r)
                 close()
             }
-            canvas.drawPath(wisp, glowPaint)
+            canvas.drawPath(wispPath, glowPaint)
             // Ojos: dos puntitos azul profundo.
             glowPaint.color = Color.parseColor("#182644")
             glowPaint.alpha = (alpha * 0.95f * 255).toInt()
@@ -1654,6 +1720,9 @@ internal class MultiTouchRouter {
 
     /** Punteros que ahora mismo son toques del juego (no de botones). */
     val forwardedPointerIds: Set<Int> get() = forwarded.keys.toSet()
+
+    /** P-C5: true si hay algún puntero reenviado, sin copiar el conjunto por cada ACTION_MOVE. */
+    val hasForwardedPointers: Boolean get() = forwarded.isNotEmpty()
 
     fun onPointerDown(
         pointerId: Int,
