@@ -10,43 +10,40 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-// Nombres en inglés de los 27 trofeos del launcher, en su orden 1..27.
-// Copia literal de los comentarios EN de model/Achievements.kt (no se
-// importa TROPHIES_27 para que este test sea autocontenido y para no
-// mezclar la lista bajo investigación con el lector que la verifica).
-private val LAUNCHER_27_EN = mapOf(
+// Nombres en inglés de los 20 trofeos del launcher, en su orden 1..20
+// (S14: el juego original tiene 20 trofeos en Vita, 19 bronce +
+// 1 plata; la lista anterior era la de Xbox). Copia literal de los
+// comentarios EN de model/Achievements.kt (no se importa TROPHIES_20
+// para que este test sea autocontenido y para no mezclar la lista bajo
+// investigación con el lector que la verifica).
+private val LAUNCHER_20_EN = mapOf(
     1 to "Starcatcher",
     2 to "Over the Moon",
     3 to "Sunrise",
     4 to "Coronation",
     5 to "Comedy",
-    6 to "The Girl and the Firefly",
-    7 to "Capilli Catch",
-    8 to "Sweet Sister",
-    9 to "Bolmus Bond",
-    10 to "Kategida Kindred",
-    11 to "Piscean Promise",
-    12 to "Tragedy",
-    13 to "Tenth Birthday",
-    14 to "Perfectionist",
-    15 to "Master Oculist",
-    16 to "Scene Stealer",
-    17 to "Showstopper",
-    18 to "Through the Looking Glass",
-    19 to "Winged Fury",
-    20 to "Explorer",
-    21 to "Perfect Sonnet",
-    22 to "Grassroots",
-    23 to "General of Light",
-    24 to "Guardians of Lemuria",
-    25 to "Aurora Borealis",
-    26 to "When Pigs Fly",
-    27 to "Golden Apple",
+    6 to "Capilli Catch",
+    7 to "Sweet Sister",
+    8 to "Bolmus Bond",
+    9 to "Kategida Kindred",
+    10 to "Piscean Promise",
+    11 to "Tragedy",
+    12 to "Tenth Birthday",
+    13 to "Perfectionist",
+    14 to "Master Oculist",
+    15 to "Scene Stealer",
+    16 to "Showstopper",
+    17 to "Winged Fury",
+    18 to "Explorer",
+    19 to "Perfect Sonnet",
+    20 to "Grassroots",
 )
 
 // Los 20 nombres del set de PlayStation según las fuentes PS (CheatCC
 // Vita/PS4, GameRevolution PS4, guía PS3/PS4: 19 bronce + 1 plata,
 // 4 secretos), en el orden del XML sintético de estos tests (id 000..019).
+// S14: son los mismos 20 de LAUNCHER_20_EN, en el mismo orden (el
+// trofeo 1 del launcher es el id 000 del TRP, y así hasta el 20/019).
 private val PS_20_EN = listOf(
     "Starcatcher",
     "Over the Moon",
@@ -82,6 +79,22 @@ private fun buildReducedTrp20(): ByteArray {
             val hidden = if (id < 4) "yes" else "no"
             val tier = if (id == 3) "S" else "B"
             append("<trophy id=\"${id3(id)}\" hidden=\"$hidden\" ttype=\"$tier\" pid=\"000\"/>")
+        }
+        append("</trophyconf>")
+    }
+    return wrapInFakeContainer(xml)
+}
+
+private fun buildFullConf20(): ByteArray {
+    val xml = buildString {
+        append("<trophyconf version=\"1.0\">")
+        append("<npcommid>NPWR00001_00</npcommid>")
+        append("<trophyset-version>01.00</trophyset-version>")
+        for ((index, name) in PS_20_EN.withIndex()) {
+            val hidden = if (index < 4) "yes" else "no"
+            val tier = if (index == 3) "S" else "B"
+            append("<trophy id=\"${id3(index)}\" hidden=\"$hidden\" ttype=\"$tier\" pid=\"000\">")
+            append("<name>$name</name><detail>Detail $index.</detail></trophy>")
         }
         append("</trophyconf>")
     }
@@ -315,29 +328,88 @@ class TrophyTrpReaderTest {
     }
 
     @Test
-    fun compareByName_twentyPsNamesAgainstTwentySeven() {
+    fun launcher20Map_hasTwentyEntriesInOrder() {
+        assertEquals(20, LAUNCHER_20_EN.size)
+        assertEquals((1..20).toList(), LAUNCHER_20_EN.keys.sorted())
+        assertEquals(PS_20_EN, (1..20).map { LAUNCHER_20_EN.getValue(it) })
+    }
+
+    @Test
+    fun compareByName_twentyAgainstTwenty_allMatch() {
+        val value = success(TrophyTrpReader.read(buildFullConf20()))
+        assertEquals(20, value.trophyCount)
+        assertTrue(value.hasNames)
+        val comparison = TrophyTrpReader.compareByName(value, LAUNCHER_20_EN)
+        assertEquals(20, comparison.trpCount)
+        assertEquals(20, comparison.launcherCount)
+        assertEquals((1..20).toList(), comparison.matchedLauncherNumbers)
+        assertTrue(comparison.launcherOnlyNumbers.isEmpty())
+        assertTrue(comparison.trpOnlyNames.isEmpty())
+    }
+
+    @Test
+    fun compareByName_trpWithFewerTrophies_reportsMissingWithoutInventing() {
+        // TRP con solo 3 de los 20 nombres: el diagnóstico reporta los
+        // 17 ausentes sin inventar un conteo de 20 ni dar por buenos
+        // los que el TRP no trae.
+        val xml = "<trophyconf version=\"1.0\">" +
+            "<trophy id=\"000\" hidden=\"yes\" ttype=\"B\" pid=\"-1\">" +
+            "<name>Starcatcher</name><detail>Recover the stars.</detail></trophy>" +
+            "<trophy id=\"003\" hidden=\"yes\" ttype=\"S\" pid=\"000\">" +
+            "<name>Coronation</name><detail>Dethrone the Queen of the Night.</detail></trophy>" +
+            "<trophy id=\"019\" hidden=\"no\" ttype=\"B\" pid=\"000\">" +
+            "<name>Grassroots</name><detail>Lemurian requests.</detail></trophy>" +
+            "</trophyconf>"
+        val value = success(TrophyTrpReader.read(wrapInFakeContainer(xml)))
+        val comparison = TrophyTrpReader.compareByName(value, LAUNCHER_20_EN)
+        assertEquals(3, comparison.trpCount)
+        assertEquals(20, comparison.launcherCount)
+        assertEquals(listOf(1, 4, 20), comparison.matchedLauncherNumbers)
+        assertEquals((1..20).filter { it !in listOf(1, 4, 20) }, comparison.launcherOnlyNumbers)
+        assertTrue(comparison.trpOnlyNames.isEmpty())
+    }
+
+    @Test
+    fun compareByName_trpWithExtraName_reportsTrpOnly() {
+        // TRP con los 20 + 1 nombre fuera de la lista: el extra se
+        // reporta como trpOnly sin inflar el conteo del launcher.
         val xml = buildString {
             append("<trophyconf version=\"1.0\">")
             append("<npcommid>NPWR00001_00</npcommid>")
             append("<trophyset-version>01.00</trophyset-version>")
             for ((index, name) in PS_20_EN.withIndex()) {
-                val hidden = if (index < 4) "yes" else "no"
-                val tier = if (index == 3) "S" else "B"
-                append("<trophy id=\"${id3(index)}\" hidden=\"$hidden\" ttype=\"$tier\" pid=\"000\">")
+                append("<trophy id=\"${id3(index)}\" hidden=\"no\" ttype=\"B\" pid=\"000\">")
                 append("<name>$name</name><detail>Detail $index.</detail></trophy>")
             }
+            append("<trophy id=\"020\" hidden=\"no\" ttype=\"B\" pid=\"000\">")
+            append("<name>Something Else Entirely</name><detail>Unknown.</detail></trophy>")
             append("</trophyconf>")
         }
         val value = success(TrophyTrpReader.read(wrapInFakeContainer(xml)))
-        val comparison = TrophyTrpReader.compareByName(value, LAUNCHER_27_EN)
-        assertEquals(20, comparison.trpCount)
-        assertEquals(27, comparison.launcherCount)
-        assertEquals(
-            listOf(1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20, 21, 22),
-            comparison.matchedLauncherNumbers,
-        )
-        assertEquals(listOf(6, 18, 23, 24, 25, 26, 27), comparison.launcherOnlyNumbers)
-        assertTrue(comparison.trpOnlyNames.isEmpty())
+        val comparison = TrophyTrpReader.compareByName(value, LAUNCHER_20_EN)
+        assertEquals(21, comparison.trpCount)
+        assertEquals(20, comparison.launcherCount)
+        assertEquals((1..20).toList(), comparison.matchedLauncherNumbers)
+        assertTrue(comparison.launcherOnlyNumbers.isEmpty())
+        assertEquals(listOf("Something Else Entirely"), comparison.trpOnlyNames)
+    }
+
+    @Test
+    fun diagnosis_installedFullConf20_matchesTwenty() {
+        // Fallback instalado con los 20 nombres: el diagnóstico lee
+        // 20 con nombres y la comparación contra la lista da pleno.
+        val ux0 = ux0With(ByteArray(1024) { (it * 7 % 256).toByte() }, buildFullConf20())
+        try {
+            val value = success(TrophyTrpReader.readTrpForDiagnosis(File(ux0, "app/PCSB00598")))
+            assertEquals(20, value.trophyCount)
+            assertTrue(value.hasNames)
+            val comparison = TrophyTrpReader.compareByName(value, LAUNCHER_20_EN)
+            assertEquals((1..20).toList(), comparison.matchedLauncherNumbers)
+            assertTrue(comparison.launcherOnlyNumbers.isEmpty())
+            assertTrue(comparison.trpOnlyNames.isEmpty())
+        } finally {
+            ux0.deleteRecursively()
+        }
     }
 
     @Test
@@ -349,7 +421,7 @@ class TrophyTrpReaderTest {
             "<name>Something Else Entirely</name><detail>Unknown.</detail></trophy>" +
             "</trophyconf>"
         val value = success(TrophyTrpReader.read(wrapInFakeContainer(xml)))
-        val comparison = TrophyTrpReader.compareByName(value, LAUNCHER_27_EN)
+        val comparison = TrophyTrpReader.compareByName(value, LAUNCHER_20_EN)
         assertEquals(listOf("Something Else Entirely"), comparison.trpOnlyNames)
         assertEquals(listOf(1), comparison.matchedLauncherNumbers)
     }
@@ -361,7 +433,7 @@ class TrophyTrpReaderTest {
             "<name>  starcatcher </name><detail>x</detail></trophy>" +
             "</trophyconf>"
         val value = success(TrophyTrpReader.read(wrapInFakeContainer(xml)))
-        val comparison = TrophyTrpReader.compareByName(value, LAUNCHER_27_EN)
+        val comparison = TrophyTrpReader.compareByName(value, LAUNCHER_20_EN)
         assertEquals(listOf(1), comparison.matchedLauncherNumbers)
     }
 
