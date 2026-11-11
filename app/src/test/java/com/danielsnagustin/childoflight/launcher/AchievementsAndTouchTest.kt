@@ -1,9 +1,10 @@
 package com.danielsnagustin.childoflight.launcher
 
+import com.danielsnagustin.childoflight.launcher.data.AchievementRepository
 import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
 import com.danielsnagustin.childoflight.launcher.data.builtInProfiles
 import com.danielsnagustin.childoflight.launcher.data.defaultTouchLayout
-import com.danielsnagustin.childoflight.launcher.model.TROPHIES_27
+import com.danielsnagustin.childoflight.launcher.model.TROPHIES_20
 import com.danielsnagustin.childoflight.launcher.model.TrophyUnlockAnnouncer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,79 +16,166 @@ import org.junit.Test
 class AchievementsTest {
 
     @Test
-    fun vitaHas27TrophiesNot20() {
-        assertEquals(27, TROPHIES_27.size)
-        assertEquals((1..27).toList(), TROPHIES_27.map { it.number })
+    fun vitaHas20TrophiesNot27() {
+        assertEquals(20, TROPHIES_20.size)
+        assertEquals((1..20).toList(), TROPHIES_20.map { it.number })
     }
 
     @Test
     fun secretTrophiesAreTheFirstFour() {
-        val secrets = TROPHIES_27.filter { it.isSecret }.map { it.number }
+        val secrets = TROPHIES_20.filter { it.isSecret }.map { it.number }
         assertEquals(listOf(1, 2, 3, 4), secrets)
-        assertEquals("Atrapaestrellas", TROPHIES_27[0].name)
-        assertEquals("Coronación", TROPHIES_27[3].name)
+        assertEquals("Atrapaestrellas", TROPHIES_20[0].name)
+        assertEquals("Coronación", TROPHIES_20[3].name)
     }
 
     @Test
-    fun onlyCoronacionHasDocumentedTierPlata() {
-        assertEquals("Plata", TROPHIES_27.first { it.number == 4 }.tier)
-        assertTrue(TROPHIES_27.filter { it.number != 4 }.all { it.tier == null })
+    fun onlyCoronacionHasTierPlataRestAreBronce() {
+        assertEquals("Plata", TROPHIES_20.first { it.number == 4 }.tier)
+        assertTrue(TROPHIES_20.filter { it.number != 4 }.all { it.tier == "Bronce" })
     }
 
     @Test
     fun noPlatinumTrophy() {
-        assertTrue(TROPHIES_27.none { it.name.contains("Platinum", ignoreCase = true) })
+        assertTrue(TROPHIES_20.none { it.name.contains("Platinum", ignoreCase = true) })
+        assertTrue(TROPHIES_20.none { it.tier == "Platinum" })
     }
 
     @Test
-    fun aTravesDelCristalNeedsOnline() {
-        val trophy = TROPHIES_27.first { it.number == 18 }
-        assertEquals("A través del cristal", trophy.name)
-        assertTrue(trophy.onlineRequired)
-        assertTrue(TROPHIES_27.filter { it.number != 18 }.none { it.onlineRequired })
+    fun noTrophyNeedsOnline() {
+        // La lista Vita de 20 no tiene trofeos online: "A través del
+        // cristal" (enviar Oculi a un amigo) solo existe en Xbox One /
+        // PC y no está en esta lista.
+        assertTrue(TROPHIES_20.none { it.onlineRequired })
+        assertTrue(TROPHIES_20.none { it.name == "A través del cristal" })
+    }
+
+    @Test
+    fun removedTrophiesAreNotInTheList() {
+        // Los 7 eliminados de la lista vieja de 27 no están en Vita.
+        val names = TROPHIES_20.map { it.name }.toSet()
+        assertFalse("La niña y la luciérnaga" in names)
+        assertFalse("General de la luz" in names)
+        assertFalse("Guardianes de Lemuria" in names)
+        assertFalse("Aurora borealis" in names)
+        assertFalse("Cuando los cerdos vuelen" in names)
+        assertFalse("La manzana dorada" in names)
     }
 
     @Test
     fun spanishNamesAreOfficial() {
-        // Nombres oficiales en español (listas PSN/Xbox del juego).
-        val byNumber = TROPHIES_27.associateBy { it.number }
+        // Nombres oficiales en español (EliteGuías + AllGamersIn).
+        val byNumber = TROPHIES_20.associateBy { it.number }
         assertEquals("Atrapaestrellas", byNumber.getValue(1).name)
         assertEquals("En la luna", byNumber.getValue(2).name)
         assertEquals("Amanecer", byNumber.getValue(3).name)
         assertEquals("Coronación", byNumber.getValue(4).name)
         assertEquals("Comedia", byNumber.getValue(5).name)
-        assertEquals("La niña y la luciérnaga", byNumber.getValue(6).name)
-        assertEquals("Captura de un Capilli", byNumber.getValue(7).name)
-        assertEquals("Hermana querida", byNumber.getValue(8).name)
-        assertEquals("Unión de un Bolmus", byNumber.getValue(9).name)
-        assertEquals("La familia Kategida", byNumber.getValue(10).name)
-        assertEquals("Promesa de los piscis", byNumber.getValue(11).name)
-        assertEquals("Tragedia", byNumber.getValue(12).name)
-        assertEquals("Décimo cumpleaños", byNumber.getValue(13).name)
-        assertEquals("Perfeccionista", byNumber.getValue(14).name)
-        assertEquals("Experto oculista", byNumber.getValue(15).name)
-        assertEquals("Robando protagonismo", byNumber.getValue(16).name)
-        assertEquals("Aguafiestas", byNumber.getValue(17).name)
-        assertEquals("A través del cristal", byNumber.getValue(18).name)
-        assertEquals("Furia alada", byNumber.getValue(19).name)
-        assertEquals("Explorador", byNumber.getValue(20).name)
-        assertEquals("Soneto perfecto", byNumber.getValue(21).name)
-        assertEquals("Raíces", byNumber.getValue(22).name)
-        assertEquals("General de la luz", byNumber.getValue(23).name)
-        assertEquals("Guardianes de Lemuria", byNumber.getValue(24).name)
-        assertEquals("Aurora borealis", byNumber.getValue(25).name)
-        assertEquals("Cuando los cerdos vuelen", byNumber.getValue(26).name)
-        assertEquals("La manzana dorada", byNumber.getValue(27).name)
+        assertEquals("Captura de un Capilli", byNumber.getValue(6).name)
+        assertEquals("Hermana querida", byNumber.getValue(7).name)
+        assertEquals("Unión de un Bolmus", byNumber.getValue(8).name)
+        assertEquals("La familia Kategida", byNumber.getValue(9).name)
+        assertEquals("Promesa de los piscis", byNumber.getValue(10).name)
+        assertEquals("Tragedia", byNumber.getValue(11).name)
+        assertEquals("Décimo cumpleaños", byNumber.getValue(12).name)
+        assertEquals("Perfeccionista", byNumber.getValue(13).name)
+        assertEquals("Experto oculista", byNumber.getValue(14).name)
+        assertEquals("Robando protagonismo", byNumber.getValue(15).name)
+        assertEquals("Aguafiestas", byNumber.getValue(16).name)
+        assertEquals("Furia alada", byNumber.getValue(17).name)
+        assertEquals("Explorador", byNumber.getValue(18).name)
+        assertEquals("Soneto perfecto", byNumber.getValue(19).name)
+        assertEquals("Raíces", byNumber.getValue(20).name)
         // Ningún nombre en inglés: la lista es española en todas las
         // superficies (lista, diálogo, popup, log).
-        assertTrue(TROPHIES_27.none { it.name == "Starcatcher" || it.name == "Showstopper" || it.name == "Master Oculist" })
+        assertTrue(TROPHIES_20.none { it.name == "Starcatcher" || it.name == "Showstopper" || it.name == "Master Oculist" })
+    }
+
+    @Test
+    fun englishNamesAreOnlyForTrpMapping() {
+        // El nombre en inglés vive en englishName (puente JNI, para
+        // mapear por nombre contra el TROPHY.TRP) y nunca es el
+        // nombre visible.
+        val byNumber = TROPHIES_20.associateBy { it.number }
+        assertEquals("Starcatcher", byNumber.getValue(1).englishName)
+        assertEquals("Coronation", byNumber.getValue(4).englishName)
+        assertEquals("Master Oculist", byNumber.getValue(14).englishName)
+        assertEquals("Showstopper", byNumber.getValue(16).englishName)
+        assertEquals("Winged Fury", byNumber.getValue(17).englishName)
+        assertEquals("Grassroots", byNumber.getValue(20).englishName)
+        assertTrue(TROPHIES_20.all { it.englishName.isNotBlank() })
+        assertTrue(TROPHIES_20.none { it.name == it.englishName })
+    }
+}
+
+/**
+ * Migración 27 -> 20 del progreso guardado (0.2.57): la decisión y
+ * su cálculo son funciones puras del companion de
+ * AchievementRepository (sin Android: no hay Robolectric en los
+ * tests unitarios). El edit en DataStore solo se verifica en el
+ * teléfono.
+ */
+class AchievementRepositoryTest {
+
+    @Test
+    fun encodeDecodeRoundTripKeepsAllEntries() {
+        val original = mapOf(1 to 1000L, 4 to 2000L, 20 to 3000L)
+        val encoded = AchievementRepository.encode(original)
+        assertEquals("1|1000;4|2000;20|3000", encoded)
+        assertEquals(original, AchievementRepository.decode(encoded))
+        assertEquals(emptyMap<Int, Long>(), AchievementRepository.decode(""))
+        // Entradas inválidas se descartan; números fuera de 1..20
+        // los filtra el repositorio, no decode.
+        assertEquals(mapOf(6 to 500L, 21 to 900L), AchievementRepository.decode("6|500;xx|1;7|;21|900"))
+    }
+
+    @Test
+    fun oldVersionMigratesAndCurrentVersionDoesNot() {
+        assertTrue(AchievementRepository.shouldMigrateTrophyList(0))
+        assertTrue(AchievementRepository.shouldMigrateTrophyList(1))
+        assertFalse(AchievementRepository.shouldMigrateTrophyList(2))
+        assertFalse(AchievementRepository.shouldMigrateTrophyList(3))
+        assertEquals(2, AchievementRepository.TROPHY_LIST_VERSION)
+    }
+
+    @Test
+    fun migrationClearsOldNumberedProgressOnce() {
+        // Claves viejas de la lista de 27 (6-20 cambiaron de trofeo
+        // con la renumeración; 21 ya no existe): se borran, no se
+        // reinterpretan.
+        val (version, text) = AchievementRepository.applyTrophyListMigration(0, "6|1000;19|2000;21|3000")
+        assertEquals(2, version)
+        assertEquals("", text)
+        val (version1, text1) = AchievementRepository.applyTrophyListMigration(1, "4|1000")
+        assertEquals(2, version1)
+        assertEquals("", text1)
+    }
+
+    @Test
+    fun migrationLeavesCurrentProgressIntact() {
+        val (version, text) = AchievementRepository.applyTrophyListMigration(2, "4|1000;17|2000")
+        assertEquals(2, version)
+        assertEquals("4|1000;17|2000", text)
+    }
+
+    @Test
+    fun oldFormatSessionTextIsDetectedByAnyKeyOverTwenty() {
+        // Una sola clave mayor que 20 delata la lista vieja (27):
+        // el texto entero se descarta, no solo esa clave.
+        assertTrue(AchievementRepository.isOldFormatTrophyText("6|1000;21|2000"))
+        assertTrue(AchievementRepository.isOldFormatTrophyText("21|2000"))
+        assertTrue(AchievementRepository.isOldFormatTrophyText("27|2000"))
+        // Texto nuevo (claves 1..20) o vacío: no es formato viejo.
+        assertFalse(AchievementRepository.isOldFormatTrophyText("4|1000;17|2000"))
+        assertFalse(AchievementRepository.isOldFormatTrophyText("1|1000;20|2000"))
+        assertFalse(AchievementRepository.isOldFormatTrophyText(""))
     }
 }
 
 /**
  * BUG 2026-11-08 (capturas 50386_0_z5ek / 50383_1_uzjw): el popup de
  * desbloqueo nombraba el trofeo equivocado. El usuario desbloqueó
- * Experto oculista (15) y después Aguafiestas (17); el popup dijo
+ * Experto oculista (14) y después Aguafiestas (16); el popup dijo
  * "Experto oculista". Causa: el ViewModel escribía el trofeo en un
  * StateFlow plano desde corrutinas sin serializar ni identidad de
  * evento — el último escritor gana, así que un desbloqueo anterior
@@ -97,16 +185,16 @@ class AchievementsTest {
 class TrophyUnlockAnnouncerTest {
 
     @Test
-    fun unlock15ClearUnlock17Shows17() {
-        // La secuencia exacta del reporte: 15, cerrar el popup, 17.
+    fun unlock14ClearUnlock16Shows16() {
+        // La secuencia exacta del reporte: 14, cerrar el popup, 16.
         val announcer = TrophyUnlockAnnouncer()
-        val first = announcer.announce(15, atMillis = 1000L, seq = 1L)
-        assertEquals(15, first?.trophy?.number)
+        val first = announcer.announce(14, atMillis = 1000L, seq = 1L)
+        assertEquals(14, first?.trophy?.number)
         assertEquals("Experto oculista", announcer.current?.trophy?.name)
         announcer.clear()
         assertNull(announcer.current)
-        val second = announcer.announce(17, atMillis = 2000L, seq = 2L)
-        assertEquals(17, second?.trophy?.number)
+        val second = announcer.announce(16, atMillis = 2000L, seq = 2L)
+        assertEquals(16, second?.trophy?.number)
         assertEquals("Aguafiestas", announcer.current?.trophy?.name)
         assertTrue(announcer.current?.unlocked == true)
         assertEquals(2000L, announcer.current?.unlockedAtMillis)
@@ -117,24 +205,24 @@ class TrophyUnlockAnnouncerTest {
         // REPRODUCCIÓN DEL BUG: dos desbloqueos seguidos y el primero
         // termina DESPUÉS del segundo (corrutoras en vuelo). Con el
         // diseño anterior (slot plano, último escritor gana) el popup
-        // acababa nombrando el 15; con la secuencia, se ignora el
-        // anuncio tardío y el popup sigue siendo el 17.
+        // acababa nombrando el 14; con la secuencia, se ignora el
+        // anuncio tardío y el popup sigue siendo el 16.
         val announcer = TrophyUnlockAnnouncer()
-        val later = announcer.announce(17, atMillis = 2000L, seq = 2L)
-        assertEquals(17, later?.trophy?.number)
-        val stale = announcer.announce(15, atMillis = 1000L, seq = 1L)
+        val later = announcer.announce(16, atMillis = 2000L, seq = 2L)
+        assertEquals(16, later?.trophy?.number)
+        val stale = announcer.announce(14, atMillis = 1000L, seq = 1L)
         assertNull(stale)
-        assertEquals(17, announcer.current?.trophy?.number)
+        assertEquals(16, announcer.current?.trophy?.number)
         assertEquals("Aguafiestas", announcer.current?.trophy?.name)
     }
 
     @Test
     fun announceBuildsUnlockedProgressFromNumber() {
-        // El anuncio se construye desde TROPHIES_27 con el número y el
+        // El anuncio se construye desde TROPHIES_20 con el número y el
         // instante del desbloqueo: nunca se relee de un flujo, así que
         // no puede nombrar otro trofeo ni llegar sin desbloquear.
         val announcer = TrophyUnlockAnnouncer()
-        val announced = announcer.announce(17, atMillis = 5000L, seq = 1L)
+        val announced = announcer.announce(16, atMillis = 5000L, seq = 1L)
         assertNotNull(announced)
         assertEquals("Aguafiestas", announced!!.trophy.name)
         assertEquals("Interrumpe a 3 enemigos al mismo tiempo.", announced.trophy.description)
@@ -154,13 +242,13 @@ class TrophyUnlockAnnouncerTest {
         // Cerrar el popup no resetea la secuencia: un anuncio tardío
         // del desbloqueo anterior sigue ignorándose después de cerrar.
         val announcer = TrophyUnlockAnnouncer()
-        announcer.announce(15, atMillis = 1000L, seq = 1L)
+        announcer.announce(14, atMillis = 1000L, seq = 1L)
         announcer.clear()
         assertNull(announcer.current)
-        assertNull(announcer.announce(15, atMillis = 1000L, seq = 1L))
+        assertNull(announcer.announce(14, atMillis = 1000L, seq = 1L))
         assertNull(announcer.current)
-        val next = announcer.announce(17, atMillis = 2000L, seq = 2L)
-        assertEquals(17, next?.trophy?.number)
+        val next = announcer.announce(16, atMillis = 2000L, seq = 2L)
+        assertEquals(16, next?.trophy?.number)
     }
 }
 
