@@ -18,6 +18,7 @@ import org.vita3k.emulator.EmuSurface
 import android.widget.Toast
 import com.danielsnagustin.childoflight.launcher.data.GameActivityState
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
+import com.danielsnagustin.childoflight.launcher.data.TrophySyncPending
 import com.danielsnagustin.childoflight.launcher.data.SettingsRepository
 import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
 import com.danielsnagustin.childoflight.launcher.launcher.Vita3KLauncher
@@ -1084,7 +1085,42 @@ class EmbeddedGameActivity : SDLActivity() {
         // se recrea enseguida y la sesión debe sobrevivir (su onCreate
         // la verá con isInitialized() y omitirá el init).
         if (isFinishing) {
+            // Ronda 0.2.57: capturar los trofeos ANTES de destruir la
+            // sesión (ver captureTrophiesBeforeSessionDestroy).
+            captureTrophiesBeforeSessionDestroy()
             destroyNativeSessionAfterSdlShutdown()
+        }
+    }
+
+    /**
+     * Ronda 0.2.57 (puente JNI de trofeos): lee las colecciones de
+     * trofeos del núcleo y las deja en TrophySyncPending para que el
+     * ViewModel las sincronice al volver (syncTrophiesFromGame).
+     *
+     * Orden OBLIGADO (verificado en el pin): getTrophyCollections
+     * devuelve vacío si no hay emuenv (native_trophies.cpp:224-226)
+     * y destroySession destruye el emuenv (runtime_bridge.cpp:
+     * session.emuenv.reset()). Leer DESPUÉS de destroySession daría
+     * siempre vacío: por eso la captura va AQUÍ, después de
+     * super.onDestroy() (el hilo SDL ya terminó y la partida ya no
+     * está en curso: nunca se lee durante la partida) y ANTES de
+     * destroySession. Síncrona en el hilo principal por necesidad:
+     * destroySession corre justo después en este mismo hilo y la
+     * invalidaría; la lectura es un solo TRP pequeño (20 trofeos).
+     * Solo se guarda si hay colecciones; un fallo (sin núcleo, puente
+     * roto, sesión ya destruida) solo deja el progreso local como
+     * estaba y queda en el log: nunca tumba el cierre del juego.
+     */
+    private fun captureTrophiesBeforeSessionDestroy() {
+        if (!Vita3kCoreBridge.available) return
+        runCatching {
+            val collections = Vita3kCoreBridge.getTrophyCollections()
+            if (collections.isNotEmpty()) {
+                TrophySyncPending.store(collections)
+                LauncherLog.append(this, "trophies", "Trofeos capturados al salir del juego: ${collections.size} colecciones pendientes de sincronizar")
+            }
+        }.onFailure { e ->
+            LauncherLog.append(this, "trophies", "No se pudieron leer los trofeos al salir del juego: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 
