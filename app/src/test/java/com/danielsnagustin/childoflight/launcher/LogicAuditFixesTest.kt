@@ -117,14 +117,19 @@ class LogicAuditFixesTest {
 
     @Test
     fun clampResolution() {
-        assertEquals(1f, SettingsRepository.clampResolution(0f))
-        assertEquals(1f, SettingsRepository.clampResolution(-1f))
+        // 0.2.63 (B/C): 0.5x es un valor ofrecido: un valor inválido
+        // por debajo (0f, -1f) cae al ofrecido más cercano, 0.5x
+        // (como 99f cae a 4x); NaN sigue cayendo a 1f.
+        assertEquals(0.5f, SettingsRepository.clampResolution(0f))
+        assertEquals(0.5f, SettingsRepository.clampResolution(-1f))
         assertEquals(4f, SettingsRepository.clampResolution(99f))
         assertEquals(1f, SettingsRepository.clampResolution(Float.NaN))
+        assertEquals(0.5f, SettingsRepository.clampResolution(0.5f))
         assertEquals(2f, SettingsRepository.clampResolution(2f))
-        // R2-S04: la UI solo ofrece 1x/2x/3x/4x: un valor intermedio
-        // (p. ej. de un backup editado a mano) se ajusta al valor
-        // ofrecido más cercano; en empate, al menor (conservador).
+        // R2-S04: la UI solo ofrece 0.5x/1x/2x/3x/4x: un valor
+        // intermedio (p. ej. de un backup editado a mano) se ajusta
+        // al valor ofrecido más cercano; en empate, al menor
+        // (conservador).
         assertEquals(1f, SettingsRepository.clampResolution(1.5f))
         assertEquals(1f, SettingsRepository.clampResolution(1.2f))
         assertEquals(2f, SettingsRepository.clampResolution(2.5f))
