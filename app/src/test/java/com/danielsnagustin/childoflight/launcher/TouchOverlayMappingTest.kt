@@ -245,6 +245,64 @@ class TouchOverlayMappingTest {
     }
 
     @Test
+    fun stickMayOverhangLeftBlackBarButCenterStaysInside() {
+        // 0.2.58 (R7-P1-05): SOLO el stick pisa la barra negra
+        // lateral como en el mockup. Teléfono 1600x720, densidad
+        // 1.75: el stick guardado en 0.05 queda con el centro en
+        // 228 px (como el mockup, 227 px) y el borde en 65 px, 99 px
+        // dentro de la barra; su centro sigue dentro del rect del
+        // juego y nunca se sale de la vista por la izquierda.
+        val game = gameRect(1600f, 720f)
+        val stick = TouchControl("s", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 186, 0.70f)
+        val rect = controlRectInGameRect(stick, game, 1.75f)
+        assertEquals(65.5f, rect.left, 1f)
+        assertEquals(228.2f, (rect.left + rect.right) / 2f, 1f)
+        assertTrue("el stick pisa la barra negra", rect.left < game.left - 0.01f)
+        assertTrue("centro del stick dentro del juego", (rect.left + rect.right) / 2f >= game.left - 0.01f)
+        assertTrue("el stick no se sale de la vista", rect.left >= 0f)
+        assertTrue("el stick no se sale por la derecha", rect.right <= game.right + 0.01f)
+        // Un stick arrastrado a x 0 no se sale de la vista: su
+        // borde queda en gameLeft - half (2 px) con el centro en
+        // el borde del rect del juego.
+        val dragged = TouchControl("s", "Stick", "stick", VitaButton.LEFT_STICK, 0.0f, 0.675f, 186, 0.70f)
+        val draggedRect = controlRectInGameRect(dragged, game, 1.75f)
+        assertEquals(2.0f, draggedRect.left, 1f)
+        assertEquals(game.left, (draggedRect.left + draggedRect.right) / 2f, 1f)
+    }
+
+    @Test
+    fun jumpMayOverhangRightBlackBarButStaysInsideView() {
+        // 0.2.58 (R7, decisión del coordinador): el salto TAMBIÉN
+        // pisa la barra negra derecha, simétrico al stick: su
+        // centro queda en 1.012 del juego (fuera del rect, como en
+        // el mockup) y su borde derecho supera gameRight, pero
+        // nunca se sale de la vista (tope en el borde derecho).
+        // La relajación es SOLO por id btn_jump, NO por kind
+        // "button": la espada comparte kind y sigue entera dentro.
+        val game = gameRect(1600f, 720f)
+        val jump = TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 1.012f, 0.752f, 92, 0.80f)
+        val rect = controlRectInGameRect(jump, game, 1.75f)
+        assertEquals(1450.6f, (rect.left + rect.right) / 2f, 1f)
+        assertEquals(1.012f, ((rect.left + rect.right) / 2f - game.left) / (game.right - game.left), 0.001f)
+        assertTrue("el salto pisa la barra negra", rect.right > game.right + 0.01f)
+        assertTrue("el salto no se sale de la vista", rect.right <= 1600f + 0.01f)
+        assertTrue("salto entero vertical", rect.top >= game.top - 0.01f && rect.bottom <= game.bottom + 0.01f)
+        // Un salto arrastrado a x 1.5 no se sale de la vista: su
+        // borde derecho queda en el borde de la vista (1600) con
+        // el centro en 1519,5 px (1,066 del juego).
+        val dragged = TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 1.5f, 0.752f, 92, 0.80f)
+        val draggedRect = controlRectInGameRect(dragged, game, 1.75f)
+        assertEquals(1600f, draggedRect.right, 0.01f)
+        assertEquals(1519.5f, (draggedRect.left + draggedRect.right) / 2f, 1f)
+        // La espada en 0.914 queda entera dentro sin recorte.
+        val sword = TouchControl("w", "Espada", "button", VitaButton.SQUARE, 0.914f, 0.576f, 92, 0.80f)
+        val swordRect = controlRectInGameRect(sword, game, 1.75f)
+        assertEquals(1326.0f, (swordRect.left + swordRect.right) / 2f, 1f)
+        assertTrue("espada entera dentro del juego", swordRect.left >= game.left - 0.01f)
+        assertTrue("espada entera dentro del juego", swordRect.right <= game.right + 0.01f)
+    }
+
+    @Test
     fun controlRectMatchesEditorPreview() {
         // La fórmula del editor (TouchLayoutScreen.kt): offset =
         // ((fracción * tamañoVista) - tamañoPx/2).toInt(), limitado a
