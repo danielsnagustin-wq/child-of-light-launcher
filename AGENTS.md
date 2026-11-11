@@ -17,7 +17,7 @@ Tocas el icono y juegas. Sin lista de juegos, sin biblioteca de emulador.
   firmware no es una sección de Ajustes: vive en Importar, junto al
   juego y los DLCs (hay un enlace "Firmware → Importar" en
   Almacenamiento, donde vive el estado de archivos).
-- 27 logros locales. Varias sesiones con copias de guardado y
+- 20 logros locales. Varias sesiones con copias de guardado y
   auto-respaldo.
 
 El usuario **no tiene PC**: todo se compila solo con GitHub Actions.
