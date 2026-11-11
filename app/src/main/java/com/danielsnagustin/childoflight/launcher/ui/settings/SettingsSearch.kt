@@ -176,7 +176,7 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     entry("Instalar Turnip", "turnip instalar cambiar zip driver mesa", SettingsCategory.GPU),
     entry("Restablecer esta categoría", "restablecer reset categoria valores preset", SettingsCategory.GPU),
     // --- CPU ---
-    entry("Optimización CPU (Dynarmic)", "cpu optimizacion dynarmic jit", SettingsCategory.CPU),
+    entry("Optimización CPU (Dynarmic)", "cpu optimizacion dynarmic", SettingsCategory.CPU),
     entry("Modo 60 FPS", "60 fps hack experimental velocidad doble", SettingsCategory.CPU),
     entry("Retraso de carga de archivos", "retraso carga archivos file loading delay", SettingsCategory.CPU),
     entry("Restablecer esta categoría", "restablecer reset categoria valores preset", SettingsCategory.CPU),
