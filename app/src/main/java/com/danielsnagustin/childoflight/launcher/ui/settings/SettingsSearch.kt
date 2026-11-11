@@ -132,9 +132,11 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     entry("Controles táctiles", "controles tactiles editor botones mando", SettingsCategory.GENERAL),
     entry("Permitir app externa", "motor app externa casos especiales", SettingsCategory.GENERAL),
     entry("Sesión PSN (simulada)", "psn sesion simulada dlc activacion", SettingsCategory.GENERAL),
+    entry("Idioma del juego", "idioma juego espanol ingles frances aleman italiano", SettingsCategory.GENERAL),
     entry("Aviso legal", "legal ubisoft sony licencia", SettingsCategory.GENERAL),
     entry("Ver config.yml generado", "config yml ver generado yaml", SettingsCategory.GENERAL),
     entry("Restablecer ajustes", "restablecer reset preset gpu defecto", SettingsCategory.GENERAL),
+    entry("Borrar progreso de logros", "borrar trofeos logros progreso eliminar", SettingsCategory.GENERAL),
     entry("Copia de seguridad de ajustes", "copia seguridad backup exportar importar json ajustes", SettingsCategory.GENERAL),
     // R5-A2-9: la entrada "Restablecer esta categoría" → GENERAL se
     // quitó: General no tiene ajustes de preset que restablecer
