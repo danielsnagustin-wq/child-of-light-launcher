@@ -243,7 +243,9 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                     "Probado: ${touchControlTestLabel(testedControl)}",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold,
-                    color = ColTurquoise,
+                    // R9-P2-02: ColTurquoise fijo sobre #E9EFF6 = 1.48:1
+                    // en tema claro; en claro azul lavanda #6578B8.
+                    color = if (isDarkUi(uiPrefs)) ColTurquoise else ColLavenderBlue,
                 )
             } else {
                 NoteText("Toca un botón en la vista previa para comprobar su etiqueta y su asignación.")
@@ -318,7 +320,12 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 val trimmed = labelDraft.take(12)
                 if (trimmed != control.label) updateControl(control.copy(label = trimmed))
             }
-            DisposableEffect(control.id) {
+            // R9-P2-06: la clave incluye control.label: si cambiar de
+            // perfil (o borrar el activo) trae el mismo id con otra
+            // etiqueta, el efecto viejo dispone y saveLabel() guarda
+            // el borrador; tras un guardado normal es no-op
+            // (trimmed == control.label).
+            DisposableEffect(control.id, control.label) {
                 onDispose { saveLabel() }
             }
             OutlinedTextField(
