@@ -588,7 +588,12 @@ fun SectionTitle(text: String) {
         text = text,
         style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.primary,
+        // R9-P1-02: en tema claro el acento crudo (hielo #8CCBEB sobre
+        // #E9EFF6 = 1.53:1) dejaba los 54 títulos de sección ilegibles;
+        // en claro se usa azul lavanda #6578B8 (3.68:1 sobre #E9EFF6),
+        // el color estándar en claro del resto de la app. En oscuro
+        // se mantiene el acento del usuario.
+        color = if (isDarkUi(LocalUiPreferences.current)) MaterialTheme.colorScheme.primary else ColLavenderBlue,
         modifier = Modifier.padding(top = 16.dp, bottom = 12.dp),
     )
 }
