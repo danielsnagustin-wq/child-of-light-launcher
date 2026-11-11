@@ -192,7 +192,7 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         // ningún botón del panel con el mando conectado. El ajuste
         // solo afecta al juego, no al editor.
         val hideAll = settings?.hideTouchWhenGamepadConnected == true && gamepads.isNotEmpty()
-        // B14: la zona Igniculus (220 dp, opacidad 0.25) se dibuja
+        // B14: la zona Igniculus (115 dp, opacidad 0.25) se dibuja
         // PRIMERO, detrás de los botones. Antes iba la última y
         // tapaba por completo el botón Start (y parte de Y/X): en
         // la vista previa Start no se podía ni tocar ni arrastrar,
@@ -284,9 +284,17 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                             // pero la fracción seguía
                                             // cambiando, y al volver los
                                             // primeros píxeles no movían nada.
+                                            // 0.2.58 (R7): el salto (btn_jump) admite
+                                            // x hasta 1.1 (JUMP_MAX_X_FRACTION): su
+                                            // centro de fábrica es 1.012 (mockup,
+                                            // sobre la barra negra derecha); con el
+                                            // tope normal el arrastre lo devolvería
+                                            // a 0.937 y perdería el arreglo. La Y
+                                            // sigue con el tope normal.
                                             val nx = TouchLayoutRepository.clampCenterFraction(
                                                 current.xFraction + dragAmount.x / previewSize.width,
                                                 (sizePx / 2f) / previewSize.width,
+                                                if (control.id == "btn_jump") TouchLayoutRepository.JUMP_MAX_X_FRACTION else null,
                                             )
                                             val ny = TouchLayoutRepository.clampCenterFraction(
                                                 current.yFraction + dragAmount.y / previewSize.height,
@@ -432,7 +440,13 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             val density = LocalDensity.current
             val halfXFrac = if (previewSize.width > 0) (with(density) { control.sizeDp.dp.toPx() } / 2f) / previewSize.width else 0f
             val halfYFrac = if (previewSize.height > 0) (with(density) { control.sizeDp.dp.toPx() } / 2f) / previewSize.height else 0f
-            SettingSlider("Posición X", (control.xFraction * 100).toInt(), 0..100, { updateControl(control.copy(xFraction = TouchLayoutRepository.clampCenterFraction(it / 100f, halfXFrac))) }, enabled = previewMeasured) { "$it%" }
+            // 0.2.58 (R7): el slider X del salto llega a 110 % (su
+            // centro de fábrica es 1.012); con el rango 0..100 el
+            // slider mostraría 101 fuera de rango y al moverlo
+            // perdería el valor del mockup. Los demás controles
+            // siguen en 0..100.
+            val xRange = if (control.id == "btn_jump") 0..110 else 0..100
+            SettingSlider("Posición X", (control.xFraction * 100).toInt(), xRange, { updateControl(control.copy(xFraction = TouchLayoutRepository.clampCenterFraction(it / 100f, halfXFrac, if (control.id == "btn_jump") TouchLayoutRepository.JUMP_MAX_X_FRACTION else null))) }, enabled = previewMeasured) { "$it%" }
             SettingSlider("Posición Y", (control.yFraction * 100).toInt(), 0..100, { updateControl(control.copy(yFraction = TouchLayoutRepository.clampCenterFraction(it / 100f, halfYFrac))) }, enabled = previewMeasured) { "$it%" }
             SettingSlider("Tamaño", control.sizeDp, 40..260, { updateControl(control.copy(sizeDp = it)) }) { "${it}dp" }
             SettingSlider("Opacidad", (control.opacity * 100).toInt(), 10..100, { updateControl(control.copy(opacity = it / 100f)) }) { "$it%" }
