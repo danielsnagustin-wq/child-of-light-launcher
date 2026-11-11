@@ -149,7 +149,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         Text("Firmware: ${com.danielsnagustin.childoflight.launcher.data.FirmwareResolver.label(firmwareStatus)}")
         NoteText("El firmware nunca es un paso inicial: el primer uso solo pide juego + DLCs. Se importa en Importar, junto al juego y los DLC.")
         Text("Backend: ${settings?.backend?.label ?: "—"} · Driver: ${settings?.gpuDriver ?: "—"}${if (settings?.turnipInstalled == true) " (${settings?.turnipVersion})" else ""}")
-        Text("Resolución: ${settings?.resolutionLabel ?: "—"} · FPS overlay: ${if (settings?.showFpsOverlay == true) "ON" else "OFF"}")
+        Text("Resolución: ${settings?.resolutionLabel ?: "—"} · FPS overlay: ${if (settings?.showFpsOverlay == true) "sí" else "no"}")
 
         // Ola 3, Etapa 10: configuración activa resumida, último FPS y
         // errores recientes del log (el modelo del dispositivo solo se
@@ -162,7 +162,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         // fuerza ON aunque el guardado sea OFF): settings es delegada,
         // así que se captura con let, no con smart cast. Igual que
         // SettingsDiagnosticsScreen.
-        Text("VSync: ${if (settings?.let { effectiveSettings(it).vSync } == true) "ON" else "OFF"} · Modo 60 FPS: ${if (settings?.fpsHack == true) "ON" else "OFF"} · Modo seguro: ${if (settings?.safeMode == true) "ON" else "OFF"}")
+        Text("VSync: ${if (settings?.let { effectiveSettings(it).vSync } == true) "sí" else "no"} · Modo 60 FPS: ${if (settings?.fpsHack == true) "sí" else "no"} · Modo seguro: ${if (settings?.safeMode == true) "sí" else "no"}")
         Text("Último FPS (prueba de 30 s): ${lastFps?.let { "$it fps" } ?: "sin medir"}")
         SectionTitle("Errores recientes del log")
         // Ronda 0.2.55 P1-13: el filtrado se memoriza por safeLogText
