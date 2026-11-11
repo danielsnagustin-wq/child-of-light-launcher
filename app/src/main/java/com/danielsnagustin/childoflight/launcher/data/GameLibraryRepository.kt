@@ -92,8 +92,8 @@ object ImportFileGuide {
             "elige el .zip del DLC (con la ruta addcont/ dentro), o usa " +
             "\"Importar carpeta de DLC\" y elige la carpeta PCSE00480 (US) o PCSB00598 (EU) " +
             "que contiene addcont/ dentro."
-        "update" -> "Elegiste un archivo .bin suelto. Ese archivo solo no instala el update: " +
-            "elige el .zip o .vpk del update, o usa \"Importar carpeta del juego\" " +
+        "update" -> "Elegiste un archivo .bin suelto. Ese archivo solo no instala la actualización: " +
+            "elige el .zip o .vpk de la actualización, o usa \"Importar carpeta del juego\" " +
             "y elige la carpeta PCSE00480 (US) o PCSB00598 (EU) que contiene eboot.bin dentro."
         else -> "Elegiste un archivo .bin suelto (eboot.bin). Ese archivo solo no basta para instalar el juego: " +
             "el juego necesita su carpeta completa. Elige el .zip o .vpk COMPLETO del juego " +
@@ -374,17 +374,17 @@ class GameLibraryRepository(private val context: Context) {
                     com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME ->
                         "Este .pkg es un DLC, no el juego: usa Importar DLC."
                     com.danielsnagustin.childoflight.launcher.model.PkgKind.UPDATE ->
-                        "Este .pkg es un DLC, no un update: usa Importar DLC."
+                        "Este .pkg es un DLC, no una actualización: usa Importar DLC."
                 }
             }
             if (contentType == PkgHeaderParser.CONTENT_TYPE_APP) {
                 if (requested == com.danielsnagustin.childoflight.launcher.model.PkgKind.DLC) {
-                    return "Este .pkg no es un DLC (es el juego o un update): " +
-                        "usa Importar juego o Importar update."
+                    return "Este .pkg no es un DLC (es el juego o una actualización): " +
+                        "usa Importar juego o Importar actualización."
                 }
                 if (requested == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME && !isGameContent) {
                     return "Este .pkg no es el juego (trae ${header.contentName}): " +
-                        "no se puede importar como juego. Usa Importar DLC o Importar update según lo que sea."
+                        "no se puede importar como juego. Usa Importar DLC o Importar actualización según lo que sea."
                 }
                 return null
             }
@@ -392,7 +392,7 @@ class GameLibraryRepository(private val context: Context) {
             return when {
                 requested == com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME && !isGameContent ->
                     "Este .pkg no es el juego (trae ${header.contentName}): " +
-                        "no se puede importar como juego. Usa Importar DLC o Importar update según lo que sea."
+                        "no se puede importar como juego. Usa Importar DLC o Importar actualización según lo que sea."
                 requested != com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME && isGameContent ->
                     "Este .pkg es del juego, no un ${requested.label}: usa Importar juego. " +
                         "Si se guardara como ${requested.label}, sobrescribiría el juego."
@@ -985,20 +985,20 @@ class GameLibraryRepository(private val context: Context) {
         val pkg = findPkgPatchFile(titleId)
         val extracted = patchDir(titleId).exists() && patchDir(titleId).listFiles()?.isNotEmpty() == true
         if (pkg != null && incomingIsPkg) {
-            return "El update de $titleId ya está subido como .pkg. Si lo subes de nuevo, se reemplaza " +
-                "la copia guardada y no ocupa más espacio. ¿Quieres reemplazarlo?"
+            return "La actualización de $titleId ya está subida como .pkg. Si la subes de nuevo, se reemplaza " +
+                "la copia guardada y no ocupa más espacio. ¿Quieres reemplazarla?"
         }
         if (pkg != null && !incomingIsPkg) {
-            return "El update de $titleId ya está subido como .pkg. Si lo subes extraído tendrás " +
-                "las dos copias y ocupará más espacio. ¿Seguro que quieres subirlo de todos modos?"
+            return "La actualización de $titleId ya está subida como .pkg. Si la subes extraída tendrás " +
+                "las dos copias y ocupará más espacio. ¿Seguro que quieres subirla de todos modos?"
         }
         if (extracted && !incomingIsPkg) {
-            return "El update de $titleId ya está subido (extraído). Si lo subes de nuevo, se reemplaza " +
-                "la copia instalada y no ocupa más espacio. ¿Quieres reemplazarlo?"
+            return "La actualización de $titleId ya está subida (extraído). Si la subes de nuevo, se reemplaza " +
+                "la copia instalada y no ocupa más espacio. ¿Quieres reemplazarla?"
         }
         if (extracted && incomingIsPkg) {
-            return "El update de $titleId ya está subido (extraído). Si lo subes como .pkg tendrás " +
-                "las dos copias y ocupará más espacio. ¿Seguro que quieres subirlo de todos modos?"
+            return "La actualización de $titleId ya está subida (extraído). Si la subes como .pkg tendrás " +
+                "las dos copias y ocupará más espacio. ¿Seguro que quieres subirla de todos modos?"
         }
         return null
     }
@@ -2091,10 +2091,10 @@ class GameLibraryRepository(private val context: Context) {
                 if (sourceSize in 1 until SUSPICIOUS_SMALL_GAME_PKG_BYTES) {
                     return duplicateResult(
                         "Este .pkg pesa solo ${formatSizeMb(sourceSize)} y el juego completo pesa ~1,14 GB: " +
-                            "parece un UPDATE, no el juego. Si lo importas como juego, el motor lo instalará " +
+                            "parece una ACTUALIZACIÓN, no el juego. Si lo importas como juego, el motor lo instalará " +
                             "en otro sitio y cada JUGAR lo reinstalará sin que el juego arranque. " +
-                            "¿Quieres importarlo de todos modos como juego? Para importarlo como update, " +
-                            "cancela y usa Importar → Update. (El SFO del .pkg va cifrado: el tamaño es la única pista.)",
+                            "¿Quieres importarlo de todos modos como juego? Para importarlo como actualización, " +
+                            "cancela y usa Importar → Actualización. (El SFO del .pkg va cifrado: el tamaño es la única pista.)",
                     )
                 }
             }
@@ -2389,7 +2389,7 @@ class GameLibraryRepository(private val context: Context) {
                     // M12: un update vacío (carpeta sin archivos) no debe
                     // instalarse ni borrar el update anterior.
                     if (titleDir.listFiles()?.isEmpty() != false) {
-                        ImportResult.Rejected("El update está vacío: la carpeta ${title.id} no trae archivos.")
+                        ImportResult.Rejected("La actualización está vacía: la carpeta ${title.id} no trae archivos.")
                     } else {
                         // P2-27: validar el contenido del update igual que
                         // el del juego (antes solo se comprobaba que la
@@ -2401,11 +2401,11 @@ class GameLibraryRepository(private val context: Context) {
                         // patch/ y el núcleo lo ignoraría).
                         val updateEboot = ImportTreeSearch.findEboot(titleDir)
                         if (updateEboot != null && !isValidEbootFile(updateEboot)) {
-                            ImportResult.Failed("El eboot.bin del update no es válido (ni ELF ni SELF, o está truncado). El archivo puede estar corrupto o no ser un update de Child of Light.")
+                            ImportResult.Failed("El eboot.bin de la actualización no es válido (ni ELF ni SELF, o está truncado). El archivo puede estar corrupto o no ser una actualización de Child of Light.")
                         } else {
                             val category = ImportTreeSearch.sfoCategory(titleDir)
                             if (category != null && category != "gp") {
-                                ImportResult.Rejected("El paquete no es un update: su param.sfo dice CATEGORY \"$category\" (un update trae \"gp\"). Revisa que sea el .zip del update, no el del juego.")
+                                ImportResult.Rejected("El paquete no es una actualización: su param.sfo dice CATEGORY \"$category\" (una actualización trae \"gp\"). Revisa que sea el .zip de la actualización, no el del juego.")
                             } else {
                                 if (!force) {
                                     updateDuplicateMessage(title.id, incomingIsPkg = false)?.let { return duplicateResult(it) }
