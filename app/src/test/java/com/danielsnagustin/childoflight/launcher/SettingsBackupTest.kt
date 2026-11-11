@@ -1,5 +1,6 @@
 package com.danielsnagustin.childoflight.launcher
 
+import com.danielsnagustin.childoflight.launcher.data.SettingsRepository
 import com.danielsnagustin.childoflight.launcher.data.decodeSettingsBackup
 import com.danielsnagustin.childoflight.launcher.data.encodeSettingsBackup
 import com.danielsnagustin.childoflight.launcher.model.AccentColor
@@ -103,6 +104,28 @@ class SettingsBackupTest {
         assertEquals(100, decoded.first.audioVolume)
         assertEquals(0, decoded.first.fileLoadingDelay)
         assertEquals(1f, decoded.first.touchOverlayOpacity, 0.001f)
+    }
+
+    @Test
+    fun editedFileLoadingDelayAboveThirtyIsClamped() {
+        // R7-P2-03: un backup editado a mano con 99999 ms dejaría el
+        // juego inutilizable (el núcleo duerme esos ms en cada
+        // sceIoOpen): el tope es 30, como el slider de la pantalla
+        // de CPU. El mismo clamp lo aplican save() y la lectura de
+        // DataStore (SettingsRepository.clampFileLoadingDelay).
+        val json = "{\"format\":\"col-settings-backup\",\"version\":1," +
+            "\"fileLoadingDelay\":99999}"
+        val decoded = decodeSettingsBackup(json, LauncherSettings(), UiPreferences()).getOrThrow()
+        assertEquals(30, decoded.first.fileLoadingDelay)
+    }
+
+    @Test
+    fun fileLoadingDelayClampIsSharedBySaveDecodeAndRead() {
+        assertEquals(0, SettingsRepository.clampFileLoadingDelay(-5))
+        assertEquals(0, SettingsRepository.clampFileLoadingDelay(0))
+        assertEquals(15, SettingsRepository.clampFileLoadingDelay(15))
+        assertEquals(30, SettingsRepository.clampFileLoadingDelay(30))
+        assertEquals(30, SettingsRepository.clampFileLoadingDelay(99999))
     }
 
     @Test
