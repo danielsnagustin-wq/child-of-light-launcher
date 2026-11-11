@@ -84,7 +84,7 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         // nota de abajo ya dice que hay que instalarlo primero.
         if (title != null) {
             Text(
-                "Carpeta de saves (sesión activa): ux0/user/00/savedata/$title",
+                "Carpeta de saves (sesión activa, dentro del almacenamiento privado del launcher): ux0/user/00/savedata/$title",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
             )
