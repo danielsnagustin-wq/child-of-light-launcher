@@ -80,10 +80,11 @@ import kotlin.math.sin
  *
  * Tocar un trofeo solo abre su información: aquí no se marca nada a
  * mano. Los trofeos se ganan jugando (la sincronización automática
- * con el progreso real del núcleo está pendiente de que JUGAR
- * funcione); también se puede importar progreso exportado desde
- * Guardados. "Borrar progreso de logros" pide doble confirmación
- * porque borraría los trofeos ganados.
+ * con el progreso real del núcleo existe desde la 0.2.57: al volver
+ * del juego se aplica el TROPHY.TRP real); también se puede importar
+ * progreso exportado desde Guardados (solo respaldos firmados
+ * exportados por la app, 0.2.58). "Borrar progreso de logros" pide
+ * doble confirmación porque borraría los trofeos ganados.
  */
 
 // R2-S01: nombres en inglés de los 20 trofeos del launcher (de los
@@ -181,7 +182,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             }
             NoteText("Logros LOCALES del launcher: no se sincronizan con PSN / PlayStation Network ni con Steam. No hay platino en este juego (ni en PS4 ni en Vita).")
             scan?.let { s ->
-                NoteText("Trofeos del núcleo (ux0/user/00/trophy/): ${s.note}")
+                NoteText("Trofeos del núcleo (ux0/user/00/trophy/data/<NPCOMMID>/): ${s.note}")
             }
             // R2-S01: diagnóstico del TROPHY.TRP real del juego instalado
             // (sce_sys/trophy/). S14 resolvió la duda: el juego tiene
