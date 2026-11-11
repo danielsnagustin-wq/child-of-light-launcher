@@ -169,7 +169,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         // (líneas + lowercase + regex por línea en cada recomposición).
         val recentErrors = remember(safeLogText) { extractRecentErrorLines(safeLogText) }
         if (recentErrors.isEmpty()) {
-            Text("Sin errores recientes en el log.", color = ColTurquoise)
+            Text("Sin errores recientes en el log.", color = if (isDarkUi(uiPrefs)) ColTurquoise else ColLavenderBlue)
         } else {
             recentErrors.forEach { line -> Text("• $line", style = MaterialTheme.typography.bodySmall) }
         }
