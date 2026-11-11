@@ -39,6 +39,10 @@ import org.junit.Test
  * 186 dp, zona Igniculus 115 dp); los tests de este archivo afirman
  * los valores nuevos.
  *
+ * 0.2.58 (2026-11-10, R7-P1-04/R7-P2-04): espada y salto suben a
+ * 92 dp y se mueven a su x del mockup (0.914 y 1.012 guardado);
+ * una mano conserva espada/salto en 82 dp.
+ *
  * Rombo estándar, centrado en (0.80, 0.71): TRIANGLE arriba,
  * CIRCLE derecha, CROSS abajo, SQUARE izquierda. Rombo antiguo
  * (transpuesto): TRIANGLE izquierda, SQUARE arriba, CIRCLE abajo,
@@ -92,8 +96,10 @@ class TouchLayoutDiamondMigrationTest {
         assertEquals(6, controls.size)
         assertEquals(0.05f to 0.675f, facePosition(controls, "stick"))
         assertEquals(186, controls.first { it.id == "stick" }.sizeDp)
-        assertEquals(0.864f to 0.576f, facePosition(controls, "btn_sword"))
-        assertEquals(0.93f to 0.752f, facePosition(controls, "btn_jump"))
+        assertEquals(0.914f to 0.576f, facePosition(controls, "btn_sword"))
+        assertEquals(92, controls.first { it.id == "btn_sword" }.sizeDp)
+        assertEquals(1.012f to 0.752f, facePosition(controls, "btn_jump"))
+        assertEquals(92, controls.first { it.id == "btn_jump" }.sizeDp)
         assertEquals(0.50f to 0.07f, facePosition(controls, "btn_start"))
         assertEquals(0.59f to 0.07f, facePosition(controls, "btn_circle"))
         assertEquals(44, controls.first { it.id == "btn_circle" }.sizeDp)
@@ -123,8 +129,8 @@ class TouchLayoutDiamondMigrationTest {
         // círculo ocultos, Start e Igniculus visibles.
         val controls = externalGamepadLayout()
         assertEquals(6, controls.size)
-        assertEquals(0.864f to 0.576f, facePosition(controls, "btn_sword"))
-        assertEquals(0.93f to 0.752f, facePosition(controls, "btn_jump"))
+        assertEquals(0.914f to 0.576f, facePosition(controls, "btn_sword"))
+        assertEquals(1.012f to 0.752f, facePosition(controls, "btn_jump"))
         assertTrue(controls.filter { it.id == "stick" || it.id == "btn_sword" || it.id == "btn_jump" || it.id == "btn_circle" }.all { !it.visible })
         assertEquals(true, controls.first { it.id == "btn_start" }.visible)
         assertEquals(186, controls.first { it.id == "stick" }.sizeDp)
@@ -139,8 +145,8 @@ class TouchLayoutDiamondMigrationTest {
         // 140 dp, Igniculus en y 0.35) migra al layout limpio de
         // fábrica, no al rombo estándar.
         assertEquals(defaultTouchLayout(), migrated.controls)
-        assertEquals(0.864f to 0.576f, facePosition(migrated.controls, "btn_sword"))
-        assertEquals(0.93f to 0.752f, facePosition(migrated.controls, "btn_jump"))
+        assertEquals(0.914f to 0.576f, facePosition(migrated.controls, "btn_sword"))
+        assertEquals(1.012f to 0.752f, facePosition(migrated.controls, "btn_jump"))
         assertEquals(186, migrated.controls.first { it.id == "stick" }.sizeDp)
         assertEquals(0.82f to 0.808f, facePosition(migrated.controls, "igniculus"))
         assertEquals("default-g99", migrated.id)
@@ -165,8 +171,8 @@ class TouchLayoutDiamondMigrationTest {
         val migrated = TouchLayoutRepository.migrateBuiltInProfile(saved)
         // 0.2.54: migra al layout limpio de mando externo entero.
         assertEquals(externalGamepadLayout(), migrated.controls)
-        assertEquals(0.864f to 0.576f, facePosition(migrated.controls, "btn_sword"))
-        assertEquals(0.93f to 0.752f, facePosition(migrated.controls, "btn_jump"))
+        assertEquals(0.914f to 0.576f, facePosition(migrated.controls, "btn_sword"))
+        assertEquals(1.012f to 0.752f, facePosition(migrated.controls, "btn_jump"))
         assertEquals(186, migrated.controls.first { it.id == "stick" }.sizeDp)
         assertEquals(0.82f to 0.808f, facePosition(migrated.controls, "igniculus"))
     }
@@ -221,8 +227,8 @@ class TouchLayoutDiamondMigrationTest {
         val migrated = TouchLayoutRepository.migrateBuiltInProfile(decoded!!)
         // 0.2.54: tras el round-trip, la migración completa lleva
         // el perfil viejo al layout limpio de fábrica.
-        assertEquals(0.864f to 0.576f, facePosition(migrated.controls, "btn_sword"))
-        assertEquals(0.93f to 0.752f, facePosition(migrated.controls, "btn_jump"))
+        assertEquals(0.914f to 0.576f, facePosition(migrated.controls, "btn_sword"))
+        assertEquals(1.012f to 0.752f, facePosition(migrated.controls, "btn_jump"))
         assertEquals(186, migrated.controls.first { it.id == "stick" }.sizeDp)
         assertEquals(0.82f to 0.808f, facePosition(migrated.controls, "igniculus"))
         val redecoded = TouchLayoutRepository.decodeProfile(TouchLayoutRepository.encodeProfile(migrated))
@@ -240,16 +246,16 @@ class TouchLayoutDiamondMigrationTest {
         val migrated = TouchLayoutRepository.migrateBuiltInProfiles(saved)
         // 0.2.54: los tres migran al layout limpio de fábrica; el
         // personalizado no se toca.
-        assertEquals(0.864f to 0.576f, facePosition(migrated[0].controls, "btn_sword"))
-        assertEquals(0.93f to 0.752f, facePosition(migrated[0].controls, "btn_jump"))
+        assertEquals(0.914f to 0.576f, facePosition(migrated[0].controls, "btn_sword"))
+        assertEquals(1.012f to 0.752f, facePosition(migrated[0].controls, "btn_jump"))
         assertEquals(186, migrated[0].controls.first { it.id == "stick" }.sizeDp)
         assertEquals(0.82f to 0.808f, facePosition(migrated[0].controls, "igniculus"))
         assertEquals(0.83f to 0.63f, facePosition(migrated[1].controls, "btn_sword"))
         assertEquals(0.91f to 0.79f, facePosition(migrated[1].controls, "btn_jump"))
         assertEquals(186, migrated[1].controls.first { it.id == "stick" }.sizeDp)
         assertEquals(0.78f to 0.80f, facePosition(migrated[1].controls, "igniculus"))
-        assertEquals(0.864f to 0.576f, facePosition(migrated[2].controls, "btn_sword"))
-        assertEquals(0.93f to 0.752f, facePosition(migrated[2].controls, "btn_jump"))
+        assertEquals(0.914f to 0.576f, facePosition(migrated[2].controls, "btn_sword"))
+        assertEquals(1.012f to 0.752f, facePosition(migrated[2].controls, "btn_jump"))
         assertEquals(186, migrated[2].controls.first { it.id == "stick" }.sizeDp)
         assertEquals(0.82f to 0.808f, facePosition(migrated[2].controls, "igniculus"))
         assertEquals(saved[3], migrated[3])
