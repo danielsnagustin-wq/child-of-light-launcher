@@ -46,6 +46,14 @@ class SettingsSearchTest {
     }
 
     @Test
+    fun jitFindsNothing() {
+        // R7-P2-08: no existe ajuste JIT (la pantalla de CPU lo dice:
+        // no hay interruptor JIT porque no haría nada), así que buscar
+        // "jit" no debe llevar a la optimización CPU (Dynarmic).
+        assertTrue(searchSettings("jit").isEmpty())
+    }
+
+    @Test
     fun accentInsensitive() {
         assertEquals(normalizeSearchText("Diagnóstico"), "diagnostico")
         val results = searchSettings("diagnostico")
