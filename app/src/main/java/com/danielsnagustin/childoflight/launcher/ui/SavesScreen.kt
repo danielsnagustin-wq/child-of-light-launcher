@@ -62,15 +62,15 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
     ) {
-        ScreenHeader("Guardados y datos", "Sesiones, saves y logros, en un solo lugar.")
+        ScreenHeader("Guardados y datos", "Sesiones, partidas guardadas y logros, en un solo lugar.")
         NoteText(
-            "Las sesiones y los saves de aquí viven en el almacenamiento privado del launcher: solo los usará el núcleo embebido. " +
-                "Con la app externa, los saves viven dentro de la app externa y cambiar de sesión aquí no cambia el juego.",
+            "Las sesiones y las partidas guardadas de aquí viven en el almacenamiento privado del launcher: solo los usará el núcleo embebido. " +
+                "Con la app externa, las partidas guardadas viven dentro de la app externa y cambiar de sesión aquí no cambia el juego.",
         )
         if (status.pkgInstalled && !status.gameExtracted) {
             NoteText(
-                "El juego está como .pkg: los saves viven dentro de la app externa, no en el launcher. " +
-                    "Las sesiones, los saves y los logros de aquí solo aplican con el juego extraído o el núcleo embebido.",
+                "El juego está como .pkg: las partidas guardadas viven dentro de la app externa, no en el launcher. " +
+                    "Las sesiones, las partidas guardadas y los logros de aquí solo aplican con el juego extraído o el núcleo embebido.",
             )
         }
         val title = status.titleId?.id
@@ -84,7 +84,7 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         // nota de abajo ya dice que hay que instalarlo primero.
         if (title != null) {
             Text(
-                "Carpeta de saves (sesión activa, dentro del almacenamiento privado del launcher): ux0/user/00/savedata/$title",
+                "Carpeta de partidas guardadas (sesión activa, dentro del almacenamiento privado del launcher): ux0/user/00/savedata/$title",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -92,7 +92,7 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         if (title == null) {
             NoteText("Instala primero el juego para ver sus guardados.")
         } else if (status.saves.isEmpty()) {
-            NoteText("No hay saves todavía. Aparecen aquí después de jugar y guardar en el juego.")
+            NoteText("No hay partidas guardadas todavía. Aparecen aquí después de jugar y guardar en el juego.")
         } else {
             SectionTitle("Archivos de guardado (${status.saves.size})")
             status.saves.forEach { save ->
@@ -100,27 +100,27 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             }
         }
 
-        SectionTitle("Saves")
+        SectionTitle("Partidas guardadas")
         // Los saves del launcher solo existen con el juego extraído:
         // con un .pkg los saves viven dentro de Vita3K.
         OutlinedButton(
             onClick = { exportSaves.launch("child-of-light-saves.zip") },
             modifier = Modifier.fillMaxWidth(),
             enabled = status.gameExtracted && status.saves.isNotEmpty(),
-        ) { Text("Exportar saves (.zip)") }
+        ) { Text("Exportar partidas guardadas (.zip)") }
         OutlinedButton(
             onClick = { importSaves.launch("*/*") },
             modifier = Modifier.fillMaxWidth(),
             enabled = status.gameExtracted,
-        ) { Text("Importar saves (.zip)") }
+        ) { Text("Importar partidas guardadas (.zip)") }
 
-        SectionTitle("Logros (junto con los saves)")
+        SectionTitle("Logros (junto con las partidas guardadas)")
         NoteText("El progreso de logros es local y se respalda en el mismo formato que se exporta aquí.")
         OutlinedButton(onClick = { exportTrophies.launch("child-of-light-logros.txt") }, modifier = Modifier.fillMaxWidth()) { Text("Exportar progreso de logros") }
         OutlinedButton(onClick = { importTrophies.launch("*/*") }, modifier = Modifier.fillMaxWidth()) { Text("Importar progreso de logros") }
 
         SectionTitle("Borrar datos del juego")
-        NoteText("Borra el juego, la actualización, los DLCs, los saves y TODAS las sesiones de ${title ?: "Child of Light"}. Esta acción no se puede deshacer. Exporta tus saves, sesiones y logros antes si los quieres conservar.")
+        NoteText("Borra el juego, la actualización, los DLCs, las partidas guardadas y TODAS las sesiones de ${title ?: "Child of Light"}. Esta acción no se puede deshacer. Exporta tus partidas guardadas, sesiones y logros antes si los quieres conservar.")
         OutlinedButton(
             onClick = { showDeleteConfirm = true },
             modifier = Modifier.fillMaxWidth(),
@@ -135,7 +135,7 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
             title = { Text("¿Borrar todos los datos del juego?") },
-            text = { Text("Se borrarán el juego, la actualización, los DLCs, los saves y TODAS las sesiones de ${status.titleId?.id ?: "Child of Light"}. Exporta antes tus saves, sesiones y logros si los quieres conservar.") },
+            text = { Text("Se borrarán el juego, la actualización, los DLCs, las partidas guardadas y TODAS las sesiones de ${status.titleId?.id ?: "Child of Light"}. Exporta antes tus partidas guardadas, sesiones y logros si los quieres conservar.") },
             confirmButton = {
                 TextButton(onClick = { vm.deleteGameData(); showDeleteConfirm = false }) { Text("Borrar todo") }
             },
