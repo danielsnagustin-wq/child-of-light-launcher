@@ -7,6 +7,7 @@ import android.view.SurfaceHolder
 import android.view.View
 import android.view.ViewGroup
 import com.danielsnagustin.childoflight.launcher.core.GamepadOverlayView
+import com.danielsnagustin.childoflight.launcher.core.TouchStats
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import org.libsdl.app.SDLSurface
 
@@ -114,8 +115,8 @@ class EmuSurface(context: Context) : SDLSurface(context) {
      * superficie con el overlay como primer destino.
      */
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        val overlay = findTouchOverlay()
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            val overlay = findTouchOverlay()
             if (overlay != null &&
                 shouldOfferDownToOverlayFirst(
                     event.actionMasked,
@@ -131,7 +132,29 @@ class EmuSurface(context: Context) : SDLSurface(context) {
                 }
             }
         }
-        return super.dispatchTouchEvent(event)
+        // 0.2.63 (D): el toque que llega aquí es táctil libre del
+        // juego (el overlay ya lo declinó): se registra en TouchStats
+        // para el reporte de bug. Los reenvíos sintéticos (segundo
+        // dedo, zona de Igniculus) pasan por aquí con
+        // forwardingSyntheticTouch activo y NO se registran: ya se
+        // cuentan en su origen (forwardPointerDownToSdl / forwardTouch).
+        val delivered = super.dispatchTouchEvent(event)
+        if (shouldRecordFreeTouch(overlay?.forwardingSyntheticTouch == true)) {
+            val x = if (event.pointerCount > 0) event.getX(0) else TouchStats.NO_POSITION
+            val y = if (event.pointerCount > 0) event.getY(0) else TouchStats.NO_POSITION
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    if (TouchStats.recordFreeDown(delivered, x, y)) {
+                        Log.i("EmuSurface", "toque libre DOWN en ($x, $y) entregado a SDL")
+                    } else if (!delivered) {
+                        Log.w("EmuSurface", "toque libre DOWN en ($x, $y) PERDIDO (SDL no lo consumió)")
+                    }
+                }
+                MotionEvent.ACTION_UP -> TouchStats.recordFreeUp(delivered, x, y)
+                MotionEvent.ACTION_MOVE -> TouchStats.recordFreeMove(x, y)
+            }
+        }
+        return delivered
     }
 
     private fun findTouchOverlay(): GamepadOverlayView? {
@@ -171,3 +194,12 @@ internal fun shouldOfferDownToOverlayFirst(
         overlayVisible &&
         !forwardingSyntheticTouch
 }
+
+/**
+ * 0.2.63 (D): un toque sintético en vuelo (segundo dedo, zona de
+ * Igniculus) ya se contó en su origen (forwardPointerDownToSdl /
+ * forwardTouch): EmuSurface no lo vuelve a contar como toque libre.
+ * Solo se registra el toque que NO es sintético. Pura, testeable en
+ * JVM (FreeTouchRegressionTest).
+ */
+internal fun shouldRecordFreeTouch(forwardingSyntheticTouch: Boolean): Boolean = !forwardingSyntheticTouch
