@@ -33,6 +33,10 @@ import org.junit.Test
  * 115 dp, orbe dibujado 97 dp; espada/salto 82 dp, pausa 56 dp y
  * círculo 44 dp no cambian); los perfiles guardados con los
  * tamaños viejos migran a los nuevos (ver CleanTouchLayoutTest).
+ * 0.2.58 (R7-P1-04/R7-P2-04): espada y salto suben a 92 dp y se
+ * mueven a su x del mockup (0.914 y 1.012 guardado); ver
+ * CleanTouchLayoutTest. 0.2.58 (R7-P1-05): el stick pisa la barra
+ * negra (clamp relajado solo para él); ver TouchOverlayMappingTest.
  * R5-A1-8: la paleta ya no lleva el morado
  * rosado #BA68C8; el test endurecido afirma que TODA la paleta
  * está en el conjunto identidad documentado abajo.
