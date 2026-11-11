@@ -84,7 +84,8 @@ import kotlin.math.sin
  * del juego se aplica el TROPHY.TRP real); también se puede importar
  * progreso exportado desde Guardados (solo respaldos firmados
  * exportados por la app, 0.2.58). "Borrar progreso de logros" pide
- * doble confirmación porque borraría los trofeos ganados.
+ * doble confirmación porque borraría los trofeos ganados (vive en
+ * Ajustes → General desde la 0.2.63, no en esta pantalla).
  */
 
 // R2-S01: nombres en inglés de los 20 trofeos del launcher (de los
@@ -124,10 +125,11 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     val scan by vm.trophyScan.collectAsState()
     val trpRead by vm.trpRead.collectAsState()
     var selected by remember { mutableStateOf<TrophyProgress?>(null) }
-    var showResetConfirm by rememberSaveable { mutableStateOf(false) }
-    // R2-P2-02: doble confirmación: el primer diálogo avisa y el
-    // segundo deja explícito que borrará los trofeos ganados jugando.
-    var showResetConfirm2 by rememberSaveable { mutableStateOf(false) }
+    // 0.2.63 (F): el botón "Borrar progreso de logros" con su doble
+    // confirmación vivía aquí y se movió a Ajustes → General, junto
+    // a "Restablecer ajustes", lejos de un toque accidental. La
+    // función vm.resetTrophies() sigue existiendo (la necesita
+    // "Borrar datos del juego"); solo cambió de sitio el botón.
 
     val unlocked = progress?.count { it.unlocked } ?: 0
     val total = progress?.size ?: 0
@@ -297,7 +299,6 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
 
         item {
             Spacer(modifier = Modifier.height(12.dp))
-            OutlinedButton(onClick = { showResetConfirm = true }, modifier = Modifier.fillMaxWidth()) { Text("Borrar progreso de logros") }
             BackButton(onBack)
         }
     }
@@ -319,28 +320,6 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             // El marcado manual no vuelve aquí: los trofeos solo se ganan
             // jugando, por decisión del usuario.
             confirmButton = { TextButton(onClick = { selected = null }) { Text("Cerrar") } },
-        )
-    }
-    if (showResetConfirm) {
-        AlertDialog(
-            onDismissRequest = { showResetConfirm = false },
-            title = { Text("¿Borrar el progreso de logros?") },
-            text = { Text("Se borran los 20 trofeos desbloqueados en este launcher. Es solo local: no afecta a PSN porque nunca se sincroniza.") },
-            confirmButton = {
-                TextButton(onClick = { showResetConfirm = false; showResetConfirm2 = true }) { Text("Continuar") }
-            },
-            dismissButton = { TextButton(onClick = { showResetConfirm = false }) { Text("Cancelar") } },
-        )
-    }
-    if (showResetConfirm2) {
-        AlertDialog(
-            onDismissRequest = { showResetConfirm2 = false },
-            title = { Text("¿Seguro? Se borrarán los trofeos ganados") },
-            text = { Text("Esto borrará los trofeos ganados jugando, con sus fechas, y no se pueden recuperar. Si quieres conservarlos, expórtalos antes desde Guardados → Exportar progreso de logros.") },
-            confirmButton = {
-                TextButton(onClick = { vm.resetTrophies(); showResetConfirm2 = false }) { Text("Sí, borrar los trofeos ganados") }
-            },
-            dismissButton = { TextButton(onClick = { showResetConfirm2 = false }) { Text("Cancelar") } },
         )
     }
 }
