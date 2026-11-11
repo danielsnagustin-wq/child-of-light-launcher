@@ -274,7 +274,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             color = cardTextColor(dark),
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        SecondaryButton("Importar update (.zip / .vpk / .pkg)", onClick = { pickUpdate.launch("*/*") }, enabled = !importing)
+                        SecondaryButton("Importar actualización (.zip / .vpk / .pkg)", onClick = { pickUpdate.launch("*/*") }, enabled = !importing)
                     }
                 }
             }
