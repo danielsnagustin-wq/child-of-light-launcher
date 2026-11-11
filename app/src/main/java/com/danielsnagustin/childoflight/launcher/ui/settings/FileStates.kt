@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
 import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
 import com.danielsnagustin.childoflight.launcher.model.GameStatus
+import com.danielsnagustin.childoflight.launcher.ui.ColLavenderBlue
 import com.danielsnagustin.childoflight.launcher.ui.ColTurquoise
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
 import com.danielsnagustin.childoflight.launcher.ui.SectionTitle
@@ -60,7 +61,7 @@ fun FileStateSection(
             FirmwareStatus.Missing -> "No"
         },
         style = MaterialTheme.typography.bodyMedium,
-        color = if (firmwareStatus is FirmwareStatus.Ready) ColTurquoise else cardTextColor(dark),
+        color = if (firmwareStatus is FirmwareStatus.Ready) { if (dark) ColTurquoise else ColLavenderBlue } else cardTextColor(dark),
     )
     // 3. Juego importado = extraído (eboot.bin en ux0/app/) o .pkg guardado.
     Text(
