@@ -1,77 +1,86 @@
 package com.danielsnagustin.childoflight.launcher.model
 
 /**
- * Los 27 trofeos de Child of Light en PS Vita, EN ESPAÑOL.
+ * Los 20 trofeos de Child of Light en PS Vita, EN ESPAÑOL.
  *
- * Nombres y descripciones oficiales en español, verificados en las
- * listas españolas de PSN/Xbox del juego (2026-11-08):
- * - All Gamers In, "Guía de Trofeos/Logros Child of Light"
- *   (allgamersin.com/guia-trofeos-logros-child-of-light)
+ * La lista correcta es de 20, no de 27 (corrección 0.2.57): la lista
+ * anterior de 27 mezclaba los trofeos de Vita con logros extra de
+ * Xbox One / PC. Verificado en 3 fuentes (2026-11-10):
+ * - TrueTrophies, "Full list of all 20 Child of Light trophies -
+ *   19 bronze and 1 silver" (versión Vita): 19 Bronce y 1 Plata
+ *   (Coronación, nº 4). No hay platino.
  * - EliteGuías, "Logros, Trofeos y Trucos Child of Light"
- *   (eliteguias.com/trucos/c/child-of-light.php)
- * - Zhakey, "Guía de Logros (Child of Light)"
- *   (zhakey.com/2015/04/guia-de-logros-child-of-light.html)
- * - Mundogamers, trofeos PS3/PS4 de Child of Light
- * - Xombit Games, "Logros y trofeos disponibles para Child of Light"
- * Comprobación cruzada en inglés: lista de GameFAQs para la versión
- * Vita (27 trofeos). OJO: la versión PS4 tiene 20; NO confundir.
- * No hay platino en ninguna de las dos listas: no se promete platino
- * en ningún sitio.
+ *   (eliteguias.com/trucos/c/child-of-light.php): los 20 nombres
+ *   en español con sus descripciones.
+ * - AllGamersIn, "Guía de Trofeos/Logros Child of Light": "Trofeos
+ *   / Logros Offline: 20" y "En su versión Xbox One hay tres logros
+ *   más, uno de ellos con funciones online".
  *
- * Los 27 nombres y descripciones son oficiales verificados (2 o más
- * fuentes coinciden en cada uno). Notas: "Furia alada" (19) frente a
- * "Furia aladal" (errata en una sola guía); "Robando protagonismo"
- * (16) frente a "Ladrón de Escena" (lista auto-traducida); "A través
- * del cristal" (18) es el nombre oficial en español del trofeo
- * online, que no existe en la lista de PS4. El nombre en inglés de
- * cada trofeo queda en el comentario de su línea, como referencia.
+ * Nombres y descripciones oficiales en español. Notas: "Furia
+ * alada" (17) frente a "Furia aladal" (errata en AllGamersIn);
+ * "Robando protagonismo" (15) frente a "Ladrón de Escena" (lista
+ * auto-traducida). El nombre en inglés de cada trofeo va en el
+ * campo englishName (lo usa el puente JNI para mapear por nombre
+ * contra el TROPHY.TRP del núcleo); nunca se muestra como nombre
+ * visible en ninguna superficie (lista, diálogo, popup, log).
  *
- * Solo el trofeo 4 (Coronación) tiene grado documentado en la fuente
- * (Plata). Para el resto no se inventa grado (Bronce/Plata):
- * el grado queda como "no especificado en la fuente".
+ * Grados: 19 Bronce y 1 Plata (Coronación), según TrueTrophies.
+ * Ningún trofeo Vita requiere online: onlineRequired es false en
+ * los 20. El trofeo online "A través del cristal" (enviar Oculi a
+ * un amigo) solo existe en Xbox One / PC, con servidores cerrados.
+ *
+ * Eliminados de la lista vieja de 27 (ninguno está en la lista
+ * oficial Vita de 20 de TrueTrophies):
+ * - 6 La niña y la luciérnaga (The Girl and the Firefly): no está
+ *   en la lista Vita; "Conoce a Igniculus" no es un trofeo Vita.
+ * - 18 A través del cristal (Through the Looking Glass): online
+ *   solo de Xbox One / PC, servidores cerrados.
+ * - 23 General de la luz (General of Light): no está en Vita.
+ * - 24 Guardianes de Lemuria (Guardians of Lemuria): no está
+ *   en Vita.
+ * - 25 Aurora borealis (Aurora Borealis): no está en Vita.
+ * - 26 Cuando los cerdos vuelen (When Pigs Fly): petición
+ *   lemuriana extra de Xbox One.
+ * - 27 La manzana dorada (Golden Apple): petición lemuriana
+ *   extra de Xbox One.
  *
  * Son logros LOCALES del launcher. NO se sincronizan con PSN /
  * PlayStation Network ni con Steam. El progreso vive en DataStore
  * y se puede exportar/importar junto con los saves.
  */
 data class Trophy(
-    val number: Int, // 1..27
+    val number: Int, // 1..20
     val name: String,
     val description: String,
+    /** Nombre en inglés: solo para mapear por nombre contra el TROPHY.TRP. Nunca visible. */
+    val englishName: String = "",
     val isSecret: Boolean = false,
-    val tier: String? = null, // solo Coronación tiene "Plata" documentado
-    /** Requiere función online de Vita (enviar Oculi a un amigo). */
+    val tier: String? = null, // "Bronce" en 19, "Plata" solo en Coronación (nº 4)
+    /** Requiere función online de Vita. En la lista Vita de 20: siempre false. */
     val onlineRequired: Boolean = false,
 )
 
-val TROPHIES_27: List<Trophy> = listOf(
-    Trophy(1, "Atrapaestrellas", "Recupera las estrellas.", isSecret = true), // EN: Starcatcher
-    Trophy(2, "En la luna", "Recupera la luna.", isSecret = true), // EN: Over the Moon
-    Trophy(3, "Amanecer", "Recupera el sol.", isSecret = true), // EN: Sunrise
-    Trophy(4, "Coronación", "Destrona a la Reina de la Oscuridad.", isSecret = true, tier = "Plata"), // EN: Coronation
-    Trophy(5, "Comedia", "Rubella se une al grupo de Aurora."), // EN: Comedy
-    Trophy(6, "La niña y la luciérnaga", "Conoce a Igniculus."), // EN: The Girl and the Firefly
-    Trophy(7, "Captura de un Capilli", "Finn se une al grupo de Aurora."), // EN: Capilli Catch
-    Trophy(8, "Hermana querida", "Norah se une al grupo de Aurora."), // EN: Sweet Sister
-    Trophy(9, "Unión de un Bolmus", "Robert se une al grupo de Aurora."), // EN: Bolmus Bond
-    Trophy(10, "La familia Kategida", "Óengus se une al grupo de Aurora."), // EN: Kategida Kindred
-    Trophy(11, "Promesa de los piscis", "Gen se une al grupo de Aurora."), // EN: Piscean Promise
-    Trophy(12, "Tragedia", "Tristis se une al grupo de Aurora."), // EN: Tragedy
-    Trophy(13, "Décimo cumpleaños", "Llega al nivel 10 con Aurora."), // EN: Tenth Birthday
-    Trophy(14, "Perfeccionista", "Mejora una habilidad hasta el máximo nivel."), // EN: Perfectionist
-    Trophy(15, "Experto oculista", "Crea Oculi."), // EN: Master Oculist
-    Trophy(16, "Robando protagonismo", "Realiza 3 golpes sorpresa."), // EN: Scene Stealer
-    Trophy(17, "Aguafiestas", "Interrumpe a 3 enemigos al mismo tiempo."), // EN: Showstopper
-    Trophy(18, "A través del cristal", "Envía Oculi a un amigo.", onlineRequired = true), // EN: Through the Looking Glass
-    Trophy(19, "Furia alada", "Arrasa a 5 enemigos."), // EN: Winged Fury
-    Trophy(20, "Explorador", "Encuentra y abre 30 cofres."), // EN: Explorer
-    Trophy(21, "Soneto perfecto", "Consigue todas las confesiones."), // EN: Perfect Sonnet
-    Trophy(22, "Raíces", "Completa 3 peticiones de lemurianos."), // EN: Grassroots
-    Trophy(23, "General de la luz", "Gana un combate contra 3 criaturas oscuras sin perder ningún PV."), // EN: General of Light
-    Trophy(24, "Guardianes de Lemuria", "Gana un combate sin Aurora."), // EN: Guardians of Lemuria
-    Trophy(25, "Aurora borealis", "Recoge 5 depósitos de brillo."), // EN: Aurora Borealis
-    Trophy(26, "Cuando los cerdos vuelen", "Termina la petición de los lemurianos: La odisea de Aquiles."), // EN: When Pigs Fly
-    Trophy(27, "La manzana dorada", "Termina la petición de los lemurianos: Librecambismo."), // EN: Golden Apple
+val TROPHIES_20: List<Trophy> = listOf(
+    Trophy(1, "Atrapaestrellas", "Recupera las estrellas.", "Starcatcher", isSecret = true, tier = "Bronce"),
+    Trophy(2, "En la luna", "Recupera la luna.", "Over the Moon", isSecret = true, tier = "Bronce"),
+    Trophy(3, "Amanecer", "Recupera el sol.", "Sunrise", isSecret = true, tier = "Bronce"),
+    Trophy(4, "Coronación", "Destrona a la Reina de la Oscuridad.", "Coronation", isSecret = true, tier = "Plata"),
+    Trophy(5, "Comedia", "Rubella se une al grupo de Aurora.", "Comedy", tier = "Bronce"),
+    Trophy(6, "Captura de un Capilli", "Finn se une al grupo de Aurora.", "Capilli Catch", tier = "Bronce"),
+    Trophy(7, "Hermana querida", "Norah se une al grupo de Aurora.", "Sweet Sister", tier = "Bronce"),
+    Trophy(8, "Unión de un Bolmus", "Robert se une al grupo de Aurora.", "Bolmus Bond", tier = "Bronce"),
+    Trophy(9, "La familia Kategida", "Óengus se une al grupo de Aurora.", "Kategida Kindred", tier = "Bronce"),
+    Trophy(10, "Promesa de los piscis", "Gen se une al grupo de Aurora.", "Piscean Promise", tier = "Bronce"),
+    Trophy(11, "Tragedia", "Tristis se une al grupo de Aurora.", "Tragedy", tier = "Bronce"),
+    Trophy(12, "Décimo cumpleaños", "Llega al nivel 10 con Aurora.", "Tenth Birthday", tier = "Bronce"),
+    Trophy(13, "Perfeccionista", "Mejora una habilidad hasta el máximo nivel.", "Perfectionist", tier = "Bronce"),
+    Trophy(14, "Experto oculista", "Crea Oculi.", "Master Oculist", tier = "Bronce"),
+    Trophy(15, "Robando protagonismo", "Realiza 3 golpes sorpresa.", "Scene Stealer", tier = "Bronce"),
+    Trophy(16, "Aguafiestas", "Interrumpe a 3 enemigos al mismo tiempo.", "Showstopper", tier = "Bronce"),
+    Trophy(17, "Furia alada", "Arrasa a 5 enemigos.", "Winged Fury", tier = "Bronce"),
+    Trophy(18, "Explorador", "Encuentra y abre 30 cofres.", "Explorer", tier = "Bronce"),
+    Trophy(19, "Soneto perfecto", "Consigue todas las confesiones.", "Perfect Sonnet", tier = "Bronce"),
+    Trophy(20, "Raíces", "Completa 3 peticiones de lemurianos.", "Grassroots", tier = "Bronce"),
 )
 
 data class TrophyProgress(
