@@ -733,14 +733,28 @@ class TouchLayoutRepository(private val context: Context) {
          * viejos de 0.2.54/0.2.55/0.2.56 (stick 210 dp, zona
          * Igniculus 156 dp). 0.2.58: también con espada y salto
          * en sus valores viejos de 0.2.57 (82 dp en (0.864, 0.576)
-         * y (0.93, 0.752)): sin esa vuelta atrás, el layout
-         * construido desde el nuevo llevaría espada/salto en
-         * 0.914/1.012 con 92 dp, que ningún perfil guardado tiene.
-         * Pausa y círculo iguales que ahora. Se construye desde
-         * el layout nuevo con los valores vueltos atrás, así no
-         * se duplica la lista: visibilidades y opacidades son las
-         * mismas en las dos versiones. Null para ids desconocidos
-         * (nunca coincide con un perfil guardado).
+         * y (0.93, 0.752)). 0.2.63 (run #337): la recalibración
+         * cambió los tamaños nuevos (espada 86 dp, salto 87 dp,
+         * pausa 52 dp, círculo 41 dp; una mano 77 dp), y las
+         * vueltas atrás de espada/salto estaban condicionadas a
+         * `sizeDp == 92` (el tamaño viejo de 0.2.62): con 86/87 dp
+         * la condición ya no se cumplía nunca y el builder
+         * devolvía el layout nuevo con stick 210 y zona 156, que
+         * ningún perfil guardado tiene — la guarda de
+         * migrateBuiltInToCleanLayout no coincidía y los perfiles
+         * limpios de 0.2.54-0.2.56 no migraban (4 tests rojos en
+         * el run #337). Ahora revierte TODOS los tamaños (y las
+         * posiciones de espada/salto del default/externo) de forma
+         * explícita por id, como cleanLayoutWith062Sizes: pausa 56
+         * dp y círculo 44 dp también vuelven atrás (en 0.2.63 son
+         * 52/41 dp), y en una mano espada/salto vuelven a 82 dp
+         * en sus posiciones (0.83, 0.63) y (0.91, 0.79), que nunca
+         * cambiaron. Pausa y círculo iguales que ahora. Se
+         * construye desde el layout nuevo con los valores vueltos
+         * atrás, así no se duplica la lista: visibilidades y
+         * opacidades son las mismas en las dos versiones. Null
+         * para ids desconocidos (nunca coincide con un perfil
+         * guardado).
          */
         private fun cleanLayoutWithOldSizes(profileId: String): List<TouchControl>? {
             val clean = when (profileId) {
@@ -753,16 +767,18 @@ class TouchLayoutRepository(private val context: Context) {
                 when (control.id) {
                     "stick" -> control.copy(sizeDp = 210)
                     "igniculus" -> control.copy(sizeDp = 156)
-                    "btn_sword" -> if (control.xFraction == 0.914f && control.sizeDp == 92) {
+                    "btn_sword" -> if (control.xFraction == 0.914f) {
                         control.copy(xFraction = 0.864f, sizeDp = 82)
                     } else {
-                        control
+                        control.copy(sizeDp = 82)
                     }
-                    "btn_jump" -> if (control.xFraction == 1.012f && control.sizeDp == 92) {
+                    "btn_jump" -> if (control.xFraction == 1.012f) {
                         control.copy(xFraction = 0.93f, sizeDp = 82)
                     } else {
-                        control
+                        control.copy(sizeDp = 82)
                     }
+                    "btn_start" -> control.copy(sizeDp = 56)
+                    "btn_circle" -> control.copy(sizeDp = 44)
                     else -> control
                 }
             }
@@ -777,9 +793,20 @@ class TouchLayoutRepository(private val context: Context) {
          * espada/salto en (0.83, 0.63) y (0.91, 0.79) con 82 dp y
          * no coincide con los valores nuevos, así que para ella
          * este layout ES el nuevo y la coincidencia es un no-op.
-         * Se construye desde el layout nuevo revirtiendo solo
-         * espada/salto, así no se duplica la lista. Null para ids
-         * desconocidos (nunca coincide con un perfil guardado).
+         * 0.2.63 (run #337): misma podredumbre que
+         * cleanLayoutWithOldSizes — las vueltas atrás de
+         * espada/salto estaban condicionadas a `sizeDp == 92` y
+         * stick/zona/pausa/círculo no se revertían, así que el
+         * builder devolvía el layout nuevo tal cual (rama muerta:
+         * ningún perfil guardado coincide con el layout nuevo).
+         * Ahora revierte TODOS los valores a los de 0.2.57 de
+         * forma explícita por id, como cleanLayoutWith062Sizes:
+         * stick 186 dp, zona 115 dp, pausa 56 dp, círculo 44 dp,
+         * espada/salto 82 dp (en (0.864, 0.576)/(0.93, 0.752) en
+         * default/externo y en (0.83, 0.63)/(0.91, 0.79) en una
+         * mano). Se construye desde el layout nuevo revirtiendo
+         * solo esos valores, así no se duplica la lista. Null para
+         * ids desconocidos (nunca coincide con un perfil guardado).
          */
         private fun cleanLayoutWith057SwordJump(profileId: String): List<TouchControl>? {
             val clean = when (profileId) {
@@ -790,16 +817,20 @@ class TouchLayoutRepository(private val context: Context) {
             }
             return clean.map { control ->
                 when (control.id) {
-                    "btn_sword" -> if (control.xFraction == 0.914f && control.sizeDp == 92) {
+                    "stick" -> control.copy(sizeDp = 186)
+                    "igniculus" -> control.copy(sizeDp = 115)
+                    "btn_sword" -> if (control.xFraction == 0.914f) {
                         control.copy(xFraction = 0.864f, sizeDp = 82)
                     } else {
-                        control
+                        control.copy(sizeDp = 82)
                     }
-                    "btn_jump" -> if (control.xFraction == 1.012f && control.sizeDp == 92) {
+                    "btn_jump" -> if (control.xFraction == 1.012f) {
                         control.copy(xFraction = 0.93f, sizeDp = 82)
                     } else {
-                        control
+                        control.copy(sizeDp = 82)
                     }
+                    "btn_start" -> control.copy(sizeDp = 56)
+                    "btn_circle" -> control.copy(sizeDp = 44)
                     else -> control
                 }
             }
