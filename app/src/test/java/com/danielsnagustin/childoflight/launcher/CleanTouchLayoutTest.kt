@@ -499,6 +499,29 @@ class CleanTouchLayoutTest {
     }
 
     @Test
+    fun editedFiveControlLayoutReturnedFieldByFieldIdentical() {
+        // Fija campo por campo que un limpio de 5 controles
+        // editado por el usuario vuelve intacto por la cadena
+        // completa: la pasada 0.2.57 por control solo achica el
+        // stick (210 -> 186) y la zona (156 -> 115) si el perfil
+        // ya trae btn_circle, y este no lo trae (pre-círculo de
+        // 0.2.54). Regresión del run #231.
+        val edited = cleanFiveControlDefault().map {
+            if (it.id == "btn_sword") it.copy(xFraction = 0.80f) else it
+        }
+        val saved = ControlProfile("default-g99", "Por defecto G99", true, edited)
+        val migrated = TouchLayoutRepository.migrateBuiltInProfile(saved)
+        assertEquals(saved, migrated)
+        assertEquals(210, control(migrated.controls, "stick").sizeDp)
+        assertEquals(156, control(migrated.controls, "igniculus").sizeDp)
+        assertEquals(0.80f to 0.576f, position(migrated.controls, "btn_sword"))
+        assertEquals(0.05f to 0.675f, position(migrated.controls, "stick"))
+        assertEquals(0.82f to 0.808f, position(migrated.controls, "igniculus"))
+        assertFalse(migrated.controls.any { it.id == "btn_circle" })
+        assertEquals(5, migrated.controls.size)
+    }
+
+    @Test
     fun circleButtonUsesGlyphAndRipplePath() {
         // btn_circle es un botón normal (kind "button"): en el juego
         // pasa por ButtonView, que dispara la gota en ACTION_DOWN
