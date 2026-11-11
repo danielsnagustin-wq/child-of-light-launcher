@@ -17,7 +17,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
 import com.danielsnagustin.childoflight.launcher.core.FaceGlyph
-import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.controlRect
+import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.childLayout
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.dpadForStick
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.faceGlyphFor
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.glowSdlButtons
@@ -149,6 +149,23 @@ class GamepadOverlayView @JvmOverloads constructor(
 
     private var controls: List<TouchControl> = emptyList()
     private var builtForSize: Pair<Int, Int>? = null
+    /**
+     * 0.2.63 (G): id del perfil activo que montó [controls] (lo pasa
+     * la Activity en setControls; null si nadie lo pasó). Solo para
+     * la línea de diagnóstico de rebuild(): el perfil + el tamaño
+     * de la vista + las fracciones del stick permiten distinguir,
+     * ante un botón desplazado, si cambió el dato guardado o si la
+     * vista horneó márgenes de un tamaño viejo.
+     */
+    private var activeProfileId: String? = null
+    /**
+     * 0.2.63 (G): controles montados en el mismo orden que los
+     * hijos (rebuild los añade en el orden de overlayChildOrder).
+     * onLayout() los usa para re-derivar los márgenes de cada hijo
+     * desde sus fracciones sin tocar el TouchControl del hijo
+     * (protected en OverlayControlView).
+     */
+    private var mountedControls: List<TouchControl> = emptyList()
 
     /**
      * R4-P1-16: decide qué punteros no consumidos por ningún control
@@ -190,9 +207,10 @@ class GamepadOverlayView @JvmOverloads constructor(
     }
 
     /** Controles del perfil activo (solo se muestran los visibles). Suelta todo lo pulsado antes de reconstruir. */
-    fun setControls(newControls: List<TouchControl>) {
+    fun setControls(newControls: List<TouchControl>, profileId: String? = null) {
         releaseAll()
         controls = newControls
+        activeProfileId = profileId
         builtForSize = null
         rebuild()
     }
@@ -405,12 +423,28 @@ class GamepadOverlayView @JvmOverloads constructor(
     }
 
     private fun forwardPointerDownToSdl(event: MotionEvent, index: Int, pointerId: Int): Boolean {
-        val surface = findSdlSurface() ?: return false
+        val x = event.getX(index)
+        val y = event.getY(index)
+        val surface = findSdlSurface()
+        if (surface == null) {
+            // 0.2.63 (D): sin superficie no hay a dónde reenviar:
+            // cuenta como DOWN perdido en TouchStats.
+            TouchStats.recordForwardedDown(false, x, y)
+            return false
+        }
         val synthetic = obtainSinglePointerEvent(
             event.downTime, event.eventTime, MotionEvent.ACTION_DOWN,
-            pointerId, event.getX(index), event.getY(index),
+            pointerId, x, y,
         )
-        return dispatchSyntheticToSdl(surface, synthetic)
+        // 0.2.63 (D): segundo dedo reenviado como táctil del juego:
+        // se registra en TouchStats (el reporte de bug lo muestra).
+        val delivered = dispatchSyntheticToSdl(surface, synthetic)
+        if (TouchStats.recordForwardedDown(delivered, x, y)) {
+            Log.i("GamepadOverlayView", "toque reenviado DOWN dedo $pointerId en ($x, $y) entregado a SDL")
+        } else if (!delivered) {
+            Log.w("GamepadOverlayView", "toque reenviado DOWN dedo $pointerId en ($x, $y) PERDIDO")
+        }
+        return delivered
     }
 
     private fun forwardPointerMovesToSdl(event: MotionEvent): Boolean {
@@ -439,7 +473,11 @@ class GamepadOverlayView @JvmOverloads constructor(
             downTime, event.eventTime, MotionEvent.ACTION_UP,
             pointerId, x, y,
         )
-        return dispatchSyntheticToSdl(surface, synthetic)
+        // 0.2.63 (D): UP del segundo dedo reenviado (cierra el toque
+        // contado en forwardPointerDownToSdl).
+        val delivered = dispatchSyntheticToSdl(surface, synthetic)
+        TouchStats.recordForwardedUp(delivered, x, y)
+        return delivered
     }
 
     private fun endForwardedTouchesToSdl() {
@@ -461,6 +499,45 @@ class GamepadOverlayView @JvmOverloads constructor(
         if (w > 0 && h > 0 && builtForSize != w to h) rebuild()
     }
 
+    /**
+     * 0.2.63 (G): en CADA layout se re-derivan los márgenes de los
+     * hijos desde las fracciones de sus controles. rebuild() solo
+     * corre cuando cambia el tamaño (onSizeChanged) o se cambian los
+     * controles (setControls): si un rebuild corrió con un tamaño
+     * transitorio, sus márgenes quedaban horneados y nada los
+     * corregía (el stick desplazado de la captura 52166 tras
+     * "Corregir audio"). onLayout() es la red de seguridad: si un
+     * margen ya no corresponde al tamaño actual, se corrige aquí.
+     * Solo se escribe el LayoutParams si difiere: escribirlo
+     * dispara otro layout, y sin la guarda el onLayout se llamaría
+     * a sí mismo en bucle; con ella, la segunda pasada ya no
+     * cambia nada y el bucle termina.
+     */
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        repositionChildrenFromFractions()
+    }
+
+    private fun repositionChildrenFromFractions() {
+        if (width <= 0 || height <= 0) return
+        val density = resources.displayMetrics.density
+        for (i in 0 until childCount) {
+            val control = mountedControls.getOrNull(i) ?: continue
+            val child = getChildAt(i) as? OverlayControlView ?: continue
+            val expected = childLayout(control, width.toFloat(), height.toFloat(), density)
+            val params = child.layoutParams as? LayoutParams ?: continue
+            if (params.width != expected.sizePx || params.height != expected.sizePx ||
+                params.leftMargin != expected.leftMargin || params.topMargin != expected.topMargin
+            ) {
+                params.width = expected.sizePx
+                params.height = expected.sizePx
+                params.leftMargin = expected.leftMargin
+                params.topMargin = expected.topMargin
+                child.layoutParams = params
+            }
+        }
+    }
+
     private fun rebuild() {
         if (width <= 0 || height <= 0) return
         // P1-11: al girar el teléfono onSizeChanged reconstruye los
@@ -478,19 +555,34 @@ class GamepadOverlayView @JvmOverloads constructor(
         // botón que se solape con la zona recibe su toque.
         val ordered = overlayChildOrder(controls)
         for (control in ordered) {
-            val rect = controlRect(control, width.toFloat(), height.toFloat(), density)
+            // 0.2.63 (G): los márgenes salen de childLayout (el mismo
+            // cálculo puro que usa onLayout para re-verificarlos).
+            val layout = childLayout(control, width.toFloat(), height.toFloat(), density)
             val child: OverlayControlView = when (control.kind) {
                 "stick" -> StickView(context, control)
                 "igniculus" -> ZoneView(context, control)
                 else -> ButtonView(context, control)
             }
-            val sizePx = (rect.width()).toInt().coerceAtLeast(1)
-            val params = LayoutParams(sizePx, sizePx)
-            params.leftMargin = rect.left.toInt()
-            params.topMargin = rect.top.toInt()
+            val params = LayoutParams(layout.sizePx, layout.sizePx)
+            params.leftMargin = layout.leftMargin
+            params.topMargin = layout.topMargin
             addView(child, params)
         }
+        mountedControls = ordered
         builtForSize = width to height
+        // 0.2.63 (G): diagnóstico del montaje (logcat, sin E/S de
+        // fichero en el hilo de UI: LauncherLog.append es síncrono
+        // y R5-A1-11 lo sacó de Main a propósito). Con perfil +
+        // tamaño de vista + fracciones del stick, un botón
+        // desplazado se diagnostica sin adivinar: si las fracciones
+        // son las de fábrica (0.05, 0.675) y la vista es 2340x1080,
+        // el stick va en (68, 485); si aparece en otro sitio, los
+        // márgenes se hornearon con otro tamaño.
+        val stick = controls.firstOrNull { it.kind == "stick" }
+        Log.i(
+            "GamepadOverlay",
+            "overlay construido: perfil ${activeProfileId ?: "desconocido"}, vista ${width}x${height}, ${controls.size} controles, stick ${stick?.let { "(${it.xFraction}, ${it.yFraction}) ${it.sizeDp} dp" } ?: "sin stick"}",
+        )
     }
 
     private fun parseHex(hex: String): Int = try {
@@ -744,6 +836,10 @@ class GamepadOverlayView @JvmOverloads constructor(
             // en cada frame. La clave incluye cx/cy: al girar el teléfono
             // (rebuild) o al moverse el pomo del stick / el orbe de
             // Igniculus, el cristal se recentra en vez de quedar descentrado.
+            // 0.2.63 (A-8): el borde era demasiado oscuro sobre el juego
+            // (alfa 0,62 sobre fondo oscuro se leía como disco azul
+            // marino opaco; el mockup es hielo translúcido): borde
+            // 0,62 -> 0,40 y medio 0,30 -> 0,40.
             val gradientKey = GlassGradientKey(cx, cy, radius, tintColor, alpha)
             var gradient = cachedGradient
             if (cachedGradientKey != gradientKey || gradient == null) {
@@ -751,8 +847,8 @@ class GamepadOverlayView @JvmOverloads constructor(
                     cx, cy, radius,
                     intArrayOf(
                         Color.argb((alpha * 0.34f * 255).toInt(), 226, 238, 248),
-                        Color.argb((alpha * 0.30f * 255).toInt(), Color.red(tintColor), Color.green(tintColor), Color.blue(tintColor)),
-                        Color.argb((alpha * 0.62f * 255).toInt(), 24, 38, 68),
+                        Color.argb((alpha * 0.40f * 255).toInt(), Color.red(tintColor), Color.green(tintColor), Color.blue(tintColor)),
+                        Color.argb((alpha * 0.40f * 255).toInt(), 24, 38, 68),
                     ),
                     floatArrayOf(0f, 0.55f, 1f),
                     Shader.TileMode.CLAMP,
@@ -805,8 +901,12 @@ class GamepadOverlayView @JvmOverloads constructor(
         protected fun drawOrnaments(canvas: Canvas, cx: Float, cy: Float, radius: Float, alpha: Float, fourWay: Boolean = false) {
             ornamentPaint.alpha = (alpha * 0.85f * 255).toInt()
             iconPaint.alpha = (alpha * 0.95f * 255).toInt()
-            val s = (radius * 0.09f).coerceAtLeast(3f * density)
-            val dist = radius
+            // 0.2.63 (A-3): los rombos eran 6x más pequeños que en el
+            // mockup (0,09r, ~5 % del diámetro) y quedaban medio
+            // recortados (centros a 1,0r, encima del anillo): ahora
+            // 0,18r centrados a 0,92r, enteros dentro del cristal.
+            val s = (radius * 0.18f).coerceAtLeast(3f * density)
+            val dist = radius * 0.92f
             drawDiamondOrnament(canvas, cx, cy - dist, s)
             drawDiamondOrnament(canvas, cx, cy + dist, s)
             if (fourWay) {
@@ -1131,7 +1231,11 @@ class GamepadOverlayView @JvmOverloads constructor(
         protected fun drawIconOrLabel(canvas: Canvas, rect: RectF, alpha: Float) {
             val kind = iconFor(control.vitaButton)
             if (kind != null) {
-                drawIcon(canvas, kind, rect.centerX(), rect.centerY(), rect.width() * 0.30f, alpha)
+                // 0.2.63 (A-5): el icono se dibujaba a 0,30 x Ø
+                // (~28-33 % del botón; en el mockup ocupa ~50 %):
+                // 0,45 x Ø (espada ~47 %, flecha ~50 %; los
+                // destellos crecen en la misma proporción).
+                drawIcon(canvas, kind, rect.centerX(), rect.centerY(), rect.width() * 0.45f, alpha)
                 return
             }
             if (control.label.isBlank()) return
@@ -1252,21 +1356,25 @@ class GamepadOverlayView @JvmOverloads constructor(
             // Stick grande (diseno 51025): cristal con adornos de
             // diamante en los 4 puntos, anillo interior luminoso y
             // dos diamantitos dentro del anillo (este y oeste).
+            // 0.2.63 (A-9): el anillo era demasiado pequeño (0,78r)
+            // y el pomo demasiado grande (0,42r) frente al mockup
+            // (anillo ~0,85r, pomo ~0,34r): el pomo dejaba de verse
+            // como una bola de cristal pequeña sobre su guía.
             drawGlassBody(canvas, rect, effectiveAlpha(), fourWayOrnaments = true)
             val radius = rect.width() / 2f
             strokePaint.color = Color.parseColor("#BFE6F7")
             strokePaint.alpha = (effectiveAlpha() * 0.5f * 255).toInt()
             strokePaint.strokeWidth = 1.5f * density
-            canvas.drawCircle(rect.centerX(), rect.centerY(), radius * 0.78f, strokePaint)
+            canvas.drawCircle(rect.centerX(), rect.centerY(), radius * 0.85f, strokePaint)
             ornamentPaint.alpha = (effectiveAlpha() * 0.7f * 255).toInt()
             iconPaint.alpha = (effectiveAlpha() * 0.9f * 255).toInt()
             val innerDiamond = (radius * 0.05f).coerceAtLeast(2.5f * density)
-            drawDiamondOrnament(canvas, rect.centerX() - radius * 0.78f, rect.centerY(), innerDiamond)
-            drawDiamondOrnament(canvas, rect.centerX() + radius * 0.78f, rect.centerY(), innerDiamond)
+            drawDiamondOrnament(canvas, rect.centerX() - radius * 0.85f, rect.centerY(), innerDiamond)
+            drawDiamondOrnament(canvas, rect.centerX() + radius * 0.85f, rect.centerY(), innerDiamond)
             // Gota sobre la base, antes del pomo: el pomo queda nitido encima.
             drawRipple(canvas, rect, effectiveAlpha())
             // Pomo del stick: círculo de cristal más pequeño desplazado con el dedo.
-            val knobRadius = radius * 0.42f
+            val knobRadius = radius * 0.34f
             val cx = rect.centerX() + knobNx * radius * 0.55f
             val cy = rect.centerY() + knobNy * radius * 0.55f
             val knobRect = RectF(cx - knobRadius, cy - knobRadius, cx + knobRadius, cy + knobRadius)
@@ -1470,13 +1578,22 @@ class GamepadOverlayView @JvmOverloads constructor(
             }
             val orbR = width * 0.42f
             val orbRect = RectF(iconCx - orbR, iconCy - orbR, iconCx + orbR, iconCy + orbR)
-            drawGlassBody(canvas, orbRect, alpha)
+            // 0.2.63 (A-4): la zona tiene opacidad 0,25 para que el
+            // juego se vea a través, pero el orbe heredaba ese
+            // 0,25 y salía gris apagado; el mockup lo muestra como
+            // un cristal brillante. El orbe se dibuja con alfa
+            // propio 0,80 (respetando la opacidad general del
+            // overlay si el usuario la baja); solo el anillo tenue
+            // exterior de la zona y la gota conservan el 0,25
+            // original.
+            val orbAlpha = maxOf(alpha, 0.8f * generalOpacity)
+            drawGlassBody(canvas, orbRect, orbAlpha)
             // Gota sobre el orbe (recortada a su anillo): nace donde
             // toca el dedo, en los dos modos. El rect es el del orbe
             // (0.42 x ancho en 0.2.54).
             rippleRect.set(orbRect)
             drawRipple(canvas, rippleRect, alpha)
-            drawIcon(canvas, IconKind.IGNICULUS, iconCx, iconCy, width * 0.42f, alpha)
+            drawIcon(canvas, IconKind.IGNICULUS, iconCx, iconCy, width * 0.42f, orbAlpha)
         }
 
         override fun release() {
@@ -1675,7 +1792,23 @@ class GamepadOverlayView @JvmOverloads constructor(
             )
             try {
                 forwardingSyntheticTouch = true
-                activity.dispatchTouchEvent(synthetic)
+                // 0.2.63 (D): toque de la zona reenviado como táctil
+                // del juego: se registra en TouchStats (el reporte
+                // de bug lo muestra). El reenvío pasa por EmuSurface
+                // con forwardingSyntheticTouch activo, así que no se
+                // cuenta dos veces.
+                val delivered = activity.dispatchTouchEvent(synthetic)
+                when (action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        if (TouchStats.recordForwardedDown(delivered, targetOverlayX, targetOverlayY)) {
+                            Log.i("GamepadOverlayView", "toque zona Igniculus DOWN en ($targetOverlayX, $targetOverlayY) entregado a SDL")
+                        } else if (!delivered) {
+                            Log.w("GamepadOverlayView", "toque zona Igniculus DOWN en ($targetOverlayX, $targetOverlayY) PERDIDO")
+                        }
+                    }
+                    MotionEvent.ACTION_UP -> TouchStats.recordForwardedUp(delivered, targetOverlayX, targetOverlayY)
+                    MotionEvent.ACTION_MOVE -> TouchStats.recordForwardedMove(targetOverlayX, targetOverlayY)
+                }
             } finally {
                 forwardingSyntheticTouch = false
                 synthetic.recycle()
