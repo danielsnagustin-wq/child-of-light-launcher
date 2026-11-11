@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
 import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
 import com.danielsnagustin.childoflight.launcher.model.GameStatus
+import com.danielsnagustin.childoflight.launcher.ui.ColLavenderBlue
 import com.danielsnagustin.childoflight.launcher.ui.ColTurquoise
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
@@ -109,7 +110,7 @@ fun SettingsStorageScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                 NoteText("La única copia en Descargas es la entrega explícita a la app externa («Copiar a la app externa», con confirmación antes de copiar). Con el núcleo embebido, el juego se instala solo al pulsar JUGAR y no hace falta copiar nada.")
                 Spacer(modifier = Modifier.height(12.dp))
                 if (downloadsCopies.isEmpty()) {
-                    Text("Descargas/ChildOfLight/: vacía ✓", style = MaterialTheme.typography.bodyMedium, color = ColTurquoise)
+                    Text("Descargas/ChildOfLight/: vacía ✓", style = MaterialTheme.typography.bodyMedium, color = if (dark) ColTurquoise else ColLavenderBlue)
                 } else {
                     Text(
                         "Copias en Descargas/ChildOfLight/:",
