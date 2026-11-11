@@ -28,7 +28,12 @@ import org.junit.Test
  * rombo con stick de 104 dp, sino el layout limpio (stick de 210 dp
  * e Igniculus de 156 dp abajo a la derecha); los perfiles viejos
  * migran a él (migrateBuiltInToCleanLayout, ver
- * CleanTouchLayoutTest). R5-A1-8: la paleta ya no lleva el morado
+ * CleanTouchLayoutTest). 0.2.57: los tamaños de fábrica se achican
+ * a la medida real del mockup (stick 186 dp, zona Igniculus
+ * 115 dp, orbe dibujado 97 dp; espada/salto 82 dp, pausa 56 dp y
+ * círculo 44 dp no cambian); los perfiles guardados con los
+ * tamaños viejos migran a los nuevos (ver CleanTouchLayoutTest).
+ * R5-A1-8: la paleta ya no lleva el morado
  * rosado #BA68C8; el test endurecido afirma que TODA la paleta
  * está en el conjunto identidad documentado abajo.
  */
@@ -37,9 +42,11 @@ class R4P2DefaultsTest {
     @Test
     fun defaultStickIsBigEnoughForTheThumb() {
         val stick = defaultTouchLayout().first { it.id == "stick" }
-        // 0.2.54: 210 dp de diámetro, como en la captura de
-        // referencia (51% de la altura de la pantalla).
-        assertEquals(210, stick.sizeDp)
+        // 0.2.57: 186 dp de diámetro: el círculo de cristal del
+        // mockup (385 px, 45% de la altura) a densidad 1.75 del
+        // teléfono. La 0.2.54 medía el adorno a adorno (434 px) y
+        // salía a 210 dp, gigante en el teléfono.
+        assertEquals(186, stick.sizeDp)
         assertTrue("el stick sigue siendo usable", stick.sizeDp >= 80)
         // Pegado al borde izquierdo del juego, abajo.
         assertEquals(0.05f, stick.xFraction, 0.001f)
@@ -49,23 +56,24 @@ class R4P2DefaultsTest {
     @Test
     fun defaultIgniculusIsBottomRightWithTheActionGroup() {
         val zone = defaultTouchLayout().first { it.id == "igniculus" }
-        // 0.2.54: junto a la espada y el salto, abajo a la derecha,
-        // con su orbe grande (zona de 156 dp, orbe dibujado a
-        // 0.42 x ancho = 131 dp).
+        // 0.2.57: junto a la espada y el salto, abajo a la derecha,
+        // con su orbe a la medida del mockup (zona de 115 dp, orbe
+        // dibujado a 0.42 x ancho = 97 dp). La 0.2.54 lo dejaba en
+        // 156 dp de zona (orbe 131 dp), gigante en el teléfono.
         assertEquals(0.82f, zone.xFraction, 0.001f)
         assertEquals(0.808f, zone.yFraction, 0.001f)
         assertTrue("Igniculus en la mitad inferior (y > 0.45)", zone.yFraction > 0.45f)
-        assertEquals(156, zone.sizeDp)
+        assertEquals(115, zone.sizeDp)
         assertEquals(0.25f, zone.opacity, 0.001f)
     }
 
     @Test
-    fun builtInSticksAreUnifiedAt210Dp() {
-        // 0.2.54: los tres perfiles llevan el stick en 210 dp, en
+    fun builtInSticksAreUnifiedAt186Dp() {
+        // 0.2.57: los tres perfiles llevan el stick en 186 dp, en
         // su posición de fábrica.
         for (profile in builtInProfiles()) {
             val stick = profile.controls.first { it.id == "stick" }
-            assertEquals("stick del perfil ${profile.id}", 210, stick.sizeDp)
+            assertEquals("stick del perfil ${profile.id}", 186, stick.sizeDp)
         }
         assertEquals(0.05f, defaultTouchLayout().first { it.id == "stick" }.xFraction, 0.001f)
         assertEquals(0.05f, oneHandLayout().first { it.id == "stick" }.xFraction, 0.001f)
