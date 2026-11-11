@@ -2,6 +2,7 @@ package com.danielsnagustin.childoflight.launcher
 
 import com.danielsnagustin.childoflight.launcher.data.Vita3kConfigGenerator
 import com.danielsnagustin.childoflight.launcher.model.AudioBackend
+import com.danielsnagustin.childoflight.launcher.model.GameLanguage
 import com.danielsnagustin.childoflight.launcher.model.GpuBackend
 import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuInfo
@@ -304,6 +305,43 @@ class Vita3kConfigGeneratorTest {
         )
         assertTrue(fpsOff.contains("psn-signed-in: 0"))
         assertFalse(fpsOff.contains("psn-signed-in: 1"))
+    }
+
+    @Test
+    fun gameLanguageDefaultsToSpanish() {
+        // 0.2.63 (E): sys-lang VERIFICADO en el pin (config.h:172):
+        // int, default ENGLISH_US (1). Valores del enum
+        // SceSystemParamLang (util/system.h): SPANISH 3, ENGLISH_US 1,
+        // ENGLISH_GB 18, FRENCH 2, GERMAN 4, ITALIAN 5. El default
+        // del launcher es ESPAÑOL (3): el juego EU PCSB00598 trae
+        // español y con 3 pide sus textos y subtítulos en español
+        // (.es.srt) en vez de los .en.srt que pedía en inglés.
+        val yaml = Vita3kConfigGenerator.generate(
+            LauncherSettings(), "/data/vita3k",
+        )
+        assertTrue(yaml.contains("sys-lang: 3"))
+        assertFalse(yaml.contains("sys-lang: 1"))
+    }
+
+    @Test
+    fun gameLanguageFollowsSetting() {
+        // 0.2.63 (E): el ajuste (Ajustes → General → Motor →
+        // "Idioma del juego") decide el valor emitido: inglés
+        // americano 1, inglés británico 18, francés 2. Es int, no
+        // string: se emite el número, nunca el nombre.
+        val us = Vita3kConfigGenerator.generate(
+            LauncherSettings(gameLanguage = GameLanguage.ENGLISH_US), "/data/vita3k",
+        )
+        assertTrue(us.contains("sys-lang: 1"))
+        assertFalse(us.contains("sys-lang: 3"))
+        val gb = Vita3kConfigGenerator.generate(
+            LauncherSettings(gameLanguage = GameLanguage.ENGLISH_GB), "/data/vita3k",
+        )
+        assertTrue(gb.contains("sys-lang: 18"))
+        val fr = Vita3kConfigGenerator.generate(
+            LauncherSettings(gameLanguage = GameLanguage.FRENCH), "/data/vita3k",
+        )
+        assertTrue(fr.contains("sys-lang: 2"))
     }
 
     @Test
