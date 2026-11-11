@@ -17,6 +17,7 @@ import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 import com.danielsnagustin.childoflight.launcher.data.DeviceCompat
 import com.danielsnagustin.childoflight.launcher.data.DeviceMemory
 import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
+import com.danielsnagustin.childoflight.launcher.ui.ColLavenderBlue
 import com.danielsnagustin.childoflight.launcher.ui.ColTurquoise
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
@@ -89,7 +90,7 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 Text(
                     "Último FPS (prueba de 30 s): ${lastFps?.let { "$it fps" } ?: "sin medir"}",
                     style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                    color = if (lastFps != null) ColTurquoise else mutedTextColor(dark),
+                    color = if (lastFps != null) { if (dark) ColTurquoise else ColLavenderBlue } else mutedTextColor(dark),
                 )
                 Text(
                     "Núcleo embebido: ${if (embeddedCore == true) "presente" else "no presente"}",
@@ -117,7 +118,7 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("Errores recientes del log:", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = cardTextColor(dark))
                 if (recentErrors.isEmpty()) {
-                    Text("Sin errores recientes en el log.", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = ColTurquoise)
+                    Text("Sin errores recientes en el log.", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = if (dark) ColTurquoise else ColLavenderBlue)
                 } else {
                     recentErrors.forEach { line ->
                         Text("• $line", style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = cardTextColor(dark))
