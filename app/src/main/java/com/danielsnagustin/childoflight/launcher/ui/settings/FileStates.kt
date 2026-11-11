@@ -103,7 +103,7 @@ fun FileStateSection(
     }
     // 6. Actualizaciones.
     Text(
-        "Actualización: " + if (status.updateInstalled) "Instalada" else "Sin update instalado",
+        "Actualización: " + if (status.updateInstalled) "Instalada" else "Sin actualización instalada",
         style = MaterialTheme.typography.bodyMedium,
         color = cardTextColor(dark),
     )
