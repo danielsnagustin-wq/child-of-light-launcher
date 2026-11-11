@@ -131,7 +131,7 @@ class SettingsRepository(private val context: Context) {
             shaderCache = p[Keys.SHADER_CACHE] ?: true,
             cpuOpt = p[Keys.CPU_OPT] ?: true,
             fpsHack = p[Keys.FPS_HACK] ?: false,
-            fileLoadingDelay = (p[Keys.FILE_LOADING_DELAY] ?: 0).coerceAtLeast(0),
+            fileLoadingDelay = clampFileLoadingDelay(p[Keys.FILE_LOADING_DELAY] ?: 0),
             audioVolume = (p[Keys.AUDIO_VOLUME] ?: 100).coerceIn(0, 100),
             audioBackend = runCatching { com.danielsnagustin.childoflight.launcher.model.AudioBackend.valueOf(p[Keys.AUDIO_BACKEND] ?: "SDL") }.getOrDefault(com.danielsnagustin.childoflight.launcher.model.AudioBackend.SDL),
             ngsEnable = p[Keys.NGS_ENABLE] ?: true,
@@ -222,8 +222,8 @@ class SettingsRepository(private val context: Context) {
             p[Keys.SHADER_CACHE] = settings.shaderCache
             p[Keys.CPU_OPT] = settings.cpuOpt
             p[Keys.FPS_HACK] = settings.fpsHack
-            p[Keys.FILE_LOADING_DELAY] = settings.fileLoadingDelay.coerceAtLeast(0)
-            p[Keys.AUDIO_VOLUME] = settings.audioVolume
+            p[Keys.FILE_LOADING_DELAY] = clampFileLoadingDelay(settings.fileLoadingDelay)
+            p[Keys.AUDIO_VOLUME] = settings.audioVolume.coerceIn(0, 100)
             p[Keys.AUDIO_BACKEND] = settings.audioBackend.name
             p[Keys.NGS_ENABLE] = settings.ngsEnable
             p[Keys.SHOW_FPS] = settings.showFpsOverlay
@@ -395,6 +395,14 @@ class SettingsRepository(private val context: Context) {
 
         fun clampAniso(value: Int): Int =
             if (value in setOf(1, 2, 4, 8, 16)) value else 1
+
+        // Retraso de carga de archivos (R7-P2-03): la UI solo ofrece
+        // 0..30 ms (SettingsCpuScreen) y el núcleo duerme esos ms en
+        // cada sceIoOpen: un backup editado a mano con 99999 dejaría
+        // el juego inutilizable. El mismo clamp se aplica al leer
+        // DataStore, al guardar y al importar el backup (SettingsBackup
+        // lo llama), como resolución, aniso y opacidad.
+        fun clampFileLoadingDelay(value: Int): Int = value.coerceIn(0, 30)
 
         // Opacidad general del overlay: 0.1..1 y finita.
         fun clampOverlayOpacity(value: Float): Float =
