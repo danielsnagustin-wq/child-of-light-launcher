@@ -130,6 +130,18 @@ Java_org_vita3k_emulator_NativeLib_getRunningAppTitle(JNIEnv *env, jclass clazz)
 // día, re-añadirlas con estas firmas exactas: jboolean (JNIEnv *,
 // jclass), sin argumentos.
 
+// --- native_trophies.cpp ---
+// Solo lectura: devuelve las colecciones de trofeos del TRP
+// (CollectionSnapshot por npComId). Verificado contra el pin
+// (native_trophies.cpp:206-207): una sola función, sin parámetros,
+// ligada a NativeLib; el adaptador pasa nullptr como jclass, igual
+// que con las demás. Se compila dentro de libVita3K.so (pin
+// CMakeLists.txt:167), así que la llamada directa enlaza.
+// Devuelve vacío si no hay emuenv (sesión destruida): el llamador
+// lee ANTES de destroySession (ver trophy_bridge.cpp).
+JNIEXPORT jobjectArray JNICALL
+Java_org_vita3k_emulator_NativeLib_getTrophyCollections(JNIEnv *env, jclass clazz);
+
 // --- native_drivers.cpp ---
 // Instala un driver GPU personalizado (zip Turnip): upstream extrae el
 // zip en <filesDir>/driver/<stem-del-zip>/ y devuelve ese stem como
