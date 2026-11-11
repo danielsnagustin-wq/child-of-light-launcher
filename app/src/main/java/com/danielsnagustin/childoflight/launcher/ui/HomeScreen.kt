@@ -309,7 +309,9 @@ private fun GameCard(
                         "No se pudo comprobar el estado",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = accent,
+                        // R9-P1-03: acento crudo ilegible en tema claro
+                        // (1.53:1); en claro azul lavanda #6578B8.
+                        color = if (dark) accent else ColLavenderBlue,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
@@ -324,7 +326,9 @@ private fun GameCard(
                         "Comprobando…",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = accent,
+                        // R9-P1-03: acento crudo ilegible en tema claro;
+                        // en claro azul lavanda #6578B8.
+                        color = if (dark) accent else ColLavenderBlue,
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     PrimaryButton("Comprobando…", onClick = {}, enabled = false)
@@ -341,7 +345,9 @@ private fun GameCard(
                         "⚠ No se pudo actualizar el estado",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = accent,
+                        // R9-P1-03: acento crudo ilegible en tema claro;
+                        // en claro azul lavanda #6578B8.
+                        color = if (dark) accent else ColLavenderBlue,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
@@ -368,7 +374,9 @@ private fun GameCard(
                             "⚠ ${strings.pendingImport}",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = accent,
+                            // R9-P1-03: acento crudo ilegible en tema claro;
+                            // en claro azul lavanda #6578B8.
+                            color = if (dark) accent else ColLavenderBlue,
                         )
                     }
                 }
@@ -492,7 +500,9 @@ private fun InstallProgressContent(
     } else {
         PulsingText(
             progress?.message ?: "Preparando el juego…",
-            accent,
+            // R9-P1-03: acento crudo ilegible en tema claro; en claro
+            // azul lavanda #6578B8 (dark y accent llegan por parámetro).
+            if (dark) accent else ColLavenderBlue,
             MaterialTheme.typography.bodyMedium,
         )
         Spacer(modifier = Modifier.height(10.dp))
