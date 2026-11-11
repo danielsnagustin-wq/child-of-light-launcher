@@ -28,7 +28,7 @@ import java.nio.charset.StandardCharsets
  * por no tener efecto real), así que no hay líneas TODO-VERIFY.
  *
  * Claves verificadas usadas:
- * - backend-renderer ("Vulkan"), resolution-multiplier (float 1.0/2.0/3.0/4.0),
+ * - backend-renderer ("Vulkan"), resolution-multiplier (float 0.5/1.0/2.0/3.0/4.0),
  *   screen-filter ("Bilinear"), v-sync (bool), anisotropic-filtering (int),
  *   async-pipeline-compilation (bool), high-accuracy (bool),
  *   disable-surface-sync (bool, INVERTIDO: true = Surface Sync Disabled),
@@ -109,17 +109,19 @@ object Vita3kConfigGenerator {
             sb.appendLine("# Sin Vulkan en este teléfono: fallback automático a OpenGL (el ajuste pedía Vulkan).")
         }
         sb.appendLine("backend-renderer: \"${escapeYamlDoubleQuoted(backend.vita3kValue)}\"")
-        sb.appendLine("# GPU — resolution-multiplier es float en config.h: 1.0 = 960x544, 2.0 = 1920x1088, 3.0 = 2880x1632, 4.0 = 3840x2176.")
+        sb.appendLine("# GPU — resolution-multiplier es float en config.h: 0.5 = 480x272, 1.0 = 960x544, 2.0 = 1920x1088, 3.0 = 2880x1632, 4.0 = 3840x2176.")
         sb.appendLine("resolution-multiplier: ${formatFloat(s.resolutionMultiplier)}")
         sb.appendLine("# GPU — screen-filter verificado (default \"Bilinear\").")
         sb.appendLine("screen-filter: \"${escapeYamlDoubleQuoted(s.screenFilter.vita3kValue)}\"")
         // v-sync VERIFICADO (config.h:155): bool, default true en
-        // upstream. El launcher lo pone en false DELIBERADAMENTE
-        // (LauncherSettings.vSync = false en todos los perfiles):
-        // con v-sync activado el Mali-G57 del teléfono pierde
-        // fotogramas esperando al refresco; desactivado, el juego
-        // corre más fluido y el tearing no se nota en esta pantalla.
-        // No es un olvido: el usuario puede activarlo en Ajustes.
+        // upstream. OJO (0.2.63, B/C P1-2): en Vulkan es INERTE:
+        // solo alimenta pending_vsync (renderer/state.h:197), que
+        // solo consume el renderer OpenGL (gl/renderer.cpp:759-760).
+        // Con backend Vulkan (el del teléfono) activarlo o
+        // desactivarlo NO cambia el rendimiento ni el tearing: no es
+        // causa de lentitud ni arreglo. El launcher lo deja en false
+        // por defecto; en OpenGL sí tiene efecto (el usuario puede
+        // activarlo en Ajustes).
         sb.appendLine("v-sync: ${s.vSync}")
         sb.appendLine("anisotropic-filtering: ${s.anisotropicFiltering}")
         sb.appendLine("async-pipeline-compilation: ${s.asyncPipelineCompilation}")
@@ -221,6 +223,23 @@ object Vita3kConfigGenerator {
         // 60 FPS no cambian psnSignedIn), pero el generador debe emitir
         // siempre valores efectivos, no una mezcla.
         sb.appendLine("psn-signed-in: ${if (s.psnSignedIn) 1 else 0}")
+        // --- Idioma del juego ---
+        // sys-lang VERIFICADO (config.h:172): int, default
+        // ENGLISH_US (1) en upstream. Valores del enum
+        // SceSystemParamLang (util/system.h, implícito desde 0):
+        // SPANISH 3, ENGLISH_US 1, ENGLISH_GB 18, FRENCH 2,
+        // GERMAN 4, ITALIAN 5 (ver GameLanguage en
+        // LauncherSettings.kt). El ajuste gameLanguage del launcher
+        // (Ajustes → General → Motor, ESPAÑOL por defecto) decide
+        // el valor. El juego EU PCSB00598 trae español: con 3 el
+        // juego pide sus textos y subtítulos en español (p. ej.
+        // .es.srt en los vídeos) en vez de los .en.srt que pedía en
+        // inglés. Se lee en el init del núcleo: el cambio aplica en
+        // el siguiente lanzamiento en proceso fresco. Se emite desde
+        // el effective (s), como psn-signed-in: ni el modo seguro ni
+        // 60 FPS lo tocan, pero el generador debe emitir siempre
+        // valores efectivos, no una mezcla.
+        sb.appendLine("sys-lang: ${s.gameLanguage.value}")
         // --- Rutas ---
         sb.appendLine("pref-path: \"${escapeYamlDoubleQuoted(vitaFsPath)}\"")
         return sb.toString()
