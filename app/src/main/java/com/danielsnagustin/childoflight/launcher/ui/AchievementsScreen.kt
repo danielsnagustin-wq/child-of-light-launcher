@@ -173,7 +173,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = cardTextColor(isDarkUi(uiPrefs)),
+                            color = if (isDarkUi(uiPrefs)) ColIceBlue else cardTextColor(isDarkUi(uiPrefs)),
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         PrimaryProgressBar(progress = if (total == 0) 0f else unlocked / total.toFloat())
