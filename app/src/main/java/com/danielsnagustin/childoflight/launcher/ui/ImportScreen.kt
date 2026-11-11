@@ -147,13 +147,13 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                                 Text(
                                     "Licencia: instalada en el núcleo ✓",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = ColTurquoise,
+                                    color = if (dark) ColTurquoise else ColLavenderBlue,
                                 )
                             } else {
                                 Text(
                                     "Licencia (work.bin): ${if (status.pkgLicensePresent) "guardada ✓" else "falta ✗"}",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = if (status.pkgLicensePresent) ColTurquoise else cardTextColor(dark),
+                                    color = if (status.pkgLicensePresent) { if (dark) ColTurquoise else ColLavenderBlue } else cardTextColor(dark),
                                 )
                             }
                         }
@@ -176,13 +176,13 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             Text(
                                 "Licencia: instalada en el núcleo ✓",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = ColTurquoise,
+                                color = if (dark) ColTurquoise else ColLavenderBlue,
                             )
                         } else {
                             Text(
                                 "Licencia (work.bin): ${if (status.pkgLicensePresent) "guardada ✓" else "falta ✗"}",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = if (status.pkgLicensePresent) ColTurquoise else cardTextColor(dark),
+                                color = if (status.pkgLicensePresent) { if (dark) ColTurquoise else ColLavenderBlue } else cardTextColor(dark),
                             )
                         }
                         TextButton(onClick = { pickGame.launch("*/*") }, enabled = !importing) { Text("Reemplazar") }
@@ -461,11 +461,12 @@ private fun ImportProgressCard(vm: LauncherViewModel, strings: AppStrings, impor
 private fun ExternalDeliveryBlock(vm: LauncherViewModel, status: GameStatus, importing: Boolean) {
     val settings by vm.settingsFlow.collectAsState(initial = null)
     val s = settings
+    val dark = isDarkUi(LocalUiPreferences.current)
     if (s?.pkgDeliveredToVita3k == true) {
-        Text("✓ Copiado a Descargas/ChildOfLight/", style = MaterialTheme.typography.bodyMedium, color = ColTurquoise)
+        Text("✓ Copiado a Descargas/ChildOfLight/", style = MaterialTheme.typography.bodyMedium, color = if (dark) ColTurquoise else ColLavenderBlue)
     }
     if (s?.pkgInstalledInVita3k == true) {
-        Text("✓ Instalado en la app externa", style = MaterialTheme.typography.bodyMedium, color = ColTurquoise)
+        Text("✓ Instalado en la app externa", style = MaterialTheme.typography.bodyMedium, color = if (dark) ColTurquoise else ColLavenderBlue)
     }
     TextButton(onClick = { vm.deliverPkgToVita3k() }, enabled = !importing && status.pkgLicensePresent) { Text("Copiar a la app externa") }
     if (s?.pkgDeliveredToVita3k == true && s?.pkgInstalledInVita3k != true) {
