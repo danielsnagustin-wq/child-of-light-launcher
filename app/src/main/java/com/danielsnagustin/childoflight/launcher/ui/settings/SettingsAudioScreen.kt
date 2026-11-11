@@ -76,7 +76,7 @@ fun SettingsAudioScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "También se limpia la caché de shaders. Lo limpiado no se recupera: se vuelve a llenar sola al jugar (el stutter de la primera partida es normal). Tus valores anteriores quedan guardados y puedes deshacer el cambio después.",
+                                "También se limpia la caché de shaders. Lo limpiado no se recupera: se vuelve a llenar sola al jugar. La próxima vez que entres al juego tardará más en cargar (los shaders se vuelven a compilar) y la primera partida puede ir a tirones: es normal, no es que el juego vaya lento. Tus valores anteriores quedan guardados y puedes deshacer el cambio después.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = mutedTextColor(dark),
                             )
