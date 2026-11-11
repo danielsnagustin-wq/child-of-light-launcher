@@ -20,6 +20,10 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.security.MessageDigest
+import java.security.SecureRandom
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 // Crash al abrir (run #80): mismo arreglo que UiPreferencesRepository
 // (ver su comentario): archivo preferences_pb corrupto -> el
@@ -37,6 +41,22 @@ private val Context.achievementsDataStore: DataStore<Preferences> by preferences
  * "numero|epochMillis", separadas por ";".
  * Es el mismo formato que se exporta/importa junto con los saves,
  * para que el usuario pueda respaldar su progreso.
+ *
+ * R7-P2-01 (0.2.58): el EXPORTADO va firmado (ver signExport /
+ * verifySignedExport): "COL-ACH-v1", el payload y un HMAC-SHA256
+ * con una clave aleatoria por dispositivo guardada en este mismo
+ * DataStore privado (EXPORT_SIGNING_KEY). importText y replaceAll
+ * solo aceptan respaldos firmados por ESTA app en ESTE dispositivo:
+ * un texto "N|epochMillis" escrito a mano (o un achievements.txt
+ * fabricado dentro de un zip de sesión) se rechaza y no desbloquea
+ * nada. Los respaldos viejos SIN firma (pre-0.2.58) también se
+ * rechazan: es el coste aceptado por diseño. El achievements.txt de
+ * cada sesión también va firmado, porque se escribe desde
+ * exportText(): las sesiones reales exportadas por la app se siguen
+ * restaurando. Esto es DETECCIÓN de archivos fabricados a mano, no
+ * seguridad real: quien tenga acceso al almacenamiento privado de
+ * la app puede leer la clave igual que el progreso; no protege
+ * contra un dispositivo rooteado, solo contra un .txt editado.
  *
  * La fuente de verdad para MOSTRAR el progreso es este DataStore.
  * El directorio de trofeos de Vita3K (ux0/user/00/trophy/) se lee
@@ -70,6 +90,8 @@ class AchievementRepository(private val context: Context) {
     private object Keys {
         val UNLOCKED = stringPreferencesKey("unlocked_trophies")
         val VERSION = intPreferencesKey("trophy_list_version")
+        /** Clave HMAC por dispositivo para firmar los respaldos (R7-P2-01). */
+        val EXPORT_SIGNING_KEY = stringPreferencesKey("achievement_export_key")
     }
 
     val progressFlow: Flow<List<TrophyProgress>> = flow {
@@ -143,11 +165,65 @@ class AchievementRepository(private val context: Context) {
         }
     }
 
-    /** Exporta el progreso en el formato "numero|epochMillis;...". */
+    /**
+     * Clave HMAC por dispositivo (R7-P2-01): se genera UNA vez (32
+     * bytes aleatorios) y se guarda en este mismo DataStore privado
+     * de la app. Es el mecanismo más simple que ya usa el repo para
+     * datos privados locales (DataStore Preferences: el mismo donde
+     * vive el progreso); no hay Keystore ni EncryptedSharedPreferences
+     * en el proyecto. El Mutex serializa la generación: dos
+     * exportText/importText concurrentes en un arranque sin clave no
+     * pueden generar (y guardar) dos claves distintas.
+     */
+    private val signingKeyMutex = Mutex()
+
+    private suspend fun signingKeyHex(): String {
+        signingKeyMutex.withLock {
+            val stored = context.achievementsDataStore.data.first()[Keys.EXPORT_SIGNING_KEY]
+            if (!stored.isNullOrBlank()) return stored
+            val bytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
+            val hex = bytes.joinToString("") { "%02x".format(it) }
+            context.achievementsDataStore.edit { prefs -> prefs[Keys.EXPORT_SIGNING_KEY] = hex }
+            return hex
+        }
+    }
+
+    /**
+     * Devuelve el payload de un respaldo firmado si la firma es
+     * válida; null si el texto no es un respaldo firmado por esta
+     * app en este dispositivo (sin firma, manipulado o firmado con
+     * otra clave). Un fallo al leer la clave también es null: no se
+     * importa nada a ciegas.
+     */
+    suspend fun verifiedPayload(signed: String): String? {
+        val key = runCatching { signingKeyHex() }.getOrNull() ?: return null
+        return verifySignedExport(signed, key)
+    }
+
+    /**
+     * Decodifica un respaldo firmado y verificado (para la
+     * restauración de sesiones: SessionManager). Mapa vacío si la
+     * firma no es válida: un achievements.txt fabricado cuenta 0
+     * trofeos y no restaura ninguno.
+     */
+    suspend fun decodeVerified(signed: String): Map<Int, Long> {
+        val payload = verifiedPayload(signed) ?: return emptyMap()
+        return decode(payload)
+    }
+
+    /**
+     * Exporta el progreso FIRMADO (R7-P2-01): cabecera, payload
+     * "numero|epochMillis;..." y HMAC con la clave del dispositivo.
+     * El achievements.txt de cada sesión también sale de aquí (vía
+     * SessionManager.snapshotExtras), así que las sesiones
+     * exportadas por la app llevan el texto firmado y su restauración
+     * sigue funcionando.
+     */
     suspend fun exportText(): String {
         migrateTrophyListIfNeeded()
         val prefs = context.achievementsDataStore.data.first()
-        return prefs[Keys.UNLOCKED] ?: ""
+        val payload = prefs[Keys.UNLOCKED] ?: ""
+        return signExport(payload, signingKeyHex())
     }
 
     /**
@@ -155,6 +231,13 @@ class AchievementRepository(private val context: Context) {
      * sesión: cada sesión tiene sus propios logros). Las entradas
      * inválidas se descartan; no fusiona con lo anterior, a diferencia
      * de importText. Un texto vacío deja 0/20.
+     *
+     * R7-P2-01: solo se acepta un respaldo FIRMADO por esta app (ver
+     * verifiedPayload). Un achievements.txt sin firma válida (de una
+     * sesión pre-0.2.58, o fabricado dentro de un zip) se descarta
+     * entero: la sesión restaura sus saves, pero sus logros quedan
+     * en 0/20 hasta que la próxima sync al volver del juego los
+     * vuelva a desbloquear desde el TROPHY.TRP real del núcleo.
      *
      * 0.2.57: un texto con alguna clave mayor que 20 es de la lista
      * vieja (27): las claves 6-20 cambiaron de trofeo con la
@@ -164,8 +247,9 @@ class AchievementRepository(private val context: Context) {
      */
     suspend fun replaceAll(raw: String) {
         migrateTrophyListIfNeeded()
-        val valid = if (isOldFormatTrophyText(raw)) emptyMap()
-        else decode(raw).filterKeys { n -> TROPHIES_20.any { it.number == n } }
+        val payload = verifiedPayload(raw) ?: ""
+        val valid = if (isOldFormatTrophyText(payload)) emptyMap()
+        else decode(payload).filterKeys { n -> TROPHIES_20.any { it.number == n } }
         unlockMutex.withLock {
             context.achievementsDataStore.edit { prefs ->
                 prefs[Keys.UNLOCKED] = encode(valid)
@@ -173,11 +257,28 @@ class AchievementRepository(private val context: Context) {
         }
     }
 
-    /** Importa progreso exportado. Las entradas inválidas se ignoran, las válidas se fusionan. Un texto de la lista vieja (alguna clave mayor que 20) se descarta entero (ver isOldFormatTrophyText). */
+    /**
+     * Importa progreso exportado. R7-P2-01: solo se aceptan respaldos
+     * FIRMADOS por esta app (ver verifiedPayload): un texto sin firma
+     * válida (escrito a mano, manipulado, de otro dispositivo, o un
+     * respaldo viejo pre-0.2.58 sin firma) se rechaza entero
+     * (rejectedInvalidSignature = true) y no desbloquea nada. Las
+     * entradas inválidas de un respaldo firmado se ignoran, las
+     * válidas se fusionan. Un texto firmado de la lista vieja (alguna
+     * clave mayor que 20) se descarta entero (ver
+     * isOldFormatTrophyText).
+     */
     suspend fun importText(raw: String): ImportAchievementsResult {
         migrateTrophyListIfNeeded()
-        val incoming = decode(raw)
-        val valid = if (isOldFormatTrophyText(raw)) emptyMap()
+        val payload = verifiedPayload(raw)
+            ?: return ImportAchievementsResult(
+                addedOrKept = 0,
+                ignoredInvalid = 0,
+                newlyUnlocked = 0,
+                rejectedInvalidSignature = true,
+            )
+        val incoming = decode(payload)
+        val valid = if (isOldFormatTrophyText(payload)) emptyMap()
         else incoming.filterKeys { n -> TROPHIES_20.any { it.number == n } }
         val ignored = incoming.size - valid.size
         var added = 0
@@ -224,6 +325,58 @@ class AchievementRepository(private val context: Context) {
         fun encode(map: Map<Int, Long>): String =
             map.entries.sortedBy { it.key }.joinToString(";") { "${it.key}|${it.value}" }
 
+        /**
+         * R7-P2-01: cabecera del respaldo FIRMADO de logros (0.2.58).
+         * Formato de 3 líneas: cabecera, payload "N|epoch;..." (vacío
+         * si 0 trofeos) y HMAC-SHA256 hex del payload con la clave por
+         * dispositivo. El payload nunca trae saltos de línea (solo
+         * dígitos, "|" y ";"), así que el formato no es ambiguo.
+         *
+         * Esto es DETECCIÓN de archivos fabricados a mano, no
+         * seguridad real: la clave vive en el almacenamiento privado
+         * de la app, al alcance de cualquiera con acceso a ese
+         * almacenamiento. No protege contra un dispositivo rooteado.
+         */
+        const val SIGNED_EXPORT_HEADER = "COL-ACH-v1"
+
+        /** Firma [payload] con la clave [keyHex] (hex de 32 bytes). Pura (JVM). */
+        fun signExport(payload: String, keyHex: String): String =
+            "$SIGNED_EXPORT_HEADER\n$payload\n${hmacSha256Hex(keyHex, payload)}"
+
+        /**
+         * Devuelve el payload de un respaldo firmado si la cabecera y
+         * el HMAC son válidos; null si no es un respaldo firmado (sin
+         * firma, cabecera distinta, payload o firma manipulados, o
+         * clave distinta). Pura (JVM): ver AchievementSigningTest. La
+         * comparación del HMAC es en tiempo constante (MessageDigest.
+         * isEqual): el valor no es secreto, pero no cuesta nada.
+         */
+        fun verifySignedExport(signed: String, keyHex: String): String? {
+            val parts = signed.split("\n")
+            if (parts.size != 3 || parts[0] != SIGNED_EXPORT_HEADER) return null
+            val payload = parts[1]
+            val hmac = parts[2]
+            val expected = runCatching { hmacSha256Hex(keyHex, payload) }.getOrNull() ?: return null
+            if (hmac.length != expected.length) return null
+            return if (MessageDigest.isEqual(
+                    expected.toByteArray(Charsets.UTF_8),
+                    hmac.toByteArray(Charsets.UTF_8),
+                )
+            ) {
+                payload
+            } else {
+                null
+            }
+        }
+
+        private fun hmacSha256Hex(keyHex: String, payload: String): String {
+            val keyBytes = keyHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            val mac = Mac.getInstance("HmacSHA256")
+            mac.init(SecretKeySpec(keyBytes, "HmacSHA256"))
+            return mac.doFinal(payload.toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+        }
+
         fun decode(raw: String): Map<Int, Long> {
             if (raw.isBlank()) return emptyMap()
             val out = mutableMapOf<Int, Long>()
@@ -243,4 +396,6 @@ data class ImportAchievementsResult(
     val addedOrKept: Int,
     val ignoredInvalid: Int,
     val newlyUnlocked: Int,
+    /** R7-P2-01: true si el texto no era un respaldo firmado válido y se rechazó entero (sin tocar el progreso). */
+    val rejectedInvalidSignature: Boolean = false,
 )
