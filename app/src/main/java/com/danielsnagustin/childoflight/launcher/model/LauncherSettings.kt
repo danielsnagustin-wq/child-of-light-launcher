@@ -156,6 +156,30 @@ enum class PerformanceOverlayPosition(val value: Int, val label: String) {
     BOTTOM_RIGHT(5, "Abajo a la derecha"),
 }
 
+/**
+ * Idioma del sistema emulado (sys-lang en config.yml).
+ * VERIFICADO en el pin (util/system.h enum SceSystemParamLang,
+ * implícito desde 0: JAPANESE 0, ENGLISH_US 1, FRENCH 2, SPANISH 3,
+ * GERMAN 4, ITALIAN 5, DUTCH 6, PORTUGUESE_PT 7, RUSSIAN 8, KOREAN 9,
+ * CHINESE_T 10, CHINESE_S 11, FINNISH 12, SWEDISH 13, DANISH 14,
+ * NORWEGIAN 15, POLISH 16, PORTUGUESE_BR 17, ENGLISH_GB 18,
+ * TURKISH 19; clave sys-lang en config.h:172, int, default
+ * ENGLISH_US). El juego EU PCSB00598 trae español: con sys-lang 3
+ * el juego pide sus textos y subtítulos en español (p. ej.
+ * .es.srt en los vídeos) en vez de los .en.srt que pedía en
+ * inglés. Solo se ofrecen los 6 idiomas con traducción completa
+ * habitual en los juegos de Vita; el resto del enum no se expone
+ * en la interfaz. ESPAÑOL por defecto: es el idioma del usuario.
+ */
+enum class GameLanguage(val value: Int, val label: String) {
+    SPANISH(3, "Español"),
+    ENGLISH_US(1, "Inglés (EE. UU.)"),
+    ENGLISH_GB(18, "Inglés (Reino Unido)"),
+    FRENCH(2, "Francés"),
+    GERMAN(4, "Alemán"),
+    ITALIAN(5, "Italiano"),
+}
+
 // ---------------------------------------------------------------------------
 // Ajustes
 // ---------------------------------------------------------------------------
@@ -272,6 +296,16 @@ data class LauncherSettings(
      */
     val psnSignedIn: Boolean = true,
     /**
+     * Idioma del juego (0.2.63, ítem E): el idioma del sistema
+     * emulado que el núcleo anuncia al juego (sys-lang en
+     * config.yml, ver GameLanguage). ESPAÑOL por defecto. Se lee en
+     * el init del núcleo: el cambio aplica en el siguiente
+     * lanzamiento en proceso fresco. No es un campo de preset
+     * (como psnSignedIn): mergePresetWithUserChoices lo conserva
+     * al aplicar un preset, y CategoryReset no lo toca.
+     */
+    val gameLanguage: GameLanguage = GameLanguage.SPANISH,
+    /**
      * .pkg entregado a Vita3K: el launcher copió el .pkg + work.bin a
      * Descargas/ChildOfLight/ y abrió Vita3K con la guía. Se resetea
      * al importar un .pkg nuevo o borrar los datos del juego.
@@ -305,12 +339,18 @@ data class LauncherSettings(
     /** Opacidad general del overlay (0.1..1): multiplica la opacidad de cada botón. */
     val touchOverlayOpacity: Float = 1f,
     /** Halo azul hielo (neón) alrededor de los botones del overlay. */
-    val touchOverlayNeonGlow: Boolean = false,
+    // 0.2.63 (A-8): el halo neón venía APAGADO por defecto y los
+    // botones se veían planos sobre el juego; el mockup 51025
+    // lleva el halo encendido. Nuevo default true (solo
+    // instalaciones nuevas: quien ya tiene el ajuste guardado
+    // conserva su valor).
+    val touchOverlayNeonGlow: Boolean = true,
     /** Ids de perfiles de control en los que el overlay queda oculto en el juego. */
     val touchOverlayHiddenProfileIds: Set<String> = emptySet(),
 ) {
     val resolutionLabel: String
         get() = when (resolutionMultiplier) {
+            0.5f -> "0.5x (480x272)"
             1f -> "1x (960x544)"
             2f -> "2x (1920x1088)"
             3f -> "3x (2880x1632)"
@@ -393,7 +433,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         asyncPipelineCompilation = true,
         highAccuracy = false,
         surfaceSyncEnabled = false,
-        memoryMapping = MemoryMapping.DOUBLE_BUFFER, // forzado: Mali hace fallback a Double Buffer
+        memoryMapping = MemoryMapping.DOUBLE_BUFFER, // 0.2.63 (B/C): elección del preset, NO fallback del núcleo: en el pin (renderer.cpp:748-766) DoubleBuffer y PageTable están SIEMPRE en la máscara soportada y NativeBuffer solo si el driver expone la importación de buffers; no hay ningún fallback especial para Mali. Double Buffer es además el método por defecto del núcleo (:750). Si va lento, probar Page Table.
         cpuOpt = true, fpsHack = false,
         textureCache = false, shaderCache = true,
     )
