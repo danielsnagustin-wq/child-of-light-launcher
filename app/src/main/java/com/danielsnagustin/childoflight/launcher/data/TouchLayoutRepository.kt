@@ -122,7 +122,20 @@ data class ControlProfile(
  * se convierte con la densidad lógica del teléfono (720x1600,
  * 280 dpi, factor 1.75): stick 186 dp (326 px en 720 de alto, 45%),
  * orbe dibujado 97 dp (zona 115 dp, 0.84 x zona), pausa 56 dp y
- * espada/salto 82 dp, que ya caían en su sitio.
+ * espada/salto 82 dp.
+ * Medición 0.2.58 de la misma captura (ajuste de círculo sobre el
+ * anillo brillante, no a ojo ni por caja): stick centro juego
+ * (0.049, 0.671), anillo 374 px; espada centro juego (0.915, 0.593),
+ * anillo 177 px; salto centro juego (1.012, 0.767), anillo 182 px;
+ * orbe centro juego (0.821, 0.810), anillo 203 px. En el teléfono
+ * eso es espada/salto ~86-88 dp; se suben a 92 dp (R7-P2-04: a 82 dp
+ * quedaban ~24 px de diámetro por debajo del diseño). La espada y
+ * el salto se mueven a su x del mockup (0.914 y 1.012 guardado) y
+ * el stick pisa la barra negra (R7-P1-05). Ver los huecos
+ * verificados en cada control, abajo: el salto llega a su x del
+ * mockup en el dibujado porque el clamp se relaja también para
+ * él (R7, decisión del coordinador): su centro queda en 1.012,
+ * 0,6 px del centro medido en el mockup.
  * - btn_start (START, pausa): (0.50, 0.07), 56 dp, 0.70. Igual que antes.
  * - btn_circle (CIRCLE = volver/cancelar en menús y batalla):
  *   junto a la pausa, a su derecha: pausa de 56 dp (0.0772 de
@@ -132,25 +145,58 @@ data class ControlProfile(
  *   y misma gota al presionar que los demás botones.
  * - stick izquierdo (mover a Aurora): centro en ventana (0.134,
  *   0.675) -> juego (0.05, 0.675), 186 dp de diámetro, 0.70.
- *   Desviación documentada: en la captura el stick pisa la barra
- *   negra lateral (pillarbox), pero controlRectInGameRect limita el
- *   centro a media anchura dentro del rect del juego, así que en
- *   pantalla queda pegado al borde izquierdo del juego, no sobre
- *   la barra. La fracción guardada sigue siendo 0.05 y el recorte
- *   lo hace el dibujado, en cualquier densidad.
+ *   0.2.58 (R7-P1-05): el stick SÍ pisa la barra negra lateral
+ *   (pillarbox) como en el mockup: controlRectInGameRect relaja el
+ *   clamp para el stick (kind "stick") y para el salto (id
+ *   btn_jump, R7, decisión del coordinador), así que su borde
+ *   izquierdo queda fuera del rect del juego (centro en 228 px en
+ *   el teléfono, 1 px del centro del mockup) y su centro sigue
+ *   dentro del rect. Los demás controles siguen con el control
+ *   ENTERO dentro del rect. La vista previa del editor no tiene
+ *   barra negra que pisar (recorta cada control a su propio rect),
+ *   así que ahí el stick se sigue viendo pegado a su borde
+ *   izquierdo y el salto colgando de su borde derecho: editor y
+ *   juego ya no coinciden en el stick ni en el salto.
  * - btn_sword "Espada" (SQUARE = interactuar: hablar, cofres,
- *   puertas): centro en ventana (0.796, 0.576) -> juego (0.864,
- *   0.576), 82 dp, 0.80. Icono espada por id de control.
- * - btn_jump "Salto" (CROSS = saltar/confirmar): centro en ventana
- *   (0.920, 0.752) -> juego x 1.02, que se limita a 1-medioBotón
- *   (0.93 con 82 dp en la densidad de la captura), y 0.752, 82 dp,
- *   0.80. Icono flecha arriba por id de control.
+ *   puertas): centro en juego (0.914, 0.576), 92 dp, 0.80. Icono
+ *   espada por id de control. 0.2.58 (R7-P1-04/R7-P2-04): la x 0.864
+ *   de 0.2.54 era una medida vieja (el centro del anillo está en
+ *   0.915 del mockup) y 82 dp quedaban ~24 px de diámetro por
+ *   debajo del diseño. La y 0.576 se conserva aunque el anillo
+ *   mida 0.593 (12 px de diferencia, fuera de este lote).
+ * - btn_jump "Salto" (CROSS = saltar/confirmar): centro en juego
+ *   (1.012, 0.752), 92 dp, 0.80. Icono flecha arriba por id de
+ *   control. 0.2.58 (R7-P1-04/R7-P2-04): guardado en 1.012, fuera
+ *   del rect del juego como en el mockup (su centro medido está a
+ *   1,0116 del juego: flecha en (916, 773)/1000 de la captura
+ *   1847x851). 0.2.58 (R7, decisión del coordinador): el clamp de
+ *   controlRectInGameRect se relaja TAMBIÉN para el salto (solo
+ *   por id btn_jump, no por kind: la espada comparte kind y no se
+ *   relaja), así que se dibuja en 1.012 (centro en 1450,6 px en
+ *   el teléfono, 0,6 px del centro del mockup) con el borde
+ *   derecho 96 px dentro de la barra negra y 69 px dentro de la
+ *   vista. La y 0.752 se conserva aunque el anillo mida 0.767
+ *   (11 px de diferencia, fuera de este lote).
  * - igniculus (táctil directo, brillo al mantener): centro en
  *   ventana (0.760, 0.808) -> juego (0.82, 0.808). Zona táctil de
  *   115 dp y orbe dibujado a 0.42 x ancho (2 x 0.42 x 115 = 97 dp
  *   de diámetro, como en la captura): la zona de 220 dp no cabía a
  *   y 0.808 sin que el recorte la subiera, así que se achica la
  *   zona y crece el ratio de dibujo, no al revés.
+ * Huecos verificados en el teléfono (1600x720, densidad 1.75, rect
+ * del juego 1270,6x720, izquierda 164,7) con los valores de arriba
+ * y el salto ya en 1.012 (centros dibujados: espada 1326,0/414,7;
+ * salto 1450,6/541,4; orbe 1206,6/581,8; radios 80,5/80,5/85):
+ * espada-salto dibujado hueco +17 px (era solape ~31 px con el
+ * clamp: el salto se mueve 96 px a la derecha hasta su x del
+ * mockup); salto-orbe dibujado hueco +82 px (era solape ~11 px:
+ * el hueco del mockup, ~81 px, SÍ se recupera); espada-orbe
+ * dibujado hueco +40 px (eran ~20 px). Las cajas táctiles
+ * salto-orbe ya no se solapan: hueco de 63 px en X (el solape en
+ * Y, 141 px, no solapa nada sin solape en X). El grupo derecho
+ * del mockup cabe porque el salto sale del rect del juego como
+ * en el diseño (x 1.012): el clamp se relaja para el salto como
+ * para el stick (R7, decisión del coordinador).
  * El rombo (TRIANGLE arriba, CIRCLE derecha, CROSS abajo, SQUARE
  * izquierda) ya NO es el layout por defecto, pero sigue disponible
  * en el editor: VitaButton.entries lo incluye y cualquier botón de
@@ -159,8 +205,8 @@ data class ControlProfile(
  */
 fun defaultTouchLayout(): List<TouchControl> = listOf(
     TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 186, 0.70f),
-    TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.864f, 0.576f, 82, 0.80f),
-    TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 0.93f, 0.752f, 82, 0.80f),
+    TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.914f, 0.576f, 92, 0.80f),
+    TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 1.012f, 0.752f, 92, 0.80f),
     TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 56, 0.70f),
     TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 44, 0.70f),
     TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 115, 0.25f, colorHex = "#7FB3D5"),
@@ -173,6 +219,12 @@ fun oneHandLayout(): List<TouchControl> = listOf(
     // con ellos; el stick baja un poco y queda en 0.70) y Start
     // visible, a diferencia de la una mano vieja, que lo ocultaba
     // junto con dos botones del rombo. Todos visibles.
+    // 0.2.58: espada y salto se quedan en 82 dp (no suben a 92 como
+    // el default): en este perfil el salto está en 0.91 y el orbe
+    // en 0.78 con hueco de ~9 px, y a 92 dp el salto-orbe quedaría
+    // en 0 px y la espada-salto se solaparía ~7 px. Su geometría
+    // compacta ya estaba bien a 82 dp (R7-P1-04: "En Una mano no
+    // pasa").
     TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.70f, 186, 0.75f),
     TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.83f, 0.63f, 82, 0.80f),
     TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 0.91f, 0.79f, 82, 0.80f),
@@ -184,10 +236,13 @@ fun oneHandLayout(): List<TouchControl> = listOf(
 fun externalGamepadLayout(): List<TouchControl> = listOf(
     // Mando externo: mismas posiciones que el default; stick,
     // espada, salto y círculo ocultos (los pone el mando físico),
-    // Start e Igniculus visibles, como antes.
+    // Start e Igniculus visibles, como antes. 0.2.58: espada y
+    // salto espejan el default nuevo (0.914/1.012, 92 dp), aunque
+    // sigan ocultos: si el usuario los vuelve a mostrar, quedan
+    // donde los deja el default.
     TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 186, 0.70f, visible = false),
-    TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.864f, 0.576f, 82, 0.80f, visible = false),
-    TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 0.93f, 0.752f, 82, 0.80f, visible = false),
+    TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.914f, 0.576f, 92, 0.80f, visible = false),
+    TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 1.012f, 0.752f, 92, 0.80f, visible = false),
     TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 56, 0.70f),
     TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 44, 0.70f, visible = false),
     TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 115, 0.25f, colorHex = "#7FB3D5"),
@@ -270,13 +325,14 @@ class TouchLayoutRepository(private val context: Context) {
     }
 
     /**
-     * R4-P0-1/R5-A1-1/0.2.54/0.2.57: reescribe en DataStore los perfiles
+     * R4-P0-1/R5-A1-1/0.2.54/0.2.57/0.2.58: reescribe en DataStore los perfiles
      * predefinidos guardados con su layout viejo de fábrica (los
      * sustituye por el layout limpio) y, si el usuario los
      * modificó, con el rombo transpuesto (lo deja con el rombo
      * estándar) y con los valores viejos de fábrica del stick y
      * la Igniculus (los normaliza a 104 dp y a y 0.55, o a los
-     * tamaños nuevos 0.2.57: stick 186 dp, zona 115 dp).
+     * tamaños nuevos 0.2.57: stick 186 dp, zona 115 dp, o a los
+     * valores nuevos 0.2.58: espada 0.914 y salto 1.012, 92 dp).
      * Solo corre una vez por instancia; es idempotente
      * (la segunda vez ya no hay nada que migrar y no escribe).
      * La lectura, la migración y la escritura ocurren dentro de un
@@ -293,7 +349,7 @@ class TouchLayoutRepository(private val context: Context) {
                 val migrated = migrateBuiltInProfiles(profiles)
                 if (migrated != profiles) {
                     prefs[Keys.PROFILES] = migrated.joinToString("\n###\n") { encodeProfile(it) }
-                    Log.i("ChildOfLight", "0.2.57: perfil predefinido migrado (layout limpio + tamaños nuevos) en DataStore")
+                    Log.i("ChildOfLight", "0.2.58: perfil predefinido migrado (layout limpio + posiciones y tamaños nuevos) en DataStore")
                 }
             }
         }
@@ -597,10 +653,16 @@ class TouchLayoutRepository(private val context: Context) {
          * 0.2.56 con los tamaños viejos (stick 210 dp, zona
          * Igniculus 156 dp, en 6 controles o en 5 sin círculo) a
          * los tamaños nuevos (stick 186 dp, zona 115 dp; espada,
-         * salto, pausa y círculo no cambian). Solo actúa si el
+         * salto, pausa y círculo no cambian). 0.2.58: también migra un
+         * perfil que ya lleva el layout limpio de 0.2.57 (espada y
+         * salto en 82 dp en (0.864, 0.576) y (0.93, 0.752)) a las
+         * posiciones y tamaños nuevos (espada 0.914 y salto 1.012,
+         * 92 dp; solo el default y el externo cambian: una mano
+         * conserva espada/salto en 82 dp). Solo actúa si el
          * perfil es predefinido Y sus controles son EXACTAMENTE
          * uno de los layouts viejos de fábrica de su id o el limpio
-         * de 5 o el limpio con tamaños viejos: si el usuario movió,
+         * de 5 o el limpio con tamaños viejos o el limpio de 0.2.57:
+         * si el usuario movió,
          * redimensionó, remapeó, ocultó o añadió aunque sea un
          * control, el perfil es suyo y no se toca (y siguen sus
          * migraciones actuales: rombo + valores de fábrica, que se
@@ -619,10 +681,12 @@ class TouchLayoutRepository(private val context: Context) {
             val withoutCircle = cleanLayoutWithoutCircle(profile.id)
             val oldSizesClean = cleanLayoutWithOldSizes(profile.id)
             val oldSizesWithoutCircle = oldSizesClean?.filter { it.id != "btn_circle" }
+            val oldSizes057 = cleanLayoutWith057SwordJump(profile.id)
             if (legacyFactoryLayouts(profile.id).none { it == profile.controls } &&
                 withoutCircle != profile.controls &&
                 oldSizesClean != profile.controls &&
-                oldSizesWithoutCircle != profile.controls
+                oldSizesWithoutCircle != profile.controls &&
+                oldSizes057 != profile.controls
             ) return profile
             return profile.copy(controls = clean)
         }
@@ -650,12 +714,16 @@ class TouchLayoutRepository(private val context: Context) {
         /**
          * 0.2.57: el layout limpio de 6 controles con los tamaños
          * viejos de 0.2.54/0.2.55/0.2.56 (stick 210 dp, zona
-         * Igniculus 156 dp; espada, salto, pausa y círculo iguales
-         * que ahora). Se construye desde el layout nuevo con los
-         * dos tamaños vueltos atrás, así no se duplica la lista:
-         * posiciones, visibilidades y opacidades son las mismas en
-         * las dos versiones. Null para ids desconocidos (nunca
-         * coincide con un perfil guardado).
+         * Igniculus 156 dp). 0.2.58: también con espada y salto
+         * en sus valores viejos de 0.2.57 (82 dp en (0.864, 0.576)
+         * y (0.93, 0.752)): sin esa vuelta atrás, el layout
+         * construido desde el nuevo llevaría espada/salto en
+         * 0.914/1.012 con 92 dp, que ningún perfil guardado tiene.
+         * Pausa y círculo iguales que ahora. Se construye desde
+         * el layout nuevo con los valores vueltos atrás, así no
+         * se duplica la lista: visibilidades y opacidades son las
+         * mismas en las dos versiones. Null para ids desconocidos
+         * (nunca coincide con un perfil guardado).
          */
         private fun cleanLayoutWithOldSizes(profileId: String): List<TouchControl>? {
             val clean = when (profileId) {
@@ -668,6 +736,53 @@ class TouchLayoutRepository(private val context: Context) {
                 when (control.id) {
                     "stick" -> control.copy(sizeDp = 210)
                     "igniculus" -> control.copy(sizeDp = 156)
+                    "btn_sword" -> if (control.xFraction == 0.914f && control.sizeDp == 92) {
+                        control.copy(xFraction = 0.864f, sizeDp = 82)
+                    } else {
+                        control
+                    }
+                    "btn_jump" -> if (control.xFraction == 1.012f && control.sizeDp == 92) {
+                        control.copy(xFraction = 0.93f, sizeDp = 82)
+                    } else {
+                        control
+                    }
+                    else -> control
+                }
+            }
+        }
+
+        /**
+         * 0.2.58: el layout limpio de 6 controles con los valores
+         * de 0.2.57 para espada y salto (82 dp en (0.864, 0.576)
+         * y (0.93, 0.752)): la forma en la que queda guardado un
+         * perfil predefinido de una instalación 0.2.57. Solo el
+         * default y el externo cambian en 0.2.58: una mano lleva
+         * espada/salto en (0.83, 0.63) y (0.91, 0.79) con 82 dp y
+         * no coincide con los valores nuevos, así que para ella
+         * este layout ES el nuevo y la coincidencia es un no-op.
+         * Se construye desde el layout nuevo revirtiendo solo
+         * espada/salto, así no se duplica la lista. Null para ids
+         * desconocidos (nunca coincide con un perfil guardado).
+         */
+        private fun cleanLayoutWith057SwordJump(profileId: String): List<TouchControl>? {
+            val clean = when (profileId) {
+                "default-g99" -> defaultTouchLayout()
+                "one-hand" -> oneHandLayout()
+                "external-gamepad" -> externalGamepadLayout()
+                else -> return null
+            }
+            return clean.map { control ->
+                when (control.id) {
+                    "btn_sword" -> if (control.xFraction == 0.914f && control.sizeDp == 92) {
+                        control.copy(xFraction = 0.864f, sizeDp = 82)
+                    } else {
+                        control
+                    }
+                    "btn_jump" -> if (control.xFraction == 1.012f && control.sizeDp == 92) {
+                        control.copy(xFraction = 0.93f, sizeDp = 82)
+                    } else {
+                        control
+                    }
                     else -> control
                 }
             }
@@ -780,6 +895,17 @@ class TouchLayoutRepository(private val context: Context) {
          * btn_circle y deben seguir normalizándose.
          * Si el usuario movió o redimensionó el control, no se
          * toca. Idempotente y puro: testeable.
+         * 0.2.58: cuarta pasada, misma guarda por control y misma
+         * guarda hasCircle: la espada del layout limpio que sigue
+         * en (0.864, 0.576) con 82 dp -> (0.914, 0.576) con 92 dp,
+         * y el salto que sigue en (0.93, 0.752) con 82 dp ->
+         * (1.012, 0.752) con 92 dp. Solo default y externo (una
+         * mano lleva espada y salto en otras posiciones y no
+         * cambia en 0.2.58). Es para el perfil predefinido que el
+         * usuario editó a medias (movió un botón pero dejó
+         * espada/salto en fábrica): el perfil entero ya no
+         * coincide con el layout viejo y no pasa por la primera
+         * pasada, pero sus controles en fábrica sí se mueven.
          */
         fun migrateBuiltInFactoryValues(profile: ControlProfile): ControlProfile {
             if (!profile.isBuiltIn) return profile
@@ -851,6 +977,44 @@ class TouchLayoutRepository(private val context: Context) {
                                 }
                             }
                         }
+                        "btn_sword" -> {
+                            // 0.2.58: espada del layout limpio con
+                            // el valor viejo de fábrica 0.2.57
+                            // ((0.864, 0.576), 82 dp) -> (0.914,
+                            // 0.576) con 92 dp. Solo default y
+                            // externo: una mano lleva la espada en
+                            // (0.83, 0.63) y no coincide. Con guarda
+                            // hasCircle como la pasada 0.2.57.
+                            if (hasCircle &&
+                                (profile.id == "default-g99" || profile.id == "external-gamepad") &&
+                                abs(control.xFraction - 0.864f) <= FACE_SLOT_EPSILON &&
+                                abs(control.yFraction - 0.576f) <= FACE_SLOT_EPSILON &&
+                                control.sizeDp == 82
+                            ) {
+                                control.copy(xFraction = 0.914f, sizeDp = 92)
+                            } else {
+                                control
+                            }
+                        }
+                        "btn_jump" -> {
+                            // 0.2.58: salto del layout limpio con
+                            // el valor viejo de fábrica 0.2.57
+                            // ((0.93, 0.752), 82 dp) -> (1.012,
+                            // 0.752) con 92 dp. Solo default y
+                            // externo: una mano lleva el salto en
+                            // (0.91, 0.79) y no coincide. Con guarda
+                            // hasCircle como la pasada 0.2.57.
+                            if (hasCircle &&
+                                (profile.id == "default-g99" || profile.id == "external-gamepad") &&
+                                abs(control.xFraction - 0.93f) <= FACE_SLOT_EPSILON &&
+                                abs(control.yFraction - 0.752f) <= FACE_SLOT_EPSILON &&
+                                control.sizeDp == 82
+                            ) {
+                                control.copy(xFraction = 1.012f, sizeDp = 92)
+                            } else {
+                                control
+                            }
+                        }
                         else -> control
                     }
                 },
@@ -862,16 +1026,20 @@ class TouchLayoutRepository(private val context: Context) {
          * guardado: primero el layout limpio 0.2.54 (si sigue
          * exactamente en su layout viejo de fábrica o en el limpio
          * de 5 controles sin círculo) o el limpio con los tamaños
-         * viejos de 0.2.57 (stick 210 dp, zona 156 dp), y después
-         * las pasadas viejas (rombo de cara + valores de fábrica
-         * del stick y la Igniculus, incluida la pasada 0.2.57 por
-         * control), que se mantienen para los perfiles que el
+         * viejos de 0.2.57 (stick 210 dp, zona 156 dp) o el limpio
+         * de 0.2.57 (espada/salto 82 dp en sus posiciones viejas),
+         * y después las pasadas viejas (rombo de cara + valores de
+         * fábrica del stick y la Igniculus, incluida la pasada
+         * 0.2.57 por control y la pasada 0.2.58 por control para
+         * espada/salto), que se mantienen para los perfiles que el
          * usuario modificó y no pasan por la primera. Las pasadas
          * son independientes: un perfil con el rombo ya migrado
          * pero el stick viejo sigue normalizando el stick. La
          * pasada 0.2.57 por control solo achica stick/zona si el
          * perfil ya trae btn_circle: un limpio de 5 controles
-         * editado por el usuario queda intacto.
+         * editado por el usuario queda intacto. La pasada 0.2.58
+         * por control tiene la misma guarda: solo mueve
+         * espada/salto si el perfil ya trae btn_circle.
          */
         fun migrateBuiltInProfile(profile: ControlProfile): ControlProfile =
             migrateBuiltInFactoryValues(migrateBuiltInFaceDiamond(migrateBuiltInToCleanLayout(profile)))
@@ -913,12 +1081,28 @@ class TouchLayoutRepository(private val context: Context) {
          * pero la fracción seguía bajando hasta 0 — y al volver, los
          * primeros píxeles del dedo no movían nada. Fracción guardada
          * y posición dibujada ahora coinciden siempre.
+         *
+         * 0.2.58 (R7): [maxFraction] relaja solo el tope derecho para
+         * el salto (btn_jump): su centro de fábrica es 1.012 (mockup,
+         * sobre la barra negra derecha) y el editor debe poder
+         * producirlo y conservarlo al arrastrar o mover el slider X;
+         * con el tope en 1 - half el editor lo devolvería a 0.937 y
+         * perdería el arreglo del mockup. El mismo tope que
+         * decodeControl (JUMP_MAX_X_FRACTION): el dibujado sigue
+         * capado al borde de la vista (controlRectInGameRect).
          */
-        fun clampCenterFraction(fraction: Float, halfSizeFraction: Float): Float {
+        fun clampCenterFraction(fraction: Float, halfSizeFraction: Float, maxFraction: Float? = null): Float {
             val lo = halfSizeFraction.coerceAtMost(0.5f)
-            val hi = (1f - halfSizeFraction).coerceAtLeast(0.5f)
+            val hi = (maxFraction ?: (1f - halfSizeFraction)).coerceAtLeast(0.5f)
             return fraction.coerceIn(lo, hi)
         }
+
+        /**
+         * 0.2.58 (R7): tope de x guardada para el salto (btn_jump).
+         * Su centro de fábrica es 1.012 (mockup); decodeControl y el
+         * editor comparten este tope para no deshacer la migración.
+         */
+        const val JUMP_MAX_X_FRACTION = 1.1f
 
         /**
          * R5-A1-7: un perfil guardado en <=0.2.49 con el verde o el
@@ -1000,8 +1184,16 @@ class TouchLayoutRepository(private val context: Context) {
             // puede sacar el botón de la pantalla ni romper el layout.
             // R5-A1-7: el color también se normaliza a la paleta de
             // la identidad (verde/rojo viejos -> turquesa/lavanda).
+            // 0.2.58 (R7): SOLO btn_jump admite x > 1, hasta
+            // JUMP_MAX_X_FRACTION: su centro de fábrica es 1.012
+            // (mockup, fuera del rect del juego, sobre la barra negra
+            // derecha) y con el tope en 1 la migración a 1.012 se
+            // desharía al releer el perfil guardado. El dibujado sigue
+            // capado al borde de la vista (controlRectInGameRect), así
+            // que un 1.1 guardado a mano tampoco se sale de la pantalla.
             return parsed.copy(
-                xFraction = parsed.xFraction.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0.5f,
+                xFraction = parsed.xFraction.takeIf { it.isFinite() }
+                    ?.coerceIn(0f, if (parsed.id == "btn_jump") JUMP_MAX_X_FRACTION else 1f) ?: 0.5f,
                 yFraction = parsed.yFraction.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0.5f,
                 sizeDp = parsed.sizeDp.coerceIn(16, 400),
                 opacity = parsed.opacity.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0.8f,
