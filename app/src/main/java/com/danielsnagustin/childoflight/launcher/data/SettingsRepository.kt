@@ -16,6 +16,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.danielsnagustin.childoflight.launcher.model.BenchmarkRun
 import com.danielsnagustin.childoflight.launcher.model.BenchmarkSource
+import com.danielsnagustin.childoflight.launcher.model.GameLanguage
 import com.danielsnagustin.childoflight.launcher.model.GpuBackend
 import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuInfo
@@ -84,6 +85,9 @@ class SettingsRepository(private val context: Context) {
         val CLOSE_BACKGROUND = booleanPreferencesKey("close_background_apps")
         val ALLOW_EXTERNAL_VITA3K = booleanPreferencesKey("allow_external_vita3k")
         val PSN_SIGNED_IN = booleanPreferencesKey("psn_signed_in")
+        // 0.2.63 (E): idioma del juego (sys-lang). Se guarda el
+        // nombre del enum; el valor int va en GameLanguage.value.
+        val GAME_LANGUAGE = stringPreferencesKey("game_language")
         val PKG_DELIVERED = booleanPreferencesKey("pkg_delivered_to_vita3k")
         val PKG_INSTALLED_IN_VITA3K = booleanPreferencesKey("pkg_installed_in_vita3k")
         val HIDE_TOUCH_GAMEPAD = booleanPreferencesKey("hide_touch_when_gamepad")
@@ -151,12 +155,13 @@ class SettingsRepository(private val context: Context) {
             closeBackgroundApps = p[Keys.CLOSE_BACKGROUND] ?: true,
             allowExternalVita3k = p[Keys.ALLOW_EXTERNAL_VITA3K] ?: false,
             psnSignedIn = p[Keys.PSN_SIGNED_IN] ?: true,
+            gameLanguage = runCatching { GameLanguage.valueOf(p[Keys.GAME_LANGUAGE] ?: "SPANISH") }.getOrDefault(GameLanguage.SPANISH),
             pkgDeliveredToVita3k = p[Keys.PKG_DELIVERED] ?: false,
             pkgInstalledInVita3k = p[Keys.PKG_INSTALLED_IN_VITA3K] ?: false,
             hideTouchWhenGamepadConnected = p[Keys.HIDE_TOUCH_GAMEPAD] ?: true,
             showTouchOverlayInGame = p[Keys.OVERLAY_SHOW_IN_GAME] ?: true,
             touchOverlayOpacity = clampOverlayOpacity(p[Keys.OVERLAY_OPACITY] ?: 1f),
-            touchOverlayNeonGlow = p[Keys.OVERLAY_NEON] ?: false,
+            touchOverlayNeonGlow = p[Keys.OVERLAY_NEON] ?: true,
             touchOverlayHiddenProfileIds = decodeHiddenProfiles(p[Keys.OVERLAY_HIDDEN_PROFILES] ?: ""),
         )
     }.catch { e ->
@@ -242,6 +247,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.CLOSE_BACKGROUND] = settings.closeBackgroundApps
             p[Keys.ALLOW_EXTERNAL_VITA3K] = settings.allowExternalVita3k
             p[Keys.PSN_SIGNED_IN] = settings.psnSignedIn
+            p[Keys.GAME_LANGUAGE] = settings.gameLanguage.name
             p[Keys.PKG_DELIVERED] = settings.pkgDeliveredToVita3k
             p[Keys.PKG_INSTALLED_IN_VITA3K] = settings.pkgInstalledInVita3k
             p[Keys.HIDE_TOUCH_GAMEPAD] = settings.hideTouchWhenGamepadConnected
@@ -387,10 +393,15 @@ class SettingsRepository(private val context: Context) {
         // cercano (en empate, al menor: 1.5x -> 1x, conservador en
         // Mali). El mismo clamp se aplica al leer DataStore, al
         // guardar y al importar el backup (SettingsBackup lo llama).
+        // 0.2.63 (B/C, P1-3): 0.5x es un valor ofrecido (el núcleo
+        // lo acepta: resolution-multiplier es float sin clamp en
+        // settings.cpp:193 del pin): el mínimo pasa de 1f a 0.5f y
+        // la lista de snap lo incluye. Un valor inválido (0f, -1f)
+        // cae al ofrecido más cercano, 0.5x, como 99f cae a 4x.
         fun clampResolution(value: Float): Float {
             if (!value.isFinite()) return 1f
-            val clamped = value.coerceIn(1f, 4f)
-            return listOf(1f, 2f, 3f, 4f).minByOrNull { kotlin.math.abs(it - clamped) } ?: 1f
+            val clamped = value.coerceIn(0.5f, 4f)
+            return listOf(0.5f, 1f, 2f, 3f, 4f).minByOrNull { kotlin.math.abs(it - clamped) } ?: 1f
         }
 
         fun clampAniso(value: Int): Int =
@@ -470,6 +481,10 @@ internal fun mergePresetWithUserChoices(
     safeMode = current?.safeMode ?: false,
     closeBackgroundApps = current?.closeBackgroundApps ?: true,
     psnSignedIn = current?.psnSignedIn ?: true,
+    // 0.2.63 (E): el idioma NO es campo de preset: al aplicar un
+    // preset se conserva la elección del usuario (si no, cada
+    // preset lo devolvería a español sin avisar).
+    gameLanguage = current?.gameLanguage ?: GameLanguage.SPANISH,
     performanceMode = current?.performanceMode ?: true,
     autoRevertTo1xIfBelow28Fps = current?.autoRevertTo1xIfBelow28Fps ?: true,
     pkgDeliveredToVita3k = current?.pkgDeliveredToVita3k ?: false,
@@ -477,7 +492,7 @@ internal fun mergePresetWithUserChoices(
     hideTouchWhenGamepadConnected = current?.hideTouchWhenGamepadConnected ?: true,
     showTouchOverlayInGame = current?.showTouchOverlayInGame ?: true,
     touchOverlayOpacity = current?.touchOverlayOpacity ?: 1f,
-    touchOverlayNeonGlow = current?.touchOverlayNeonGlow ?: false,
+    touchOverlayNeonGlow = current?.touchOverlayNeonGlow ?: true,
     touchOverlayHiddenProfileIds = current?.touchOverlayHiddenProfileIds ?: emptySet(),
     allowExternalVita3k = current?.allowExternalVita3k ?: false,
 )
