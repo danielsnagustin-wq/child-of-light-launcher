@@ -1208,13 +1208,6 @@ class GameLibraryRepository(private val context: Context) {
     fun addcontDir(titleId: String): File = File(ux0Dir, "addcont/$titleId")
     fun patchDir(titleId: String): File = File(ux0Dir, "patch/$titleId")
     fun saveDir(titleId: String): File = File(ux0Dir, "user/00/savedata/$titleId")
-    /**
-     * Ruta VIEJA de trofeos (trophy/<TITLE_ID>/): el núcleo nunca la
-     * usa, lo instalado vive en trophy/data/<NPCOMMID>/ (ver
-     * TrophyDeletePaths). Se conserva solo como objetivo de limpieza
-     * extra en deleteGameData, por si quedó algo de versiones viejas.
-     */
-    fun trophyDir(titleId: String): File = File(ux0Dir, "user/00/trophy/$titleId")
     fun firmwareDir(): File = File(vitaRoot, "firmware")
     fun driversDir(): File = File(vitaRoot, "drivers/turnip")
 
@@ -2919,6 +2912,19 @@ class GameLibraryRepository(private val context: Context) {
                         dir.deleteRecursively()
                         if ("trofeos$suffix" !in deleted) deleted.add("trofeos$suffix")
                     }
+                // R7-P1-02: las licencias instaladas (.rif en
+                // license/<TITLE>/) también se borran: si no, un .pkg
+                // reimportado se instalaba sin work.bin (findPkgZrif
+                // exime al título con licencia en el núcleo) y el
+                // "borrado total" no revocaba nada. Solo la carpeta
+                // EXACTA de este título, nunca license/ entera: ahí
+                // viven también las licencias de la otra región.
+                val licenseDir = licenseDirFor(ux0, target.id)
+                if (licenseDir.exists()) {
+                    val hadRif = licenseHasRif(ux0, target.id)
+                    licenseDir.deleteRecursively()
+                    if (hadRif && "licencias$suffix" !in deleted) deleted.add("licencias$suffix")
+                }
                 // .pkg guardados (juego + update + licencia) en este ux0.
                 var pkgDeleted = false
                 listOf(
@@ -2982,6 +2988,11 @@ class GameLibraryRepository(private val context: Context) {
                 // bajo trophy/data/ es de este juego (las dos regiones
                 // se borran juntas, P2-C9).
                 File(ux0, "user/00/trophy/data").listFiles()?.any { it.isDirectory } == true ||
+                // R7-P1-02: las licencias instaladas (.rif en
+                // license/<TITLE>/) también son datos del título: si
+                // solo quedaran ellas, el título seguiría contando
+                // como objetivo del borrado total.
+                licenseHasRif(ux0, titleId) ||
                 File(File(ux0, "pkg"), "$titleId.pkg").isFile ||
                 hasTitleBackups(ux0, titleId)
         }
@@ -3247,6 +3258,22 @@ class GameLibraryRepository(private val context: Context) {
                         LauncherLog.append(context, "delete", "DLC .pkg $dlcId NO se pudo borrar de $titleId (${pkg.path})")
                     }
                 }
+            // R7-P1-03: el .rif instalado de ESTE DLC
+            // (license/<TITLE>/<CONTENT_ID>.rif): si sobrevive, el
+            // DLC reimportado se instala sin work.bin (la exención de
+            // storedPkgsMissingLicense lo exime). Solo el archivo
+            // exacto de este DLC (por su clave de contenido, la misma
+            // que empareja su carpeta extraída y su .pkg guardado):
+            // nunca el .rif del juego ni el de otro DLC, que viven en
+            // la misma carpeta.
+            dlcLicenseFilesToDelete(ux0, titleId, keys).forEach { rif ->
+                if (rif.delete()) {
+                    LauncherLog.append(context, "delete", "Licencia .rif del DLC $dlcId borrada de $titleId (${rif.path})")
+                } else {
+                    failed = true
+                    LauncherLog.append(context, "delete", "Licencia .rif del DLC $dlcId NO se pudo borrar de $titleId (${rif.path})")
+                }
+            }
         }
         return DlcDeleteResult(deletedStoredPkg, deletedExtracted, failed)
     }
@@ -3346,3 +3373,44 @@ class GameLibraryRepository(private val context: Context) {
  */
 internal fun isDlcLicenseInstalledInCore(ux0Dir: File, titleId: String, contentId: String): Boolean =
     File(ux0Dir, "license/$titleId/$contentId.rif").isFile
+
+/**
+ * R7-P1-02 (0.2.58): carpeta de licencias instaladas de un título
+ * (ux0/license/<TITLE>/). Solo esa carpeta exacta, nunca license/
+ * entera: ahí viven también las licencias de la otra región.
+ * Top-level internal para testear la lógica pura sin instanciar el
+ * repositorio (que pide Context).
+ */
+internal fun licenseDirFor(ux0Dir: File, titleId: String): File =
+    File(ux0Dir, "license/$titleId")
+
+/**
+ * R7-P1-02: ¿hay al menos un .rif instalado para este título? Una
+ * carpeta license/<TITLE>/ vacía (sin .rif) no es dato del título:
+ * no hace que hasAnyGameData lo cuente. Un título con separadores
+ * o ".." nunca vale: no se construye una ruta con él.
+ */
+internal fun licenseHasRif(ux0Dir: File, titleId: String): Boolean {
+    if (titleId.isBlank() || titleId == "." || titleId == ".." || '/' in titleId || '\\' in titleId) return false
+    return licenseDirFor(ux0Dir, titleId).listFiles()
+        ?.any { it.isFile && it.name.lowercase().endsWith(".rif") } == true
+}
+
+/**
+ * R7-P1-03: los .rif instalados de UN DLC concreto, en
+ * ux0/license/<TITLE>/. El .rif se llama por el Content ID
+ * completo (<CONTENT_ID>.rif) y la clave de fusión del DLC es su
+ * nombre corto (lo que va tras "_00-"): un .rif es de este DLC
+ * cuando su clave de fusión está entre [contentKeys], la misma
+ * clave que ya empareja su carpeta extraída y su .pkg guardado.
+ * Solo esos archivos, nunca el .rif del juego ni el de otro DLC
+ * (que viven en la misma carpeta). Lista vacía si el título no
+ * vale o no hay .rif de ese DLC.
+ */
+internal fun dlcLicenseFilesToDelete(ux0Dir: File, titleId: String, contentKeys: Set<String>): List<File> {
+    if (titleId.isBlank() || titleId == "." || titleId == ".." || '/' in titleId || '\\' in titleId) return emptyList()
+    if (contentKeys.isEmpty()) return emptyList()
+    return licenseDirFor(ux0Dir, titleId).listFiles()
+        ?.filter { it.isFile && it.name.lowercase().endsWith(".rif") && GameLibraryRepository.dlcMergeKey(it.nameWithoutExtension) in contentKeys }
+        ?: emptyList()
+}
