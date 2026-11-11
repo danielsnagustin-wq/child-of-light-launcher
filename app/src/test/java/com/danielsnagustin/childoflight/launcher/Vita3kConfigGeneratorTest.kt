@@ -489,6 +489,10 @@ class Vita3kConfigGeneratorTest {
             "show-compile-shaders" to "bool",
             "show-welcome" to "bool",
             "psn-signed-in" to "int",
+            // 0.2.63 (E): sys-lang es INT en el pin (config.h:172:
+            // code(int, "sys-lang", ...)); el generador lo emite
+            // tras psn-signed-in ("sys-lang: 3" en español).
+            "sys-lang" to "int",
             "pref-path" to "string",
         )
         val yaml = Vita3kConfigGenerator.generate(LauncherSettings(psnSignedIn = true), "/data/vita3k")
