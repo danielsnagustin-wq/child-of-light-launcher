@@ -215,6 +215,28 @@ private fun GameCard(
             // ContentScale.Fit muestra la ilustración entera, sin
             // recortar nada y sin bandas. Título y subtítulo sobre
             // gradiente inferior, dentro de la tarjeta.
+            // P-C1: los dos gradientes de la portada se memorizan
+            // (el ambiental depende del acento; el inferior es
+            // constante) para no recrearlos en cada recomposición.
+            val ambientGradient = remember(accent) {
+                Brush.verticalGradient(
+                    listOf(
+                        accent.copy(alpha = 0.08f),
+                        Color.Transparent,
+                        Color.Transparent,
+                    ),
+                )
+            }
+            val bottomGradient = remember {
+                Brush.verticalGradient(
+                    listOf(
+                        Color.Transparent,
+                        Color.Transparent,
+                        ColNight.copy(alpha = 0.55f),
+                        ColNight.copy(alpha = 0.85f),
+                    ),
+                )
+            }
             CoverEntrance(play = !introDone) {
                 Box(
                     modifier = Modifier
@@ -248,36 +270,19 @@ private fun GameCard(
                     // arriba, que se desvanece. Sin animaciones infinitas.
                     Box(
                         modifier = Modifier.fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        accent.copy(alpha = 0.08f),
-                                        Color.Transparent,
-                                        Color.Transparent,
-                                    ),
-                                ),
-                            ),
+                            .background(ambientGradient),
                     )
                     // Gradiente inferior estático para que el título se
                     // lea sobre el arte. Sin animaciones infinitas.
                     Box(
                         modifier = Modifier.fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        Color.Transparent,
-                                        Color.Transparent,
-                                        ColNight.copy(alpha = 0.55f),
-                                        ColNight.copy(alpha = 0.85f),
-                                    ),
-                                ),
-                            ),
+                            .background(bottomGradient),
                     )
                     Column(
                         modifier = Modifier.align(Alignment.BottomStart).padding(16.dp),
                     ) {
                         Text("Child of Light", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.White)
-                        Text("PS Vita · Ubisoft · UbiArt", style = MaterialTheme.typography.bodyMedium, color = ColMutedText)
+                        Text("PS Vita · Ubisoft · UbiArt", style = MaterialTheme.typography.bodyMedium, color = ColIceBlue)
                     }
                 }
             }
@@ -341,12 +346,23 @@ private fun GameCard(
                 }
                 if (!gameOk) {
                     Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        "⚠ ${strings.pendingImport}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = accent,
-                    )
+                    // P-G3: el aviso va en un contenedor con el tinte
+                    // del acento al 8% (mismo patrón que la luz
+                    // ambiental de la portada); el texto se mantiene
+                    // en el acento elegido por el usuario.
+                    Box(
+                        modifier = Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(accent.copy(alpha = 0.08f))
+                            .padding(12.dp),
+                    ) {
+                        Text(
+                            "⚠ ${strings.pendingImport}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = accent,
+                        )
+                    }
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 if (gameOk) {
@@ -357,7 +373,7 @@ private fun GameCard(
                     // diseño de Home se mantiene mínimo.
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        "DLCs: ${status.dlcCount} · ${status.firmwareName ?: "firmware no instalado"} · Update: ${if (status.updateInstalled) "instalado" else "no instalado"}",
+                        "DLCs: ${status.dlcCount} · ${status.firmwareName ?: "firmware no instalado"} · Actualización: ${if (status.updateInstalled) "instalado" else "no instalado"}",
                         style = MaterialTheme.typography.bodySmall,
                         color = mutedTextColor(dark),
                     )
