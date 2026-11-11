@@ -278,7 +278,10 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                         )
                         if (item.trophy.tier != null) Text("Grado: ${item.trophy.tier}", style = MaterialTheme.typography.bodySmall, color = if (item.unlocked) ColMutedText else mutedTextColor(isDarkUi(uiPrefs)))
                         if (item.trophy.onlineRequired) {
-                            Text("⚠ Puede no desbloquearse sin la función online de Vita (enviar Oculi a un amigo).", style = MaterialTheme.typography.bodySmall, color = ColAccent)
+                            // R9-P2-03: ColAccent fijo ilegible en tema
+                            // claro (~1.7:1 sobre surfaceVariant); en
+                            // claro azul lavanda #6578B8. Texto intacto.
+                            Text("⚠ Puede no desbloquearse sin la función online de Vita (enviar Oculi a un amigo).", style = MaterialTheme.typography.bodySmall, color = if (isDarkUi(uiPrefs)) ColAccent else ColLavenderBlue)
                         }
                         item.unlockedAtMillis?.let { at ->
                             val date = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(at))
@@ -385,6 +388,10 @@ private fun symbolFor(number: Int): TrophySymbol = when (number) {
 private fun TrophyIcon(item: TrophyProgress, modifier: Modifier = Modifier) {
     val secretLocked = item.trophy.isSecret && !item.unlocked
     val iconAlpha = if (item.unlocked) 1f else 0.5f
+    // R9-P2-05: la "?" blanca al 50% sobre el degradado gris azulado
+    // (~1.9:1) apenas se veía; solo la "?" sube a 0.8, el círculo
+    // mantiene su atenuado de 0.5 y el degradado no cambia.
+    val questionAlpha = if (item.unlocked) 1f else 0.8f
     // Azul acuarela pálido si está desbloqueado; gris azulado si no.
     val gradientColors = if (item.unlocked) {
         listOf(Color(0xFFC7D6EC), Color(0xFF93AED6))
@@ -413,7 +420,7 @@ private fun TrophyIcon(item: TrophyProgress, modifier: Modifier = Modifier) {
                 color = Color.White,
                 fontWeight = FontWeight.Bold,
                 fontSize = 24.sp,
-                modifier = Modifier.alpha(iconAlpha),
+                modifier = Modifier.alpha(questionAlpha),
             )
         } else {
             Canvas(modifier = Modifier.fillMaxSize(0.62f).alpha(if (item.unlocked) 1f else 0.65f)) {
