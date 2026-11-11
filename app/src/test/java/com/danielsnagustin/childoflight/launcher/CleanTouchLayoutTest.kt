@@ -30,6 +30,18 @@ import org.junit.Test
  * recorte a medio botón dentro del juego lo hace controlRect; el
  * salto en ventana x 0.920 da juego 1.02 y se guarda en 0.93
  * (1 - medio botón con 82 dp).
+ *
+ * 0.2.57 (2026-11-10): re-medición del mockup (componentes conexos
+ * por brillo): el stick es un círculo de unos 385 px, no 434 de
+ * adorno a adorno; el orbe, unos 200 px, no 272. Con la densidad
+ * lógica del teléfono (720x1600, 280 dpi, factor 1.75): stick
+ * 186 dp, zona Igniculus 115 dp (orbe dibujado 97 dp); espada y
+ * salto 82 dp, pausa 56 dp y círculo 44 dp no cambian. Los perfiles
+ * guardados con los tamaños viejos (stick 210 dp, zona 156 dp)
+ * migran a los nuevos: el perfil entero si sigue exacto en fábrica
+ * (migrateBuiltInToCleanLayout) y, si el usuario lo editó a medias,
+ * cada control que sigue en fábrica por separado
+ * (migrateBuiltInFactoryValues). Ver los tests 0.2.57 abajo.
  */
 class CleanTouchLayoutTest {
 
@@ -130,12 +142,12 @@ class CleanTouchLayoutTest {
         assertEquals(0.864f to 0.576f, position(controls, "btn_sword"))
         assertEquals(0.93f to 0.752f, position(controls, "btn_jump"))
         assertEquals(0.82f to 0.808f, position(controls, "igniculus"))
-        assertEquals(210, control(controls, "stick").sizeDp)
+        assertEquals(186, control(controls, "stick").sizeDp)
         assertEquals(82, control(controls, "btn_sword").sizeDp)
         assertEquals(82, control(controls, "btn_jump").sizeDp)
         assertEquals(56, control(controls, "btn_start").sizeDp)
         assertEquals(44, control(controls, "btn_circle").sizeDp)
-        assertEquals(156, control(controls, "igniculus").sizeDp)
+        assertEquals(115, control(controls, "igniculus").sizeDp)
         assertEquals(0.70f, control(controls, "stick").opacity, 0.001f)
         assertEquals(0.80f, control(controls, "btn_sword").opacity, 0.001f)
         assertEquals(0.80f, control(controls, "btn_jump").opacity, 0.001f)
@@ -182,9 +194,9 @@ class CleanTouchLayoutTest {
         assertEquals(0.50f to 0.07f, position(controls, "btn_start"))
         assertEquals(0.59f to 0.07f, position(controls, "btn_circle"))
         assertEquals(0.78f to 0.80f, position(controls, "igniculus"))
-        assertEquals(210, control(controls, "stick").sizeDp)
+        assertEquals(186, control(controls, "stick").sizeDp)
         assertEquals(44, control(controls, "btn_circle").sizeDp)
-        assertEquals(156, control(controls, "igniculus").sizeDp)
+        assertEquals(115, control(controls, "igniculus").sizeDp)
         // El grupo derecho baja hacia la esquina para el pulgar.
         assertTrue(position(controls, "btn_jump").second > position(defaultTouchLayout(), "btn_jump").second)
         assertTrue(position(controls, "btn_sword").second > position(defaultTouchLayout(), "btn_sword").second)
@@ -317,6 +329,160 @@ class CleanTouchLayoutTest {
         assertEquals(externalGamepadLayout(), TouchLayoutRepository.migrateBuiltInProfile(external).controls)
         // En externo el círculo queda oculto, como la espada y el salto.
         assertFalse(control(externalGamepadLayout(), "btn_circle").visible)
+    }
+
+    // --- Migración 0.2.57: tamaños viejos de fábrica -> nuevos ---
+
+    // Layout limpio de 6 controles con los tamaños viejos de
+    // 0.2.54/0.2.55/0.2.56 (stick 210 dp, zona 156 dp): la forma en
+    // la que queda guardado un perfil predefinido de una instalación
+    // limpia 0.2.55. Literales (no derivados del layout nuevo): el
+    // test fija la entrada de forma independiente.
+    private fun cleanSixControlOldSizesDefault(): List<TouchControl> = listOf(
+        TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 210, 0.70f),
+        TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.864f, 0.576f, 82, 0.80f),
+        TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 0.93f, 0.752f, 82, 0.80f),
+        TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 56, 0.70f),
+        TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 44, 0.70f),
+        TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 156, 0.25f, colorHex = "#7FB3D5"),
+    )
+
+    private fun cleanSixControlOldSizesOneHand(): List<TouchControl> = listOf(
+        TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.70f, 210, 0.75f),
+        TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.83f, 0.63f, 82, 0.80f),
+        TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 0.91f, 0.79f, 82, 0.80f),
+        TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 56, 0.70f),
+        TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 44, 0.70f),
+        TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.78f, 0.80f, 156, 0.25f, colorHex = "#7FB3D5"),
+    )
+
+    private fun cleanSixControlOldSizesExternal(): List<TouchControl> =
+        cleanSixControlOldSizesDefault().map {
+            if (it.id == "stick" || it.id == "btn_sword" || it.id == "btn_jump" || it.id == "btn_circle") it.copy(visible = false) else it
+        }
+
+    @Test
+    fun migratesSavedOldSizeCleanDefaultToNewSizes() {
+        // El caso del usuario: instalación limpia 0.2.55 con el
+        // default de fábrica guardado. Cambiar defaultTouchLayout
+        // solo NO le cambia el layout guardado: la migración lo
+        // lleva a los tamaños nuevos, sin tocar posiciones ni
+        // funciones (espada sigue SQUARE, salto CROSS, pausa START).
+        val saved = ControlProfile("default-g99", "Por defecto G99", true, cleanSixControlOldSizesDefault())
+        val migrated = TouchLayoutRepository.migrateBuiltInProfile(saved)
+        assertEquals(defaultTouchLayout(), migrated.controls)
+        assertEquals(186, control(migrated.controls, "stick").sizeDp)
+        assertEquals(115, control(migrated.controls, "igniculus").sizeDp)
+        assertEquals(82, control(migrated.controls, "btn_sword").sizeDp)
+        assertEquals(82, control(migrated.controls, "btn_jump").sizeDp)
+        assertEquals(56, control(migrated.controls, "btn_start").sizeDp)
+        assertEquals(44, control(migrated.controls, "btn_circle").sizeDp)
+        assertEquals(0.864f to 0.576f, position(migrated.controls, "btn_sword"))
+        assertEquals(0.93f to 0.752f, position(migrated.controls, "btn_jump"))
+        assertEquals(VitaButton.SQUARE, control(migrated.controls, "btn_sword").vitaButton)
+        assertEquals(VitaButton.CROSS, control(migrated.controls, "btn_jump").vitaButton)
+        // Idempotente: una vez con los tamaños nuevos, no cambia.
+        assertEquals(migrated, TouchLayoutRepository.migrateBuiltInProfile(migrated))
+    }
+
+    @Test
+    fun migratesSavedOldSizeCleanOneHandAndExternalToNewSizes() {
+        val oneHand = ControlProfile("one-hand", "Una mano", true, cleanSixControlOldSizesOneHand())
+        assertEquals(oneHandLayout(), TouchLayoutRepository.migrateBuiltInProfile(oneHand).controls)
+        val external = ControlProfile("external-gamepad", "Mando externo + táctil mínimo", true, cleanSixControlOldSizesExternal())
+        assertEquals(externalGamepadLayout(), TouchLayoutRepository.migrateBuiltInProfile(external).controls)
+        // En externo el stick sigue oculto y la zona sigue visible.
+        val migratedExternal = TouchLayoutRepository.migrateBuiltInProfile(external)
+        assertFalse(control(migratedExternal.controls, "stick").visible)
+        assertTrue(control(migratedExternal.controls, "igniculus").visible)
+    }
+
+    @Test
+    fun oldSizeCleanProfileEditedByUserKeepsItsOwnSizes() {
+        // El usuario agrandó el stick a mano a 200 dp en su layout
+        // limpio con tamaños viejos: el stick es suyo y NO se achica
+        // (la pasada por control solo actúa sobre el valor exacto
+        // de fábrica, 210 dp). La zona, que sigue en fábrica, sí se
+        // achica por su lado: las pasadas son por control.
+        val resized = cleanSixControlOldSizesDefault().map {
+            if (it.id == "stick") it.copy(sizeDp = 200) else it
+        }
+        val saved = ControlProfile("default-g99", "Por defecto G99", true, resized)
+        assertEquals(saved, TouchLayoutRepository.migrateBuiltInToCleanLayout(saved))
+        val migrated = TouchLayoutRepository.migrateBuiltInProfile(saved)
+        assertEquals(200, control(migrated.controls, "stick").sizeDp)
+        assertEquals(115, control(migrated.controls, "igniculus").sizeDp)
+        assertEquals(0.864f to 0.576f, position(migrated.controls, "btn_sword"))
+    }
+
+    @Test
+    fun oldSizeCleanCustomProfileIsNotResized() {
+        // Un perfil personalizado con los tamaños viejos es del
+        // usuario: no se toca por ninguna pasada.
+        val custom = ControlProfile("custom-1", "Mío", false, cleanSixControlOldSizesDefault())
+        assertEquals(custom, TouchLayoutRepository.migrateBuiltInToCleanLayout(custom))
+        assertEquals(custom, TouchLayoutRepository.migrateBuiltInProfile(custom))
+        assertEquals(custom, TouchLayoutRepository.migrateBuiltInFactoryValues(custom))
+    }
+
+    @Test
+    fun factoryValuesPassShrinksOldSizeStickAndZoneOfEditedBuiltIn() {
+        // El usuario movió la espada en su perfil predefinido con
+        // tamaños viejos: el perfil entero ya no coincide con el
+        // layout viejo, pero el stick y la zona siguen en fábrica y
+        // la pasada por control los achica por separado.
+        val edited = cleanSixControlOldSizesDefault().map {
+            if (it.id == "btn_sword") it.copy(xFraction = 0.80f) else it
+        }
+        val saved = ControlProfile("default-g99", "Por defecto G99", true, edited)
+        val migrated = TouchLayoutRepository.migrateBuiltInFactoryValues(saved)
+        assertEquals(186, control(migrated.controls, "stick").sizeDp)
+        assertEquals(115, control(migrated.controls, "igniculus").sizeDp)
+        assertEquals(0.80f to 0.576f, position(migrated.controls, "btn_sword"))
+        // Y la cadena completa hace lo mismo con el perfil entero.
+        val chained = TouchLayoutRepository.migrateBuiltInProfile(saved)
+        assertEquals(186, control(chained.controls, "stick").sizeDp)
+        assertEquals(115, control(chained.controls, "igniculus").sizeDp)
+        assertEquals(0.80f to 0.576f, position(chained.controls, "btn_sword"))
+        // Si el usuario movió el stick, esa pasada no lo toca.
+        val movedStick = cleanSixControlOldSizesDefault().map {
+            if (it.id == "stick") it.copy(xFraction = 0.10f) else it
+        }
+        val savedMoved = ControlProfile("default-g99", "Por defecto G99", true, movedStick)
+        val migratedMoved = TouchLayoutRepository.migrateBuiltInFactoryValues(savedMoved)
+        assertEquals(210, control(migratedMoved.controls, "stick").sizeDp)
+        assertEquals(115, control(migratedMoved.controls, "igniculus").sizeDp)
+    }
+
+    @Test
+    fun defaultSizesMatchMockupProportionsOnPhone() {
+        // Teléfono 1600x720 a densidad 1.75 (720x1600, 280 dpi):
+        // el rect del juego es 1270x720 centrado. Los tamaños en dp
+        // tienen que rendir como los círculos del mockup (stick 45%
+        // de la altura, orbe dibujado 23,5%, pausa 13,5%).
+        val controls = defaultTouchLayout()
+        val stickRect = controlRect(control(controls, "stick"), 1600f, 720f, 1.75f)
+        val stickHeightPx = stickRect.bottom - stickRect.top
+        assertEquals(325.5f, stickHeightPx, 1f)
+        assertEquals(0.452f, stickHeightPx / 720f, 0.01f)
+        val zone = control(controls, "igniculus")
+        val zoneRect = controlRect(zone, 1600f, 720f, 1.75f)
+        assertEquals(201.25f, zoneRect.bottom - zoneRect.top, 1f)
+        // Orbe dibujado: 0.42 x ancho a cada lado = 0.84 x zona.
+        val orbDrawnPx = 0.84f * zone.sizeDp * 1.75f
+        assertEquals(169f, orbDrawnPx, 1f)
+        assertEquals(0.235f, orbDrawnPx / 720f, 0.01f)
+        val pauseRect = controlRect(control(controls, "btn_start"), 1600f, 720f, 1.75f)
+        val pauseHeightPx = pauseRect.bottom - pauseRect.top
+        assertEquals(98f, pauseHeightPx, 1f)
+        assertEquals(0.136f, pauseHeightPx / 720f, 0.01f)
+        // Proporciones entre controles, como en el mockup (espada
+        // 0.49, orbe 0.52, pausa 0.30 del stick; la espada queda en
+        // 0.44 porque 82 dp ya caían en su sitio y no se agranda).
+        val stick = control(controls, "stick").sizeDp.toFloat()
+        assertEquals(0.44f, control(controls, "btn_sword").sizeDp / stick, 0.01f)
+        assertEquals(0.52f, 0.84f * zone.sizeDp / stick, 0.01f)
+        assertEquals(0.30f, control(controls, "btn_start").sizeDp / stick, 0.01f)
     }
 
     @Test
