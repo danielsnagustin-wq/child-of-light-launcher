@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -48,7 +49,9 @@ import com.danielsnagustin.childoflight.launcher.ui.Screen
  * distinto y cada uno dice lo que hace (R2-P2-26): "Restablecer solo
  * esta pantalla" (pie de pantalla) solo toca tema/acento/fondo/texto/
  * idioma/portada; "Restablecer personalización y editor táctil"
- * resetea UiPreferences Y los perfiles del editor táctil.
+ * resetea UiPreferences Y los perfiles del editor táctil — y pide
+ * confirmación antes (R7-P1-01): los perfiles de control creados por
+ * el usuario se borran y solo quedan los predefinidos.
  *
  * Sobre los iconos, honesto: existe UN solo juego de iconos
  * vectoriales consistente (ColIcons.kt); este ajuste cambia su
@@ -108,6 +111,10 @@ fun SettingsPersonalizationScreen(vm: LauncherViewModel, onBack: () -> Unit, onN
     // R2-P2-27: rememberSaveable (con Saver propio) en vez de remember:
     // el borrador se perdía al rotar la pantalla.
     var draft by rememberSaveable(stateSaver = uiPreferencesDraftSaver) { mutableStateOf<UiPreferences?>(null) }
+    // R7-P1-01: el reset total borra los perfiles de control creados
+    // por el usuario: pide confirmación explícita (mismo patrón que
+    // Limpieza: booleano + AlertDialog) antes de llamar al ViewModel.
+    var showResetConfirm by rememberSaveable { mutableStateOf(false) }
     val current = draft ?: saved
     val hasChanges = draft != null && saved != null && draft != saved
     fun update(transform: (UiPreferences) -> UiPreferences) {
@@ -220,9 +227,20 @@ fun SettingsPersonalizationScreen(vm: LauncherViewModel, onBack: () -> Unit, onN
                 SecondaryButton("Personalizar botones", onClick = { onNavigate(Screen.TOUCH) })
                 NoteText("Los botones del juego se editan en el editor táctil: mover, cambiar el tamaño, reasignar o borrar. Lo que ves ahí es lo que aparece sobre el juego.")
                 OutlinedButton(
-                    onClick = { vm.resetAllCustomization(); draft = null },
+                    onClick = { showResetConfirm = true },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Restablecer personalización y editor táctil") }
+                if (showResetConfirm) {
+                    AlertDialog(
+                        onDismissRequest = { showResetConfirm = false },
+                        title = { Text("¿Restablecer personalización y editor táctil?") },
+                        text = { Text("Se restablecen el tema, el acento, el fondo, el texto, el idioma, la portada y los controles a los valores de fábrica. También se borran los perfiles de control creados por ti; solo quedan los perfiles predefinidos. Esta acción no se puede deshacer.") },
+                        confirmButton = {
+                            TextButton(onClick = { showResetConfirm = false; vm.resetAllCustomization(); draft = null }) { Text("Restablecer") }
+                        },
+                        dismissButton = { TextButton(onClick = { showResetConfirm = false }) { Text("Cancelar") } },
+                    )
+                }
             } ?: Text("Cargando personalización…")
         }
     }
