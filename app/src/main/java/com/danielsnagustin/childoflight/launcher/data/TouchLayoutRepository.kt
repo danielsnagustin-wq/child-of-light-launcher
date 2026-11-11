@@ -769,11 +769,27 @@ class TouchLayoutRepository(private val context: Context) {
          * el perfil entero ya no coincide con el layout viejo y no
          * pasa por la primera pasada, pero sus controles en fábrica
          * sí se achican.
+         * Guarda 0.2.57: las dos ramas de arriba solo actúan si el
+         * perfil YA trae btn_circle (layout limpio de 6 controles).
+         * Un limpio de 5 controles sin círculo es un perfil
+         * pre-círculo de 0.2.54: si el usuario lo editó, es suyo y
+         * no se toca nada; si no lo editó, la primera pasada ya lo
+         * convierte entero al default nuevo con los tamaños nuevos.
+         * Las ramas viejas (stick 140/120 dp, Igniculus) no llevan
+         * esta guarda: los layouts viejos del rombo no tienen
+         * btn_circle y deben seguir normalizándose.
          * Si el usuario movió o redimensionó el control, no se
          * toca. Idempotente y puro: testeable.
          */
         fun migrateBuiltInFactoryValues(profile: ControlProfile): ControlProfile {
             if (!profile.isBuiltIn) return profile
+            // Guarda 0.2.57: solo los layouts limpios que ya pasaron
+            // por la adición del círculo (6 controles) reciben el
+            // achique por control de stick 210 -> 186 y zona
+            // 156 -> 115. Un limpio de 5 sin btn_circle es
+            // pre-círculo de 0.2.54 y, si el usuario lo editó, es
+            // suyo y no se toca.
+            val hasCircle = profile.controls.any { it.id == "btn_circle" }
             return profile.copy(
                 controls = profile.controls.map { control ->
                     when (control.id) {
@@ -788,7 +804,7 @@ class TouchLayoutRepository(private val context: Context) {
                                 abs(control.yFraction - oldY) <= FACE_SLOT_EPSILON
                             ) {
                                 control.copy(sizeDp = 104)
-                            } else if (control.kind == "stick" && control.sizeDp == 210 &&
+                            } else if (hasCircle && control.kind == "stick" && control.sizeDp == 210 &&
                                 abs(control.xFraction - cleanX) <= FACE_SLOT_EPSILON &&
                                 abs(control.yFraction - cleanY) <= FACE_SLOT_EPSILON
                             ) {
@@ -808,7 +824,7 @@ class TouchLayoutRepository(private val context: Context) {
                                     abs(control.yFraction - 0.28f) <= FACE_SLOT_EPSILON
                                 ) {
                                     control.copy(xFraction = 0.50f, yFraction = 0.50f)
-                                } else if (control.sizeDp == 156 &&
+                                } else if (hasCircle && control.sizeDp == 156 &&
                                     abs(control.xFraction - 0.78f) <= FACE_SLOT_EPSILON &&
                                     abs(control.yFraction - 0.80f) <= FACE_SLOT_EPSILON
                                 ) {
@@ -823,7 +839,7 @@ class TouchLayoutRepository(private val context: Context) {
                                     abs(control.yFraction - 0.35f) <= FACE_SLOT_EPSILON
                                 ) {
                                     control.copy(yFraction = 0.55f)
-                                } else if (control.sizeDp == 156 &&
+                                } else if (hasCircle && control.sizeDp == 156 &&
                                     abs(control.xFraction - 0.82f) <= FACE_SLOT_EPSILON &&
                                     abs(control.yFraction - 0.808f) <= FACE_SLOT_EPSILON
                                 ) {
@@ -852,7 +868,10 @@ class TouchLayoutRepository(private val context: Context) {
          * control), que se mantienen para los perfiles que el
          * usuario modificó y no pasan por la primera. Las pasadas
          * son independientes: un perfil con el rombo ya migrado
-         * pero el stick viejo sigue normalizando el stick.
+         * pero el stick viejo sigue normalizando el stick. La
+         * pasada 0.2.57 por control solo achica stick/zona si el
+         * perfil ya trae btn_circle: un limpio de 5 controles
+         * editado por el usuario queda intacto.
          */
         fun migrateBuiltInProfile(profile: ControlProfile): ControlProfile =
             migrateBuiltInFactoryValues(migrateBuiltInFaceDiamond(migrateBuiltInToCleanLayout(profile)))
