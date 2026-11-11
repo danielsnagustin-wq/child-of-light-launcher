@@ -1,5 +1,6 @@
 package com.danielsnagustin.childoflight.launcher
 
+import com.danielsnagustin.childoflight.launcher.core.ControlRect
 import com.danielsnagustin.childoflight.launcher.core.FaceGlyph
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.controlRect
@@ -17,6 +18,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.sqrt
 
 /**
  * Tests 0.2.54 (2026-11-09): layout limpio de controles (6 controles,
@@ -26,10 +28,12 @@ import org.junit.Test
  *
  * Conversión desde la captura 1847x851 (rect del juego x 172.5-1674.5,
  * y 0-851; densidad aprox 2.07): fracJuego = (fracVentana x 1847 -
- * 172.5) / 1502 en x, igual en y. El stick queda en x 0.05 y el
- * recorte a medio botón dentro del juego lo hace controlRect; el
- * salto en ventana x 0.920 da juego 1.02 y se guarda en 0.93
- * (1 - medio botón con 82 dp).
+ * 172.5) / 1502 en x, igual en y. El stick queda en x 0.05 y pisa
+ * la barra negra (0.2.58: el clamp solo lo limita a centro dentro
+ * del rect); el salto se guarda en 1.012 y el clamp se relaja
+ * también para él (R7, decisión del coordinador): se dibuja en
+ * 1.012, con el borde derecho 96 px dentro de la barra negra
+ * derecha en el teléfono y sin salirse de la vista.
  *
  * 0.2.57 (2026-11-10): re-medición del mockup (componentes conexos
  * por brillo): el stick es un círculo de unos 385 px, no 434 de
@@ -42,6 +46,19 @@ import org.junit.Test
  * (migrateBuiltInToCleanLayout) y, si el usuario lo editó a medias,
  * cada control que sigue en fábrica por separado
  * (migrateBuiltInFactoryValues). Ver los tests 0.2.57 abajo.
+ *
+ * 0.2.58 (2026-11-10, R7-P1-04/R7-P2-04/R7-P1-05): re-medición del
+ * mockup por ajuste de círculo sobre el anillo brillante: espada
+ * centro juego (0.915, 0.593), anillo 177 px; salto centro juego
+ * (1.012, 0.767), anillo 182 px; orbe (0.821, 0.810), anillo
+ * 203 px. Espada y salto suben a 92 dp y se mueven a su x del
+ * mockup (0.914 y 1.012 guardado); el stick pisa la barra negra
+ * izquierda y el salto la derecha (clamp relajado para los dos).
+ * Los huecos verificados en el teléfono están en
+ * defaultLayoutGapsOnPhone: con el salto en 1.012, la
+ * espada-salto pasa de solape ~31 px a hueco +17 px y el
+ * salto-orbe de solape ~11 px a hueco +82 px: ver el KDoc
+ * de defaultTouchLayout, que documenta la geometría exacta.
  */
 class CleanTouchLayoutTest {
 
@@ -139,12 +156,12 @@ class CleanTouchLayoutTest {
         assertEquals(0.50f to 0.07f, position(controls, "btn_start"))
         assertEquals(0.59f to 0.07f, position(controls, "btn_circle"))
         assertEquals(0.05f to 0.675f, position(controls, "stick"))
-        assertEquals(0.864f to 0.576f, position(controls, "btn_sword"))
-        assertEquals(0.93f to 0.752f, position(controls, "btn_jump"))
+        assertEquals(0.914f to 0.576f, position(controls, "btn_sword"))
+        assertEquals(1.012f to 0.752f, position(controls, "btn_jump"))
         assertEquals(0.82f to 0.808f, position(controls, "igniculus"))
         assertEquals(186, control(controls, "stick").sizeDp)
-        assertEquals(82, control(controls, "btn_sword").sizeDp)
-        assertEquals(82, control(controls, "btn_jump").sizeDp)
+        assertEquals(92, control(controls, "btn_sword").sizeDp)
+        assertEquals(92, control(controls, "btn_jump").sizeDp)
         assertEquals(56, control(controls, "btn_start").sizeDp)
         assertEquals(44, control(controls, "btn_circle").sizeDp)
         assertEquals(115, control(controls, "igniculus").sizeDp)
@@ -159,9 +176,13 @@ class CleanTouchLayoutTest {
     @Test
     fun defaultLayoutRectsStayInsideTheGameRectOnTheCapture() {
         // Captura 1847x851, densidad aprox 2.07: el rect del juego
-        // es x 172.5-1674.5, y 0-851. Los 6 controles quedan
-        // ENTEROS dentro, aunque el stick se guarde en x 0.05 (en
-        // la captura pisa la barra negra) y el salto en 0.93.
+        // es x 172.5-1674.5, y 0-851. 0.2.58 (R7-P1-05): el stick
+        // pisa la barra negra izquierda (su borde izquierdo queda
+        // fuera del rect, con el centro dentro). 0.2.58 (R7,
+        // decisión del coordinador): TAMBIÉN el salto pisa la
+        // barra negra derecha (su borde derecho queda fuera del
+        // rect, con el centro en 1.012, sin salirse de la vista);
+        // los otros 4 controles quedan ENTEROS dentro del rect.
         // El círculo queda a la derecha de la pausa con 15 dp de
         // hueco entre bordes, sin solaparse con ella.
         val game = gameRect(1847f, 851f)
@@ -169,14 +190,38 @@ class CleanTouchLayoutTest {
         assertEquals(1674.5f, game.right, 1f)
         for (c in defaultTouchLayout()) {
             val rect = controlRect(c, 1847f, 851f, 2.07f)
-            assertTrue("rect de ${c.id} dentro del juego", rect.left >= game.left - 0.01f && rect.top >= game.top - 0.01f)
-            assertTrue("rect de ${c.id} dentro del juego", rect.right <= game.right + 0.01f && rect.bottom <= game.bottom + 0.01f)
+            if (c.kind == "stick") {
+                // El stick pisa la barra: su borde izquierdo queda
+                // fuera del rect, pero su centro sigue dentro.
+                assertTrue("stick pisa la barra: ${c.id}", rect.left < game.left - 0.01f)
+                assertTrue("centro del stick dentro del juego", (rect.left + rect.right) / 2f >= game.left - 0.01f)
+                assertTrue("stick no se sale por la derecha", rect.right <= game.right + 0.01f)
+            } else if (c.id == "btn_jump") {
+                // El salto pisa la barra derecha: su borde derecho
+                // queda fuera del rect, con el centro en 1.012, y
+                // no se sale de la vista (1847 px).
+                assertTrue("salto pisa la barra: ${c.id}", rect.right > game.right + 0.01f)
+                assertEquals(1.012f, ((rect.left + rect.right) / 2f - game.left) / (game.right - game.left), 0.001f)
+                assertTrue("salto no se sale de la vista", rect.right <= 1847f + 0.01f)
+            } else {
+                assertTrue("rect de ${c.id} dentro del juego", rect.left >= game.left - 0.01f && rect.top >= game.top - 0.01f)
+                assertTrue("rect de ${c.id} dentro del juego", rect.right <= game.right + 0.01f && rect.bottom <= game.bottom + 0.01f)
+            }
         }
-        // El stick se recorta al borde izquierdo del juego: su
-        // izquierda ES la del rect del juego, no la de la ventana.
+        // El stick ya NO se recorta al borde izquierdo del juego:
+        // su izquierda es 55 px en la captura (172.5 + 0.05 x 1502
+        // - 186 x 2.07 / 2 = 55,1), 117 px dentro de la barra.
         val stickRect = controlRect(control(defaultTouchLayout(), "stick"), 1847f, 851f, 2.07f)
-        assertEquals(game.left, stickRect.left, 1f)
-        assertTrue("el stick no pisa la barra negra", stickRect.left >= game.left - 0.01f)
+        assertEquals(55.1f, stickRect.left, 1f)
+        assertTrue("el stick pisa la barra negra", stickRect.left < game.left - 0.01f)
+        // El salto guardado en 1.012 queda con el centro en
+        // 1692,4 px (0,5 px del centro medido en el mockup,
+        // 1691,9) y el borde derecho en 1787,6 px, 113 px dentro
+        // de la barra y 59 px dentro de la vista.
+        val jumpRect = controlRect(control(defaultTouchLayout(), "btn_jump"), 1847f, 851f, 2.07f)
+        assertEquals(1692.4f, (jumpRect.left + jumpRect.right) / 2f, 1f)
+        assertEquals(1787.6f, jumpRect.right, 1f)
+        assertTrue("el salto pisa la barra negra", jumpRect.right > game.right + 0.01f)
     }
 
     @Test
@@ -366,19 +411,20 @@ class CleanTouchLayoutTest {
         // El caso del usuario: instalación limpia 0.2.55 con el
         // default de fábrica guardado. Cambiar defaultTouchLayout
         // solo NO le cambia el layout guardado: la migración lo
-        // lleva a los tamaños nuevos, sin tocar posiciones ni
+        // lleva a los valores nuevos (0.2.58: espada y salto
+        // también se mueven a 0.914/1.012 con 92 dp), sin tocar
         // funciones (espada sigue SQUARE, salto CROSS, pausa START).
         val saved = ControlProfile("default-g99", "Por defecto G99", true, cleanSixControlOldSizesDefault())
         val migrated = TouchLayoutRepository.migrateBuiltInProfile(saved)
         assertEquals(defaultTouchLayout(), migrated.controls)
         assertEquals(186, control(migrated.controls, "stick").sizeDp)
         assertEquals(115, control(migrated.controls, "igniculus").sizeDp)
-        assertEquals(82, control(migrated.controls, "btn_sword").sizeDp)
-        assertEquals(82, control(migrated.controls, "btn_jump").sizeDp)
+        assertEquals(92, control(migrated.controls, "btn_sword").sizeDp)
+        assertEquals(92, control(migrated.controls, "btn_jump").sizeDp)
         assertEquals(56, control(migrated.controls, "btn_start").sizeDp)
         assertEquals(44, control(migrated.controls, "btn_circle").sizeDp)
-        assertEquals(0.864f to 0.576f, position(migrated.controls, "btn_sword"))
-        assertEquals(0.93f to 0.752f, position(migrated.controls, "btn_jump"))
+        assertEquals(0.914f to 0.576f, position(migrated.controls, "btn_sword"))
+        assertEquals(1.012f to 0.752f, position(migrated.controls, "btn_jump"))
         assertEquals(VitaButton.SQUARE, control(migrated.controls, "btn_sword").vitaButton)
         assertEquals(VitaButton.CROSS, control(migrated.controls, "btn_jump").vitaButton)
         // Idempotente: una vez con los tamaños nuevos, no cambia.
@@ -403,7 +449,10 @@ class CleanTouchLayoutTest {
         // limpio con tamaños viejos: el stick es suyo y NO se achica
         // (la pasada por control solo actúa sobre el valor exacto
         // de fábrica, 210 dp). La zona, que sigue en fábrica, sí se
-        // achica por su lado: las pasadas son por control.
+        // achica por su lado: las pasadas son por control. 0.2.58:
+        // la espada y el salto también siguen en fábrica (0.864 y
+        // 0.93 con 82 dp) y la pasada por control los mueve a
+        // 0.914/1.012 con 92 dp, como la zona.
         val resized = cleanSixControlOldSizesDefault().map {
             if (it.id == "stick") it.copy(sizeDp = 200) else it
         }
@@ -412,7 +461,10 @@ class CleanTouchLayoutTest {
         val migrated = TouchLayoutRepository.migrateBuiltInProfile(saved)
         assertEquals(200, control(migrated.controls, "stick").sizeDp)
         assertEquals(115, control(migrated.controls, "igniculus").sizeDp)
-        assertEquals(0.864f to 0.576f, position(migrated.controls, "btn_sword"))
+        assertEquals(0.914f to 0.576f, position(migrated.controls, "btn_sword"))
+        assertEquals(92, control(migrated.controls, "btn_sword").sizeDp)
+        assertEquals(1.012f to 0.752f, position(migrated.controls, "btn_jump"))
+        assertEquals(92, control(migrated.controls, "btn_jump").sizeDp)
     }
 
     @Test
@@ -477,12 +529,20 @@ class CleanTouchLayoutTest {
         assertEquals(98f, pauseHeightPx, 1f)
         assertEquals(0.136f, pauseHeightPx / 720f, 0.01f)
         // Proporciones entre controles, como en el mockup (espada
-        // 0.49, orbe 0.52, pausa 0.30 del stick; la espada queda en
-        // 0.44 porque 82 dp ya caían en su sitio y no se agranda).
+        // 0.49, orbe 0.52, pausa 0.30 del stick; 0.2.58: la espada
+        // sube de 82 a 92 dp porque a 82 quedaba ~24 px de diámetro
+        // por debajo del diseño, R7-P2-04).
         val stick = control(controls, "stick").sizeDp.toFloat()
-        assertEquals(0.44f, control(controls, "btn_sword").sizeDp / stick, 0.01f)
+        assertEquals(0.49f, control(controls, "btn_sword").sizeDp / stick, 0.01f)
+        assertEquals(0.49f, control(controls, "btn_jump").sizeDp / stick, 0.01f)
         assertEquals(0.52f, 0.84f * zone.sizeDp / stick, 0.01f)
         assertEquals(0.30f, control(controls, "btn_start").sizeDp / stick, 0.01f)
+        // Espada y salto dibujados: 92 dp x 1.75 = 161 px de
+        // diámetro (22,4% de la altura, como el anillo del mockup).
+        val swordRect = controlRect(control(controls, "btn_sword"), 1600f, 720f, 1.75f)
+        assertEquals(161f, swordRect.bottom - swordRect.top, 1f)
+        val jumpRect = controlRect(control(controls, "btn_jump"), 1600f, 720f, 1.75f)
+        assertEquals(161f, jumpRect.bottom - jumpRect.top, 1f)
     }
 
     @Test
@@ -618,5 +678,199 @@ class CleanTouchLayoutTest {
         // Los ocultos no aparecen.
         val hidden = TouchOverlayMapping.overlayChildOrder(externalGamepadLayout())
         assertEquals(listOf("igniculus", "btn_start"), hidden.map { it.id })
+    }
+
+    // --- Migración 0.2.58 (R7-P1-04/R7-P2-04): posiciones y tamaños nuevos ---
+
+    // Layout limpio de 6 controles con los valores de 0.2.57
+    // (espada y salto en 82 dp en (0.864, 0.576) y (0.93, 0.752)):
+    // la forma en la que queda guardado un perfil predefinido de
+    // una instalación 0.2.57. Literales (no derivados del layout
+    // nuevo): el test fija la entrada de forma independiente.
+    private fun cleanSixControl057Default(): List<TouchControl> = listOf(
+        TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 186, 0.70f),
+        TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.864f, 0.576f, 82, 0.80f),
+        TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 0.93f, 0.752f, 82, 0.80f),
+        TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 56, 0.70f),
+        TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 44, 0.70f),
+        TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 115, 0.25f, colorHex = "#7FB3D5"),
+    )
+
+    private fun cleanSixControl057External(): List<TouchControl> =
+        cleanSixControl057Default().map {
+            if (it.id == "stick" || it.id == "btn_sword" || it.id == "btn_jump" || it.id == "btn_circle") it.copy(visible = false) else it
+        }
+
+    @Test
+    fun migratesSaved057DefaultToNewPositionsAndSizes() {
+        // El caso del usuario: instalación 0.2.57 con el default
+        // de fábrica guardado. La migración lo lleva al default
+        // 0.2.58 entero (espada 0.914 y salto 1.012, 92 dp).
+        val saved = ControlProfile("default-g99", "Por defecto G99", true, cleanSixControl057Default())
+        val migrated = TouchLayoutRepository.migrateBuiltInProfile(saved)
+        assertEquals(defaultTouchLayout(), migrated.controls)
+        assertEquals(0.914f to 0.576f, position(migrated.controls, "btn_sword"))
+        assertEquals(1.012f to 0.752f, position(migrated.controls, "btn_jump"))
+        assertEquals(92, control(migrated.controls, "btn_sword").sizeDp)
+        assertEquals(92, control(migrated.controls, "btn_jump").sizeDp)
+        assertEquals(186, control(migrated.controls, "stick").sizeDp)
+        assertEquals(115, control(migrated.controls, "igniculus").sizeDp)
+        // Idempotente: una vez con los valores nuevos, no cambia.
+        assertEquals(migrated, TouchLayoutRepository.migrateBuiltInProfile(migrated))
+    }
+
+    @Test
+    fun migratesSaved057ExternalAndLeavesOneHandAlone() {
+        // Externo 0.2.57: su espada/salto ocultos espejan el
+        // default y también migran (0.914/1.012, 92 dp).
+        val external = ControlProfile("external-gamepad", "Mando externo + táctil mínimo", true, cleanSixControl057External())
+        assertEquals(externalGamepadLayout(), TouchLayoutRepository.migrateBuiltInProfile(external).controls)
+        assertFalse(control(externalGamepadLayout(), "btn_sword").visible)
+        assertFalse(control(externalGamepadLayout(), "btn_jump").visible)
+        // Una mano 0.2.57 ES el layout nuevo de una mano: no
+        // cambia en 0.2.58 (espada/salto se quedan en 82 dp).
+        val oneHand = ControlProfile("one-hand", "Una mano", true, oneHandLayout())
+        assertEquals(oneHand, TouchLayoutRepository.migrateBuiltInProfile(oneHand))
+        assertEquals(82, control(oneHandLayout(), "btn_sword").sizeDp)
+        assertEquals(82, control(oneHandLayout(), "btn_jump").sizeDp)
+    }
+
+    @Test
+    fun migratesSaved057CustomProfileIsNotTouched() {
+        val custom = ControlProfile("custom-1", "Mío", false, cleanSixControl057Default())
+        assertEquals(custom, TouchLayoutRepository.migrateBuiltInToCleanLayout(custom))
+        assertEquals(custom, TouchLayoutRepository.migrateBuiltInProfile(custom))
+        assertEquals(custom, TouchLayoutRepository.migrateBuiltInFactoryValues(custom))
+    }
+
+    @Test
+    fun factoryValuesPassMoves057SwordAndJumpOfEditedBuiltIn() {
+        // El usuario movió el stick en su perfil 0.2.57: el perfil
+        // entero ya no coincide con el layout viejo, pero espada y
+        // salto siguen en fábrica y la pasada por control los mueve
+        // por separado. El stick movido queda donde lo dejó.
+        val edited = cleanSixControl057Default().map {
+            if (it.id == "stick") it.copy(xFraction = 0.10f) else it
+        }
+        val saved = ControlProfile("default-g99", "Por defecto G99", true, edited)
+        val migrated = TouchLayoutRepository.migrateBuiltInFactoryValues(saved)
+        assertEquals(0.10f to 0.675f, position(migrated.controls, "stick"))
+        assertEquals(0.914f to 0.576f, position(migrated.controls, "btn_sword"))
+        assertEquals(92, control(migrated.controls, "btn_sword").sizeDp)
+        assertEquals(1.012f to 0.752f, position(migrated.controls, "btn_jump"))
+        assertEquals(92, control(migrated.controls, "btn_jump").sizeDp)
+        // Y la cadena completa hace lo mismo con el perfil entero.
+        val chained = TouchLayoutRepository.migrateBuiltInProfile(saved)
+        assertEquals(0.10f to 0.675f, position(chained.controls, "stick"))
+        assertEquals(0.914f to 0.576f, position(chained.controls, "btn_sword"))
+        assertEquals(1.012f to 0.752f, position(chained.controls, "btn_jump"))
+        // Si el usuario movió la espada, esa pasada no la toca...
+        val movedSword = cleanSixControl057Default().map {
+            if (it.id == "btn_sword") it.copy(xFraction = 0.80f) else it
+        }
+        val savedMoved = ControlProfile("default-g99", "Por defecto G99", true, movedSword)
+        val migratedMoved = TouchLayoutRepository.migrateBuiltInFactoryValues(savedMoved)
+        assertEquals(0.80f to 0.576f, position(migratedMoved.controls, "btn_sword"))
+        assertEquals(82, control(migratedMoved.controls, "btn_sword").sizeDp)
+        // ...pero el salto, que sigue en fábrica, sí se mueve.
+        assertEquals(1.012f to 0.752f, position(migratedMoved.controls, "btn_jump"))
+        assertEquals(92, control(migratedMoved.controls, "btn_jump").sizeDp)
+        // Y si el usuario movió el salto, el salto queda y la
+        // espada sí se mueve.
+        val movedJump = cleanSixControl057Default().map {
+            if (it.id == "btn_jump") it.copy(xFraction = 0.88f) else it
+        }
+        val savedJump = ControlProfile("default-g99", "Por defecto G99", true, movedJump)
+        val migratedJump = TouchLayoutRepository.migrateBuiltInFactoryValues(savedJump)
+        assertEquals(0.88f to 0.752f, position(migratedJump.controls, "btn_jump"))
+        assertEquals(82, control(migratedJump.controls, "btn_jump").sizeDp)
+        assertEquals(0.914f to 0.576f, position(migratedJump.controls, "btn_sword"))
+    }
+
+    // --- Huecos verificados en el teléfono (R7-P1-04/R7-P1-05) ---
+
+    private fun centerDistance(a: ControlRect, b: ControlRect): Float {
+        val ax = (a.left + a.right) / 2f
+        val ay = (a.top + a.bottom) / 2f
+        val bx = (b.left + b.right) / 2f
+        val by = (b.top + b.bottom) / 2f
+        return sqrt((ax - bx) * (ax - bx) + (ay - by) * (ay - by))
+    }
+
+    @Test
+    fun stickOverhangsLeftBlackBarOnPhone() {
+        // Teléfono 1600x720, densidad 1.75 (R7-P1-05): el stick
+        // guardado en 0.05 queda con el centro en 228 px y el
+        // borde en 65 px, 99 px dentro de la barra negra; su
+        // centro sigue dentro del rect del juego y no se sale por
+        // la derecha ni por arriba/abajo.
+        val game = gameRect(1600f, 720f)
+        assertEquals(164.7f, game.left, 1f)
+        assertEquals(1270.6f, game.right - game.left, 1f)
+        val stickRect = controlRect(control(defaultTouchLayout(), "stick"), 1600f, 720f, 1.75f)
+        assertEquals(65.5f, stickRect.left, 1f)
+        assertEquals(228.2f, (stickRect.left + stickRect.right) / 2f, 1f)
+        assertTrue("el stick pisa la barra negra", stickRect.left < game.left - 0.01f)
+        assertTrue("centro del stick dentro del juego", (stickRect.left + stickRect.right) / 2f >= game.left - 0.01f)
+        assertTrue("stick dentro por la derecha", stickRect.right <= game.right + 0.01f)
+        assertTrue("stick dentro vertical", stickRect.top >= game.top - 0.01f && stickRect.bottom <= game.bottom + 0.01f)
+        // Los demás controles siguen ENTEROS dentro del rect,
+        // SALVO el salto (R7, decisión del coordinador): pisa la
+        // barra negra derecha con el centro en 1.012, como el
+        // stick pisa la izquierda.
+        for (c in defaultTouchLayout()) {
+            if (c.kind == "stick" || c.id == "btn_jump") continue
+            val rect = controlRect(c, 1600f, 720f, 1.75f)
+            assertTrue("rect de ${c.id} dentro del juego", rect.left >= game.left - 0.01f && rect.top >= game.top - 0.01f)
+            assertTrue("rect de ${c.id} dentro del juego", rect.right <= game.right + 0.01f && rect.bottom <= game.bottom + 0.01f)
+        }
+    }
+
+    @Test
+    fun defaultLayoutGapsOnPhone() {
+        // Teléfono 1600x720, densidad 1.75: rect del juego
+        // 1270,6x720, izquierda 164,7. Huecos DIBUJADOS (círculos
+        // de cristal: espada/salto 92 dp = 161 px de diámetro,
+        // orbe 97 dp = 169 px, 0.84 x zona de 115 dp). Negativo =
+        // los cristales se solapan. 0.2.58 (R7, decisión del
+        // coordinador): el salto guardado en 1.012 se dibuja en
+        // 1.012 (clamp relajado también para él), así que el hueco
+        // salto-orbe del mockup (~81 px) SÍ se recupera (+82 px)
+        // y la espada-salto pasa de solape ~31 px a hueco +17 px:
+        // el salto se mueve 96 px a la derecha hasta su x del
+        // mockup. Ver el KDoc de defaultTouchLayout. Este test fija
+        // la geometría medida para que ningún cambio futuro la
+        // mueva en silencio.
+        val controls = defaultTouchLayout()
+        val swordRect = controlRect(control(controls, "btn_sword"), 1600f, 720f, 1.75f)
+        val jumpRect = controlRect(control(controls, "btn_jump"), 1600f, 720f, 1.75f)
+        val zoneRect = controlRect(control(controls, "igniculus"), 1600f, 720f, 1.75f)
+        // Centros dibujados.
+        assertEquals(1326.0f, (swordRect.left + swordRect.right) / 2f, 1f)
+        assertEquals(414.7f, (swordRect.top + swordRect.bottom) / 2f, 1f)
+        assertEquals(1450.6f, (jumpRect.left + jumpRect.right) / 2f, 1f)
+        assertEquals(541.4f, (jumpRect.top + jumpRect.bottom) / 2f, 1f)
+        assertEquals(1206.6f, (zoneRect.left + zoneRect.right) / 2f, 1f)
+        assertEquals(581.8f, (zoneRect.top + zoneRect.bottom) / 2f, 1f)
+        // El salto dibujado queda en x 1.012 del juego, fuera del
+        // rect, con el borde derecho 96 px dentro de la barra
+        // negra y sin salirse de la vista (1600 px).
+        val game = gameRect(1600f, 720f)
+        assertEquals(1.012f, ((jumpRect.left + jumpRect.right) / 2f - game.left) / (game.right - game.left), 0.001f)
+        assertTrue("el salto pisa la barra negra", jumpRect.right > game.right + 0.01f)
+        assertTrue("el salto no se sale de la vista", jumpRect.right <= 1600f + 0.01f)
+        // Huecos dibujados: distancia entre centros menos radios
+        // (espada/salto 80.5 px, orbe 84.5 px). Los tres en
+        // positivo: ningún cristal se solapa con otro.
+        assertEquals(16.7f, centerDistance(swordRect, jumpRect) - 80.5f - 80.5f, 1f)
+        assertEquals(82.3f, centerDistance(jumpRect, zoneRect) - 80.5f - 84.5f, 1f)
+        assertEquals(40.3f, centerDistance(swordRect, zoneRect) - 80.5f - 84.5f, 1f)
+        // Cajas táctiles salto-orbe: ya NO se solapan (antes
+        // 33x141 px de solape con 82 dp y clamp): hueco de 63 px
+        // en X, así que el solape en Y (141 px) no solapa nada.
+        val touchOverlapX = minOf(jumpRect.right, zoneRect.right) - maxOf(jumpRect.left, zoneRect.left)
+        val touchOverlapY = minOf(jumpRect.bottom, zoneRect.bottom) - maxOf(jumpRect.top, zoneRect.top)
+        assertEquals(-62.8f, touchOverlapX, 1f)
+        assertEquals(140.8f, touchOverlapY, 1f)
     }
 }
