@@ -188,6 +188,17 @@ fun userAccent(uiPrefs: UiPreferences?): Color = try {
     ColIceBlue
 }
 
+/**
+ * Acento del usuario memorizado (P-C4): parsea el hex una sola vez por
+ * valor de `hex` en vez de en cada recomposición; la clave cubre la
+ * única entrada de [userAccent].
+ */
+@Composable
+fun rememberedUserAccent(uiPrefs: UiPreferences?): Color {
+    val hex = uiPrefs?.accent?.hex
+    return remember(hex) { userAccent(uiPrefs) }
+}
+
 @Composable
 fun isDarkUi(uiPrefs: UiPreferences?): Boolean = when (uiPrefs?.theme) {
     ThemeMode.LIGHT -> false
@@ -546,7 +557,7 @@ fun BackButton(onBack: () -> Unit) {
     Spacer(modifier = Modifier.height(24.dp))
 }
 
-/** Barra de progreso azul hielo (logros). Anima el progreso al cambiar (800 ms), no salta. */
+/** Barra de progreso azul hielo (logros). Anima el progreso al cambiar (200 ms), no salta. */
 @Composable
 fun PrimaryProgressBar(progress: Float, modifier: Modifier = Modifier) {
     // Antes era LinearProgressIndicator: con progreso 0 dibujaba un
@@ -555,7 +566,7 @@ fun PrimaryProgressBar(progress: Float, modifier: Modifier = Modifier) {
     val p = progress.coerceIn(0f, 1f)
     val animated by animateFloatAsState(
         targetValue = p,
-        animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
         label = "primaryProgress",
     )
     Box(
