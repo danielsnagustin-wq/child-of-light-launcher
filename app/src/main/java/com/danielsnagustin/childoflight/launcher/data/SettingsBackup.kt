@@ -5,6 +5,7 @@ import com.danielsnagustin.childoflight.launcher.model.AppLanguage
 import com.danielsnagustin.childoflight.launcher.model.AudioBackend
 import com.danielsnagustin.childoflight.launcher.model.CardSize
 import com.danielsnagustin.childoflight.launcher.model.CardTransparency
+import com.danielsnagustin.childoflight.launcher.model.GameLanguage
 import com.danielsnagustin.childoflight.launcher.model.GpuBackend
 import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
@@ -93,6 +94,7 @@ fun encodeSettingsBackup(settings: LauncherSettings, ui: UiPreferences): String 
     bool("closeBackgroundApps", settings.closeBackgroundApps)
     bool("allowExternalVita3k", settings.allowExternalVita3k)
     bool("psnSignedIn", settings.psnSignedIn)
+    str("gameLanguage", settings.gameLanguage.name)
     bool("hideTouchWhenGamepadConnected", settings.hideTouchWhenGamepadConnected)
     bool("showTouchOverlayInGame", settings.showTouchOverlayInGame)
     num("touchOverlayOpacity", settings.touchOverlayOpacity)
@@ -165,6 +167,7 @@ fun decodeSettingsBackup(
         closeBackgroundApps = boolValue(map["closeBackgroundApps"], current.closeBackgroundApps),
         allowExternalVita3k = boolValue(map["allowExternalVita3k"], current.allowExternalVita3k),
         psnSignedIn = boolValue(map["psnSignedIn"], current.psnSignedIn),
+        gameLanguage = enumValue(map["gameLanguage"], GameLanguage.entries.toTypedArray(), current.gameLanguage),
         hideTouchWhenGamepadConnected = boolValue(map["hideTouchWhenGamepadConnected"], current.hideTouchWhenGamepadConnected),
         showTouchOverlayInGame = boolValue(map["showTouchOverlayInGame"], current.showTouchOverlayInGame),
         touchOverlayOpacity = SettingsRepository.clampOverlayOpacity(floatValue(map["touchOverlayOpacity"], current.touchOverlayOpacity)),
