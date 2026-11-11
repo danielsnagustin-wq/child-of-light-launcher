@@ -30,11 +30,13 @@ import com.danielsnagustin.childoflight.launcher.data.GpuDetector
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.data.PkgHeaderParser
 import com.danielsnagustin.childoflight.launcher.data.formatLaunchAttempt
+import com.danielsnagustin.childoflight.launcher.data.mapNativeTrophies
 import com.danielsnagustin.childoflight.launcher.data.SessionManager
 import com.danielsnagustin.childoflight.launcher.data.SettingsRepository
 import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
 import com.danielsnagustin.childoflight.launcher.data.TrophyStoreReader
 import com.danielsnagustin.childoflight.launcher.data.TrophyStoreScan
+import com.danielsnagustin.childoflight.launcher.data.TrophySyncPending
 import com.danielsnagustin.childoflight.launcher.data.TrophyTrpReader
 import com.danielsnagustin.childoflight.launcher.data.TrpReadResult
 import com.danielsnagustin.childoflight.launcher.data.TurnipDriverRepository
@@ -467,6 +469,39 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /**
+     * R6-P1-02(b): borra el .pkg de juego guardado EN CUALQUIER ESTADO
+     * (sin exigir juego extraído ni eboot válido): el gancho es
+     * library.deleteStoredGamePkgAnyState, para el .pkg "update
+     * disfrazado de juego" que deja JUGAR en bucle. Solo se llama desde
+     * la UI con confirmación (CleanupScreen): sin juego extraído, este
+     * .pkg es la única copia del juego. El work.bin se conserva y no
+     * hay juego extraído ni partidas que tocar (los saves solo existen
+     * con el juego extraído).
+     */
+    fun deleteStoredGamePkgAnyState() {
+        viewModelScope.launch(Dispatchers.IO) {
+            // S11: no fiarse del _status guardado (puede ir
+            // desactualizado tras importar o borrar): escanear fresco
+            // de disco antes de decidir qué .pkg borrar, igual que
+            // deleteInstalledGamePkgs.
+            val status = runCatching { scanStatusFresh() }.getOrNull() ?: _status.value
+            val pkgId = status.pkgTitleId?.id
+            val freed = if (pkgId != null && !status.gameExtracted) {
+                val size = status.pkgSizeBytes
+                if (runCatching { library.deleteStoredGamePkgAnyState(pkgId) }.getOrDefault(false)) size else 0L
+            } else 0L
+            if (freed > 0) refreshStatus()
+            withContext(Dispatchers.Main) {
+                _message.value = if (freed > 0) {
+                    "Se borró el .pkg guardado (${DownloadsCleanup.formatBytes(freed)} liberados). No había juego extraído: importa de nuevo tu copia del juego para jugar."
+                } else {
+                    "No había ningún .pkg guardado sin instalar que borrar."
+                }
+            }
+        }
+    }
+
     // P2-31: respaldos .bak huérfanos (su destino existe: la
     // instalación completó y el respaldo quedó atrás). Se muestran con
     // su tamaño en "Limpiar no usados" y se borran solo con
@@ -572,7 +607,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * vez de 17) porque dos desbloqueos en vuelo escribían este
      * StateFlow sin orden ni identidad de evento. El anuncio pasa por
      * [TrophyUnlockAnnouncer] (secuencia por pulsación + construcción
-     * directa desde TROPHIES_27).
+     * directa desde TROPHIES_20).
      * El marcado manual se eliminó (2026-11-08): los trofeos solo se
      * ganan jugando. El anunciador y el sonido quedan para la
      * sincronización automática con el TROPHY.TRP del núcleo.
@@ -582,6 +617,19 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _justUnlocked = MutableStateFlow<TrophyProgress?>(null)
     val justUnlocked: StateFlow<TrophyProgress?> = _justUnlocked.asStateFlow()
     private val unlockAnnouncer = TrophyUnlockAnnouncer()
+
+    // Ronda 0.2.57 (puente JNI de trofeos): la sincronización al volver
+    // del juego anuncia por aquí. Se declaran ANTES del init (misma
+    // regla que _audioFixSnapshot: los usa syncTrophiesFromGame y una
+    // corrutina del init podría correr antes de sus inicializadores).
+    // - trophySyncSeq: fuente de la secuencia del anunciador: un
+    //   AtomicLong que solo crece (incrementAndGet por anuncio). Nunca
+    //   se reutiliza ni se resetea: un anuncio tardío con secuencia
+    //   menor o igual se ignora y el popup no nombra otro trofeo.
+    // - trophySyncMutex: serializa las sincronizaciones: dos vueltas
+    //   seguidas a Home no pueden desbloquear/anunciar a la vez.
+    private val trophySyncSeq = AtomicLong(0L)
+    private val trophySyncMutex = Mutex()
 
     private val _trophyScan = MutableStateFlow<TrophyStoreScan?>(null)
     val trophyScan: StateFlow<TrophyStoreScan?> = _trophyScan.asStateFlow()
@@ -1175,6 +1223,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             } else {
                 false
             }
+            // R7-P2-10 parcial (0.2.57): detectGpu llama directo a
+            // settingsRepo.applyPreset, sin pasar por el applyPreset
+            // del ViewModel que invalida el snapshot (R6-P2-10). En
+            // el primer arranque el modo seguro no puede estar ON
+            // (false por defecto, sin snapshot posible), pero la
+            // re-detección manual desde Diagnóstico GPU sí puede
+            // correr con el modo seguro ON: sin esto, al desactivarlo
+            // resucitarían los valores viejos.
+            if (appliedPreset && current.safeMode) deleteSettingsSnapshot(safeModeSnapshotFile())
             // R4-P0-9: la variante conservadora es VISIBLE: el mensaje
             // dice que la caché de texturas quedó OFF (antes solo decía
             // "perfil conservador (1x)" y el preset seguía llamándose
@@ -2577,6 +2634,59 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val autoFps = settingsRepo.takeAutoBenchmarkFps() ?: return@launch
             if (!autoFps.isFinite() || autoFps < 1f || autoFps > 240f) return@launch
             completeBenchmark(autoFps, BenchmarkSource.AUTO_MEASURED, pending)
+        }
+    }
+
+    /**
+     * Sincroniza los trofeos ganados en la última partida con el
+     * progreso local (Ronda 0.2.57, puente JNI de trofeos). La llama
+     * MainActivity.onResume al volver del juego, junto a
+     * noteReturnedFromGame, solo cuando la Activity del juego ya no
+     * sigue viva. Solo lectura del TROPHY.TRP real del núcleo: los
+     * trofeos SOLO se ganan jugando; no hay marcado manual.
+     *
+     * Flujo: EmbeddedGameActivity capturó las colecciones nativas en
+     * onDestroy ANTES de destroySession (la lectura JNI exige sesión
+     * viva: sin emuenv devuelve vacío) y las dejó en
+     * TrophySyncPending. Aquí se consumen (take vacía el hueco: una
+     * segunda vuelta a Home no re-anuncia lo mismo), se mapean por
+     * nombre en inglés exacto a números locales 1..20 y, por cada
+     * trofeo ganado, achievementsRepo.unlock() guarda el desbloqueo
+     * con el instante real del núcleo; solo si unlock() devuelve true
+     * (desbloqueo nuevo) se anuncia el popup, con secuencia
+     * estrictamente creciente. Un trofeo nativo sin correspondencia
+     * se salta y queda en el log, nunca se inventa un mapeo.
+     *
+     * Nunca tumba la UI ni el regreso a Home: todo va en try/catch y
+     * un fallo del puente solo deja el progreso local como estaba
+     * (el diagnóstico TRP de Logros sigue disponible). Sin partida
+     * embebida (vía externa, primer arranque) no hay nada pendiente
+     * y vuelve sin hacer nada.
+     *
+     * Límite heredado del popup (un solo hueco en _justUnlocked): si
+     * en una partida se ganan varios trofeos nuevos, se anuncian en
+     * orden por número y el popup visible es el último; los demás
+     * quedan guardados y el contador de Logros sube por todos.
+     */
+    fun syncTrophiesFromGame() {
+        viewModelScope.launch(Dispatchers.IO) {
+            trophySyncMutex.withLock {
+                val collections = TrophySyncPending.take() ?: return@withLock
+                runCatching {
+                    val result = mapNativeTrophies(collections)
+                    for (skipped in result.skippedUnknownNames) {
+                        LauncherLog.append(context, "trophies", "Trofeo del núcleo sin correspondencia local, se salta: $skipped")
+                    }
+                    for (entry in result.unlocked) {
+                        if (achievementsRepo.unlock(entry.number, entry.unlockedAtMillis)) {
+                            unlockAnnouncer.announce(entry.number, entry.unlockedAtMillis, trophySyncSeq.incrementAndGet())
+                                ?.let { _justUnlocked.value = it }
+                        }
+                    }
+                }.onFailure { e ->
+                    LauncherLog.append(context, "trophies", "Sincronización de trofeos fallida (el progreso local no cambia): ${e.javaClass.simpleName}: ${e.message}")
+                }
+            }
         }
     }
 
