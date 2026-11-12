@@ -1,0 +1,150 @@
+package com.danielsnagustin.childoflight.launcher
+
+import com.danielsnagustin.childoflight.launcher.core.MultiTouchRouter
+import com.danielsnagustin.childoflight.launcher.core.MultiTouchRouter.PointerAction
+import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.controlSizePx
+import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.sizeFractionForReferenceDp
+import com.danielsnagustin.childoflight.launcher.data.ControlProfile
+import com.danielsnagustin.childoflight.launcher.data.TouchControl
+import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
+import com.danielsnagustin.childoflight.launcher.data.defaultTouchLayout
+import com.danielsnagustin.childoflight.launcher.data.oneHandLayout
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * Tests 0.2.65 (ronda 10, agente 4/6 — overlay y migración):
+ * M-P2-1 (sizeFraction a null en migrateBuiltInFactoryValues),
+ * M-P2-2 (una mano: espada/salto 82 -> 77 dp), M-P2-4 (perfil de
+ * 7 campos llega al layout limpio: la comparación ignora colorHex
+ * y visible) y R-P1-16 (el router coalesca MOVEs sub-píxel).
+ * Todo puro JVM, sin Android ni Compose.
+ */
+class OverlayR10FixesTest {
+
+    private fun defaultProfile(controls: List<TouchControl>): ControlProfile =
+        ControlProfile("default-g99", "Por defecto G99", true, controls)
+
+    private fun oneHandProfile(controls: List<TouchControl>): ControlProfile =
+        ControlProfile("one-hand", "Una mano", true, controls)
+
+    @Test
+    fun factoryValuesPassClearsSizeFraction() {
+        // M-P2-1: un perfil con fracción puesta (p. ej. importado
+        // a mano con 15 campos) y tamaño viejo debe migrar de
+        // verdad: sin sizeFraction = null, controlSizePx seguiría
+        // prefiriendo la fracción y el cambio de sizeDp no se vería.
+        val saved = defaultTouchLayout().map { control ->
+            when (control.id) {
+                "stick" -> control.copy(sizeDp = 210, sizeFraction = sizeFractionForReferenceDp(210))
+                "igniculus" -> control.copy(sizeDp = 156, sizeFraction = sizeFractionForReferenceDp(156))
+                else -> control
+            }
+        }
+        val migrated = TouchLayoutRepository.migrateBuiltInFactoryValues(defaultProfile(saved))
+        val stick = migrated.controls.first { it.id == "stick" }
+        assertEquals(174, stick.sizeDp)
+        assertNull(stick.sizeFraction)
+        assertEquals(174 * 2.80f, controlSizePx(stick, 1080f, 2.80f), 0.01f)
+        val zone = migrated.controls.first { it.id == "igniculus" }
+        assertEquals(104, zone.sizeDp)
+        assertNull(zone.sizeFraction)
+    }
+
+    @Test
+    fun oneHandEditedProfileSwordAndJumpGoTo77() {
+        // M-P2-2: una mano editada a medias (un botón movido, resto
+        // en fábrica 0.2.62) dejaba espada/salto en 82 dp; la
+        // fábrica es 77 dp desde la 0.2.63.
+        val saved = oneHandLayout().map { control ->
+            when (control.id) {
+                "btn_sword" -> control.copy(sizeDp = 82, sizeFraction = null)
+                "btn_jump" -> control.copy(sizeDp = 82, sizeFraction = null)
+                "btn_start" -> control.copy(xFraction = 0.51f)
+                else -> control
+            }
+        }
+        val migrated = TouchLayoutRepository.migrateBuiltInFactoryValues(oneHandProfile(saved))
+        val sword = migrated.controls.first { it.id == "btn_sword" }
+        val jump = migrated.controls.first { it.id == "btn_jump" }
+        assertEquals(77, sword.sizeDp)
+        assertNull(sword.sizeFraction)
+        assertEquals(77, jump.sizeDp)
+        assertNull(jump.sizeFraction)
+        // El botón movido por el usuario no se toca.
+        assertEquals(0.51f, migrated.controls.first { it.id == "btn_start" }.xFraction, 0.001f)
+    }
+
+    @Test
+    fun sevenFieldProfileMigratesToCleanLayout() {
+        // M-P2-4: perfil guardado en formato de 7 campos (rombo
+        // transpuesto del default): al decodificar, Igniculus queda
+        // en colorHex "#8CCBEB" (default) en vez de "#7FB3D5" y la
+        // igualdad total de data class no coincidía con ningún
+        // snapshot. Con la comparación por campos relevantes, migra.
+        val sevenField = listOf(
+            "stick|Stick|stick|0.18|0.72|140|0.7",
+            "btn_y|Y|button|0.70|0.70|64|0.8",
+            "btn_x|X|button|0.78|0.62|64|0.8",
+            "btn_b|B|button|0.78|0.80|64|0.8",
+            "btn_a|A|button|0.87|0.71|64|0.85",
+            "btn_start|Start|button|0.50|0.06|56|0.7",
+            "igniculus|Igniculus|igniculus|0.50|0.35|220|0.25",
+        )
+        val decoded = sevenField.map { TouchLayoutRepository.decodeControl(it)!! }
+        assertEquals("#8CCBEB", decoded.first { it.id == "igniculus" }.colorHex)
+        val migrated = TouchLayoutRepository.migrateBuiltInProfile(defaultProfile(decoded))
+        assertEquals(defaultTouchLayout(), migrated.controls)
+    }
+
+    @Test
+    fun clean062ProfileWithDefaultIgniculusColorStillMigrates() {
+        // M-P2-4, segunda vía: perfil limpio de 0.2.62 con la
+        // fracción ya a null pero el color de Igniculus en el
+        // default "#8CCBEB": antes tampoco migraba; ahora sí.
+        val saved = defaultTouchLayout().map { control ->
+            when (control.id) {
+                "stick" -> control.copy(sizeDp = 186, sizeFraction = null)
+                "btn_sword" -> control.copy(sizeDp = 92, sizeFraction = null)
+                "btn_jump" -> control.copy(sizeDp = 92, sizeFraction = null)
+                "btn_start" -> control.copy(sizeDp = 56, sizeFraction = null)
+                "btn_circle" -> control.copy(sizeDp = 44, sizeFraction = null)
+                "igniculus" -> control.copy(sizeDp = 115, sizeFraction = null, colorHex = "#8CCBEB")
+                else -> control.copy(sizeFraction = null)
+            }
+        }
+        val migrated = TouchLayoutRepository.migrateBuiltInProfile(defaultProfile(saved))
+        assertEquals(defaultTouchLayout(), migrated.controls)
+    }
+
+    @Test
+    fun editedProfileStillDoesNotMigrate() {
+        // Guarda preservada: un perfil que el usuario movió (aunque
+        // sea un solo control) sigue siendo suyo y no migra.
+        val saved = defaultTouchLayout().map { control ->
+            if (control.id == "stick") control.copy(xFraction = 0.06f) else control
+        }
+        val migrated = TouchLayoutRepository.migrateBuiltInProfile(defaultProfile(saved))
+        assertEquals(saved, migrated.controls)
+    }
+
+    @Test
+    fun routerCoalescesSubPixelMovesButKeepsDrift() {
+        // R-P1-16: MOVEs que no mueven el dedo ≥ 1 px desde el
+        // último reenviado se descartan; la deriva lenta en pasos
+        // sub-píxel se acumula y se reenvía al llegar a 1 px.
+        val router = MultiTouchRouter()
+        router.onPointerDown(1, 1000L, 500f, 800f, false, false)
+        assertEquals(PointerAction.DROP, router.onMove(1, 500.4f, 800f))
+        assertEquals(PointerAction.DROP, router.onMove(1, 500.8f, 800f))
+        assertEquals(PointerAction.FORWARD_MOVE, router.onMove(1, 501.2f, 800f))
+        // endAll sigue devolviendo la posición REAL, no la última
+        // reenviada: el UP de cierre lleva al dedo donde está.
+        val ended = router.endAll()
+        assertEquals(1, ended.size)
+        assertEquals(501.2f, ended.first().x, 0.001f)
+        assertEquals(800f, ended.first().y, 0.001f)
+    }
+}
