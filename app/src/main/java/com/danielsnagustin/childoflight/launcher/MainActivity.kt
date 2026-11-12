@@ -51,6 +51,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import com.danielsnagustin.childoflight.launcher.data.GameActivityState
+import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.launcher.Vita3KLauncher
 import com.danielsnagustin.childoflight.launcher.model.ThemeMode
@@ -152,6 +153,26 @@ class MainActivity : ComponentActivity() {
             // partida (las colecciones ya se capturaron en
             // EmbeddedGameActivity.onDestroy antes de destroySession).
             vm.syncTrophiesFromGame()
+            // Ronda 0.2.65 (R-P1-4): al volver del juego, instalar los
+            // addons que JUGAR dejó pendientes (update/DLCs en .pkg
+            // guardados): ya no se instalan antes de arrancar para no
+            // retrasar el primer frame. Solo si hay algo pendiente
+            // (sin pendiente no se lanza ni la corrutina) y solo si la
+            // partida terminó (esta rama ya lo garantiza: si el juego
+            // sigue vivo, installPendingAddons no toca nada de todos
+            // modos). Corre en IO en segundo plano; si el usuario
+            // pulsa JUGAR mientras sigue instalando, el lanzamiento lo
+            // espera (join) antes de init. El trabajo queda en
+            // addonInstallJob para ese join.
+            if (Vita3KLauncher.pendingAddonTitleId != null) {
+                Vita3KLauncher.addonInstallJob = lifecycleScope.launch(Dispatchers.IO) {
+                    runCatching {
+                        Vita3KLauncher(applicationContext).installPendingAddons(GameLibraryRepository(applicationContext))
+                    }.onFailure { e ->
+                        LauncherLog.append(applicationContext, "pkg", "Instalación aplazada de addons falló: ${e.javaClass.simpleName}: ${e.message}")
+                    }
+                }
+            }
         }
         // P2-A4a: si EmbeddedGameActivity falló su init DESPUÉS de que
         // launch() devolviera LaunchedEmbedded, el ViewModel ya puso
@@ -166,7 +187,13 @@ class MainActivity : ComponentActivity() {
             lifecycleScope.launch(Dispatchers.IO) {
                 LauncherLog.append(applicationContext, "launch", "El juego no llegó a arrancar: $reason")
             }
-            Toast.makeText(this, "El juego no llegó a arrancar. $reason", Toast.LENGTH_LONG).show()
+            // Ronda 0.2.65 (P0-1): el Toast es genérico a propósito:
+            // el motivo crudo (p. ej. "System.loadLibrary(Vita3K)...")
+            // llegaba a la pantalla dos veces. El detalle queda solo
+            // en el registro de arriba, nunca en el Toast. El motivo
+            // exacto ya lo mostró el diálogo de JUGAR antes de abrir
+            // la pantalla del juego.
+            Toast.makeText(this, "El juego no llegó a arrancar. No se pudo cargar el motor. Vuelve a intentarlo; si sigue igual, repórtalo.", Toast.LENGTH_LONG).show()
         }
     }
 }
@@ -410,7 +437,6 @@ private fun LauncherApp(vm: LauncherViewModel) {
             },
             confirmButton = {
                 when (info.action) {
-                    AlertAction.INSTALL_VITA3K -> TextButton(onClick = { vm.clearAlert(); vm.openVita3kReleases() }) { Text("Instalar app externa") }
                     AlertAction.GO_IMPORT -> TextButton(onClick = { vm.clearAlert(); navigateTo(Screen.IMPORT) }) { Text("Ir a importar") }
                     AlertAction.DELIVER_PKG_TO_VITA3K -> TextButton(onClick = { vm.clearAlert(); vm.deliverPkgToVita3k() }) { Text("Copiar a la app externa") }
                     AlertAction.CONFIRM_DOWNLOADS_COPY -> TextButton(onClick = { vm.clearAlert(); vm.confirmDeliverPkgToDownloads() }) { Text("Copiar a Descargas") }
