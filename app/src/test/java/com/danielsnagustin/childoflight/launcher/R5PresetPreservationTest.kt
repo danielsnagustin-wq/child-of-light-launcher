@@ -37,7 +37,7 @@ class R5PresetPreservationTest {
         val applied = preserveManualCacheChoices(presetSettings(GpuProfileId.G99_QUALITY), manual)
         assertEquals(PerformanceOverlayDetail.MAXIMUM, applied.performanceOverlayDetail)
         assertEquals(PerformanceOverlayPosition.BOTTOM_RIGHT, applied.performanceOverlayPosition)
-        // Los valores del preset sí se aplican: 2x con FSR.
+        // Los valores del preset sí se aplican: 2x con Bilinear (ronda 0.2.65, R-P1-8: ya no 2x con FSR).
         assertEquals(2f, applied.resolutionMultiplier, 0.001f)
         assertEquals(GpuProfileId.G99_QUALITY, applied.activeProfile)
     }
@@ -103,7 +103,7 @@ class R5PresetPreservationTest {
             GpuDriver.SYSTEM,
         )
         assertTrue(merged.allowExternalVita3k)
-        // Los valores del preset sí se aplican: 2x con FSR.
+        // Los valores del preset sí se aplican: 2x con Bilinear (ronda 0.2.65, R-P1-8: ya no 2x con FSR).
         assertEquals(2f, merged.resolutionMultiplier, 0.001f)
         assertEquals(GpuProfileId.G99_QUALITY, merged.activeProfile)
     }
