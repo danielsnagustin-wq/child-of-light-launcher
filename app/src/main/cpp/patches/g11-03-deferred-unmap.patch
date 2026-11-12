@@ -61,14 +61,19 @@ diff --git a/vkutil/src/objects.cpp b/vkutil/src/objects.cpp
 index 579a479d..f3a33c86 100644
 --- a/vkutil/src/objects.cpp
 +++ b/vkutil/src/objects.cpp
-@@ -326,6 +326,10 @@ void DestroyQueue::destroy_objects() {
+@@ -326,6 +326,15 @@ void DestroyQueue::destroy_objects() {
              HANDLE_DESTROY(Framebuffer)
              HANDLE_DESTROY(QueryPool)
              HANDLE_DESTROY(DescriptorPool)
 +            // Ronda 0.2.66 (G11-03): la memoria de dispositivo también
 +            // puede diferirse (unmap_memory la encola junto a su búfer);
 +            // antes no había caso y caía en "Unknown object type".
-+            HANDLE_DESTROY(DeviceMemory)
++            // Fix #514: DeviceMemory no tiene device.destroy() en Vulkan-Hpp; se libera con freeMemory (caso aparte).
++            case vk::ObjectType::eDeviceMemory: {
++                auto vk_object = std::bit_cast<vk::DeviceMemory>(el);
++                device.freeMemory(vk_object);
++                break;
++            }
  
          default:
              LOG_ERROR("Unknown object type {}", vk::to_string(type));
