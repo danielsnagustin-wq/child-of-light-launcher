@@ -146,7 +146,7 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 SectionTitle("Corrección de errores")
                 NoteText("Mitigaciones del launcher (no reescriben el núcleo del juego). Si algo falla, empieza por el Modo seguro.")
                 SettingSwitch("Cerrar apps en segundo plano antes de jugar", "Best-effort con el permiso del sistema. Libera RAM antes de lanzar.", s.closeBackgroundApps) { vm.saveSettings(s.copy(closeBackgroundApps = it)) }
-                SettingSwitch("Modo seguro", "Fuerza 1x, SDL, High Accuracy OFF, sin caché sin hash, Double Buffer y sin retraso de carga. Para cuando algo falle.", s.safeMode) { vm.setSafeMode(it) }
+                SettingSwitch("Modo seguro", "Fuerza 1x, SDL, High Accuracy OFF, sin caché sin hash, Double Buffer, driver del sistema (neutraliza Turnip) y sin retraso de carga. Para cuando algo falle.", s.safeMode) { vm.setSafeMode(it) }
             }
         }
     }
