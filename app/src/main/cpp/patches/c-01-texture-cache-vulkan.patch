@@ -1,0 +1,85 @@
+diff --git a/renderer/include/renderer/texture_cache.h b/renderer/include/renderer/texture_cache.h
+index 10537eea..2672bc84 100644
+--- a/renderer/include/renderer/texture_cache.h
++++ b/renderer/include/renderer/texture_cache.h
+@@ -153,7 +153,14 @@ public:
+     virtual void configure_sampler(size_t index, const SceGxmTexture &texture, bool no_linear) {}
+ 
+     void upload_texture(const SceGxmTexture &gxm_texture, MemState &mem);
+-    void cache_and_bind_texture(const SceGxmTexture &gxm_texture, MemState &mem);
++    // Ronda 0.2.66 (C-01): use_cache = false es "texture-cache: false":
++    // no se consulta texture_lookup (siempre se toma el slot LRU y se
++    // vuelve a subir desde la memoria guest) ni se inserta el resultado
++    // (nada se reutiliza después). El slot LRU, el hash de cambio y el
++    // sampler siguen igual que en el camino con caché; solo se apaga
++    // la reutilización. Sin el parámetro, Vulkan cacheaba incondicional
++    // (el único lector de config.texture_cache era OpenGL).
++    void cache_and_bind_texture(const SceGxmTexture &gxm_texture, MemState &mem, bool use_cache = true);
+ 
+     // is called by cache_and_bind_texture if use_sampler_cache is set to true
+     int cache_and_bind_sampler(const SceGxmTexture &gxm_texture, bool is_depth = false);
+diff --git a/renderer/src/texture/cache.cpp b/renderer/src/texture/cache.cpp
+index 015829a5..4a24501b 100644
+--- a/renderer/src/texture/cache.cpp
++++ b/renderer/src/texture/cache.cpp
+@@ -647,7 +647,7 @@ static constexpr TextureGxmDataRepr strided_texture_mask = {
+     0xF3FFFFFF
+ };
+ 
+-void TextureCache::cache_and_bind_texture(const SceGxmTexture &gxm_texture, MemState &mem) {
++void TextureCache::cache_and_bind_texture(const SceGxmTexture &gxm_texture, MemState &mem, bool use_cache) {
+     R_PROFILE(__func__);
+ 
+     size_t index = 0;
+@@ -655,6 +655,8 @@ void TextureCache::cache_and_bind_texture(const SceGxmTexture &gxm_texture, MemS
+     bool upload = false;
+ 
+     // Try to find GXM texture in cache.
++    // Ronda 0.2.66 (C-01): con use_cache = false no se consulta el
++    // mapa: cada textura se trata como nueva (se sube siempre).
+     int cached_gxm_texture_index = -1;
+     TextureGxmDataRepr texture_repr = std::bit_cast<TextureGxmDataRepr>(gxm_texture);
+     if (use_sampler_cache) {
+@@ -664,7 +666,7 @@ void TextureCache::cache_and_bind_texture(const SceGxmTexture &gxm_texture, MemS
+             texture_repr[i] &= mask[i];
+     }
+     auto gxm_it = texture_lookup.find(texture_repr);
+-    if (gxm_it != texture_lookup.end())
++    if (use_cache && gxm_it != texture_lookup.end())
+         // we found the texture in the cache
+         cached_gxm_texture_index = gxm_it->second->index;
+ 
+@@ -682,7 +684,11 @@ void TextureCache::cache_and_bind_texture(const SceGxmTexture &gxm_texture, MemS
+             LOG_WARN_ONCE("Texture cache is full. Starting to replace textures");
+             texture_lookup.erase(std::bit_cast<TextureGxmDataRepr>(info->texture));
+         }
+-        texture_lookup[texture_repr] = info;
++        // Ronda 0.2.66 (C-01): con use_cache = false no se inserta:
++        // el slot LRU se reutiliza para esta subida y nada queda
++        // registrado para un draw posterior.
++        if (use_cache)
++            texture_lookup[texture_repr] = info;
+ 
+         configure = true;
+         upload = true;
+diff --git a/renderer/src/vulkan/texture.cpp b/renderer/src/vulkan/texture.cpp
+index ae3fa2d4..21d22324 100644
+--- a/renderer/src/vulkan/texture.cpp
++++ b/renderer/src/vulkan/texture.cpp
+@@ -127,7 +127,15 @@ void sync_texture(VKContext &context, MemState &mem, std::size_t index, SceGxmTe
+         // get the sampler now
+         context.state.texture_cache.cache_and_bind_sampler(texture, is_depth_surface);
+     } else {
+-        context.state.texture_cache.cache_and_bind_texture(texture, mem);
++        // Ronda 0.2.66 (C-01): honrar texture-cache en Vulkan, como
++        // OpenGL (gl/sync_state.cpp): con false no se cachea nada
++        // (siempre se vuelve a subir); con true, el camino de siempre.
++        // Antes Vulkan cacheaba incondicional y el ajuste no hacía
++        // nada en el teléfono. El sampler sigue con su propia caché
++        // (igual que en OpenGL, donde el no-cache solo afecta a la
++        // textura); apagar la caché es más lento (subida por draw),
++        // es el significado honesto del interruptor.
++        context.state.texture_cache.cache_and_bind_texture(texture, mem, config.texture_cache);
+         auto &image = context.state.texture_cache.current_texture->texture;
+         lookup_result = TextureLookupResult{
+             image.view,
