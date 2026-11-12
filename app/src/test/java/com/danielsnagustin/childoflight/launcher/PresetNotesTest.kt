@@ -13,6 +13,17 @@ import org.junit.Test
 class PresetNotesTest {
 
     @Test
+    fun genericQualityNoteSays2xForGpuWithoutOwnProfile() {
+        // Ronda 0.2.65 (RG-P2-16): la nota del 2x genérico dice para
+        // quién es y que solo difiere en la resolución 2x.
+        val note = presetCompatibilityNote(GpuProfileId.GENERIC_QUALITY)
+        assertTrue(note.contains("2x"))
+        assertTrue(note.contains("sin perfil propio"))
+        assertTrue(note.contains("única diferencia"))
+        assertTrue(note.contains("28 fps"))
+    }
+
+    @Test
     fun qualityWarnsAbout2xOnMali() {
         val note = presetCompatibilityNote(GpuProfileId.G99_QUALITY)
         assertTrue(note.contains("2x"))
@@ -43,21 +54,25 @@ class PresetNotesTest {
     }
 
     // P2-16: cada nota dice su diferencia real con G99 Recomendado
-    // (calculada campo a campo desde presetSettings; ningún preset
-    // tiene cero diferencias, así que ninguno se fusiona).
+    // (calculada campo a campo desde presetSettings). Ronda 0.2.65:
+    // MALI_PERFORMANCE y MALI_BALANCED tienen CERO diferencias con
+    // Recomendado (R-P1-5/R-P1-9) y sus notas lo dicen; G99_QUALITY
+    // solo difiere en la resolución 2x (R-P1-8/R-P1-17).
 
     @Test
-    fun maliPerformanceDiffersOnlyInTextureCache() {
+    fun maliPerformanceIsIdenticalToRecommended() {
         val note = presetCompatibilityNote(GpuProfileId.MALI_PERFORMANCE)
-        assertTrue(note.contains("única diferencia"))
-        assertTrue(note.contains("caché de texturas OFF"))
+        assertTrue(note.contains("igual que Recomendado"))
+        assertTrue(note.contains("Sin Turnip"))
+        assertTrue(!note.contains("caché de texturas OFF"))
     }
 
     @Test
-    fun maliBalancedDiffersOnlyInFilter() {
+    fun maliBalancedIsIdenticalToRecommended() {
         val note = presetCompatibilityNote(GpuProfileId.MALI_BALANCED)
-        assertTrue(note.contains("única diferencia"))
-        assertTrue(note.contains("FSR"))
+        assertTrue(note.contains("igual que Recomendado"))
+        assertTrue(note.contains("Sin Turnip"))
+        assertTrue(!note.contains("FSR"))
     }
 
     @Test
@@ -68,24 +83,27 @@ class PresetNotesTest {
     }
 
     @Test
-    fun qualityListsItsThreeDifferences() {
+    fun qualityDiffersOnlyInResolution() {
         val note = presetCompatibilityNote(GpuProfileId.G99_QUALITY)
         assertTrue(note.contains("2x"))
-        assertTrue(note.contains("FSR"))
-        assertTrue(note.contains("HUD de FPS"))
+        assertTrue(note.contains("única diferencia"))
+        assertTrue(!note.contains("FSR"))
+        assertTrue(!note.contains("HUD de FPS"))
     }
 
-    // Ronda 0.2.64: VSync ON ya no cuenta (en Vulkan es inerte): son
-    // 5 diferencias (2x, FXAA, 4x, Page Table, Turnip), no 6.
+    // Ronda 0.2.64: VSync ON ya no cuenta (en Vulkan es inerte).
+    // Ronda 0.2.65 (RG-P2-6): el HUD de FPS activado es la 6ª
+    // diferencia del preset Turnip (antes eran 5).
     @Test
-    fun turnipQualityListsAllFiveDifferences() {
+    fun turnipQualityListsAllSixDifferences() {
         val note = presetCompatibilityNote(GpuProfileId.ADRENO_QUALITY_TURNIP)
-        assertTrue(note.contains("5 ajustes"))
+        assertTrue(note.contains("6 ajustes"))
         assertTrue(note.contains("2x"))
         assertTrue(note.contains("FXAA"))
         assertTrue(note.contains("4x"))
         assertTrue(note.contains("Page Table"))
         assertTrue(note.contains("Turnip"))
+        assertTrue(note.contains("HUD"))
         assertTrue(!note.contains("VSync ON"))
     }
 }
