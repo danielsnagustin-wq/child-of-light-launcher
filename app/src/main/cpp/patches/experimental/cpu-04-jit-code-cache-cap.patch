@@ -1,0 +1,44 @@
+diff --git a/vita3k/cpu/src/dynarmic_cpu.cpp b/vita3k/cpu/src/dynarmic_cpu.cpp
+index cdfb07c92..bece77d8f 100644
+--- a/vita3k/cpu/src/dynarmic_cpu.cpp
++++ b/vita3k/cpu/src/dynarmic_cpu.cpp
+@@ -95,6 +95,9 @@ static constexpr Dynarmic::HaltReason HALT_STOP = Dynarmic::HaltReason::UserDefi
+ static constexpr Dynarmic::HaltReason HALT_RETURN = Dynarmic::HaltReason::UserDefined2;
+ static constexpr Dynarmic::HaltReason HALT_BREAKPOINT = Dynarmic::HaltReason::UserDefined3;
+ static constexpr Dynarmic::HaltReason HALT_IMPORT = Dynarmic::HaltReason::UserDefined8;
++// Launcher 0.2.66, experimento CPU-04 (Fase 3): tope de caché JIT por
++// instancia, en MiB. Ver comentario en make_jit().
++static constexpr std::size_t kExpJitCodeCacheMiB = 64;
+ 
+ class ArmDynarmicCallback : public Dynarmic::A32::UserCallbacks {
+     DynarmicCPU &cpu;
+@@ -295,7 +298,29 @@ std::unique_ptr<Dynarmic::A32::Jit> DynarmicCPU::make_jit() {
+     config.coprocessors[15] = cp15;
+     config.processor_id = processor_id;
+     config.optimizations = cpu_opt ? Dynarmic::all_safe_optimizations : Dynarmic::no_optimizations;
++    // Launcher 0.2.66, experimento CPU-06 (Fase 3): SOLO Unsafe_UnfuseFMA.
++    // NUNCA Unsafe_IgnoreGlobalMonitor: CoL es multihilo y el monitor global
++    // protege LDREX/STXR; Dynarmic lo avisa ("may result in unexpected
++    // behaviour in multithreaded scenarios, including data races and
++    // deadlocks", interface/optimization_flags.h). Tampoco ReducedErrorFP ni
++    // InaccurateNaN: la ganancia de UnfuseFMA ya es la hipótesis a medir.
++    // Para activar un flag unsafe hacen falta LAS DOS cosas (config.h:141-151,
++    // verificado en el Dynarmic fijado 86458a0b): unsafe_optimizations = true
++    // Y el bit en optimizations (HasOptimization lo enmascara si no).
++    config.unsafe_optimizations = true;
++    config.optimizations = config.optimizations | Dynarmic::OptimizationFlag::Unsafe_UnfuseFMA;
+     config.enable_cycle_counting = false;
++    // Launcher 0.2.66, experimento CPU-04 (Fase 3): tope PARAMETRIZABLE de la
++    // caché JIT por instancia (un DynarmicCPU por hilo guest, cada uno con su
++    // propio JIT). El default del Dynarmic fijado (external/dynarmic@86458a0b,
++    // interface/A32/config.h:239, VERIFICADO contra el pin, no solo upstream)
++    // es 128 MiB por instancia; con ~10-30 hilos guest la reserva virtual
++    // crece aunque la residente solo crezca con lo compilado. El parámetro
++    // del experimento es kExpJitCodeCacheMiB (probar 32 / 64 / 96): 64 MiB
++    // es el punto de partida, dentro del rango de Dynarmic (mín ~8 MiB,
++    // máx ~128 MiB en arm64). Si el juego recompila en caliente sin parar
++    // (tirones nuevos al cambiar de zona), el tope es demasiado bajo.
++    config.code_cache_size = kExpJitCodeCacheMiB * 1024 * 1024;
+ 
+     return std::make_unique<Dynarmic::A32::Jit>(config);
+ }
