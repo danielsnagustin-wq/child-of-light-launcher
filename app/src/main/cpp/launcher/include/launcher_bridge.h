@@ -170,6 +170,20 @@ Java_org_vita3k_emulator_NativeLib_removeCustomDriver(JNIEnv *env, jclass clazz,
 JNIEXPORT jint JNICALL
 Java_org_vita3k_emulator_NativeLib_getSupportedMemoryMappingMask(JNIEnv *env, jclass clazz, jstring custom_driver_name);
 
+// --- native_config.cpp ---
+// Estado del driver personalizado pedido: [máscara, cargado] (ronda
+// 0.2.65, R-P1-12; native_config.cpp:816-840 del pin). El segundo
+// valor es 0 = no se pidió driver personalizado, 1 = pedido y
+// cargado, 2 = pedido pero NO cargado (el núcleo cayó al driver del
+// sistema: resolve_vk_get_instance_proc_addr en android_driver.cpp
+// :479-491). Con cargado == 2 la UI debe decir "Turnip pedido pero
+// no cargado, se usa el sistema", no "Turnip activo". [custom_driver_name]
+// es el nombre del driver instalado ("" = driver del sistema, que
+// devuelve [máscara, 0]). El array devuelto tiene siempre 2
+// elementos, o es null solo si la JVM no pudo crearlo (OOM).
+JNIEXPORT jintArray JNICALL
+Java_org_vita3k_emulator_NativeLib_getCustomDriverSupportInfo(JNIEnv *env, jclass clazz, jstring custom_driver_name);
+
 // --- input_overlay.cpp (overlay táctil: mando virtual SDL) ---
 // Verificado contra Vita3K pin 3e43bc80 (vita3k/android/jni/
 // input_overlay.cpp): el overlay de upstream es un joystick virtual
