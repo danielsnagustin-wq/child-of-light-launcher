@@ -107,6 +107,8 @@ class SettingsRepository(private val context: Context) {
         val GPU_VULKAN = stringPreferencesKey("gpu_vulkan")
         val GPU_VULKAN_SUPPORTED = booleanPreferencesKey("gpu_vulkan_supported")
         val GPU_DETECTED_AT = longPreferencesKey("gpu_detected_at")
+        // Ronda 0.2.64 (P2-2 Mali): anisotrópico máximo leído por GLES.
+        val GPU_MAX_ANISO = intPreferencesKey("gpu_max_aniso")
         // Historial de pruebas: hasta 5, codificadas como "profile|gpu|started|fps|source|reverted|note"
         val BENCHMARKS = stringPreferencesKey("benchmarks")
         // FPS medio medido automáticamente por el núcleo durante una
@@ -178,6 +180,7 @@ class SettingsRepository(private val context: Context) {
             socModel = p[Keys.GPU_SOC] ?: "",
             vulkanVersionLabel = p[Keys.GPU_VULKAN] ?: "Desconocido",
             vulkanSupported = p[Keys.GPU_VULKAN_SUPPORTED] ?: false,
+            maxAnisotropy = p[Keys.GPU_MAX_ANISO],
             detectedAtMillis = p[Keys.GPU_DETECTED_AT] ?: 0L,
         )
     }.catch { e ->
@@ -342,6 +345,11 @@ class SettingsRepository(private val context: Context) {
             p[Keys.GPU_SOC] = gpu.socModel
             p[Keys.GPU_VULKAN] = gpu.vulkanVersionLabel
             p[Keys.GPU_VULKAN_SUPPORTED] = gpu.vulkanSupported
+            if (gpu.maxAnisotropy != null) {
+                p[Keys.GPU_MAX_ANISO] = gpu.maxAnisotropy
+            } else {
+                p.remove(Keys.GPU_MAX_ANISO)
+            }
             p[Keys.GPU_DETECTED_AT] = gpu.detectedAtMillis
         }
     }
