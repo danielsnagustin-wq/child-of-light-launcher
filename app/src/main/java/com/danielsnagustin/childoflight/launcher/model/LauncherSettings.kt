@@ -102,22 +102,6 @@ data class GpuInfo(
     val vulkanVersionLabel: String = "Desconocido",
     val vulkanSupported: Boolean = false,
     /**
-     * Vulkan USABLE para el núcleo (ronda 0.2.65, RG-P2-12): no
-     * basta el booleano vulkanSupported (system feature LEVEL o
-     * VERSION): se consulta también la versión reportada
-     * (vulkanVersionLabel, leída por GpuDetector con
-     * FEATURE_VULKAN_HARDWARE_VERSION y los códigos VK_MAKE_VERSION
-     * 1.0–1.3). Un "Sin Vulkan" explícito contradice un booleano
-     * true obsoleto/corrupto (p. ej. DataStore de otra detección) y
-     * manda: sin Vulkan usable. "Desconocido" o "Vulkan (versión no
-     * determinada)" NO contradicen nada: la etiqueta solo no se
-     * determinó y manda el booleano. El núcleo solo pide
-     * VK_API_VERSION_1_0 (pin, renderer.cpp:193,406,901,1760), así
-     * que cualquier 1.x reportada es usable: no se exige 1.1+.
-     */
-    val hasUsableVulkan: Boolean
-        get() = vulkanSupported && vulkanVersionLabel != "Sin Vulkan",
-    /**
      * Anisotrópico máximo del dispositivo (ronda 0.2.64, P2-2 Mali):
      * GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT leído por GLES en la
      * detección (GpuDetector), null si no se pudo leer (sin
@@ -131,6 +115,30 @@ data class GpuInfo(
     val maxAnisotropy: Int? = null,
     val detectedAtMillis: Long = 0L,
 ) {
+    /**
+     * Vulkan USABLE para el núcleo (ronda 0.2.65, RG-P2-12): no
+     * basta el booleano vulkanSupported (system feature LEVEL o
+     * VERSION): se consulta también la versión reportada
+     * (vulkanVersionLabel, leída por GpuDetector con
+     * FEATURE_VULKAN_HARDWARE_VERSION y los códigos VK_MAKE_VERSION
+     * 1.0–1.3). Un "Sin Vulkan" explícito contradice un booleano
+     * true obsoleto/corrupto (p. ej. DataStore de otra detección) y
+     * manda: sin Vulkan usable. "Desconocido" o "Vulkan (versión no
+     * determinada)" NO contradicen nada: la etiqueta solo no se
+     * determinó y manda el booleano. El núcleo solo pide
+     * VK_API_VERSION_1_0 (pin, renderer.cpp:193,406,901,1760), así
+     * que cualquier 1.x reportada es usable: no se exige 1.1+.
+     *
+     * Ronda 0.2.66 (run #441): esta propiedad vivía en el
+     * constructor primario con getter y eso es sintaxis inválida en
+     * Kotlin (un parámetro de constructor no admite getter): el
+     * run #441 murió en compileDebugKotlin con ~90 errores en
+     * cascada en 8 archivos. Vive en el CUERPO de la clase, como
+     * isHelioG99 / shortLabel. Ningún otro miembro del constructor
+     * lleva getter.
+     */
+    val hasUsableVulkan: Boolean
+        get() = vulkanSupported && vulkanVersionLabel != "Sin Vulkan"
     /** Helio G99 = MediaTek MT6789. Se detecta solo por procesador (SoC o hardware), nunca por modelo de dispositivo. */
     val isHelioG99: Boolean
         get() {
@@ -208,7 +216,7 @@ enum class GpuProfileId(val label: String, val description: String) {
     ),
     MALI_PERFORMANCE(
         "Mali — Rendimiento",
-        "Mali genérico (no G99): 1x siempre, Double Buffer forzado.",
+        "Mali genérico (no G99): 1x siempre, Page Table.",
     ),
     MALI_BALANCED(
         "Mali — Equilibrado",
@@ -330,7 +338,18 @@ data class LauncherSettings(
     val highAccuracy: Boolean = false,
     /** true = Surface Sync activado (más preciso). false = Disabled (más rápido). */
     val surfaceSyncEnabled: Boolean = false,
-    val memoryMapping: MemoryMapping = MemoryMapping.DOUBLE_BUFFER,
+    /**
+     * Ronda 0.2.66 (G11-01): Page Table por defecto (antes Double
+     * Buffer). HIPÓTESIS hasta la medición A/B en teléfono: Double
+     * Buffer sería el método más caro en Mali (cada acceso pasa por
+     * BufferTrapping, pin renderer.cpp:1895-1905; Page Table registra
+     * el mapeo y la GPU lee directo, :1464-1483). No es un hecho
+     * medido: la prueba A/B de 30 s en el teléfono decide. La red
+     * de seguridad es G11-02 (el lanzador resuelve el método
+     * efectivo con la máscara del driver antes de escribir
+     * config.yml). Adreno ya era Page Table: no se toca.
+     */
+    val memoryMapping: MemoryMapping = MemoryMapping.PAGE_TABLE,
     /**
      * Ronda 0.2.65 (R-P1-5): en Vulkan es INERTE. Verificado en el
      * pin: ningún código Vulkan lee config.texture_cache (el
@@ -380,8 +399,33 @@ data class LauncherSettings(
     val audioBackend: AudioBackend = AudioBackend.SDL,
     /** NGS (audio del sistema Vita). Clave ngs-enable verificada en config.h. */
     val ngsEnable: Boolean = true,
+    /**
+     * Ronda 0.2.66 — Parches experimentales: Audio SDL (R1, Vita3K+ ff1515a+69757af
+     * + hunk de audio de 570cd24). Clave exp-audio-sdl en config.yml, OFF por defecto.
+     * La clave SOLO existe en config.h si el parche app/src/main/cpp/patches/
+     * r1-audio-sdl-exp.patch está aplicado en la compilación: sin él, el núcleo
+     * ignora la clave en silencio y el interruptor no hace nada (ver generador).
+     * ON = nuevo manejo de búfer/underrun SDL (sin el pacing del 50% de audio.cpp,
+     * umbral max(3x búfer, 40 ms), espera calibrada contra lo que falta por sonar)
+     * + hint de baja latencia en Android. OFF = comportamiento actual del pin.
+     * Cambiarlo exige relanzar el juego (se lee al iniciar el audio, como el backend).
+     * El modo seguro lo fuerza OFF; ningún preset lo enciende; aplicar un preset
+     * conserva el valor manual (preserveManualCacheChoices, como hashlessTextureCache).
+     */
+    val expAudioSdl: Boolean = false,
     // --- Overlay / rendimiento ---
     val showFpsOverlay: Boolean = false, // performance-overlay, verificado
+    /**
+     * Perfil de frames, Fase L (ronda 0.2.66, INST-P0-2/INST-P0-3):
+     * mide la cadencia de vsync (Choreographer), el tiempo del
+     * overlay Views (FrameMetrics) y el FPS emulado a 4 Hz mientras
+     * se juega. Diagnóstico, no ajuste de juego: NO se emite en
+     * config.yml (no existe clave upstream para esto y no se inventa
+     * una: el diseño lo activa por JNI en la Fase P, y la Fase L no
+     * necesita al núcleo). OFF por defecto. No lo tocan los presets
+     * (preserveManualCacheChoices lo conserva, como el overlay).
+     */
+    val frameProfile: Boolean = false,
     /**
      * Detalle del HUD (performance-overlay-detail, int, default
      * MINIMUM = 0 en upstream). Solo se nota si el overlay está ON.
@@ -537,7 +581,7 @@ fun defaultProfileFor(gpu: GpuInfo): GpuProfileId = when {
     gpu.vendor == GpuVendor.ADRENO -> GpuProfileId.ADRENO_PERFORMANCE
     // Xclipse (ronda 0.2.64, H-02): sin datos de teléfono todavía,
     // perfil seguro provisional con etiqueta propia (no el genérico
-    // anónimo): 1x, Double Buffer. El 2x ya se OFRECE como opción
+    // anónimo): 1x, Page Table. El 2x ya se OFRECE como opción
     // (GENERIC_QUALITY en profilesFor, ronda 0.2.65 RG-P2-16); el
     // default sigue siendo 1x hasta que haya mediciones en un Exynos.
     gpu.vendor == GpuVendor.XCLIPSE -> GpuProfileId.MALI_PERFORMANCE
@@ -566,7 +610,7 @@ fun profilesFor(gpu: GpuInfo?): List<GpuProfileId> {
         // Ronda 0.2.65 (G-P2-6): en Adreno SOLO presets Adreno.
         // Antes se colaba G99_RECOMMENDED (etiqueta de otro GPU):
         // un usuario Adreno lo aplicaba y corría un preset Mali
-        // (Double Buffer, 1x) creyendo que era "el recomendado".
+        // (Page Table, 1x) creyendo que era "el recomendado".
         gpu.vendor == GpuVendor.ADRENO -> listOf(
             GpuProfileId.ADRENO_PERFORMANCE,
             GpuProfileId.ADRENO_QUALITY_TURNIP,
@@ -636,7 +680,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         asyncPipelineCompilation = true,
         highAccuracy = false,
         surfaceSyncEnabled = false,
-        memoryMapping = MemoryMapping.DOUBLE_BUFFER,
+        memoryMapping = MemoryMapping.PAGE_TABLE,
         cpuOpt = true, fpsHack = false, fileLoadingDelay = 0,
         showFpsOverlay = false,
         gpuDriver = GpuDriver.SYSTEM, shaderCache = true, textureCache = true, performanceMode = true,
@@ -658,7 +702,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         asyncPipelineCompilation = true,
         highAccuracy = false,
         surfaceSyncEnabled = false,
-        memoryMapping = MemoryMapping.DOUBLE_BUFFER,
+        memoryMapping = MemoryMapping.PAGE_TABLE,
         cpuOpt = true, fpsHack = false, fileLoadingDelay = 0,
         // R-P1-17: HUD OFF por defecto: el overlay lo dibuja el
         // NÚCLEO (ImGui dentro de su propio pase, renderer.cpp:81-95)
@@ -669,7 +713,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
     )
     // Ronda 0.2.65 (RG-P2-16): el 2x genérico para GPU sin perfil
     // propio (Xclipse, PowerVR, OTHER, UNKNOWN). Mismos valores que
-    // G99_QUALITY (2x, Bilinear, Double Buffer, sin HUD, Sistema):
+    // G99_QUALITY (2x, Bilinear, Page Table, sin HUD, Sistema):
     // el preset es agnóstico al GPU; solo cambia la etiqueta, para
     // no ofrecer "G99 — Calidad" a quien no tiene un G99 (G-P2-6).
     GpuProfileId.GENERIC_QUALITY -> LauncherSettings(
@@ -682,7 +726,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         asyncPipelineCompilation = true,
         highAccuracy = false,
         surfaceSyncEnabled = false,
-        memoryMapping = MemoryMapping.DOUBLE_BUFFER,
+        memoryMapping = MemoryMapping.PAGE_TABLE,
         cpuOpt = true, fpsHack = false, fileLoadingDelay = 0,
         showFpsOverlay = false,
         gpuDriver = GpuDriver.SYSTEM, shaderCache = true, textureCache = true, performanceMode = true,
@@ -697,7 +741,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         asyncPipelineCompilation = true,
         highAccuracy = false,
         surfaceSyncEnabled = false,
-        memoryMapping = MemoryMapping.DOUBLE_BUFFER, // 0.2.63 (B/C): elección del preset, NO fallback del núcleo: en el pin (renderer.cpp:748-766) DoubleBuffer y PageTable están SIEMPRE en la máscara soportada y NativeBuffer solo si el driver expone la importación de buffers; no hay ningún fallback especial para Mali. Double Buffer es además el método por defecto del núcleo (:750). Si va lento, probar Page Table.
+        memoryMapping = MemoryMapping.PAGE_TABLE, // Ronda 0.2.66 (G11-01): Page Table por defecto en Mali (antes Double Buffer; ver la nota del campo memoryMapping: es HIPÓTESIS hasta la A/B en teléfono). 0.2.63 (B/C): en el pin (renderer.cpp:748-766) DoubleBuffer y PageTable están SIEMPRE en la máscara soportada y NativeBuffer solo si el driver expone la importación de buffers; no hay ningún fallback especial para Mali. Double Buffer sigue siendo el método por defecto del núcleo (:750) y el de la red de seguridad G11-02.
         cpuOpt = true, fpsHack = false,
         // Ronda 0.2.65 (R-P1-5): textureCache = true, igual que
         // G99_RECOMMENDED. En Vulkan la clave es INERTE (ningún
@@ -725,7 +769,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         asyncPipelineCompilation = true,
         highAccuracy = false,
         surfaceSyncEnabled = false,
-        memoryMapping = MemoryMapping.DOUBLE_BUFFER,
+        memoryMapping = MemoryMapping.PAGE_TABLE,
         cpuOpt = true, fpsHack = false,
         textureCache = true, shaderCache = true,
     )
@@ -903,10 +947,18 @@ fun preserveManualCacheChoices(preset: LauncherSettings, current: LauncherSettin
         textureCache = current.textureCache,
         shaderCache = current.shaderCache,
         showFpsOverlay = current.showFpsOverlay,
+        // Ronda 0.2.66: el perfil de frames es diagnóstico manual,
+        // no valor de preset: un preset no lo apaga en silencio.
+        frameProfile = current.frameProfile,
         hashlessTextureCache = current.hashlessTextureCache,
         showCompileShaders = current.showCompileShaders,
         performanceOverlayDetail = current.performanceOverlayDetail,
         performanceOverlayPosition = current.performanceOverlayPosition,
+        // Ronda 0.2.66: el interruptor experimental de audio SDL también
+        // sobrevive a aplicar un preset (como hashlessTextureCache): un
+        // preset es configuración conocida, no un experimento, y no debe
+        // apagar a escondidas una prueba A/B en curso ni encenderla.
+        expAudioSdl = current.expAudioSdl,
     )
 }
 
@@ -963,6 +1015,8 @@ fun shouldAutoRevertTo1x(fpsAvg: Float?, resolutionMultiplier: Float, autoRevert
  * optimizaciones Dynarmic) y el driver Sistema ya estaba forzado
  * aquí desde 0.2.64 — la parte de G-P2-8 que me tocaba ya estaba
  * hecha; solo faltaba el texto que lo menciona (otro agente).
+ * Ronda 0.2.66: también fuerza expAudioSdl = false (parche
+ * experimental R1: el modo seguro es rescate, no experimento).
  */
 fun applySafeMode(settings: LauncherSettings): LauncherSettings = settings.copy(
     safeMode = true,
@@ -975,6 +1029,7 @@ fun applySafeMode(settings: LauncherSettings): LauncherSettings = settings.copy(
     surfaceSyncEnabled = false,
     audioBackend = AudioBackend.SDL,
     ngsEnable = true,
+    expAudioSdl = false,
     shaderCache = true,
     cpuOpt = true,
     fpsHack = false,
@@ -1051,8 +1106,18 @@ fun apply60FpsMode(settings: LauncherSettings): LauncherSettings = settings.copy
  *
  * Forzado: 1x (960x544; 2x cuadruplica el framebuffer y las texturas),
  * filtro Bilinear (sin FXAA ni FSR: ambos cuestan GPU/memoria extra),
- * anisotrópico 1, Double Buffer, VSync off, High Accuracy off,
+ * anisotrópico 1, Page Table, VSync off, High Accuracy off,
  * Surface Sync off.
+ *
+ * Ronda 0.2.66 (G11-01, decisión del coordinador): Page Table, no
+ * Double Buffer. Antes forzaba Double Buffer y eso ANULABA G11-01
+ * justo en el teléfono objetivo (4 GB, primer arranque): el preset
+ * G99 Recomendado ya es Page Table y la variante lo devolvía a
+ * Double Buffer en silencio. La red de seguridad es G11-02
+ * (effectiveMappingMethod): si la máscara del driver no incluye
+ * Page Table, el núcleo cae a Double Buffer por sí solo; el forzado
+ * manual es redundante. Page Table además debería ser mejor con
+ * poca RAM (menos copias por draw que Double Buffer).
  *
  * Caché (ronda 0.2.65, R-P1-5): la variante YA NO toca
  * texture-cache. config.yml NO tiene claves de TAMAÑO de caché
@@ -1071,7 +1136,7 @@ fun applyLowRamDefaults(settings: LauncherSettings): LauncherSettings = settings
     vSync = false,
     highAccuracy = false,
     surfaceSyncEnabled = false,
-    memoryMapping = MemoryMapping.DOUBLE_BUFFER,
+    memoryMapping = MemoryMapping.PAGE_TABLE,
     shaderCache = true,
 )
 
