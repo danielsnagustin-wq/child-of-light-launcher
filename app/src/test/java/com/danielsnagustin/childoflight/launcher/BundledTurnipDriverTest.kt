@@ -95,12 +95,33 @@ class BundledTurnipDriverTest {
             ),
         )
         try {
-            val result = BundledTurnipDriver.validatePackage(zip)
+            // Ronda 0.2.64: el zip es falso (su hash nunca es el R8
+            // real), así que se valida solo la estructura (""): con
+            // el hash por defecto se rechaza (ver wrongShaFails).
+            val result = BundledTurnipDriver.validatePackage(zip, expectedSha256 = "")
             assertTrue(result.isSuccess)
             val info = result.getOrThrow()
             assertEquals("libvulkan_freedreno.so", info.libraryName)
             assertEquals(zip.length(), info.sizeBytes)
             assertEquals(64, info.sha256Hex.length)
+        } finally {
+            zip.delete()
+        }
+    }
+
+    @Test
+    fun wrongShaFails() {
+        // Ronda 0.2.64: EXPECTED_SHA256 ya está relleno (R8 real,
+        // verificado 2026-11-11): un zip estructuralmente válido
+        // pero con otro hash se rechaza con el hash por defecto.
+        val zip = buildZip(
+            mapOf(
+                "meta.json" to metaJson,
+                "libvulkan_freedreno.so" to byteArrayOf(0x7F, 0x45, 0x4C, 0x46),
+            ),
+        )
+        try {
+            assertTrue(BundledTurnipDriver.validatePackage(zip).isFailure)
         } finally {
             zip.delete()
         }
