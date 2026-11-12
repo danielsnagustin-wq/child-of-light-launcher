@@ -1,0 +1,117 @@
+diff --git a/renderer/include/renderer/vulkan/screen_renderer.h b/renderer/include/renderer/vulkan/screen_renderer.h
+index 3efb94f7..39d0174f 100644
+--- a/renderer/include/renderer/vulkan/screen_renderer.h
++++ b/renderer/include/renderer/vulkan/screen_renderer.h
+@@ -44,6 +44,10 @@ public:
+     vk::SurfaceCapabilitiesKHR surface_capabilities;
+     vk::SurfaceFormatKHR surface_format;
+     vk::PresentModeKHR present_mode{};
++    // Ronda 0.2.66 (G11-06): v-sync de la config, copiado por
++    // VKState::create antes de setup(). ON -> present mode Fifo,
++    // OFF -> Mailbox (ver setup()).
++    bool vsync_enabled = true;
+     vk::Extent2D extent;
+     uint32_t swapchain_size{};
+     std::vector<vk::Image> swapchain_images;
+diff --git a/renderer/src/vulkan/renderer.cpp b/renderer/src/vulkan/renderer.cpp
+index a2ce34bb..86f8fff4 100644
+--- a/renderer/src/vulkan/renderer.cpp
++++ b/renderer/src/vulkan/renderer.cpp
+@@ -960,6 +960,12 @@ bool VKState::create(std::unique_ptr<renderer::State> &state, const Config &conf
+         frame.destroy_queue.init(device);
+     }
+ 
++    // Ronda 0.2.66 (G11-06): v-sync (config) decide el present mode en
++    // ScreenRenderer::setup. Se copia aquí porque setup() no recibe la
++    // config y pending_vsync todavía es -1 en este punto
++    // (apply_renderer_config lo pone después de create()).
++    screen_renderer.vsync_enabled = config.current_config.v_sync;
++
+     if (!screen_renderer.setup())
+         return false;
+ 
+diff --git a/renderer/src/vulkan/screen_renderer.cpp b/renderer/src/vulkan/screen_renderer.cpp
+index 6423bf11..8f685d04 100644
+--- a/renderer/src/vulkan/screen_renderer.cpp
++++ b/renderer/src/vulkan/screen_renderer.cpp
+@@ -217,28 +217,64 @@ bool ScreenRenderer::setup() {
+         state.deep_stencil_use = vk::Format::eD16Unorm;
+     }
+ 
+-    // preferred order : mailbox > fifo_relaxed > fifo > whatever
+-    // the only drawback for mailbox is that it draws more power, so maybe on a portable device use something else
+-    // this one should always be available
++    // Ronda 0.2.66 (G11-06): v-sync es el selector de present mode.
++    // Antes el modo era fijo (Mailbox > FifoRelaxed > Fifo) y v-sync
++    // no hacía nada en Vulkan: solo alimenta pending_vsync
++    // (renderer/state.h), que solo consume OpenGL. ON -> Fifo
++    // (sincronizado con el vsync del panel, sin trabajo GPU de más
++    // en un juego a 30 fps); OFF -> Mailbox (máxima velocidad, como
++    // antes). El valor viene de la config (VKState::create lo copia
++    // antes de setup()); si el juego cambia v-sync en caliente
++    // (set_vsync_state) el modo NO cambia hasta el próximo
++    // lanzamiento: el swapchain se crea aquí.
++    // preferred order with v-sync : fifo > fifo_relaxed > mailbox > whatever
++    // preferred order without v-sync: mailbox > fifo_relaxed > fifo > whatever
++    // (the only drawback for mailbox is that it draws more power, so maybe on a portable device use something else)
++    // fifo should always be available
+     present_mode = vk::PresentModeKHR::eImmediate;
+     const auto present_modes = state.physical_device.getSurfacePresentModesKHR(surface);
+-    for (const auto &mode : present_modes) {
+-        if (mode == vk::PresentModeKHR::eMailbox) {
+-            present_mode = mode;
+-            break;
++    if (vsync_enabled) {
++        for (const auto &mode : present_modes) {
++            if (mode == vk::PresentModeKHR::eFifo) {
++                present_mode = mode;
++                break;
++            }
+         }
+-
+-        if (mode == vk::PresentModeKHR::eFifoRelaxed) {
+-            present_mode = mode;
++        if (present_mode == vk::PresentModeKHR::eImmediate) {
++            for (const auto &mode : present_modes) {
++                if (mode == vk::PresentModeKHR::eFifoRelaxed) {
++                    present_mode = mode;
++                    break;
++                }
++            }
+         }
+-        if (present_mode == vk::PresentModeKHR::eFifoRelaxed)
+-            continue;
+-
+-        if (mode == vk::PresentModeKHR::eFifo) {
+-            present_mode = mode;
++        if (present_mode == vk::PresentModeKHR::eImmediate) {
++            for (const auto &mode : present_modes) {
++                if (mode == vk::PresentModeKHR::eMailbox) {
++                    present_mode = mode;
++                    break;
++                }
++            }
++        }
++    } else {
++        for (const auto &mode : present_modes) {
++            if (mode == vk::PresentModeKHR::eMailbox) {
++                present_mode = mode;
++                break;
++            }
++
++            if (mode == vk::PresentModeKHR::eFifoRelaxed) {
++                present_mode = mode;
++            }
++            if (present_mode == vk::PresentModeKHR::eFifoRelaxed)
++                continue;
++
++            if (mode == vk::PresentModeKHR::eFifo) {
++                present_mode = mode;
++            }
+         }
+     }
+-    LOG_INFO("Present mode: {}", vk::to_string(present_mode));
++    LOG_INFO("Present mode: {} (v-sync {})", vk::to_string(present_mode), vsync_enabled ? "on" : "off");
+ 
+     create_render_pass();
+ 
