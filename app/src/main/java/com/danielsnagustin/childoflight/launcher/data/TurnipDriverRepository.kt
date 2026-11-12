@@ -19,14 +19,29 @@ import java.io.FileOutputStream
  * (Etapa 2). Por eso la UI dice "instalado en el launcher", no
  * "activo en Vita3K", hasta que el núcleo lo confirme.
  *
- * Al cambiar de driver, Vita3K limpia la caché de shaders al arrancar.
- * El launcher también ofrece limpiar la caché manualmente: borra los
- * directorios de caché de shaders conocidos dentro del vita_fs.
- * Solo se borra caché, nunca el juego ni los saves.
+ * El launcher también ofrece limpiar la caché de shaders manualmente:
+ * borra los directorios de caché de shaders conocidos dentro del
+ * vita_fs. Solo se borra caché, nunca el juego ni los saves.
+ * (Ronda 0.2.65, A-P2-2: la afirmación antigua de que "al cambiar de
+ * driver, Vita3K limpia la caché de shaders al arrancar" se quitó:
+ * no hay evidencia de eso en el pin.)
  */
 class TurnipDriverRepository(private val context: Context) {
 
-    /** Instala un zip de Turnip. Devuelve el nombre guardado. */
+    /**
+     * Instala un zip de Turnip. Devuelve el nombre guardado.
+     *
+     * Ronda 0.2.65, W-P1-3: antes solo se comprobaba que fuera un
+     * `.zip`: cualquier zip quedaba marcado como "Turnip instalado"
+     * aunque el núcleo lo rechazara. Ahora el contenido se VALIDA
+     * antes de confirmar (formato AdrenoTools: meta.json en la raíz
+     * + al menos un .so, con la libraryName declarada presente en el
+     * zip; ver [BundledTurnipDriver.validatePackage]). La validación
+     * es solo estructural: se pasa "" como hash esperado, porque un
+     * zip manual no es el zip R8 incluido y su SHA-256 no tiene por
+     * qué coincidir con EXPECTED_SHA256. Si la validación falla, el
+     * temporal se borra y el driver anterior sigue intacto.
+     */
     fun installDriverZip(uri: Uri, fileName: String): Result<String> {
         // El nombre viene de DISPLAY_NAME del selector: se toma solo el
         // basename. Un nombre con "/" o ".." escaparía de la carpeta de
@@ -46,6 +61,13 @@ class TurnipDriverRepository(private val context: Context) {
             context.contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(tmp).use { out -> input.copyTo(out, LARGE_FILE_COPY_BUFFER_BYTES) }
             } ?: return Result.failure(IllegalStateException("No se pudo abrir el zip."))
+            // Validar el CONTENIDO antes de confirmar: un zip que no
+            // sea un paquete de driver (sin meta.json o sin .so) no
+            // se instala y no desplaza al driver anterior.
+            BundledTurnipDriver.validatePackage(tmp, expectedSha256 = "").getOrElse { e ->
+                tmp.delete()
+                return Result.failure(e)
+            }
             val committed = commitTempFile(dir, tmp, safeName)
             val savedName = committed.getOrElse { return Result.failure(it) }
             // Solo se guarda el último driver instalado.
