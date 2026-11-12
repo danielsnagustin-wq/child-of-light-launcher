@@ -39,6 +39,8 @@ import com.danielsnagustin.childoflight.launcher.model.PkgKind
 import org.libsdl.app.SDLActivity
 import com.danielsnagustin.childoflight.launcher.model.TitleId
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
@@ -191,7 +193,15 @@ class Vita3KLauncher(private val context: Context) {
         if (deleted) {
             val vitaRoot = GameLibraryRepository(context).vitaRoot
             val key = titleId?.let { PkgRetryState.gameKey(it) }
-            if (key != null) writePkgRetryState(vitaRoot, readPkgRetryState(vitaRoot).recordSuccess(key))
+            if (key != null) {
+                writePkgRetryState(vitaRoot, readPkgRetryState(vitaRoot).recordSuccess(key))
+            } else {
+                // Ronda 0.2.65 (W-P1-5): el bloqueado era un addon (sin
+                // Title ID del juego): limpiar sus entradas de
+                // reintentos por nombre de archivo para que una
+                // reimportación futura parta de cero.
+                writePkgRetryState(vitaRoot, readPkgRetryState(vitaRoot).clearEntriesForFile(File(path).name))
+            }
             lastBlockedPkgPath = null
             lastBlockedPkgTitleId = null
             LauncherLog.append(context, "pkg", ".pkg bloqueado borrado a mano: $path")
@@ -219,6 +229,17 @@ class Vita3KLauncher(private val context: Context) {
     companion object {
         const val VITA3K_PACKAGE = "org.vita3k.emulator"
         const val EMBEDDED_LIB_NAME = "Vita3K" // OUTPUT_NAME de upstream (target CMake "vita3k", archivo libVita3K.so)
+
+        // Ronda 0.2.65 (R-P1-2): tope de la espera anti-relanzamiento.
+        const val OLD_SDL_THREAD_WAIT_TIMEOUT_MS = 5_000L
+
+        /**
+         * Ronda 0.2.65 (R-P1-2): decisión pura de la espera
+         * anti-relanzamiento, testeable sin SDL: se sigue esperando
+         * mientras el hilo viejo siga vivo y no se haya agotado el tope.
+         */
+        internal fun shouldKeepWaitingForOldSDLThread(isAlive: Boolean, elapsedMs: Long, timeoutMs: Long = OLD_SDL_THREAD_WAIT_TIMEOUT_MS): Boolean =
+            isAlive && elapsedMs < timeoutMs
 
         /**
          * Una frase, sin pedir que se busque nada por internet.
@@ -269,17 +290,46 @@ class Vita3KLauncher(private val context: Context) {
         }
 
         /**
+         * Ronda 0.2.65 (R-P1-4): Title ID con addons (update/DLCs en
+         * .pkg guardados) pendientes de instalar DESPUÉS de la partida,
+         * no antes de arrancar. Lo pone launchImpl al lanzar el juego
+         * sin esperarlos y lo consume installPendingAddons al volver
+         * del juego (MainActivity.onResume). En companion (proceso):
+         * MainActivity crea su propio Vita3KLauncher y debe ver el
+         * pendiente que dejó el lanzamiento del ViewModel. null = nada
+         * pendiente. Se limpia al completar el intento aplazado.
+         */
+        @Volatile
+        var pendingAddonTitleId: String? = null
+
+        /**
+         * Ronda 0.2.65 (R-P1-4): trabajo de instalación aplazada de
+         * addons en curso (lo crea MainActivity.onResume al volver del
+         * juego). Si el usuario pulsa JUGAR mientras sigue instalando,
+         * launchImpl lo espera (join) antes de init: instalar y
+         * arrancar a la vez tocarían el mismo ux0. null = no hay
+         * instalación en curso.
+         */
+        @Volatile
+        var addonInstallJob: Job? = null
+
+        /**
          * P2-A4b: texto del fallo de init() según el código. El -1
          * (NOT_IMPLEMENTED) no es "un error más": significa que no hay
-         * núcleo en esta APK (cargó el stub o nada) y mostrar solo
-         * "código -1" no dice nada. Se registra qué biblioteca falló
-         * al cargar (lastLoadError) en el mensaje y en el log.
+         * núcleo en esta APK (cargó el stub o nada).
+         *
+         * Ronda 0.2.65 (P0-1): el mensaje visible NUNCA interpola
+         * lastLoadError: ese texto crudo ("System.loadLibrary(Vita3K)
+         * ...") llegaba al Toast dos veces y menciona el núcleo por su
+         * nombre interno. [lastLoadError] se mantiene en la firma por
+         * compatibilidad con el llamador de EmbeddedGameActivity, pero
+         * se IGNORA a propósito: el detalle solo va al registro
+         * (LauncherLog, en tryLaunchEmbedded), nunca a la pantalla.
+         * El texto es genérico: "No se pudo cargar el motor".
          */
         internal fun initFailureMessage(rc: Int, lastLoadError: String?): String {
             return if (rc == Vita3kCoreBridge.NOT_IMPLEMENTED) {
-                "El motor integrado no está presente en esta APK: el núcleo no se pudo cargar" +
-                    (lastLoadError?.let { " ($it)" } ?: "") +
-                    ". Instala el artefacto con núcleo (native) o repórtalo."
+                "No se pudo cargar el motor. Instala el artefacto con núcleo (native) o repórtalo."
             } else {
                 "El motor integrado no se pudo iniciar (código $rc). Vuelve a intentarlo; si sigue igual, repórtalo."
             }
@@ -706,11 +756,32 @@ class Vita3KLauncher(private val context: Context) {
                 // si el juego arranca destruía la única vía de
                 // recuperación si el eboot quedó truncado. El
                 // work.bin se conserva siempre.
-                // R5-A4-4: red de seguridad para update/DLC en .pkg
-                // guardados pero no instalados (ver
-                // installStoredAddonPkgs): con el juego ya extraído,
-                // ningún camino los instalaba nunca.
-                installStoredAddonPkgs(library, titleId, onInstallProgress)
+                // Ronda 0.2.65 (R-P1-4): los addons guardados (update /
+                // DLCs en .pkg) YA NO se instalan antes de arrancar: cada
+                // uno es una instalación completa y retrasaba el primer
+                // frame minutos en el peor caso. El juego base arranca
+                // sin ellos. Se dejan pendientes (pendingAddonTitleId)
+                // y se instalan al volver del juego (installPendingAddons,
+                // MainActivity.onResume), cuando ya no hay partida en
+                // curso. Instalarlos en segundo plano MIENTRAS se juega
+                // no es seguro: el núcleo escribe en ux0 (patch/,
+                // addcont/) mientras el juego lee de ahí, y la
+                // instalación no se probó concurrente con una partida
+                // en curso; por eso el aplazamiento es a después de la
+                // partida, no a durante. Si quedó una instalación
+                // aplazada en curso (el usuario volvió a pulsar JUGAR
+                // enseguida), se espera a que termine antes de init:
+                // es el mismo trabajo que antes bloqueaba el arranque,
+                // solo en ese caso borde.
+                pendingAddonTitleId = titleId
+                addonInstallJob?.let { job ->
+                    if (job.isActive) {
+                        LauncherLog.append(context, "pkg", "Instalación aplazada de addons en curso: se espera antes de arrancar.")
+                        job.join()
+                    }
+                    addonInstallJob = null
+                }
+                LauncherLog.append(context, "pkg", "Addons guardados aplazados a después de la partida (R-P1-4): el juego arranca sin esperarlos.")
                 return when (val attempt = tryLaunchEmbedded(library, titleId, configFile.absolutePath, benchmark, onInstallProgress, launchStartedAtMillis)) {
                     is EmbeddedAttempt.Ok -> attempt.outcome
                     is EmbeddedAttempt.Failed -> {
@@ -796,16 +867,20 @@ class Vita3KLauncher(private val context: Context) {
      * P1-1: apaga la sesión nativa anterior si ya no hay partida en
      * curso, para que el init() siguiente re-lea config.yml de disco
      * con los ajustes cambiados entre partidas. Contrato JNI: solo
-     * desde el hilo principal (por eso el withContext(Main)) y solo
-     * sin partida en curso (isAppRunning false). Si devuelve
-     * SESSION_ACTIVE (-4), no se forzó nada: se registra y se sigue
-     * con el lanzamiento (el init será no-op y los ajustes viejos
-     * seguirán; hace falta matar el proceso para que entren). Sin
-     * sesión (-2) o sin núcleo (-1) no hay nada que apagar.
+     * sin partida en curso (isAppRunning false).
+     *
+     * Ronda 0.2.65 (R-P1-11): destroySession destruye el emuenv
+     * entero (incluido el renderer Vulkan) y es pesado: corría en
+     * Main y congelaba la UI al arrancar y al salir. Ahora corre en
+     * IO, tras el join del hilo SDL (el llamador es tryLaunchEmbedded,
+     * que solo se alcanza cuando la Activity anterior ya murió, y
+     * EmbeddedGameActivity.onDestroy ya hizo su join). El contrato
+     * "solo Main" no tenía motivo: ningún JNI aquí exige el hilo
+     * principal, solo que el hilo SDL ya terminara.
      */
     private suspend fun destroyStaleSessionIfIdle() {
         if (!Vita3kCoreBridge.available || Vita3kCoreBridge.isAppRunning()) return
-        val rc = withContext(Dispatchers.Main) {
+        val rc = withContext(Dispatchers.IO) {
             runCatching { Vita3kCoreBridge.destroySession() }.getOrDefault(Vita3kCoreBridge.NOT_IMPLEMENTED)
         }
         when (rc) {
@@ -818,6 +893,22 @@ class Vita3KLauncher(private val context: Context) {
             else ->
                 LauncherLog.append(context, "launch", "destroySession devolvió $rc antes de init; se sigue con el lanzamiento (si la sesión vieja sigue, los ajustes nuevos pueden no aplicarse hasta matar el proceso).")
         }
+    }
+
+    // Ronda 0.2.65 (R-P1-2): espera suspendida a que muera el hilo SDL de
+    // la partida anterior. Devuelve true si murió antes del tope. En
+    // arranque en frío no hay hilo y vuelve al instante. delay() suspende:
+    // no bloquea el hilo que llama.
+    private suspend fun waitForOldSDLThreadToDie(timeoutMs: Long = OLD_SDL_THREAD_WAIT_TIMEOUT_MS): Boolean {
+        val startedAt = SystemClock.uptimeMillis()
+        while (shouldKeepWaitingForOldSDLThread(SDLActivity.isSDLThreadAlive(), SystemClock.uptimeMillis() - startedAt, timeoutMs)) {
+            delay(100)
+        }
+        val died = !SDLActivity.isSDLThreadAlive()
+        if (!died) {
+            LauncherLog.append(context, "launch", "El hilo SDL anterior sigue vivo tras ${timeoutMs}ms; se lanza igual (puede quedar negro hasta girar o ir a segundo plano)")
+        }
+        return died
     }
 
     /**
@@ -936,6 +1027,21 @@ class Vita3KLauncher(private val context: Context) {
                     }
                     val reason = reinstalled.exceptionOrNull()?.message ?: "No se pudo reinstalar el .pkg."
                     LauncherLog.append(context, "launch", "Reinstalación del .pkg falló: $reason")
+                    // Ronda 0.2.65 (W-P1-4): el propio fallo de
+                    // reinstalación NO se registraba (el return salía
+                    // antes de recordFailedReinstall): el .pkg se
+                    // reinstalaba entero en cada JUGAR. Se registra
+                    // aquí y se deja el puntero al .pkg bloqueado para
+                    // que el diálogo ofrezca "Borrar ese .pkg" en vez
+                    // de reintentar.
+                    writePkgRetryState(
+                        library.vitaRoot,
+                        readPkgRetryState(library.vitaRoot).recordFailedReinstall(
+                            PkgRetryState.gameKey(titleId), pkgFile, System.currentTimeMillis(),
+                        ),
+                    )
+                    lastBlockedPkgPath = pkgFile.absolutePath
+                    lastBlockedPkgTitleId = titleId
                     return EmbeddedAttempt.Failed("No se pudo preparar el juego en el motor integrado: $reason")
                 }
                 loadRc = Vita3kCoreBridge.loadGame(titleId)
@@ -985,7 +1091,18 @@ class Vita3KLauncher(private val context: Context) {
                                 "Pulsa «Borrar ese .pkg» para borrarlo " +
                                 "y vuelve a importar el juego completo (no el update)."
                         } else {
-                            ""
+                            // Ronda 0.2.65 (A-P2-1): loadGame -3 SIN
+                            // .pkg guardado: antes el mensaje era solo
+                            // "no encontró el juego instalado" y el
+                            // diálogo solo ofrecía Reintentar, que
+                            // repite lo mismo para siempre (no hay
+                            // nada que reinstalar). La salida es
+                            // reimportar el juego completo en
+                            // Importar: el texto lo dice y el
+                            // ViewModel debe ofrecer ir a Importar
+                            // (GO_IMPORT) con este motivo.
+                            ". No hay ningún .pkg guardado para reinstalarlo: " +
+                                "vuelve a importar el juego completo en Importar."
                         }
                     else -> "el motor integrado devolvió el código $loadRc al validar el juego"
                 }
@@ -1009,8 +1126,17 @@ class Vita3KLauncher(private val context: Context) {
             runCatching {
                 writePkgRetryState(library.vitaRoot, readPkgRetryState(library.vitaRoot).recordSuccess(PkgRetryState.gameKey(titleId)))
             }
-            lastBlockedPkgPath = null
-            lastBlockedPkgTitleId = null
+            // Ronda 0.2.65 (W-P1-5): el puntero solo se limpia si
+            // apuntaba al .pkg del JUEGO (este titleId): loadGame
+            // validó el juego y ese bloqueo ya no vale. Si apuntaba
+            // a un ADDON bloqueado (lastBlockedPkgTitleId null, puesto
+            // por la instalación aplazada), se conserva: el addon
+            // sigue bloqueado y un próximo lanzamiento fallido debe
+            // poder ofrecer "Borrar ese .pkg" para él.
+            if (lastBlockedPkgTitleId == titleId) {
+                lastBlockedPkgPath = null
+                lastBlockedPkgTitleId = null
+            }
             // Peso del juego (2026-11-09): el PUP guardado (133 MB)
             // también es redundante cuando el firmware ya está
             // instalado en el núcleo (hay marcador): solo hace falta
@@ -1039,6 +1165,17 @@ class Vita3KLauncher(private val context: Context) {
             // sobrevivir a este lanzamiento: si esta Activity falla su
             // init, ella misma anota el fallo nuevo.
             lastEmbeddedLaunchFailure = null
+            // Ronda 0.2.65 (R-P1-2): guarda anti-relanzamiento. Si el
+            // hilo SDL de la partida anterior sigue muriendo (onDestroy
+            // solo espera 1 s con join), abrir la Activity nueva ahora
+            // haría que handleNativeState llamara nativeResume() sobre
+            // ese hilo moribundo y, al morir, nadie volvería a arrancar
+            // SDL_main (negro sin on_launch hasta girar o ir a segundo
+            // plano). Se espera a que muera, como mucho 5 s; si sigue
+            // vivo, se sigue igual que antes (no se bloquea JUGAR para
+            // siempre). En arranque en frío no hay hilo y no se espera
+            // nada.
+            waitForOldSDLThreadToDie()
             context.startActivity(intent)
             logTiming("launch", launchStartedAtMillis, "Núcleo embebido lanzó $titleId (EmbeddedGameActivity)")
             EmbeddedAttempt.Ok(LaunchOutcome.LaunchedEmbedded(configPath))
@@ -1095,6 +1232,45 @@ class Vita3KLauncher(private val context: Context) {
     }
 
     /**
+     * Ronda 0.2.65 (R-P1-4): instala los addons pendientes (update /
+     * DLCs en .pkg guardados) DESPUÉS de la partida. Lo llama
+     * MainActivity.onResume al volver del juego, en IO. Solo corre
+     * sin partida en curso (isAppRunning false): si el juego sigue
+     * vivo (el usuario pasó por Inicio/Recientes a mitad de partida),
+     * no toca nada y el pendiente queda para la próxima vuelta.
+     * Devuelve true si se intentó la instalación (aunque algún addon
+     * fallara por addon: esos fallos quedan en su tope de reintentos
+     * y en lastBlockedPkgPath); false si no había nada pendiente, no
+     * había núcleo o el juego seguía en curso. Nunca lanza
+     * excepciones: un fallo aquí no debe tumbar la vuelta a Home.
+     */
+    suspend fun installPendingAddons(
+        library: GameLibraryRepository,
+        onInstallProgress: EmbeddedPkgInstaller.ProgressListener? = null,
+    ): Boolean {
+        val titleId = pendingAddonTitleId ?: return false
+        if (!Vita3kCoreBridge.available) return false
+        if (Vita3kCoreBridge.isAppRunning()) {
+            LauncherLog.append(context, "pkg", "Addons aplazados: el juego sigue en curso, no se instalan ahora.")
+            return false
+        }
+        return try {
+            installStoredAddonPkgs(library, titleId, onInstallProgress)
+            true
+        } catch (e: Throwable) {
+            LauncherLog.append(context, "pkg", "Instalación aplazada de addons falló: ${e.javaClass.simpleName}: ${e.message}")
+            false
+        } finally {
+            // El intento se hizo (o no se pudo hacer por excepción):
+            // el pendiente se limpia para no reintentarlo en cada
+            // vuelta. Los addons que fallaron por addon quedan
+            // bloqueados por su propio tope (PkgRetryState) hasta que
+            // el archivo cambie o el usuario los borre.
+            pendingAddonTitleId = null
+        }
+    }
+
+    /**
      * R5-A4-4: red de seguridad para update/DLC en .pkg guardados
      * pero no instalados. Con el juego ya extraído (UseEmbedded),
      * ningún camino instalaba esos .pkg: ni JUGAR, ni el arranque,
@@ -1102,15 +1278,15 @@ class Vita3KLauncher(private val context: Context) {
      * cuando no había núcleo o falló su instalación (el .pkg quedó
      * guardado "para reintentarlo" sin ningún reintento), o un .pkg
      * de DLC/update en el ux0 antiguo tras la migración (la fusión
-     * mueve los archivos pero no los instala). Se instala aquí, antes
-     * de arrancar: primero el update y luego cada DLC en pkg/dlc/
-     * (ambos ux0, sin duplicar, igual que installPkgWithEmbeddedCore).
-     * Solo se instala lo que aún NO está instalado (extraído):
-     * reinstalar en cada JUGAR lo que ya está dentro costaría minutos
-     * por partida. Un fallo de un addon NO bloquea el lanzamiento
-     * (log y seguir); un éxito invalida los tamaños. No se hace en
-     * refreshStatusOnce: instalar es pesado y exige el núcleo
-     * inicializado. Nunca lanza excepciones.
+     * mueve los archivos pero no los instala).
+     *
+     * Ronda 0.2.65 (R-P1-4): YA NO se llama antes de arrancar (eso
+     * retrasaba el primer frame minutos). Se llama solo desde
+     * installPendingAddons, al volver del juego, cuando ya no hay
+     * partida en curso. El resto no cambia: solo se instala lo que
+     * aún NO está instalado (extraído); un fallo de un addon NO
+     * bloquea nada (log y seguir, con su tope de reintentos); un
+     * éxito invalida los tamaños. Nunca lanza excepciones.
      */
     private suspend fun installStoredAddonPkgs(
         library: GameLibraryRepository,
@@ -1154,6 +1330,16 @@ class Vita3KLauncher(private val context: Context) {
                         }
                         .onFailure {
                             LauncherLog.append(context, "pkg", "Update guardado no se pudo instalar antes de jugar: ${it.message}")
+                            // Ronda 0.2.65 (W-P1-5): un update bloqueado
+                            // fallaba en silencio, sin botón de borrado.
+                            // Se deja lastBlockedPkgPath con su ruta
+                            // para que el diálogo ofrezca
+                            // DELETE_BLOCKED_PKG. TitleId null a
+                            // propósito: el bloqueado es el ADDON, no
+                            // el .pkg del juego (deleteBlockedPkg lo
+                            // borra por su ruta, no por Title ID).
+                            lastBlockedPkgPath = patchPkg.absolutePath
+                            lastBlockedPkgTitleId = null
                             writePkgRetryState(
                                 library.vitaRoot,
                                 readPkgRetryState(library.vitaRoot).recordFailedReinstall(updateKey, patchPkg, System.currentTimeMillis()),
@@ -1213,6 +1399,12 @@ class Vita3KLauncher(private val context: Context) {
                 }
                 .onFailure {
                     LauncherLog.append(context, "pkg", "DLC guardado $dlcId no se pudo instalar antes de jugar: ${it.message}")
+                    // Ronda 0.2.65 (W-P1-5): igual que el update de
+                    // arriba: el DLC bloqueado deja su ruta para que
+                    // el diálogo ofrezca borrarlo (TitleId null: es
+                    // el addon, no el .pkg del juego).
+                    lastBlockedPkgPath = pkg.absolutePath
+                    lastBlockedPkgTitleId = null
                     writePkgRetryState(
                         library.vitaRoot,
                         readPkgRetryState(library.vitaRoot).recordFailedReinstall(dlcKey, pkg, System.currentTimeMillis()),
@@ -1249,6 +1441,25 @@ class Vita3KLauncher(private val context: Context) {
         // el ux0 efectivo y dejaban fuera el contenido del legacy.
         val gamePkg = library.findPkgGameFile(titleId.id)
             ?: return Result.failure(IllegalStateException("No está el archivo ${titleId.id}.pkg."))
+        // Ronda 0.2.65 (P0-2): la PRIMERA instalación del game.pkg
+        // no tenía tope: si fallaba, cada JUGAR reinstalaba los 1,14 GB
+        // enteros. Si este mismo .pkg ya falló una vez, NO se
+        // reinstala más hasta que cambie el archivo o se borre: se
+        // devuelve el fallo con el puntero al .pkg bloqueado para que
+        // el diálogo ofrezca "Borrar ese .pkg" (mismo mecanismo que
+        // tryLaunchEmbedded para la reinstalación).
+        val gameKey = PkgRetryState.gameKey(titleId.id)
+        if (readPkgRetryState(library.vitaRoot).isBlocked(gameKey, gamePkg)) {
+            lastBlockedPkgPath = gamePkg.absolutePath
+            lastBlockedPkgTitleId = titleId.id
+            LauncherLog.append(context, "pkg", "Instalación .pkg embebida bloqueada por el tope (ya falló una vez con este archivo): ${gamePkg.name}")
+            return Result.failure(
+                IllegalStateException(
+                    "Este .pkg ya falló al instalarse una vez (${gamePkg.absolutePath}) y no se reinstala más hasta que cambie el archivo. " +
+                        "Pulsa «Borrar ese .pkg» para borrarlo y vuelve a importar el juego completo.",
+                ),
+            )
+        }
         // R5-A4-1: sin espacio no se empieza la instalación en el
         // núcleo: el .pkg ya guardado más su extracción son ~2,28 GB
         // de pico y un fallo a mitad dejaría el juego a medias.
@@ -1263,6 +1474,21 @@ class Vita3KLauncher(private val context: Context) {
         val result = installer.installPkgFile(gamePkg, library.findPkgWorkBinFile(gamePkg), progress)
         result.onFailure {
             LauncherLog.append(context, "pkg", "Instalación .pkg embebida falló: ${it.message}")
+            // Ronda 0.2.65 (P0-2): el fallo de la primera instalación
+            // se registra en el tope (igual que el de la
+            // reinstalación): el próximo JUGAR no reinstala 1,14 GB
+            // otra vez, y el diálogo ofrece borrar el .pkg. La
+            // excepción "instalado pero sin licencia" NO se registra:
+            // el juego SÍ quedó instalado y el próximo JUGAR ya no
+            // pasa por aquí (decide UseEmbedded, no UseEmbeddedPkg).
+            if (it !is InstalledWithoutLicenseException) {
+                writePkgRetryState(
+                    library.vitaRoot,
+                    readPkgRetryState(library.vitaRoot).recordFailedReinstall(gameKey, gamePkg, System.currentTimeMillis()),
+                )
+                lastBlockedPkgPath = gamePkg.absolutePath
+                lastBlockedPkgTitleId = titleId.id
+            }
             return Result.failure(it)
         }
         // P0-1 (2026-11-09): el .pkg ya NO se borra aquí. Se borra
@@ -1278,7 +1504,21 @@ class Vita3KLauncher(private val context: Context) {
                     // borra (con su guarda: solo si quedó instalado).
                     library.deleteStoredAddonPkg(patchPkg, PkgKind.UPDATE, titleId.id)
                 }
-                .onFailure { LauncherLog.append(context, "pkg", "Instalación del update embebido falló: ${it.message}") }
+                .onFailure {
+                    LauncherLog.append(context, "pkg", "Instalación del update embebido falló: ${it.message}")
+                    // Ronda 0.2.65 (W-P1-5): el update bloqueado deja
+                    // su ruta para que el diálogo ofrezca borrarlo
+                    // (TitleId null: es el addon, no el juego) y se
+                    // registra en su tope de reintentos.
+                    lastBlockedPkgPath = patchPkg.absolutePath
+                    lastBlockedPkgTitleId = null
+                    writePkgRetryState(
+                        library.vitaRoot,
+                        readPkgRetryState(library.vitaRoot).recordFailedReinstall(
+                            PkgRetryState.addonKey(titleId.id, patchPkg.name), patchPkg, System.currentTimeMillis(),
+                        ),
+                    )
+                }
         }
         // DLCs en .pkg en AMBOS ux0 (efectivo y antiguo), sin duplicar
         // el mismo DLC: el efectivo manda si está en los dos.
@@ -1296,7 +1536,20 @@ class Vita3KLauncher(private val context: Context) {
                     // borra (con su guarda: solo si quedó instalado).
                     library.deleteStoredAddonPkg(pkg, PkgKind.DLC, titleId.id)
                 }
-                .onFailure { LauncherLog.append(context, "pkg", "Instalación del DLC $dlcId embebido falló: ${it.message}") }
+                .onFailure {
+                    LauncherLog.append(context, "pkg", "Instalación del DLC $dlcId embebido falló: ${it.message}")
+                    // Ronda 0.2.65 (W-P1-5): igual que el update de
+                    // arriba: el DLC bloqueado deja su ruta para el
+                    // diálogo y se registra en su tope.
+                    lastBlockedPkgPath = pkg.absolutePath
+                    lastBlockedPkgTitleId = null
+                    writePkgRetryState(
+                        library.vitaRoot,
+                        readPkgRetryState(library.vitaRoot).recordFailedReinstall(
+                            PkgRetryState.addonKey(titleId.id, pkg.name), pkg, System.currentTimeMillis(),
+                        ),
+                    )
+                }
         }
         // R4-P2-7: el núcleo acaba de instalar juego + update + DLCs
         // en ux0: los tamaños cacheados ya no valen. Un fallo de
@@ -1306,7 +1559,17 @@ class Vita3KLauncher(private val context: Context) {
         return Result.success(Unit)
     }
 
-    /** ¿Existe la librería nativa del núcleo embebido? Se cachea: loadLibrary no debe intentarse en cada recomposición. */
+    /**
+     * ¿Existe la librería nativa del núcleo embebido? Se cachea: loadLibrary no debe intentarse en cada recomposición.
+     * Ronda 0.2.65 (J-P2-6): el resultado se cachea en un campo
+     * volátil: no cambia durante la vida del proceso (el .so no
+     * aparece ni desaparece en caliente) y sin @Volatile dos hilos
+     * podían cargar el .so de ~42 MB a la vez en Main. La primera
+     * llamada sigue cargando el .so (eso es lo que pregunta si existe
+     * de verdad); las siguientes devuelven el cache sin tocar disco
+     * ni cargar nada.
+     */
+    @Volatile
     private var embeddedCoreChecked: Boolean? = null
 
     fun embeddedCorePresent(): Boolean {
