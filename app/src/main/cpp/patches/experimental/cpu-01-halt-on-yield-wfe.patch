@@ -1,0 +1,61 @@
+diff --git a/vita3k/cpu/src/dynarmic_cpu.cpp b/vita3k/cpu/src/dynarmic_cpu.cpp
+index cdfb07c92..9ce1f8157 100644
+--- a/vita3k/cpu/src/dynarmic_cpu.cpp
++++ b/vita3k/cpu/src/dynarmic_cpu.cpp
+@@ -27,9 +27,11 @@
+ #include <dynarmic/interface/exclusive_monitor.h>
+ 
+ #include <bit>
++#include <chrono>
+ #include <memory>
+ #include <optional>
+ #include <string>
++#include <thread>
+ 
+ class ArmDynarmicCP15 : public Dynarmic::A32::Coprocessor {
+ public:
+@@ -95,6 +97,16 @@ static constexpr Dynarmic::HaltReason HALT_STOP = Dynarmic::HaltReason::UserDefi
+ static constexpr Dynarmic::HaltReason HALT_RETURN = Dynarmic::HaltReason::UserDefined2;
+ static constexpr Dynarmic::HaltReason HALT_BREAKPOINT = Dynarmic::HaltReason::UserDefined3;
+ static constexpr Dynarmic::HaltReason HALT_IMPORT = Dynarmic::HaltReason::UserDefined8;
++// Launcher 0.2.66, experimento CPU-01 (Fase 3): Yield/WFE paran el JIT para
++// que el hilo host descanse en vez de girar al 100%. OJO: NO es HALT_RETURN:
++// run_guest()/run_loop() (kernel/src/thread.cpp) tratan Kind::returned como
++// "la función del hilo terminó" y el hilo guest MORIRÍA. HALT_YIELD es solo
++// una parada (Kind::stopped) y el descanso lo pone run() abajo.
++static constexpr Dynarmic::HaltReason HALT_YIELD = Dynarmic::HaltReason::UserDefined4;
++// Parámetro del experimento: cuánto duerme el hilo host tras cada Yield/WFE.
++// 100 us frena un giro cerrado sin alargar de forma apreciable la entrega
++// de un bloqueo (un cambio de hilo guest tarda ~10-50 us en la práctica).
++static constexpr std::chrono::microseconds kExpYieldSleep{ 100 };
+ 
+ class ArmDynarmicCallback : public Dynarmic::A32::UserCallbacks {
+     DynarmicCPU &cpu;
+@@ -246,8 +258,16 @@ public:
+         case Dynarmic::A32::Exception::PreloadInstruction:
+         case Dynarmic::A32::Exception::SendEvent:
+         case Dynarmic::A32::Exception::SendEventLocal:
++            break;
+         case Dynarmic::A32::Exception::WaitForEvent:
+         case Dynarmic::A32::Exception::Yield:
++            // Launcher 0.2.66, experimento CPU-01: un hilo guest que gira sobre
++            // Yield/WFE corría sin límite en un núcleo host al 100% (el JIT no
++            // tiene timeslice: AddTicks es no-op, cycle counting OFF). Parar el
++            // JIT aquí devuelve el control a run(), que duerme kExpYieldSleep
++            // antes de re-entrar: el giro deja de quemar el núcleo y el SO
++            // puede planificar otros hilos host en él.
++            cpu.jit->HaltExecution(HALT_YIELD);
+             break;
+         case Dynarmic::A32::Exception::UndefinedInstruction:
+             LOG_WARN("Undefined instruction at address 0x{:X}, instruction 0x{:X} ({})", pc, MemoryReadCode(pc).value(), cpu.disassemble(pc, nullptr));
+@@ -321,6 +341,10 @@ GuestExit DynarmicCPU::run(RunMode mode) {
+             reason = jit->Run();
+         } while (reason == Dynarmic::HaltReason::Step || reason == Dynarmic::HaltReason::CacheInvalidation);
+     }
++    // Launcher 0.2.66, experimento CPU-01: el JIT paró por Yield/WFE (ver
++    // ExceptionRaised): descansar antes de re-entrar para no girar en caliente.
++    if (!step && Dynarmic::Has(reason, HALT_YIELD))
++        std::this_thread::sleep_for(kExpYieldSleep);
+     // The NID is the word after the SVC. A stepped SVC reports the debugger stop with it.
+     if (Dynarmic::Has(reason, HALT_IMPORT))
+         return { GuestExit::Kind::import, *Ptr<uint32_t>(get_pc() + 4).get(mem), step };
