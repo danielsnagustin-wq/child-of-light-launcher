@@ -41,7 +41,8 @@ class Vita3kConfigGeneratorTest {
         assertTrue(yaml.contains("high-accuracy: false"))
         // Surface Sync Disabled -> disable-surface-sync: true (inverso verificado).
         assertTrue(yaml.contains("disable-surface-sync: true"))
-        assertTrue(yaml.contains("memory-mapping: \"double-buffer\""))
+        // Ronda 0.2.66 (G11-01): G99 Recomendado emite page-table.
+        assertTrue(yaml.contains("memory-mapping: \"page-table\""))
         assertTrue(yaml.contains("audio-backend: \"SDL\""))
         assertTrue(yaml.contains("audio-volume: 100"))
         assertTrue(yaml.contains("ngs-enable: true"))
@@ -49,6 +50,24 @@ class Vita3kConfigGeneratorTest {
         assertTrue(yaml.contains("fps-hack: false"))
         assertTrue(yaml.contains("turbo-mode: false"))
         assertTrue(yaml.contains("performance-overlay: false"))
+    }
+
+    @Test
+    fun audioDeviceSampleFramesIsEmittedAndValidates() {
+        // Ronda 0.2.66 (AUD-P2-1): la clave nueva (audio-device-sample-frames,
+        // default 512) tiene que emitirse Y pasar el validador: si el
+        // validador no la conociera, writeConfig regeneraría defaults
+        // (repetir AUD-P0-1). La aserción es específica de esta clave:
+        // el invariante global (generate() entero valida vacío) vive
+        // en R11Fase0Test (AUD-P0-1, Fase 0, ya arreglado en esta
+        // misma ronda: audio-backend SÍ está en el validador).
+        val yaml = Vita3kConfigGenerator.generate(presetSettings(GpuProfileId.G99_RECOMMENDED), "/data/vita3k")
+        assertTrue(yaml.contains("audio-device-sample-frames: 512"))
+        val problems = Vita3kConfigGenerator.validateGeneratedConfig(yaml)
+        assertTrue(
+            "el validador no debe mencionar audio-device-sample-frames: $problems",
+            problems.none { it.contains("audio-device-sample-frames") },
+        )
     }
 
     @Test
@@ -488,6 +507,13 @@ class Vita3kConfigGeneratorTest {
             "anisotropic-filtering" to "int",
             "async-pipeline-compilation" to "bool",
             "high-accuracy" to "bool",
+            // Ronda 0.2.66 (integración, hallazgo Codex paso 1 en el
+            // test estructural hermano): este mapa TAMBIÉN estaba
+            // desfasado: faltaban validation-layer (Fase 0, G11-07),
+            // audio-device-sample-frames (Fase 2, AUD-P2-1) y
+            // exp-audio-sdl (interruptores, R1). Sin ellas, el test
+            // fallaba con "clave sin tipo clasificado".
+            "validation-layer" to "bool",
             "disable-surface-sync" to "bool",
             "memory-mapping" to "string",
             "texture-cache" to "bool",
@@ -499,6 +525,8 @@ class Vita3kConfigGeneratorTest {
             "file-loading-delay" to "int",
             "audio-backend" to "string",
             "audio-volume" to "int",
+            "audio-device-sample-frames" to "int",
+            "exp-audio-sdl" to "bool",
             "ngs-enable" to "bool",
             "performance-overlay" to "bool",
             "performance-overlay-detail" to "int",
