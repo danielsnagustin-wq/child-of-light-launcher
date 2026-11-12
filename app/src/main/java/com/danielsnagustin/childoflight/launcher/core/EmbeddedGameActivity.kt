@@ -119,6 +119,12 @@ class EmbeddedGameActivity : SDLActivity() {
         const val EXTRA_APP_START_PARAMETERS = "AppStartParameters"
         /** true = prueba de 30 s: muestrear el FPS del núcleo y guardarlo al salir. */
         const val EXTRA_BENCHMARK = "benchmark"
+        /**
+         * Ronda 0.2.64 (H-4 tiempo de carga, T1/T2): t0 del toque de
+         * JUGAR (SystemClock.elapsedRealtime, el mismo reloj que
+         * play()/startBenchmark y el lanzador). 0 = sin medir.
+         */
+        const val EXTRA_LAUNCH_STARTED_AT = "launch_started_at"
         /** Muestras válidas de la prueba de 30 s: 1 por segundo de juego real. */
         const val BENCHMARK_MAX_SAMPLES = 30
 
@@ -148,11 +154,12 @@ class EmbeddedGameActivity : SDLActivity() {
         private const val PAUSE_CLEAR_MAX_ATTEMPTS = 3
         private const val PAUSE_CLEAR_RETRY_DELAY_MS = 500L
 
-        fun createLaunchIntent(context: Context, titleId: String, gameTitle: String, benchmark: Boolean = false): Intent {
+        fun createLaunchIntent(context: Context, titleId: String, gameTitle: String, benchmark: Boolean = false, launchStartedAtMillis: Long = 0L): Intent {
             return Intent(context, EmbeddedGameActivity::class.java).apply {
                 putExtra(EXTRA_TITLE_ID, titleId)
                 putExtra(EXTRA_GAME_TITLE, gameTitle)
                 putExtra(EXTRA_BENCHMARK, benchmark)
+                putExtra(EXTRA_LAUNCH_STARTED_AT, launchStartedAtMillis)
                 addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
             }
         }
@@ -164,6 +171,14 @@ class EmbeddedGameActivity : SDLActivity() {
     private var benchmarkMode: Boolean = false
     private var benchmarkJob: Job? = null
     private val benchmarkSamples = mutableListOf<Float>()
+    /**
+     * Ronda 0.2.64 (H-4 tiempo de carga, T1/T2): t0 del toque de
+     * JUGAR (elapsedRealtime), leído del extra del intent. 0 = sin
+     * medir (lanzamiento directo o proceso frío sin extra).
+     */
+    private var launchStartedAtMillis: Long = 0L
+    /** T2 ya registrado una vez en este lanzamiento (primer frame presentado). */
+    private var firstFrameLogged: Boolean = false
     /**
      * Momento (uptimeMillis) en que el núcleo confirmó el juego en
      * curso (setCurrentGameId, hook on_launch). 0 = aún no confirmado:
@@ -265,6 +280,7 @@ class EmbeddedGameActivity : SDLActivity() {
         }
         currentTitleId = titleId
         benchmarkMode = intent.getBooleanExtra(EXTRA_BENCHMARK, false)
+        launchStartedAtMillis = intent.getLongExtra(EXTRA_LAUNCH_STARTED_AT, 0L)
         val storageRoot = EmbeddedCoreLayout.storageRoot(this)
         // P2-B12: el flujo normal (JUGAR) ya inicializó el núcleo en IO
         // en tryLaunchEmbedded, así que aquí solo se VERIFICA que la
@@ -866,6 +882,31 @@ class EmbeddedGameActivity : SDLActivity() {
         }
     }
 
+    /**
+     * Ronda 0.2.64 (H-4, T2): primer frame presentado tras on_launch.
+     * Sondea getFps() 1 vez por segundo hasta el primer FPS > 0 y
+     * registra "Primer frame presentado tras on_launch (T2 ≈ X ms
+     * desde JUGAR)" una sola vez. La pantalla de título también
+     * presenta frames: T2 marca el primer frame presentado, NO el
+     * gameplay interactivo. Corre en overlayScope (se cancela en
+     * onDestroy); sin t0 no registra nada.
+     */
+    private fun maybeStartFirstFramePoll() {
+        if (launchStartedAtMillis <= 0 || firstFrameLogged) return
+        overlayScope.launch {
+            while (isActive && !firstFrameLogged) {
+                val fps = runCatching { Vita3kCoreBridge.getFps() }.getOrDefault(-1f)
+                if (fps > 0f) {
+                    firstFrameLogged = true
+                    val t2 = SystemClock.elapsedRealtime() - launchStartedAtMillis
+                    LauncherLog.append(this@EmbeddedGameActivity, "launch", "Primer frame presentado tras on_launch (T2 ≈ ${t2}ms desde JUGAR)")
+                    return@launch
+                }
+                delay(1000)
+            }
+        }
+    }
+
     private fun stopBenchmarkSamplingAndSave() {
         benchmarkJob?.cancel()
         benchmarkJob = null
@@ -935,6 +976,13 @@ class EmbeddedGameActivity : SDLActivity() {
         // juego (atascado en init/carga); si aparece y la pantalla
         // sigue negra, el juego arrancó pero el render no presenta.
         LauncherLog.append(this, "launch", "Núcleo confirmó juego en curso: ${gameId.orEmpty()} (on_launch)")
+        // Ronda 0.2.64 (H-4, T1): JUGAR → título. El t0 viene del
+        // extra del intent (elapsedRealtime, mismo reloj que play()
+        // y el lanzador): si no hay t0, no se registra nada.
+        if (launchStartedAtMillis > 0) {
+            val t1 = SystemClock.elapsedRealtime() - launchStartedAtMillis
+            LauncherLog.append(this, "launch", "T1 (JUGAR → título): ${t1}ms")
+        }
         runOnUiThread {
             currentTitleId = gameId.orEmpty()
             // R2-P2-29: el núcleo confirma aquí que el juego está en
@@ -945,6 +993,14 @@ class EmbeddedGameActivity : SDLActivity() {
             if (gameId?.isNotEmpty() == true && gameRunningSinceMillis == 0L) {
                 gameRunningSinceMillis = SystemClock.uptimeMillis()
                 maybeStartBenchmarkSampling()
+                // Ronda 0.2.64 (H-4, T2): primer frame presentado. Se
+                // sondea getFps() 1 vez por segundo hasta el primer
+                // FPS > 0 (la pantalla de título también presenta
+                // frames: T2 marca el primer frame presentado, NO el
+                // gameplay interactivo — que el usuario pulse Start
+                // queda fuera de la vista del launcher). Una sola vez
+                // por lanzamiento; overlayScope se cancela en onDestroy.
+                maybeStartFirstFramePoll()
             }
             // El juego arrancó: SDL está arriba y la sesión activa, así
             // que es el momento de crear el mando virtual del overlay
