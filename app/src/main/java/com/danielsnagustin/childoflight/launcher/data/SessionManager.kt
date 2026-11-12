@@ -8,6 +8,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -51,7 +52,11 @@ class SessionManager(
     private val repo = SessionRepository(library.vitaRoot)
 
     private val _sessions = MutableStateFlow<List<GameSession>>(emptyList())
-    val sessionsFlow: Flow<List<GameSession>> = _sessions.asStateFlow()
+    // Ronda 0.2.65 (T-P2-3): StateFlow (no solo Flow) para que el
+    // informe de bug pueda leer los nombres de sesión de forma
+    // síncrona al exportar y sanitizarlos; los consumidores como Flow
+    // no cambian.
+    val sessionsFlow: StateFlow<List<GameSession>> = _sessions.asStateFlow()
 
     private val _activeSessionId = MutableStateFlow<String?>(null)
     val activeSessionIdFlow: Flow<String?> = _activeSessionId.asStateFlow()
