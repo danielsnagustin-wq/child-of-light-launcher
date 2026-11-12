@@ -29,6 +29,8 @@
 #include <jni.h>
 #include <android/log.h>
 
+#include <exception>
+
 #include "launcher_bridge.h"
 
 #define LOG_TAG "LauncherBridge"
@@ -57,7 +59,17 @@ extern "C" JNIEXPORT jobjectArray JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetTrophyCollections(
     JNIEnv *env, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
-    jobjectArray result = Java_org_vita3k_emulator_NativeLib_getTrophyCollections(env, nullptr);
+    // J-P2-3: una excepción C++ sin capturar cruzando JNI aborta el
+    // proceso (SIGABRT) al volver a Home. Se captura y se devuelve
+    // un array vacío: sin trofeos que sincronizar, sin crash.
+    jobjectArray result = nullptr;
+    try {
+        result = Java_org_vita3k_emulator_NativeLib_getTrophyCollections(env, nullptr);
+    } catch (const std::exception &e) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "nativeGetTrophyCollections: excepción C++ capturada: %s", e.what());
+    } catch (...) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "nativeGetTrophyCollections: excepción C++ desconocida capturada");
+    }
     if (launcher_clear_pending_exception(env) || result == nullptr) {
         return new_empty_trophy_collection_array(env);
     }
