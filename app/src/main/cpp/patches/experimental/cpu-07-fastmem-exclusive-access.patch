@@ -1,0 +1,16 @@
+diff --git a/vita3k/kernel/src/kernel.cpp b/vita3k/kernel/src/kernel.cpp
+index fa6622990..fc1a3a8ab 100644
+--- a/vita3k/kernel/src/kernel.cpp
++++ b/vita3k/kernel/src/kernel.cpp
+@@ -33,6 +33,11 @@
+ #include <SDL3/SDL_mutex.h>
+ #include <SDL3/SDL_thread.h>
+ 
++#ifdef __ANDROID__
++#include <atomic>
++#include <sched.h>
++#endif
++
+ int CorenumAllocator::new_corenum() {
+     const std::lock_guard<std::mutex> guard(lock);
+ 
