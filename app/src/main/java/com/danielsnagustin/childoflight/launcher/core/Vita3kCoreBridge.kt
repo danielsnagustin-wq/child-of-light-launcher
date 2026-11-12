@@ -181,6 +181,33 @@ object Vita3kCoreBridge {
     }
 
     /**
+     * Frames PRESENTADOS por el swapchain desde el arranque (gancho nº 1,
+     * 0.2.66; parche hook1-present-counter.patch). A diferencia de getFps()
+     * (frames emulados), solo avanza cuando presentKHR presenta una imagen:
+     * con pantalla negra NO avanza. -1 si no hay núcleo.
+     * Presents/s = (count2 - count1) / ((timeNs2 - timeNs1) / 1e9),
+     * muestreando este contador junto a [getLastPresentTimeNs].
+     */
+    fun getPresentedFrameCount(): Long {
+        if (!available) return -1
+        return try {
+            nativeGetPresentedFrameCount()
+        } catch (_: UnsatisfiedLinkError) {
+            -1
+        }
+    }
+
+    /** Timestamp monotónico (ns) del último presentKHR, o -1 si no hay núcleo. */
+    fun getLastPresentTimeNs(): Long {
+        if (!available) return -1
+        return try {
+            nativeGetLastPresentTimeNs()
+        } catch (_: UnsatisfiedLinkError) {
+            -1
+        }
+    }
+
+    /**
      * true si la sesión del núcleo existe (NativeLib.isInitialized
      * de upstream: hay emuenv). NO dice si hay partida en curso
      * (eso es isAppRunning). La oleada 2 lo usa en
@@ -663,6 +690,8 @@ object Vita3kCoreBridge {
     private external fun nativeInit(storagePath: String): Int
     private external fun nativeLoadGame(titleId: String): Int
     private external fun nativeGetFps(): Float
+    private external fun nativeGetPresentedFrameCount(): Long
+    private external fun nativeGetLastPresentTimeNs(): Long
     private external fun nativeIsInitialized(): Boolean
     private external fun nativeDestroySession(): Int
     private external fun nativePrepareFrontend(): Boolean
