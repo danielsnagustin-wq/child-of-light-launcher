@@ -44,7 +44,7 @@ fun SettingsPerformanceScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
         } else {
             item {
                 SectionTitle("Fotogramas")
-                SettingSwitch("Volver a 1x si baja de 28 fps", "Solo con el preset G99 Calidad (2x). Automático al registrar el FPS de la prueba.", s.autoRevertTo1xIfBelow28Fps) { vm.saveSettings(s.copy(autoRevertTo1xIfBelow28Fps = it)) }
+                SettingSwitch("Volver a 1x si baja de 28 fps", "Con cualquier perfil 2x (G99 Calidad, Adreno Calidad/Turnip o un 2x puesto a mano). Automático al registrar el FPS de la prueba.", s.autoRevertTo1xIfBelow28Fps) { vm.saveSettings(s.copy(autoRevertTo1xIfBelow28Fps = it)) }
                 SettingSwitch("Modo rendimiento del launcher", "Mantiene la pantalla encendida mientras juegas.", s.performanceMode) { vm.saveSettings(s.copy(performanceMode = it)) }
             }
             item {
