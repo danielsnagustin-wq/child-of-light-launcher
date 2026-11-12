@@ -60,7 +60,15 @@ object GpuDetector {
             // como respaldo si algún driver reporta otro renderer. La
             // rama va DESPUÉS de Mali: un Exynos con Mali (p. ej. 2100,
             // Mali-G78) sigue siendo Mali por su renderer.
-            r.contains("XCLIPSE") || soc.contains("EXYNOS") -> GpuVendor.XCLIPSE
+            // Ronda 0.2.65, G-P2-2: Android reporta el SoC como código
+            // de chip (Build.SOC_MODEL / Build.HARDWARE), no como
+            // "EXYNOS": s5e9945 = Exynos 2400, s5e9935 = Exynos 2200,
+            // s5e9840 = Exynos 2100, s5e8825 = Exynos 1480, s5e8855 =
+            // Exynos 1580, s5e9965 = Exynos 2600. El prefijo s5e* es
+            // el de los SoC Samsung (todos los Exynos conocidos lo
+            // llevan); se acepta además de "EXYNOS" por si algún
+            // dispositivo reporta el nombre comercial.
+            r.contains("XCLIPSE") || soc.contains("EXYNOS") || soc.contains("S5E") -> GpuVendor.XCLIPSE
             // PowerVR (Imagination): renderer "PowerVR ..." o vendor
             // "Imagination Technologies". Sin perfil propio: cae en el
             // perfil Genérico seguro (defaultProfileFor).
