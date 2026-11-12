@@ -28,6 +28,17 @@ package com.danielsnagustin.childoflight.launcher.data
  * copia de 1,14 GB. Si el archivo cambia (otro tamaño o mtime), la
  * entrada ya no corresponde y el tope se resetea solo. Un loadGame
  * con éxito limpia la entrada del juego.
+ *
+ * Ronda 0.2.65 (X-P2-2): nombre, tamaño y mtime NO bastan para
+ * identificar el archivo: reimportar un .pkg DISTINTO con el mismo
+ * nombre, mismo tamaño y mismo mtime heredaba el bloqueo del viejo
+ * (un .pkg nuevo y bueno quedaba bloqueado por el fallo del viejo).
+ * La identidad incluye ahora un hash parcial del contenido (SHA-256
+ * de 3 ventanas de 64 KB: inicio, mitad y final; un .pkg de 1,14 GB
+ * no se lee entero para esto). Dos archivos con el mismo nombre,
+ * tamaño y mtime pero distinto contenido tienen distinto hash y el
+ * tope no se hereda. Las entradas viejas (sin hash) siguen valiendo
+ * con la identidad clásica hasta que se reescriben.
  */
 data class PkgRetryEntry(
     val key: String,
@@ -36,6 +47,8 @@ data class PkgRetryEntry(
     val lastModifiedMillis: Long,
     val failedReinstalls: Int,
     val lastFailedAtMillis: Long,
+    /** Hash parcial SHA-256 del contenido (X-P2-2); "" = entrada vieja, sin hash. */
+    val partialHashHex: String = "",
 )
 
 data class PkgRetryState(val entries: Map<String, PkgRetryEntry> = emptyMap()) {
@@ -49,6 +62,44 @@ data class PkgRetryState(val entries: Map<String, PkgRetryEntry> = emptyMap()) {
 
         private const val MAX_FAILURES_BEFORE_BLOCK = 1
 
+        /** Ventana del hash parcial (X-P2-2): 64 KB por muestra. */
+        private const val PARTIAL_HASH_WINDOW_BYTES = 64 * 1024L
+
+        /**
+         * Hash parcial del contenido de un .pkg (X-P2-2): SHA-256 de
+         * 3 ventanas de 64 KB (inicio, mitad y final del archivo).
+         * Lee como mucho 192 KB aunque el .pkg pese 1,14 GB. "" si el
+         * archivo no existe, está vacío o no se puede leer: en ese
+         * caso la identidad vuelve a ser solo nombre, tamaño y mtime
+         * (como antes). Determinista: el mismo contenido da siempre
+         * el mismo hash; dos contenidos distintos con igual nombre,
+         * tamaño y mtime casi nunca coinciden.
+         */
+        fun partialFileHash(pkgFile: java.io.File): String {
+            return runCatching {
+                val size = pkgFile.length()
+                if (size <= 0L) return ""
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                java.io.RandomAccessFile(pkgFile, "r").use { raf ->
+                    val window = PARTIAL_HASH_WINDOW_BYTES
+                    if (size <= window) {
+                        val all = ByteArray(size.toInt())
+                        raf.readFully(all)
+                        digest.update(all)
+                    } else {
+                        val buf = ByteArray(window.toInt())
+                        val starts = listOf(0L, size / 2 - window / 2, size - window)
+                        for (start in starts) {
+                            raf.seek(start.coerceAtLeast(0L))
+                            raf.readFully(buf)
+                            digest.update(buf)
+                        }
+                    }
+                }
+                digest.digest().joinToString("") { "%02x".format(it) }
+            }.getOrDefault("")
+        }
+
         /** Decodifica el estado desde el texto del archivo (líneas malformadas se saltan). */
         fun decode(text: String): PkgRetryState {
             val entries = mutableMapOf<String, PkgRetryEntry>()
@@ -56,7 +107,8 @@ data class PkgRetryState(val entries: Map<String, PkgRetryEntry> = emptyMap()) {
                 val trimmed = line.trim()
                 if (trimmed.isEmpty()) continue
                 val parts = trimmed.split("|")
-                if (parts.size != 6) continue
+                // 6 campos = formato viejo (sin hash, X-P2-2); 7 = con hash.
+                if (parts.size != 6 && parts.size != 7) continue
                 val failures = parts[4].toIntOrNull() ?: continue
                 val size = parts[2].toLongOrNull() ?: continue
                 val mtime = parts[3].toLongOrNull() ?: continue
@@ -68,6 +120,7 @@ data class PkgRetryState(val entries: Map<String, PkgRetryEntry> = emptyMap()) {
                     lastModifiedMillis = mtime,
                     failedReinstalls = failures,
                     lastFailedAtMillis = lastFailed,
+                    partialHashHex = if (parts.size == 7) parts[6] else "",
                 )
                 entries[entry.key] = entry
             }
@@ -77,7 +130,7 @@ data class PkgRetryState(val entries: Map<String, PkgRetryEntry> = emptyMap()) {
 
     /** Codifica el estado a texto (una línea por entrada). */
     fun encode(): String = entries.values.joinToString("\n") { e ->
-        listOf(e.key, e.fileName, e.sizeBytes, e.lastModifiedMillis, e.failedReinstalls, e.lastFailedAtMillis)
+        listOf(e.key, e.fileName, e.sizeBytes, e.lastModifiedMillis, e.failedReinstalls, e.lastFailedAtMillis, e.partialHashHex)
             .joinToString("|")
     }
 
@@ -102,6 +155,7 @@ data class PkgRetryState(val entries: Map<String, PkgRetryEntry> = emptyMap()) {
             lastModifiedMillis = pkgFile.lastModified(),
             failedReinstalls = failures,
             lastFailedAtMillis = nowMillis,
+            partialHashHex = partialFileHash(pkgFile),
         )
         return copy(entries = entries + (key to entry))
     }
@@ -109,8 +163,24 @@ data class PkgRetryState(val entries: Map<String, PkgRetryEntry> = emptyMap()) {
     /** Limpia la entrada (éxito, o el usuario borró el .pkg). */
     fun recordSuccess(key: String): PkgRetryState = copy(entries = entries - key)
 
-    private fun sameFile(entry: PkgRetryEntry, pkgFile: java.io.File): Boolean =
-        entry.fileName == pkgFile.name &&
-            entry.sizeBytes == pkgFile.length() &&
-            entry.lastModifiedMillis == pkgFile.lastModified()
+    /**
+     * Limpia las entradas de un archivo por su nombre (ronda 0.2.65,
+     * W-P1-5): al borrar a mano un addon bloqueado (sin Title ID del
+     * juego) no hay clave game:/addon: a mano; se borran las entradas
+     * que apuntan a ese nombre de archivo para que una reimportación
+     * futura parta de cero.
+     */
+    fun clearEntriesForFile(fileName: String): PkgRetryState =
+        copy(entries = entries.filterValues { it.fileName != fileName })
+
+    private fun sameFile(entry: PkgRetryEntry, pkgFile: java.io.File): Boolean {
+        if (entry.fileName != pkgFile.name) return false
+        if (entry.sizeBytes != pkgFile.length()) return false
+        if (entry.lastModifiedMillis != pkgFile.lastModified()) return false
+        // X-P2-2: con hash, el contenido manda: mismo nombre, tamaño
+        // y mtime pero distinto contenido NO es el mismo archivo.
+        // Entradas viejas sin hash ("") usan la identidad clásica.
+        if (entry.partialHashHex.isEmpty()) return true
+        return entry.partialHashHex == partialFileHash(pkgFile)
+    }
 }
