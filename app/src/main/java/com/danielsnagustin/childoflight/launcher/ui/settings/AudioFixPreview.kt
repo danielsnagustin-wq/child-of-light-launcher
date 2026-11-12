@@ -7,9 +7,9 @@ import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
  * "Corregir audio" (Fase 2, Ola 2, Etapa 4). Funciones PURAS, sin
  * Android ni Compose: el diálogo de confirmación muestra exactamente
  * lo que va a cambiar y el ViewModel aplica lo mismo con
- * audioFixTarget. La limpieza de la caché de shaders es un efecto
- * aparte del ViewModel (no forma parte de los ajustes) y se avisa en
- * el diálogo: lo limpiado no se recupera, se vuelve a llenar solo.
+ * audioFixTarget. Ronda 0.2.64 (H-1 tiempo de carga): ya NO limpia la
+ * caché de shaders (no forma parte de los ajustes ni del efecto: el
+ * audio no tiene nada que ver con ella).
  */
 data class AudioFixChange(val label: String, val before: String, val after: String)
 
