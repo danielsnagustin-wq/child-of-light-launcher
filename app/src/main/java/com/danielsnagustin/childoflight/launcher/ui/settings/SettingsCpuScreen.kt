@@ -37,7 +37,12 @@ fun SettingsCpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
         } else {
             item {
                 SectionTitle("Procesador")
-                SettingSwitch("Optimización CPU (Dynarmic)", "cpu-opt en config.yml. Dynarmic es el backend por defecto del núcleo y siempre está activo: no se puede apagar desde la configuración; este ajuste controla sus optimizaciones.", s.cpuOpt) { vm.saveSettings(s.copy(cpuOpt = it)) }
+                // Ronda 0.2.66 (CPU-08): OFF no es "un poco más lento":
+                // sin cpu-opt se pierden a la vez las optimizaciones
+                // del JIT, el fastmem y la page-table del núcleo
+                // (pin dynarmic_cpu.cpp:287-297): es el peor modo
+                // posible. Solo para depurar.
+                SettingSwitch("Optimización CPU (Dynarmic)", "cpu-opt en config.yml. Dynarmic es el backend por defecto del núcleo y siempre está activo: no se puede apagar desde la configuración; este ajuste controla sus optimizaciones. OFF = mucho más lento, solo para depurar.", s.cpuOpt) { vm.saveSettings(s.copy(cpuOpt = it)) }
                 // R2-P2-25: la etiqueta muestra la unidad (ms): antes
                 // no se sabía si eran ms, % o qué.
                 // P2-20 + R2-S02: el valor ES un retraso (el núcleo
