@@ -418,6 +418,11 @@ private fun LauncherApp(vm: LauncherViewModel) {
                     AlertAction.REPLACE_DUPLICATE -> TextButton(onClick = { vm.confirmReplaceDuplicate() }) { Text("Reemplazar") }
                     AlertAction.RETRY_LAUNCH -> TextButton(onClick = { vm.clearAlert(); vm.play() }) { Text("Reintentar") }
                     AlertAction.RESOLVE_LEGACY_CONFLICT -> TextButton(onClick = { vm.clearAlert(); vm.resolveLegacyConflictKeepEmbedded() }) { Text("Borrar la antigua y jugar") }
+                    // Ronda 0.2.64 (H-2): el .pkg ya se intentó
+                    // reinstalar una vez y siguió sin validar: el
+                    // botón borra ese .pkg (un toque) en vez de
+                    // reinstalar 1,14 GB otra vez.
+                    AlertAction.DELETE_BLOCKED_PKG -> TextButton(onClick = { vm.clearAlert(); vm.deleteBlockedPkg() }) { Text("Borrar ese .pkg") }
                     null -> TextButton(onClick = { vm.clearAlert() }) { Text("Entendido") }
                 }
             },
