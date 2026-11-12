@@ -167,7 +167,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 // Ronda 0.2.65 (U-P2-3): sin el fabricante del teléfono
                 // en la UI visible (Xclipse es AMD RDNA; el nombre del
                 // fabricante no aporta nada al diagnóstico).
-                NoteText("Xclipse (AMD RDNA): sin perfil propio todavía; se usa el perfil Mali seguro (1x, Double Buffer). Sin Turnip. Se puede probar 2x a mano con la prueba de 30 s; si baja de 28 fps, vuelve a 1x.")
+                NoteText("Xclipse (AMD RDNA): sin perfil propio todavía; se usa el perfil Mali seguro (1x, Page Table). Sin Turnip. Se puede probar 2x a mano con la prueba de 30 s; si baja de 28 fps, vuelve a 1x.")
             } else if (g.vendor.name == "POWERVR") {
                 // Ronda 0.2.64 (H-03/H-06): nota por gama, no una sola
                 // para todo PowerVR. DXT/CXTP = gama alta (Tensor
@@ -177,12 +177,12 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 // intento: sin evidencia en PowerVR (la mejora histórica
                 // de PowerVR en el fork fue del lado Vulkan).
                 if (g.isPowerVrDxt) {
-                    NoteText("PowerVR de gama alta (DXT/CXTP, Tensor G5/G6): se usa el perfil seguro (1x, Double Buffer). Se puede probar 2x a mano con la prueba de 30 s; si baja de 28 fps, vuelve a 1x. Si el juego va mal, prueba el modo seguro en Ajustes; el backend OpenGL es un último recurso sin probar en PowerVR.")
+                    NoteText("PowerVR de gama alta (DXT/CXTP, Tensor G5/G6): se usa el perfil seguro (1x, Page Table). Se puede probar 2x a mano con la prueba de 30 s; si baja de 28 fps, vuelve a 1x. Si el juego va mal, prueba el modo seguro en Ajustes; el backend OpenGL es un último recurso sin probar en PowerVR.")
                 } else {
-                    NoteText("PowerVR (gama baja, Rogue GE8xxx): se usa el perfil seguro (1x, Double Buffer). Quedarse en 1x: esta gama no sostiene 2x. Si el juego va mal, prueba el modo seguro en Ajustes; el backend OpenGL es un último recurso sin probar en PowerVR.")
+                    NoteText("PowerVR (gama baja, Rogue GE8xxx): se usa el perfil seguro (1x, Page Table). Quedarse en 1x: esta gama no sostiene 2x. Si el juego va mal, prueba el modo seguro en Ajustes; el backend OpenGL es un último recurso sin probar en PowerVR.")
                 }
             } else {
-                NoteText("GPU sin perfil propio (o no detectada): se usa el perfil Genérico seguro (1x, Double Buffer). Ninguna GPU se queda sin perfil.")
+                NoteText("GPU sin perfil propio (o no detectada): se usa el perfil Genérico seguro (1x, Page Table). Ninguna GPU se queda sin perfil.")
             }
             OutlinedButton(onClick = { vm.detectGpu() }, modifier = Modifier.fillMaxWidth()) { Text("Volver a detectar GPU") }
         }
@@ -217,8 +217,10 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         // consume OpenGL): mostrar "— (sin efecto en Vulkan)" en vez
         // de un "sí" que no significa nada. Y el resumen muestra los
         // valores EFECTIVOS (frame pacing): mapeo de memoria efectivo
-        // (el núcleo vuelve a Double Buffer en silencio si el pedido
-        // no está soportado) y Surface Sync efectiva.
+        // (ronda 0.2.66, G11-02: el launcher resuelve el efectivo con
+        // la máscara del driver al escribir config.yml; antes el
+        // núcleo caía a Double Buffer en silencio si el pedido no
+        // estaba soportado) y Surface Sync efectiva.
         val effectiveBackend = settings?.let { resolveBackend(it, g) }
         val vsyncText = if (effectiveBackend == GpuBackend.VULKAN) {
             "— (sin efecto en Vulkan)"
