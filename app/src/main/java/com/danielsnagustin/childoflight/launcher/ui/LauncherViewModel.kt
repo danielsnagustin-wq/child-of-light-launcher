@@ -51,6 +51,7 @@ import com.danielsnagustin.childoflight.launcher.model.BenchmarkRun
 import com.danielsnagustin.childoflight.launcher.model.BenchmarkSource
 import com.danielsnagustin.childoflight.launcher.model.GameStatus
 import com.danielsnagustin.childoflight.launcher.model.GpuInfo
+import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.ImportResult
@@ -89,7 +90,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /** Acción que puede ofrecer el diálogo de aviso importante. */
-enum class AlertAction { INSTALL_VITA3K, GO_IMPORT, DELIVER_PKG_TO_VITA3K, CONFIRM_PKG_INSTALLED, REPLACE_DUPLICATE, CONFIRM_DOWNLOADS_COPY, RETRY_LAUNCH, RESOLVE_LEGACY_CONFLICT }
+enum class AlertAction { INSTALL_VITA3K, GO_IMPORT, DELIVER_PKG_TO_VITA3K, CONFIRM_PKG_INSTALLED, REPLACE_DUPLICATE, CONFIRM_DOWNLOADS_COPY, RETRY_LAUNCH, RESOLVE_LEGACY_CONFLICT, DELETE_BLOCKED_PKG }
 
 /** Caducidad de una prueba de 30 s pendiente (P2-A2): pasado este tiempo sin registrarse, se descarta. */
 internal const val BENCHMARK_PENDING_MAX_AGE_MILLIS = 15L * 60 * 1000
@@ -215,6 +216,11 @@ internal fun restoreSafeModeSnapshot(snapshot: LauncherSettings, current: Launch
         hashlessTextureCache = keepIfTouched(current.hashlessTextureCache, forced.hashlessTextureCache, snapshot.hashlessTextureCache),
         memoryMapping = keepIfTouched(current.memoryMapping, forced.memoryMapping, snapshot.memoryMapping),
         fileLoadingDelay = keepIfTouched(current.fileLoadingDelay, forced.fileLoadingDelay, snapshot.fileLoadingDelay),
+        // Ronda 0.2.64 (P1-4 Adreno): el modo seguro también neutraliza
+        // Turnip (gpuDriver = SYSTEM en applySafeMode); al salir, vuelve
+        // el driver anterior con la misma regla. El estado instalado
+        // (turnipInstalled / customDriverName) no se toca nunca aquí.
+        gpuDriver = keepIfTouched(current.gpuDriver, forced.gpuDriver, snapshot.gpuDriver),
     )
 }
 
@@ -327,6 +333,51 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val settingsFlow = settingsRepo.settingsFlow
     val gpuFlow = settingsRepo.gpuInfoFlow
     val benchmarksFlow = settingsRepo.benchmarksFlow
+
+    /**
+     * Máscara de métodos de mapeo de memoria soportados por el driver
+     * (ronda 0.2.64, P1-3 Mali; ver Vita3kCoreBridge
+     * .getSupportedMemoryMappingMask). null = aún no preguntada (o sin
+     * núcleo: sin núcleo no se puede preguntar); 0 = el núcleo no la
+     * devolvió (desconocida: la UI no filtra nada). La preguntan
+     * GpuDiagnosticsScreen al entrar y Ajustes → GPU la lee para la
+     * nota de métodos no soportados. Se refresca al cambiar de driver
+     * (Turnip cambia la máscara: se refresca en useSystemDriver e
+     * installTurnip tras aplicar).
+     */
+    private val _supportedMappingMask = MutableStateFlow<Int?>(null)
+    val supportedMappingMask: StateFlow<Int?> = _supportedMappingMask.asStateFlow()
+
+    /** Pregunta la máscara al núcleo (IO; sin núcleo deja null). */
+    fun refreshMappingMask() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val settings = settingsRepo.settingsFlow.first()
+            val driverName = if (settings.gpuDriver == GpuDriver.TURNIP) settings.customDriverName else ""
+            val mask = Vita3kCoreBridge.getSupportedMemoryMappingMask(driverName)
+            _supportedMappingMask.value = mask
+            LauncherLog.append(context, "gpu", "Máscara de mapeo soportada: $mask (driver=${settings.gpuDriver})")
+        }
+    }
+
+    /**
+     * Borra el .pkg bloqueado por el tope de reinstalación (ronda
+     * 0.2.64, H-2): el que ya se intentó reinstalar una vez y siguió
+     * sin validar. Borra el archivo y su entrada de reintentos, para
+     * que la próxima importación parta de cero. Lo llama el botón
+     * "Borrar ese .pkg" del diálogo de JUGAR fallido.
+     */
+    fun deleteBlockedPkg() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val deleted = launcher.deleteBlockedPkg()
+            withContext(Dispatchers.Main) {
+                _message.value = if (deleted) {
+                    "El .pkg que no validaba se borró. Vuelve a importarlo en Importar para intentarlo de nuevo."
+                } else {
+                    "No se pudo borrar ese .pkg. Bórralo a mano en Importar → juego."
+                }
+            }
+        }
+    }
     val touchLayoutFlow = touchRepo.layoutFlow
     val profilesFlow = touchRepo.profilesFlow
     val activeProfileIdFlow = touchRepo.activeProfileIdFlow
@@ -1340,7 +1391,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // la copia; al desactivar, los valores del preset quedan
             // como están y el mensaje lo dice.
             if (current.safeMode) deleteSettingsSnapshot(safeModeSnapshotFile())
-            settingsRepo.applyPreset(profile, current = current)
+            // Ronda 0.2.64 (H-01): el preset Turnip en una GPU que no
+            // es Adreno revierte el preset ENTERO a MALI_PERFORMANCE,
+            // no solo el driver: el guard anterior solo corregía
+            // gpuDriver a SYSTEM y el resto del preset Adreno (2x,
+            // FXAA, anisotrópico 4x, Page Table) quedaba aplicado en
+            // una GPU donde nunca se validó. profilesFor() ya no lista
+            // Turnip fuera de Adreno; esto cubre el camino directo
+            // (p. ej. un preset guardado antes del cambio).
+            val gpu = settingsRepo.gpuInfoFlow.first()
+            val effectiveProfile = if (profile == GpuProfileId.ADRENO_QUALITY_TURNIP && gpu?.vendor != GpuVendor.ADRENO) {
+                GpuProfileId.MALI_PERFORMANCE
+            } else {
+                profile
+            }
+            settingsRepo.applyPreset(effectiveProfile, current = current)
             // R5-A2-2: la conservación del modo rendimiento y del
             // auto-revert vive ahora dentro de SettingsRepository
             // .applyPreset (la cubren también el auto-revert de la
@@ -1351,23 +1416,26 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // preset NO lo cambió (se conservó el manual) y el
             // mensaje lo dice: la pantalla General muestra
             // "Perfil modificado" en ese caso.
-            val preservedNote = if (preservedPresetFieldsDiffer(current, presetSettings(profile))) {
+            val preservedNote = if (preservedPresetFieldsDiffer(current, presetSettings(effectiveProfile))) {
                 " Tus cambios manuales de cachés y overlay se conservaron (verás «Perfil modificado»)."
             } else {
                 ""
             }
-            // Turnip solo vale en Adreno y solo si el zip está
-            // instalado: en Mali (o sin Turnip instalado) el preset
-            // "Calidad / Turnip" dejaría gpuDriver=TURNIP sin efecto
-            // y sin forma de revertirlo desde la UI de Mali. Se
-            // vuelve al driver del sistema y se avisa.
-            if (profile == GpuProfileId.ADRENO_QUALITY_TURNIP) {
-                val gpu = settingsRepo.gpuInfoFlow.first()
+            if (effectiveProfile != profile) {
+                _message.value = "Preset aplicado: ${effectiveProfile.label} (Turnip solo funciona en Adreno: en este teléfono se aplicó el perfil seguro en su lugar).$preservedNote"
+                LauncherLog.append(context, "preset", "Preset aplicado: ${effectiveProfile.name} (pedido ${profile.name}, revertido entero: GPU no Adreno)")
+                return@launch
+            }
+            // Adreno sin Turnip instalado: el preset Turnip dejaría
+            // gpuDriver=TURNIP sin efecto y sin forma de revertirlo
+            // desde la UI. Solo se corrige el driver (el resto del
+            // preset Adreno sí es válido aquí).
+            if (effectiveProfile == GpuProfileId.ADRENO_QUALITY_TURNIP) {
                 val updated = settingsRepo.settingsFlow.first()
-                if (gpu?.vendor != GpuVendor.ADRENO || !updated.turnipInstalled) {
+                if (!updated.turnipInstalled) {
                     settingsRepo.save(updated.copy(gpuDriver = com.danielsnagustin.childoflight.launcher.model.GpuDriver.SYSTEM))
-                    _message.value = "Preset aplicado: ${profile.label}. Turnip no está disponible en este teléfono (solo Adreno con el driver instalado): se usa el driver del sistema.$preservedNote"
-                    LauncherLog.append(context, "preset", "Preset aplicado: ${profile.name} (Turnip no disponible, driver Sistema)")
+                    _message.value = "Preset aplicado: ${profile.label}. Turnip no está instalado: se usa el driver del sistema.$preservedNote"
+                    LauncherLog.append(context, "preset", "Preset aplicado: ${profile.name} (Turnip no instalado, driver Sistema)")
                     return@launch
                 }
             }
@@ -1437,7 +1505,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     return@launch
                 }
                 settingsRepo.save(applySafeMode(current))
-                _message.value = "Modo seguro activado: 1x, SDL, High Accuracy OFF. Tus ajustes anteriores quedan guardados: al desactivarlo se restauran los valores que el modo seguro cambió."
+                _message.value = "Modo seguro activado: 1x, SDL, High Accuracy OFF y driver del sistema (un Turnip malo queda neutralizado; se puede reactivar al salir). Tus ajustes anteriores quedan guardados: al desactivarlo se restauran los valores que el modo seguro cambió."
             } else {
                 val snapshot = readSettingsSnapshot(safeModeSnapshotFile())
                 deleteSettingsSnapshot(safeModeSnapshotFile())
@@ -1453,16 +1521,23 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * "Corregir audio": SDL + NGS ON + shaderCache ON + limpiar caché
-     * de shaders (Ola 2, Etapa 4). Antes de aplicar se guarda una
-     * copia de los ajustes actuales en un archivo privado
-     * (col-audio-fix-snapshot.json): la pantalla de Audio ofrece
-     * "Deshacer" para restaurarlos, también si la app se cierra
-     * entre medias. La caché limpiada no se recupera (se vuelve a
-     * llenar sola al jugar) y el diálogo lo dice antes de aplicar.
-     * El destino de los ajustes es audioFixTarget (misma fuente que
-     * el diálogo de confirmación). No reinicia el juego solo: hay
-     * que volver a lanzar el juego.
+     * "Corregir audio": SDL + NGS ON + shaderCache ON (Ola 2, Etapa 4).
+     * Antes de aplicar se guarda una copia de los ajustes actuales en
+     * un archivo privado (col-audio-fix-snapshot.json): la pantalla de
+     * Audio ofrece "Deshacer" para restaurarlos, también si la app se
+     * cierra entre medias. El destino de los ajustes es audioFixTarget
+     * (misma fuente que el diálogo de confirmación). No reinicia el
+     * juego solo: hay que volver a lanzar el juego.
+     *
+     * Ronda 0.2.64 (H-1 tiempo de carga, P0): YA NO limpia la caché
+     * de shaders. Antes borraba shader_cache + cache/shaders enteros
+     * (33 archivos en el caso del usuario) y el siguiente arranque
+     * recompilaba todo (~2 min): el backend de audio (SDL/Cubeb +
+     * NGS) no tiene ninguna relación con la caché de shaders (se
+     * indexa por hash de programa y versión de shader, no por
+     * backend). La limpieza de caché sigue existiendo como botón
+     * intencional en Ajustes → Rendimiento, con su aviso de que el
+     * siguiente arranque será más lento.
      *
      * La declaración de _audioFixSnapshot está antes del init (ver
      * arriba): el init lanza una corrutina que la toca y los
@@ -1508,12 +1583,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             }
             _audioFixSnapshot.value = current
             settingsRepo.save(audioFixTarget(current))
-            val cleared = turnipRepo.clearShaderCache()
             withContext(Dispatchers.Main) {
-                _message.value = "Audio corregido: SDL + NGS ON + caché de shaders limpiada " +
-                    "(${cleared.deletedFiles} archivos). Vuelve a lanzar el juego para aplicar el cambio."
+                _message.value = "Audio corregido: SDL + NGS ON + caché de shaders ON. No se toca la caché de shaders: el siguiente arranque no se vuelve más lento por esto. Vuelve a lanzar el juego para aplicar el cambio."
             }
-            LauncherLog.append(context, "audio", "Corregir audio: SDL + NGS ON, caché limpiada")
+            LauncherLog.append(context, "audio", "Corregir audio: SDL + NGS ON (sin tocar la caché de shaders)")
         }
     }
 
@@ -1529,8 +1602,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             settingsRepo.save(restoreAudioFixSnapshot(snapshot, current))
             deleteSettingsSnapshot(audioFixSnapshotFile())
             _audioFixSnapshot.value = null
-            _message.value = "Audio restaurado a los valores anteriores a «Corregir audio» (backend, NGS y caché de shaders). Los demás ajustes no se tocaron. " +
-                "La caché de shaders limpiada no se recupera: se vuelve a llenar sola al jugar."
+            _message.value = "Audio restaurado a los valores anteriores a «Corregir audio» (backend, NGS y caché de shaders). Los demás ajustes no se tocaron."
             LauncherLog.append(context, "audio", "Corregir audio deshecho: valores anteriores restaurados")
         }
     }
@@ -2293,12 +2365,28 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 // (G99) instalar el zip no activa nada: el driver del
                 // sistema sigue siendo el que manda.
                 val gpu = settingsRepo.gpuInfoFlow.first()
+                // Ronda 0.2.64 (P2-6 Mali): el vendor se comprueba
+                // ANTES de instalar nada. Antes installDriverIntoCore()
+                // corría antes del if y copiaba el zip DENTRO del núcleo
+                // también en Mali (inerte ahí), y la rama no-Adreno
+                // persistía turnipInstalled/version/customDriverName:
+                // estado muerto que la UI de Mali no podía revertir.
+                // Ahora en no-Adreno no se persiste nada de Turnip y
+                // el zip recién copiado se borra.
+                if (gpu?.vendor != GpuVendor.ADRENO) {
+                    turnipRepo.deleteDriver()
+                    withContext(Dispatchers.Main) {
+                        _message.value = "Turnip no se instaló: tu GPU es ${gpu?.shortLabel ?: "Mali"} y Turnip solo funciona en Adreno/Snapdragon. Se sigue usando el driver del sistema."
+                    }
+                    LauncherLog.append(context, "driver", "Turnip no instalado (GPU no Adreno: ${gpu?.shortLabel}); zip borrado")
+                    return@onSuccess
+                }
                 // El nombre que va a custom-driver-name es el del driver
                 // instalado en el núcleo; si no hay núcleo aún, el stem
                 // del zip (mismo valor que devuelve installCustomDriver).
                 val coreName = installDriverIntoCore()
                 val driverName = coreName.ifEmpty { savedName.substringBeforeLast(".") }
-                if (gpu?.vendor == GpuVendor.ADRENO) {
+                if (gpu.vendor == GpuVendor.ADRENO) {
                     settingsRepo.save(
                         current.copy(
                             turnipInstalled = true,
@@ -2307,23 +2395,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                             gpuDriver = com.danielsnagustin.childoflight.launcher.model.GpuDriver.TURNIP,
                         ),
                     )
+                    // Ronda 0.2.64 (P1-3 Mali): el nuevo driver cambia
+                    // la máscara de mapeo soportada: se vuelve a preguntar.
+                    refreshMappingMask()
                     withContext(Dispatchers.Main) {
                         _message.value = if (Vita3kCoreBridge.available && coreName.isEmpty()) {
                             "Turnip guardado ($savedName), pero el núcleo no pudo instalarlo: se usará el driver del sistema hasta reinstalarlo o relanzar el juego."
                         } else {
                             "Turnip instalado: $savedName. El núcleo limpiará la caché de shaders al arrancar con el nuevo driver."
                         }
-                    }
-                } else {
-                    settingsRepo.save(
-                        current.copy(
-                            turnipInstalled = true,
-                            turnipVersion = savedName,
-                            customDriverName = driverName,
-                        ),
-                    )
-                    withContext(Dispatchers.Main) {
-                        _message.value = "Turnip guardado ($savedName), pero NO activado: tu GPU es ${gpu?.shortLabel ?: "Mali"} y Turnip solo funciona en Adreno/Snapdragon. Se sigue usando el driver del sistema."
                     }
                 }
             }.onFailure { e ->
@@ -2384,6 +2464,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val current = settingsRepo.settingsFlow.first()
             settingsRepo.save(current.copy(gpuDriver = com.danielsnagustin.childoflight.launcher.model.GpuDriver.SYSTEM))
             _message.value = "Driver del sistema activado."
+            // Ronda 0.2.64 (P1-3 Mali): cambiar de driver cambia la
+            // máscara de mapeo soportada: se vuelve a preguntar.
+            refreshMappingMask()
         }
     }
 
@@ -2393,10 +2476,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             if (!tryBeginLaunch()) return@launch
             try {
+            // Ronda 0.2.64 (H-4 tiempo de carga, T1/T2): cronómetro del
+            // camino JUGAR → título → primer frame. t0 es el toque de
+            // JUGAR (elapsedRealtime, monotónico); se pasa al lanzador
+            // y a la actividad del juego, que registran T1 (título) y
+            // T2 (primer frame presentado) en el mismo reloj.
+            val launchStartedAtMillis = SystemClock.elapsedRealtime()
+            val playStatus = _status.value
+            LauncherLog.append(context, "launch", "JUGAR t=0ms (titleId=${playStatus.titleId?.id ?: "?"})")
             // P3 (crash ~15:06 sin stack trace): entrada de JUGAR en
             // el log con el estado que decide el lanzamiento, para que
             // el próximo reporte muestre hasta dónde llegó el intento.
-            val playStatus = _status.value
             LauncherLog.append(context, "launch", formatLaunchAttempt(playStatus.titleId?.id, Vita3kCoreBridge.available, playStatus.firmwareInstalled))
             if (!Vita3kCoreBridge.available) {
                 Vita3kCoreBridge.lastLoadError?.let {
@@ -2448,9 +2538,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     _installProgress.value = InstallProgress(percent, status)
                 },
                 configAlreadyWritten = configWritten,
+                launchStartedAtMillis = launchStartedAtMillis,
             )
             _installProgress.value = null
-            LauncherLog.append(context, "launch", "JUGAR resultado: ${outcome::class.simpleName}")
+            LauncherLog.append(context, "launch", "JUGAR resultado: ${outcome::class.simpleName} (${SystemClock.elapsedRealtime() - launchStartedAtMillis}ms desde JUGAR)")
             // P0-1 / P1-12: si el resultado es un bloqueo o fallo por
             // licencia, el pendiente queda listo ANTES del diálogo para
             // que Importar ofrezca "Elegir work.bin".
@@ -2538,6 +2629,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         val action = when {
                             outcome.reason.contains("no pudo copiar su licencia") -> AlertAction.GO_IMPORT
                             outcome.reason.contains("no se mueve nada para no mezclar dos instalaciones") -> AlertAction.RESOLVE_LEGACY_CONFLICT
+                            // Ronda 0.2.64 (H-2 tiempo de carga): el .pkg
+                            // ya se intentó reinstalar una vez y siguió
+                            // sin validar: el botón es "Borrar ese .pkg",
+                            // no reintentar (reintentar reinstala 1,14 GB
+                            // cada vez). launcher.lastBlockedPkgPath lo
+                            // pone tryLaunchEmbedded al bloquear.
+                            launcher.lastBlockedPkgPath != null -> AlertAction.DELETE_BLOCKED_PKG
                             else -> AlertAction.RETRY_LAUNCH
                         }
                         val text = if (action == AlertAction.RESOLVE_LEGACY_CONFLICT) {
@@ -2865,6 +2963,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             if (!tryBeginLaunch()) return@launch
             try {
+            // Ronda 0.2.64 (H-4 tiempo de carga, T1/T2): mismo t0 que
+            // play(): el toque que inicia la prueba.
+            val launchStartedAtMillis = SystemClock.elapsedRealtime()
+            LauncherLog.append(context, "launch", "Prueba 30 s t=0ms (titleId=${_status.value.titleId?.id ?: "?"})")
             val settings = settingsRepo.settingsFlow.first()
             val gpu = settingsRepo.gpuInfoFlow.first()
             val pre = launcher.checkPrerequisites(library)
@@ -2902,7 +3004,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 benchmark = true,
                 configAlreadyWritten = configWritten,
                 prerequisites = pre,
+                launchStartedAtMillis = launchStartedAtMillis,
             )
+            LauncherLog.append(context, "launch", "Prueba 30 s resultado: ${outcome::class.simpleName} (${SystemClock.elapsedRealtime() - launchStartedAtMillis}ms desde el toque)")
             // P0-1 / P1-12: igual que en play(): si el resultado es un
             // bloqueo o fallo por licencia, el pendiente queda listo
             // para que Importar ofrezca "Elegir work.bin".
@@ -3000,7 +3104,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         val settings = settingsRepo.settingsFlow.first()
         // M25: el auto-revert se decide con el perfil ACTUAL, no con el
         // de cuando empezó la prueba (el usuario pudo cambiarlo).
-        val revert = shouldAutoRevertTo1x(fps, settings.activeProfile, settings.autoRevertTo1xIfBelow28Fps)
+        // Ronda 0.2.64 (P1-3 Adreno + H-05): la regla es por resolución
+        // EFECTIVA (un 2x puesto a mano sobre un perfil 1x también
+        // revierte) y el destino depende de la GPU: ADRENO_PERFORMANCE
+        // en Adreno, G99_RECOMMENDED en G99/Mali. Antes siempre
+        // G99_RECOMMENDED y solo para el perfil G99_QUALITY.
+        val effectiveResolution = effectiveSettings(settings).resolutionMultiplier
+        val revert = shouldAutoRevertTo1x(fps, effectiveResolution, settings.autoRevertTo1xIfBelow28Fps)
         val completed = pending.copy(fpsAvg = fps, source = source, autoReverted = revert)
         settingsRepo.recordBenchmark(completed)
         val how = if (source == BenchmarkSource.AUTO_MEASURED) "medido automáticamente por el juego" else "registrado a mano"
@@ -3009,8 +3119,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // modo seguro ON, el snapshot queda invalidado o al
             // desactivarlo resucitarían los valores viejos.
             if (settings.safeMode) deleteSettingsSnapshot(safeModeSnapshotFile())
-            settingsRepo.applyPreset(GpuProfileId.G99_RECOMMENDED, current = settings)
-            _message.value = "FPS medio: $fps ($how). Menos de 28 fps con Calidad 2x: vuelto a 1x automáticamente (preset G99 Recomendado)."
+            val gpu = settingsRepo.gpuInfoFlow.first()
+            val targetProfile = if (gpu?.vendor == GpuVendor.ADRENO) GpuProfileId.ADRENO_PERFORMANCE else GpuProfileId.G99_RECOMMENDED
+            settingsRepo.applyPreset(targetProfile, current = settings)
+            _message.value = "FPS medio: $fps ($how). Menos de 28 fps con 2x: vuelto a 1x automáticamente (preset ${targetProfile.label})."
         } else {
             _message.value = "Prueba registrada: $fps fps medios ($how) con ${pending.profile.label}."
         }
@@ -3811,13 +3923,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // tamaño viejo; la línea "overlay construido" del logcat
             // dice con qué tamaño de vista se montó.
             val reportStick = lastTouchLayout.firstOrNull { it.kind == "stick" }
-            appendLine("Perfil táctil: ${lastTouchProfileId ?: "sin dato"} | ${lastTouchLayout.size} controles | stick: ${reportStick?.let { "(${it.xFraction}, ${it.yFraction}) ${it.sizeDp} dp" } ?: "sin stick"}")
+            appendLine("Perfil táctil: ${lastTouchProfileId ?: "sin dato"} | ${lastTouchLayout.size} controles | stick: ${reportStick?.let { "(${it.xFraction}, ${it.yFraction}) ${it.sizeDp} dp${it.sizeFraction?.let { f -> " (fracción $f)" } ?: ""}" } ?: "sin stick"}")
             appendLine()
             // R4-P2-9: "Ajustes activos" muestra los valores EFECTIVOS
             // (los que corre el juego y emite config.yml), no los
             // guardados: effectiveSettings() aplica el Modo seguro (1x,
             // SDL, High Accuracy OFF) y el paquete del modo 60 FPS
-            // (1x, VSync ON, cachés ON), y resolveBackend() el fallback
+            // (1x, cachés ON), y resolveBackend() el fallback
             // Vulkan→OpenGL. Es el mismo patrón que la pantalla de
             // Diagnóstico ("Configuración efectiva",
             // SettingsDiagnosticsScreen). Antes, con 60 FPS ON el
@@ -3825,12 +3937,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // mismo reporte emitía v-sync: true. La RAM total va aquí
             // (DeviceMemory, la misma fuente que Diagnóstico) para
             // cerrar el misterio de los 4 GB sin preguntar.
+            // Ronda 0.2.64: el modo 60 FPS YA NO fuerza VSync ON (en
+            // Vulkan es inerte): la línea de abajo ya no lo dice.
             appendLine("--- Ajustes activos (efectivos) ---")
             val effective = effectiveSettings(settings)
             if (settings.safeMode) {
-                appendLine("Modo seguro activo: los valores de abajo son los efectivos (1x, SDL, High Accuracy OFF), no los guardados.")
+                appendLine("Modo seguro activo: los valores de abajo son los efectivos (1x, SDL, High Accuracy OFF, driver del sistema), no los guardados.")
             } else if (settings.fpsHack) {
-                appendLine("Modo 60 FPS activo: los valores de abajo son los efectivos (fps-hack + 1x, VSync ON, cachés ON), no los guardados.")
+                appendLine("Modo 60 FPS activo: los valores de abajo son los efectivos (fps-hack + 1x, cachés ON), no los guardados.")
             }
             appendLine("Perfil: ${effective.activeProfile.label}")
             appendLine("Backend: ${resolveBackend(effective, gpu).label} | Resolución: ${effective.resolutionLabel} | Filtro: ${effective.screenFilter}")
