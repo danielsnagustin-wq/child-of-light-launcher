@@ -1,0 +1,94 @@
+diff --git a/modules/SceAudio/SceAudio.cpp b/modules/SceAudio/SceAudio.cpp
+index 41a50eaa..545bde0b 100644
+--- a/modules/SceAudio/SceAudio.cpp
++++ b/modules/SceAudio/SceAudio.cpp
+@@ -21,7 +21,11 @@
+ #include <kernel/state.h>
+ #include <kernel/thread/thread_state.h>
+ #include <util/lock_and_find.h>
++#include <util/log.h>
+ #include <util/tracy.h>
++#include <atomic> // Ronda 0.2.66 (AUD-P2-6): contadores del log de audio
++#include <chrono> // Ronda 0.2.66 (AUD-P2-6): steady_clock
++#include <cstdint> // Ronda 0.2.66 (AUD-P2-6): uint64_t
+ 
+ TRACY_MODULE_NAME(SceAudio);
+ 
+@@ -190,6 +194,17 @@ EXPORT(int, sceAudioOutOpenPort, SceAudioOutPortType type, int len, int freq, Sc
+ 
+ EXPORT(int, sceAudioOutOutput, int port, const void *buf) {
+     TRACY_FUNC(sceAudioOutOutput, port, buf);
++    // Ronda 0.2.66 (AUD-P2-6): log periódico de ms de audio
++    // (instrumentación Fase P, gancho A1): cada 60 llamadas se registra
++    // la media y el máximo de microsegundos por llamada de la ventana.
++    // Es la medición que decide si hace falta el hilo NGS dedicado
++    // (AUD-P1-2, diferido). Contadores locales a la función (static):
++    // no hay estado global nuevo y el coste por llamada es un
++    // steady_clock + dos sumas.
++    static std::atomic<uint64_t> call_count{ 0 };
++    static std::atomic<uint64_t> total_ns{ 0 };
++    static std::atomic<uint64_t> max_ns{ 0 };
++    const auto t0 = std::chrono::steady_clock::now();
+     const AudioOutPortPtr prt = lock_and_find(port, emuenv.audio.out_ports, emuenv.audio.mutex);
+     if (!prt) {
+         return RET_ERROR(SCE_AUDIO_OUT_ERROR_INVALID_PORT);
+@@ -206,6 +221,17 @@ EXPORT(int, sceAudioOutOutput, int port, const void *buf) {
+         return RET_ERROR(SCE_AUDIO_OUT_ERROR_INVALID_PORT);
+     const ThreadState::HostWait waiting(*thread);
+     emuenv.audio.audio_output(*prt, buf);
++    const uint64_t ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
++    const uint64_t n = call_count.fetch_add(1, std::memory_order_relaxed) + 1;
++    total_ns.fetch_add(ns, std::memory_order_relaxed);
++    uint64_t prev_max = max_ns.load(std::memory_order_relaxed);
++    while (ns > prev_max && !max_ns.compare_exchange_weak(prev_max, ns, std::memory_order_relaxed)) {
++    }
++    if (n % 60 == 0) {
++        const uint64_t total = total_ns.exchange(0, std::memory_order_relaxed);
++        const uint64_t max = max_ns.exchange(0, std::memory_order_relaxed);
++        LOG_INFO("[audio-ms] sceAudioOutOutput: media {} us, max {} us (ventana de 60 llamadas)", total / 60000, max / 1000);
++    }
+     return prt->len;
+ }
+ 
+diff --git a/modules/SceNgsUser/SceNgs.cpp b/modules/SceNgsUser/SceNgs.cpp
+index 836496db..1d7edfb3 100644
+--- a/modules/SceNgsUser/SceNgs.cpp
++++ b/modules/SceNgsUser/SceNgs.cpp
+@@ -23,6 +23,9 @@
+ #include <ngs/system.h>
+ #include <util/log.h>
+ #include <util/tracy.h>
++#include <atomic> // Ronda 0.2.66 (AUD-P2-6): contadores del log de audio
++#include <chrono> // Ronda 0.2.66 (AUD-P2-6): steady_clock
++#include <cstdint> // Ronda 0.2.66 (AUD-P2-6): uint64_t
+ 
+ TRACY_MODULE_NAME(SceNgs);
+ 
+@@ -476,7 +479,27 @@ EXPORT(SceUInt32, sceNgsSystemUpdate, ngs::System *system) {
+         return 0;
+     }
+ 
++    // Ronda 0.2.66 (AUD-P2-6): log periódico de ms de audio
++    // (instrumentación Fase P, gancho A2): cada 60 llamadas se registra
++    // la media y el máximo de microsegundos por llamada de la ventana.
++    // Es la medición que decide si hace falta el hilo NGS dedicado
++    // (AUD-P1-2, diferido). Contadores locales a la función (static).
++    static std::atomic<uint64_t> call_count{ 0 };
++    static std::atomic<uint64_t> total_ns{ 0 };
++    static std::atomic<uint64_t> max_ns{ 0 };
++    const auto t0 = std::chrono::steady_clock::now();
+     system->voice_scheduler.update(emuenv.kernel, emuenv.mem, thread_id);
++    const uint64_t ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
++    const uint64_t n = call_count.fetch_add(1, std::memory_order_relaxed) + 1;
++    total_ns.fetch_add(ns, std::memory_order_relaxed);
++    uint64_t prev_max = max_ns.load(std::memory_order_relaxed);
++    while (ns > prev_max && !max_ns.compare_exchange_weak(prev_max, ns, std::memory_order_relaxed)) {
++    }
++    if (n % 60 == 0) {
++        const uint64_t total = total_ns.exchange(0, std::memory_order_relaxed);
++        const uint64_t max = max_ns.exchange(0, std::memory_order_relaxed);
++        LOG_INFO("[audio-ms] sceNgsSystemUpdate: media {} us, max {} us (ventana de 60 llamadas)", total / 60000, max / 1000);
++    }
+ 
+     return SCE_NGS_OK;
+ }
