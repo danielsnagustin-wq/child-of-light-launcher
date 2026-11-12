@@ -58,15 +58,10 @@ diff --git a/config/include/config/config.h b/config/include/config/config.h
 index 7e4683b0..a074ec45 100644
 --- a/config/include/config/config.h
 +++ b/config/include/config/config.h
-@@ -168,6 +168,12 @@ using PhysicalKeyCode = input::PhysicalKeyCode;
+@@ -168,6 +168,7 @@ using PhysicalKeyCode = input::PhysicalKeyCode;
      code(std::string, "audio-backend", "SDL", audio_backend)                                            \
      code(int, "audio-volume", 100, audio_volume)                                                        \
      code(bool, "ngs-enable", true, ngs_enable)                                                          \
-+    // Ronda 0.2.66 (AUD-P2-1): clave real para el tamaño de búfer de
-+    // dispositivo SDL (SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES). Antes no
-+    // existía: el launcher emitía un "audio buffer size" sin clave y
-+    // SDLAudioAdapter usaba un 512 fijo en el código. Default 512 =
-+    // el valor que ya usaba el adaptador, para no cambiar el sonido.
 +    code(int, "audio-device-sample-frames", 512, audio_device_sample_frames)                           \
      code(int, "sys-button", static_cast<int>(SCE_SYSTEM_PARAM_ENTER_BUTTON_CROSS), sys_button)          \
      code(int, "sys-lang", static_cast<int>(SCE_SYSTEM_PARAM_LANG_ENGLISH_US), sys_lang)                 \
