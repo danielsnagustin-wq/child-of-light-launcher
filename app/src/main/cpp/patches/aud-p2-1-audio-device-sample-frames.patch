@@ -1,0 +1,73 @@
+diff --git a/app/src/app_init.cpp b/app/src/app_init.cpp
+index 8a4d9bda..7a06a850 100644
+--- a/app/src/app_init.cpp
++++ b/app/src/app_init.cpp
+@@ -579,6 +579,10 @@ bool late_init(EmuEnvState &state) {
+         return false;
+     }
+ 
++    // Ronda 0.2.66 (AUD-P2-1): copiar el tamaño de búfer de
++    // dispositivo de la config ANTES de crear el adaptador: el
++    // adaptador SDL lo lee en init() y no tiene acceso a la config.
++    state.audio.audio_device_sample_frames = state.cfg.current_config.audio_device_sample_frames;
+     if (!state.audio.init(state.cfg.current_config.audio_backend)) {
+         LOG_WARN("Failed to initialize audio! Audio will not work.");
+     }
+diff --git a/audio/include/audio/state.h b/audio/include/audio/state.h
+index 6b410614..21b2b2a7 100644
+--- a/audio/include/audio/state.h
++++ b/audio/include/audio/state.h
+@@ -93,6 +93,11 @@ struct AudioState {
+     AudioInPort in_port;
+     std::string audio_backend;
+     float global_volume = 1;
++    // Ronda 0.2.66 (AUD-P2-1): tamaño de búfer de dispositivo SDL
++    // (SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES) leído de la config en
++    // late_init; el adaptador SDL lo usa en init(). AudioState no
++    // tiene puntero a la config, por eso se copia aquí.
++    int audio_device_sample_frames = 512;
+ 
+     bool init(const std::string &adapter_name);
+     void deinit();
+diff --git a/audio/src/impl/sdl_audio.cpp b/audio/src/impl/sdl_audio.cpp
+index 55d06393..0e0ca7d0 100644
+--- a/audio/src/impl/sdl_audio.cpp
++++ b/audio/src/impl/sdl_audio.cpp
+@@ -19,6 +19,7 @@
+ #include "util/log.h"
+ #include <SDL3/SDL_audio.h>
+ #include <SDL3/SDL_hints.h>
++#include <string> // Ronda 0.2.66 (AUD-P2-1): std::to_string para el hint
+ 
+ #define SDL_CHECK_EXT(condition, ret)                         \
+     do {                                                      \
+@@ -59,7 +60,11 @@ bool SDLAudioAdapter::init() {
+     // SDL3 default is 1024 sample frames for 48kHz audio, which is higher than cubeb.
+     // Request smaller device buffer for lower latency callbacks.
+     // 512 sample frames = 2048 bytes for stereo 16-bit, matching cubeb's callback size.
+-    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
++    // Ronda 0.2.66 (AUD-P2-1): el tamaño viene de la config
++    // (audio-device-sample-frames, default 512) vía AudioState; un
++    // valor inválido vuelve al 512 de antes.
++    const int sample_frames = (state.audio_device_sample_frames > 0) ? state.audio_device_sample_frames : 512;
++    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, std::to_string(sample_frames).c_str());
+     device_id = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nullptr);
+     SDL_CHECK_EXT(device_id > 0, false);
+     return true;
+diff --git a/config/include/config/config.h b/config/include/config/config.h
+index 7e4683b0..a074ec45 100644
+--- a/config/include/config/config.h
++++ b/config/include/config/config.h
+@@ -168,6 +168,12 @@ using PhysicalKeyCode = input::PhysicalKeyCode;
+     code(std::string, "audio-backend", "SDL", audio_backend)                                            \
+     code(int, "audio-volume", 100, audio_volume)                                                        \
+     code(bool, "ngs-enable", true, ngs_enable)                                                          \
++    // Ronda 0.2.66 (AUD-P2-1): clave real para el tamaño de búfer de
++    // dispositivo SDL (SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES). Antes no
++    // existía: el launcher emitía un "audio buffer size" sin clave y
++    // SDLAudioAdapter usaba un 512 fijo en el código. Default 512 =
++    // el valor que ya usaba el adaptador, para no cambiar el sonido.
++    code(int, "audio-device-sample-frames", 512, audio_device_sample_frames)                           \
+     code(int, "sys-button", static_cast<int>(SCE_SYSTEM_PARAM_ENTER_BUTTON_CROSS), sys_button)          \
+     code(int, "sys-lang", static_cast<int>(SCE_SYSTEM_PARAM_LANG_ENGLISH_US), sys_lang)                 \
+     code(int, "sys-date-format", (int)SCE_SYSTEM_PARAM_DATE_FORMAT_MMDDYYYY, sys_date_format)           \
