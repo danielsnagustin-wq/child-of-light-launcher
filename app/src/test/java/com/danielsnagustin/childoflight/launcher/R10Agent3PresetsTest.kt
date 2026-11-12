@@ -7,6 +7,7 @@ import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
+import com.danielsnagustin.childoflight.launcher.model.MemoryMapping
 import com.danielsnagustin.childoflight.launcher.model.apply60FpsMode
 import com.danielsnagustin.childoflight.launcher.model.applyLowRamDefaults
 import com.danielsnagustin.childoflight.launcher.model.applySafeMode
@@ -50,7 +51,12 @@ class R10Agent3PresetsTest {
         val s = applyLowRamDefaults(presetSettings(GpuProfileId.G99_RECOMMENDED))
         assertTrue(s.textureCache)
         assertTrue(s.shaderCache)
-        // Sobre G99_RECOMMENDED la variante ya es el preset: no es divergencia.
+        // Ronda 0.2.66 (G11-01, decisión del coordinador): la variante
+        // fuerza Page Table (antes Double Buffer), así que sobre
+        // G99 Recomendado la variante ES el preset: no hay divergencia
+        // conservadora que registrar; la caché sigue sin tocarse.
+        assertEquals(MemoryMapping.PAGE_TABLE, s.memoryMapping)
+        assertEquals(presetSettings(GpuProfileId.G99_RECOMMENDED), s)
         assertFalse(isLowRamConservativeVariant(s))
         // Sobre un preset 2x sí lo es (baja a 1x con Bilinear).
         val quality = applyLowRamDefaults(presetSettings(GpuProfileId.G99_QUALITY))
