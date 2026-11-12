@@ -1,0 +1,35 @@
+diff --git a/renderer/src/vulkan/renderer.cpp b/renderer/src/vulkan/renderer.cpp
+index cc955634..f4424a49 100644
+--- a/renderer/src/vulkan/renderer.cpp
++++ b/renderer/src/vulkan/renderer.cpp
+@@ -1285,13 +1285,23 @@ void VKState::render_frame(DisplayState &display, const GxmState &gxm, MemState
+ void VKState::swap_window() {
+     screen_renderer.swap_window();
+ 
+-    // look once a frame if we need to save the pipeline cache
+-    const auto time_s = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+-    if (time_s >= pipeline_cache.next_pipeline_cache_save) {
+-        pipeline_cache.save_pipeline_cache();
+-
+-        pipeline_cache.next_pipeline_cache_save = std::numeric_limits<uint64_t>::max();
+-    }
++    // Ronda 0.2.66 (G11-09): ya NO se guarda la caché de pipelines
++    // aquí. El guardado periódico (cada 15 s tras compilar un
++    // pipeline nuevo, pipeline_cache_save_delay = 15 s en
++    // renderer/include/renderer/vulkan/pipeline_cache.h:77) corría
++    // SÍNCRONO en el hilo de render: getPipelineCacheData + escritura
++    // a disco en mitad del frame. Ahora la caché solo se guarda al
++    // salir (preclose_action -> save_pipeline_cache, que ya existía).
++    // Contrapartida honesta: si el juego se cierra de forma abrupta
++    // (crash), los pipelines compilados en esa sesión no quedan
++    // guardados y la siguiente sesión los recompila; con salida limpia
++    // no se pierde nada. No se mueve el guardado a un hilo de trabajo
++    // porque save_pipeline_cache recorre el mapa `pipelines` sin el
++    // bloqueo que respetan los hilos de compilación: sacarlo del hilo
++    // de render sin ese bloqueo sería una carrera de datos.
++    // next_pipeline_cache_save se sigue actualizando en
++    // pipeline_cache.cpp (queda como disparador para un futuro
++    // guardado en hilo de trabajo, si se añade el bloqueo).
+ }
+ 
+ std::vector<uint32_t> VKState::dump_frame(DisplayState &display, uint32_t &width, uint32_t &height) {
