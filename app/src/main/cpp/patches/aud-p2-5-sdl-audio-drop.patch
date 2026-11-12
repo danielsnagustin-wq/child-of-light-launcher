@@ -1,0 +1,55 @@
+diff --git a/audio/src/impl/sdl_audio.cpp b/audio/src/impl/sdl_audio.cpp
+index 0e0ca7d0..84f223d5 100644
+--- a/audio/src/impl/sdl_audio.cpp
++++ b/audio/src/impl/sdl_audio.cpp
+@@ -19,7 +19,10 @@
+ #include "util/log.h"
+ #include <SDL3/SDL_audio.h>
+ #include <SDL3/SDL_hints.h>
++#include <algorithm> // Ronda 0.2.66 (AUD-P2-5): std::min
++#include <cstdint> // Ronda 0.2.66 (AUD-P2-5): std::uint8_t
+ #include <string> // Ronda 0.2.66 (AUD-P2-1): std::to_string para el hint
++#include <vector> // Ronda 0.2.66 (AUD-P2-5): búfer de descarte
+ 
+ #define SDL_CHECK_EXT(condition, ret)                         \
+     do {                                                      \
+@@ -104,12 +107,37 @@ void SDLAudioAdapter::audio_output(AudioOutPort &out_port, const void *buffer) {
+     SDLAudioOutPort &port = static_cast<SDLAudioOutPort &>(out_port);
+     // If there's lots of audio left to play, stop this thread.
+     // The audio callback will wake it up later when it's running out of data.
+-    const int samples_available = get_rest_sample(port);
+-    if (samples_available > get_threshold_samples(device_buffer_samples)) {
++    // Ronda 0.2.66 (AUD-P2-5): antes había UNA sola espera y después se
++    // metía el búfer sí o sí: si el consumidor iba lento, la cola SDL
++    // crecía sin límite (la latencia se iba a segundos y el sonido
++    // llegaba tarde). Ahora la espera es un bucle con tope total y, si
++    // aun así sobra audio, se descartan los bytes MÁS ANTIGUOS hasta
++    // dejar sitio para este búfer (el sonido suena "al día", con un
++    // salto, en vez de cada vez más tarde). Se descarta como mucho un
++    // búfer por llamada: en el peor caso la latencia baja de forma
++    // gradual, sin vaciar la cola de golpe.
++    const int threshold_samples = get_threshold_samples(device_buffer_samples);
++    int samples_available = get_rest_sample(port);
++    // Espera acotada: 4 esperas de 2 búferes como mucho (8 búferes en
++    // total); cada espera se interrumpe cuando el callback avisa de que
++    // la cola baja, o al parar el puerto.
++    for (int i = 0; i < 4 && samples_available > threshold_samples; i++) {
+         std::unique_lock<std::mutex> lock(port.mutex);
+         port.cond_var.wait_for(lock, std::chrono::microseconds(port.len_microseconds * 2));
+         if (out_port.stopping)
+             return;
++        samples_available = get_rest_sample(port);
++    }
++    if (samples_available > threshold_samples) {
++        // Todavía sobra: descartar lo más antiguo (hasta un búfer) para
++        // dejar sitio al nuevo. SDL_GetAudioStreamData lee (y saca) los
++        // bytes más antiguos de la cola.
++        const int bytes_available = SDL_GetAudioStreamAvailable(port.stream.get());
++        const int bytes_to_drop = std::min(bytes_available, out_port.len_bytes);
++        if (bytes_to_drop > 0) {
++            std::vector<std::uint8_t> discarded(bytes_to_drop);
++            SDL_GetAudioStreamData(port.stream.get(), discarded.data(), bytes_to_drop);
++        }
+     }
+     SDL_CHECK_VOID(SDL_PutAudioStreamData(port.stream.get(), buffer, out_port.len_bytes));
+ }
