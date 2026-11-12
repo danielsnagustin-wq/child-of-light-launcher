@@ -136,6 +136,46 @@ jobs:
           ls -l ../tools ../i18n ../external ../data
           echo "Vita3K en ${VITA3K_PIN} con submódulos."
 
+      # Ronda 0.2.66 (Fase 2): parches del núcleo sobre el pin 3e43bc80.
+      # Se aplican con git apply --check PRIMERO y el build es ROJO si
+      # alguno no aplica: mejor un build rojo que un parche
+      # silenciosamente ausente. Lista EXPLÍCITA en orden de aplicación
+      # (el orden importa: aud-p2-1 toca config.h antes que cpu-05, y
+      # hook1/g11-06 comparten screen_renderer.cpp). r1 va ÚLTIMO:
+      # está rebasado sobre aud-p2-1/aud-p2-5 (mismos hunks en
+      # sdl_audio.cpp, config.h, state.h y app_init.cpp); ni antes
+      # que ellos ni encima sin rebase aplica.
+      # app/src/main/cpp/patches/; nunca patches/experimental/.
+      # Las rutas dentro de cada .patch son relativas a la raíz del
+      # árbol Vita3K (sin prefijo vita3k/), por eso se aplica desde
+      # dentro de app/src/main/cpp/vita3k.
+      - name: Apply core patches (0.2.66)
+        run: |
+          cd app/src/main/cpp/vita3k
+          for patch in \
+            p3-jit-invalidate-on-module-reload.patch \
+            p5-eye-plane-mali-guard.patch \
+            hook1-present-counter.patch \
+            g11-06-vsync-present-mode.patch \
+            g11-03-deferred-unmap.patch \
+            g11-09-pipeline-cache-save-on-exit.patch \
+            c-01-texture-cache-vulkan.patch \
+            c-02-shader-cache-vulkan.patch \
+            aud-p2-1-audio-device-sample-frames.patch \
+            cpu-05-remove-cpu-pool-size.patch \
+            aud-p2-5-sdl-audio-drop.patch \
+            aud-p2-3-ngs-system-init-error.patch \
+            aud-p2-6-audio-ms-log.patch \
+            g11-05-shader-manifest-per-mask.patch \
+            r1-audio-sdl-exp.patch; do
+            f="../patches/$patch"
+            [ -f "$f" ] || { echo "ERROR: falta el parche $f"; exit 1; }
+            git apply --check "$f" || { echo "ERROR: el parche $patch no aplica limpio sobre el pin ${VITA3K_PIN}"; exit 1; }
+            git apply "$f" || { echo "ERROR: git apply falló para $patch"; exit 1; }
+            echo "Parche aplicado: $patch"
+          done
+          echo "15 parches aplicados sobre ${VITA3K_PIN}."
+
       - name: Cache vcpkg (binaria, como upstream)
         uses: actions/cache@v4
         with:
