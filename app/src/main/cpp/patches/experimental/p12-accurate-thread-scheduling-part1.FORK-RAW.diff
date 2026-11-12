@@ -1,0 +1,1750 @@
+diff --git a/vita3k/config/include/config/config.h b/vita3k/config/include/config/config.h
+index 16cb52280..bb950aa31 100644
+--- a/vita3k/config/include/config/config.h
++++ b/vita3k/config/include/config/config.h
+@@ -153,6 +153,8 @@ using PhysicalKeyCode = input::PhysicalKeyCode;
+     code(int, "anisotropic-filtering", 1, anisotropic_filtering)                                        \
+     code(bool, "texture-cache", true, texture_cache)                                                    \
+     code(bool, "async-pipeline-compilation", true, async_pipeline_compilation)                          \
++    code(bool, "accurate-thread-scheduling", false, accurate_thread_scheduling)                         \
++    code(int, "guest-cores", 1, guest_cores)                                                            \
+     code(bool, "show-compile-shaders", true, show_compile_shaders)                                      \
+     code(bool, "hashless-texture-cache", false, hashless_texture_cache)                                 \
+     code(bool, "import-textures", false, import_textures)                                               \
+diff --git a/vita3k/config/include/config/state.h b/vita3k/config/include/config/state.h
+index 1e1abe8f6..1c2d94437 100644
+--- a/vita3k/config/include/config/state.h
++++ b/vita3k/config/include/config/state.h
+@@ -79,6 +79,8 @@ struct Config {
+         bool v_sync = true;
+         int anisotropic_filtering = 1;
+         bool async_pipeline_compilation = true;
++        bool accurate_thread_scheduling = false;
++        int guest_cores = 1;
+         bool import_textures = false;
+         bool export_textures = false;
+         bool export_as_png = false;
+diff --git a/vita3k/config/src/settings.cpp b/vita3k/config/src/settings.cpp
+index c79877b4c..af48d6978 100644
+--- a/vita3k/config/src/settings.cpp
++++ b/vita3k/config/src/settings.cpp
+@@ -47,6 +47,8 @@ void copy_global_to_current(Config::CurrentConfig &current, const Config &cfg) {
+     current.v_sync = cfg.v_sync;
+     current.anisotropic_filtering = cfg.anisotropic_filtering;
+     current.async_pipeline_compilation = cfg.async_pipeline_compilation;
++    current.accurate_thread_scheduling = cfg.accurate_thread_scheduling;
++    current.guest_cores = cfg.guest_cores;
+     current.import_textures = cfg.import_textures;
+     current.export_textures = cfg.export_textures;
+     current.export_as_png = cfg.export_as_png;
+@@ -92,6 +94,8 @@ void copy_current_to_global(Config &cfg, const Config::CurrentConfig &current) {
+     cfg.v_sync = current.v_sync;
+     cfg.anisotropic_filtering = current.anisotropic_filtering;
+     cfg.async_pipeline_compilation = current.async_pipeline_compilation;
++    cfg.accurate_thread_scheduling = current.accurate_thread_scheduling;
++    cfg.guest_cores = current.guest_cores;
+     cfg.import_textures = current.import_textures;
+     cfg.export_textures = current.export_textures;
+     cfg.export_as_png = current.export_as_png;
+@@ -194,6 +198,8 @@ bool load_custom_config(Config::CurrentConfig &out, const fs::path &config_path,
+         out.v_sync = gpu.attribute("v-sync").as_bool();
+         out.anisotropic_filtering = gpu.attribute("anisotropic-filtering").as_int();
+         out.async_pipeline_compilation = gpu.attribute("async-pipeline-compilation").as_bool();
++        out.accurate_thread_scheduling = gpu.attribute("accurate-thread-scheduling").as_bool();
++        out.guest_cores = gpu.attribute("guest-cores").as_int(1);
+         out.import_textures = gpu.attribute("import-textures").as_bool();
+         out.export_textures = gpu.attribute("export-textures").as_bool();
+         out.export_as_png = gpu.attribute("export-as-png").as_bool();
+@@ -282,6 +288,8 @@ bool save_custom_config(const Config::CurrentConfig &cc, const fs::path &config_
+     gpu_child.append_attribute("v-sync") = cc.v_sync;
+     gpu_child.append_attribute("anisotropic-filtering") = cc.anisotropic_filtering;
+     gpu_child.append_attribute("async-pipeline-compilation") = cc.async_pipeline_compilation;
++    gpu_child.append_attribute("accurate-thread-scheduling") = cc.accurate_thread_scheduling;
++    gpu_child.append_attribute("guest-cores") = cc.guest_cores;
+     gpu_child.append_attribute("import-textures") = cc.import_textures;
+     gpu_child.append_attribute("export-textures") = cc.export_textures;
+     gpu_child.append_attribute("export-as-png") = cc.export_as_png;
+diff --git a/vita3k/cpu/src/cpu.cpp b/vita3k/cpu/src/cpu.cpp
+index d8cd1ad24..3232bffa6 100644
+--- a/vita3k/cpu/src/cpu.cpp
++++ b/vita3k/cpu/src/cpu.cpp
+@@ -17,11 +17,16 @@
+ 
+ #include <cpu/disasm/functions.h>
+ #include <cpu/functions.h>
++
++#include <algorithm>
++#include <atomic>
+ #include <cpu/impl/dynarmic_cpu.h>
+ #include <cpu/impl/interface.h>
+ #include <cpu/state.h>
+ #include <mem/ptr.h>
++#include <string>
+ #include <util/types.h>
++#include <vector>
+ 
+ #include <memory>
+ #include <string>
+diff --git a/vita3k/cpu/src/dynarmic_cpu.cpp b/vita3k/cpu/src/dynarmic_cpu.cpp
+index 1588f6bb5..673a05b04 100644
+--- a/vita3k/cpu/src/dynarmic_cpu.cpp
++++ b/vita3k/cpu/src/dynarmic_cpu.cpp
+@@ -20,12 +20,16 @@
+ #include <cpu/state.h>
+ #include <util/log.h>
+ 
++#include <cpu/functions.h>
++#include <mem/functions.h>
+ #include <mem/ptr.h>
+ 
+ #include <dynarmic/frontend/A32/a32_ir_emitter.h>
+ #include <dynarmic/interface/A32/coprocessor.h>
+ #include <dynarmic/interface/exclusive_monitor.h>
+ 
++#include <algorithm>
++#include <array>
+ #include <atomic>
+ #include <bit>
+ #include <chrono>
+@@ -33,6 +37,8 @@
+ #include <mutex>
+ #include <optional>
+ #include <string>
++#include <thread>
++#include <vector>
+ 
+ // Log the first few invalid guest accesses in full, then suppress (a guest null-deref loop can log GBs).
+ static bool should_log_invalid_access() {
+diff --git a/vita3k/display/src/display.cpp b/vita3k/display/src/display.cpp
+index b7741f166..bbc939910 100644
+--- a/vita3k/display/src/display.cpp
++++ b/vita3k/display/src/display.cpp
+@@ -15,6 +15,21 @@
+ // with this program; if not, write to the Free Software Foundation, Inc.,
+ // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ 
++#include <algorithm>
++#include <cpu/functions.h>
++#include <thread>
++
++#ifdef _WIN32
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++// after windows.h
++#include <psapi.h>
++#endif
+ #include <display/functions.h>
+ 
+ #include <dialog/state.h>
+@@ -35,8 +50,73 @@ static constexpr int64_t TARGET_MICRO_PER_FRAME = 1000000LL / TARGET_FPS;
+ static constexpr int predict_threshold = 3;
+ static constexpr int max_expected_swapchain_size = 6;
+ 
++struct ProcSample {
++    uint64_t page_faults = 0;
++    uint64_t working_set_mb = 0;
++    uint64_t private_mb = 0;
++    uint64_t user_us = 0;
++    uint64_t kernel_us = 0;
++    uint64_t sys_idle_us = 0;
++    uint64_t sys_busy_us = 0;
++};
++
++static ProcSample sample_process() {
++    ProcSample out;
++#ifdef _WIN32
++    PROCESS_MEMORY_COUNTERS pmc{};
++    pmc.cb = sizeof(pmc);
++    if (K32GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
++        out.page_faults = pmc.PageFaultCount;
++        out.working_set_mb = pmc.WorkingSetSize / (1024 * 1024);
++        out.private_mb = pmc.PagefileUsage / (1024 * 1024);
++    }
++    auto to_us = [](const FILETIME &ft) {
++        return ((static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime) / 10;
++    };
++    FILETIME created{}, exited{}, kernel{}, user{};
++    if (GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) {
++        out.kernel_us = to_us(kernel);
++        out.user_us = to_us(user);
++    }
++    FILETIME sys_idle{}, sys_kernel{}, sys_user{};
++    if (GetSystemTimes(&sys_idle, &sys_kernel, &sys_user)) {
++        out.sys_idle_us = to_us(sys_idle);
++        out.sys_busy_us = to_us(sys_kernel) + to_us(sys_user) - to_us(sys_idle);
++    }
++#endif
++    return out;
++}
++
++static void freeze_watchdog_thread(EmuEnvState &emuenv) {
++    DisplayState &display = emuenv.display;
++    ProcSample prev = sample_process();
++    while (!display.abort.load()) {
++        const auto before = std::chrono::steady_clock::now();
++        std::this_thread::sleep_for(std::chrono::milliseconds(10));
++        const auto slept_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - before).count();
++        const int64_t overshoot = std::max<int64_t>(0, slept_us - 10000);
++
++        const ProcSample now = sample_process();
++        if (overshoot > 100000) {
++            const double sys_idle_ms = (now.sys_idle_us - prev.sys_idle_us) / 1000.0;
++            const double sys_busy_ms = (now.sys_busy_us - prev.sys_busy_us) / 1000.0;
++            LOG_WARN("[FREEZE] {:.0f}ms process-wide stall | page_faults +{} (total {}) | working_set {}MB (delta {}MB) | private {}MB | OUR cpu: user {:.0f}ms kernel {:.0f}ms (= {:.0f}% of one core) | SYSTEM cpu: busy {:.0f}ms idle {:.0f}ms across {} cores (= {:.0f}% busy)",
++                overshoot / 1000.0,
++                now.page_faults - prev.page_faults, now.page_faults,
++                now.working_set_mb, static_cast<int64_t>(now.working_set_mb) - static_cast<int64_t>(prev.working_set_mb),
++                now.private_mb,
++                (now.user_us - prev.user_us) / 1000.0, (now.kernel_us - prev.kernel_us) / 1000.0,
++                100.0 * (now.user_us - prev.user_us + now.kernel_us - prev.kernel_us) / static_cast<double>(slept_us),
++                sys_busy_ms, sys_idle_ms, std::thread::hardware_concurrency(),
++                (sys_busy_ms + sys_idle_ms) > 0.0 ? (100.0 * sys_busy_ms / (sys_busy_ms + sys_idle_ms)) : 0.0);
++        }
++        prev = now;
++    }
++}
++
+ static void vblank_sync_thread(EmuEnvState &emuenv) {
+     DisplayState &display = emuenv.display;
++    std::thread watchdog(freeze_watchdog_thread, std::ref(emuenv));
+ 
+     while (!display.abort.load()) {
+         {
+@@ -92,6 +172,8 @@ static void vblank_sync_thread(EmuEnvState &emuenv) {
+         const auto time_left = TARGET_MICRO_PER_FRAME - (time_ms % TARGET_MICRO_PER_FRAME);
+         std::this_thread::sleep_for(std::chrono::microseconds(time_left));
+     }
++
++    watchdog.join();
+ }
+ 
+ void start_sync_thread(EmuEnvState &emuenv) {
+diff --git a/vita3k/gui-qt/include/gui-qt/settings_dialog_tooltips.h b/vita3k/gui-qt/include/gui-qt/settings_dialog_tooltips.h
+index 55cfe4036..167ae2a76 100644
+--- a/vita3k/gui-qt/include/gui-qt/settings_dialog_tooltips.h
++++ b/vita3k/gui-qt/include/gui-qt/settings_dialog_tooltips.h
+@@ -47,6 +47,7 @@ public:
+     QString vsync;
+     QString disable_surface_sync;
+     QString async_pipeline;
++    QString accurate_thread_scheduling;
+     QString screen_filter;
+     QString gpu_device;
+     QString resolution_upscaling;
+diff --git a/vita3k/gui-qt/src/settings_dialog.cpp b/vita3k/gui-qt/src/settings_dialog.cpp
+index eeef2da4f..aaef0b292 100644
+--- a/vita3k/gui-qt/src/settings_dialog.cpp
++++ b/vita3k/gui-qt/src/settings_dialog.cpp
+@@ -323,6 +323,7 @@ void SettingsDialog::load_config() {
+     m_ui->vsync->setChecked(m_config.v_sync);
+     m_ui->disable_surface_sync->setChecked(m_config.disable_surface_sync);
+     m_ui->async_pipeline_compilation->setChecked(m_config.async_pipeline_compilation);
++    m_ui->accurate_thread_scheduling->setChecked(m_config.accurate_thread_scheduling);
+ 
+     {
+         m_ui->memory_mapping_box->clear();
+@@ -613,6 +614,7 @@ void SettingsDialog::build_desired_config(Config &desired) const {
+     current.v_sync = m_ui->vsync->isChecked();
+     current.disable_surface_sync = m_ui->disable_surface_sync->isChecked();
+     current.async_pipeline_compilation = m_ui->async_pipeline_compilation->isChecked();
++    current.accurate_thread_scheduling = m_ui->accurate_thread_scheduling->isChecked();
+     current.memory_mapping = m_ui->memory_mapping_box->currentData().toString().toStdString();
+     current.screen_filter = m_ui->screen_filter_box->currentText().toStdString();
+     current.resolution_multiplier = static_cast<float>(m_ui->resolution_upscale->value()) / 4.0f;
+@@ -1199,6 +1201,7 @@ void SettingsDialog::setup_connections() {
+         { m_ui->vsync, tr("V-Sync"), m_tooltips->vsync },
+         { m_ui->disable_surface_sync, tr("Disable Surface Sync"), m_tooltips->disable_surface_sync },
+         { m_ui->async_pipeline_compilation, tr("Asynchronous Pipeline Compilation"), m_tooltips->async_pipeline },
++        { m_ui->accurate_thread_scheduling, tr("Accurate Thread Scheduling"), m_tooltips->accurate_thread_scheduling },
+         { m_ui->memory_mapping_box, tr("Memory Mapping"), m_tooltips->memory_mapping },
+         { m_ui->screen_filter_box, tr("Screen Filter"), m_tooltips->screen_filter },
+         { m_ui->gb_gpu_device, tr("Graphics Device"), m_tooltips->gpu_device },
+diff --git a/vita3k/gui-qt/src/settings_dialog.ui b/vita3k/gui-qt/src/settings_dialog.ui
+index 8ca5c8d4f..cee6624c4 100644
+--- a/vita3k/gui-qt/src/settings_dialog.ui
++++ b/vita3k/gui-qt/src/settings_dialog.ui
+@@ -699,6 +699,13 @@ QGroupBox[flat=&quot;true&quot;]::title {
+                      </property>
+                     </widget>
+                    </item>
++                   <item>
++                    <widget class="QCheckBox" name="accurate_thread_scheduling">
++                     <property name="text">
++                      <string>Accurate Thread Scheduling</string>
++                     </property>
++                    </widget>
++                   </item>
+                    <item>
+                     <layout class="QHBoxLayout" name="memory_mapping_layout">
+                      <property name="spacing">
+diff --git a/vita3k/gui-qt/src/settings_dialog_tooltips.cpp b/vita3k/gui-qt/src/settings_dialog_tooltips.cpp
+index 53cdb31ba..666d948e7 100644
+--- a/vita3k/gui-qt/src/settings_dialog_tooltips.cpp
++++ b/vita3k/gui-qt/src/settings_dialog_tooltips.cpp
+@@ -111,6 +111,7 @@ SettingsDialogTooltips::SettingsDialogTooltips(QObject *parent)
+     , vsync(tr("Enable V-Sync for OpenGL. Reduces screen tearing."))
+     , disable_surface_sync(tr("Speed hack, disabling turns off surface syncing between CPU and GPU. Surface syncing is needed by a few games.\nGives a big performance boost if disabled (in particular when upscaling is on)."))
+     , async_pipeline(tr("Allow pipelines to be compiled concurrently on multiple concurrent threads.\nThis decreases pipeline compilation stutter at the cost of temporary graphical glitches."))
++    , accurate_thread_scheduling(tr("Run the game's threads the way a PS Vita schedules them: threads left at the default CPU affinity take turns by priority instead of all running at once."))
+     , screen_filter(tr("Select the final image filter to apply."))
+     , gpu_device(tr("Select which GPU Vita3k should use."))
+     , resolution_upscaling(tr("Scale the games resolution by a multiplier.\nExperimental: apps are not guaranteed to render properly at more than 1x."))
+diff --git a/vita3k/interface.cpp b/vita3k/interface.cpp
+index 36f63919f..2d1c9fa0c 100644
+--- a/vita3k/interface.cpp
++++ b/vita3k/interface.cpp
+@@ -416,6 +416,11 @@ static ExitCode load_app_impl(SceUID &main_module_id, EmuEnvState &emuenv, const
+     emuenv.kernel.process_exit_callback = [&emuenv](int res, std::optional<AppLaunchRequest> relaunch) {
+         emuenv.post_app_launch_request(relaunch.value_or(AppLaunchRequest{ .reason = AppLaunchReason::ProcessExit }));
+     };
++    emuenv.kernel.accurate_thread_scheduling = emuenv.cfg.current_config.accurate_thread_scheduling;
++    guest_sched_set_cores(emuenv.cfg.current_config.guest_cores);
++    if (emuenv.kernel.accurate_thread_scheduling)
++        LOG_INFO("Accurate thread scheduling enabled: default-affinity guest threads run one at a time, by priority");
++
+     if (!emuenv.kernel.init(emuenv.mem, call_import, emuenv.cfg.current_config.cpu_opt)) {
+         LOG_WARN("Failed to init kernel!");
+         return KernelInitFailed;
+diff --git a/vita3k/kernel/include/kernel/state.h b/vita3k/kernel/include/kernel/state.h
+index 4c663daca..2fa6cc272 100644
+--- a/vita3k/kernel/include/kernel/state.h
++++ b/vita3k/kernel/include/kernel/state.h
+@@ -100,6 +100,8 @@ struct KernelState {
+     std::mutex mutex;
+     CodecEngineBlocks codec_blocks;
+ 
++    bool accurate_thread_scheduling = false;
++
+     Ptr<const void> tls_address = Ptr<const void>(0);
+     unsigned int tls_psize = 0;
+     unsigned int tls_msize = 0;
+diff --git a/vita3k/kernel/include/kernel/sync_primitives.h b/vita3k/kernel/include/kernel/sync_primitives.h
+index 8374d328a..94d759671 100644
+--- a/vita3k/kernel/include/kernel/sync_primitives.h
++++ b/vita3k/kernel/include/kernel/sync_primitives.h
+@@ -17,6 +17,7 @@
+ 
+ #pragma once
+ 
++#include <atomic>
+ #include <kernel/thread/thread_data_queue.h>
+ #include <kernel/types.h>
+ #include <util/byte_ring_buffer.h>
+@@ -128,6 +129,7 @@ struct Mutex : SyncPrimitive {
+     ThreadStatePtr owner;
+     WaitingThreadQueuePtr waiting_threads;
+     Ptr<SceKernelLwMutexWork> workarea;
++    std::atomic<bool> deleted{ false };
+ };
+ 
+ typedef std::shared_ptr<Mutex> MutexPtr;
+diff --git a/vita3k/kernel/include/kernel/thread/thread_state.h b/vita3k/kernel/include/kernel/thread/thread_state.h
+index 0d2b78082..00fb39463 100644
+--- a/vita3k/kernel/include/kernel/thread/thread_state.h
++++ b/vita3k/kernel/include/kernel/thread/thread_state.h
+@@ -32,6 +32,11 @@
+ struct CPUContext;
+ 
+ struct ThreadState;
++
++void guest_sched_set_cores(int cores);
++void guest_sched_release_for_block();
++void guest_sched_forget_cpu(CPUState *cpu);
++CPUState *guest_sched_token_cpu();
+ struct ThreadParams;
+ struct KernelState;
+ 
+@@ -81,7 +86,6 @@ struct ThreadState {
+ 
+     CPUStatePtr cpu;
+     ThreadStatus status = ThreadStatus::dormant;
+-
+     ThreadSignal signal;
+     std::vector<CallbackPtr> callbacks;
+     std::condition_variable status_cond;
+@@ -90,6 +94,7 @@ struct ThreadState {
+ 
+     ThreadState() = delete;
+     explicit ThreadState(SceUID id, KernelState &kernel, MemState &mem);
++    ~ThreadState();
+ 
+     int init(const char *name, Ptr<const void> entry_point, int init_priority, SceInt32 affinity_mask, int stack_size, const SceKernelThreadOptParam *option);
+     int start(SceSize arglen, const Ptr<void> argp, bool run_entry_callback = false);
+diff --git a/vita3k/kernel/src/kernel.cpp b/vita3k/kernel/src/kernel.cpp
+index ed22f58e6..40cae19bc 100644
+--- a/vita3k/kernel/src/kernel.cpp
++++ b/vita3k/kernel/src/kernel.cpp
+@@ -54,6 +54,9 @@ void CorenumAllocator::set_max_core_count(const std::size_t max) {
+     alloc.set_maximum(max);
+ }
+ 
++void set_current_thread_state(SceUID id, const ThreadStatePtr &thread);
++void clear_current_thread_state();
++
+ // TODO implement cross platform debug thread name setter and eliminate SDL thread
+ struct ThreadParams {
+     KernelState *kernel = nullptr;
+@@ -66,6 +69,7 @@ static int SDLCALL thread_function(void *data) {
+     const ThreadParams params = *static_cast<const ThreadParams *>(data);
+     SDL_SignalSemaphore(params.host_may_destroy_params);
+     const ThreadStatePtr thread = params.kernel->get_thread(params.thid);
++    set_current_thread_state(params.thid, thread);
+ #ifdef TRACY_ENABLE
+     if (!thread->name.empty()) {
+         tracy::SetThreadName(thread->name.c_str());
+@@ -77,6 +81,7 @@ static int SDLCALL thread_function(void *data) {
+ 
+     thread->run_loop();
+     const uint32_t r0 = read_reg(*thread->cpu, 0);
++    clear_current_thread_state();
+ 
+     {
+         std::lock_guard<std::mutex> lock(params.kernel->mutex);
+@@ -142,7 +147,22 @@ void KernelState::invalidate_jit_cache(Address start, size_t length) {
+     }
+ }
+ 
++static thread_local SceUID tls_self_id = 0;
++static thread_local ThreadStatePtr tls_self;
++
++void set_current_thread_state(SceUID id, const ThreadStatePtr &thread) {
++    tls_self_id = id;
++    tls_self = thread;
++}
++
++void clear_current_thread_state() {
++    tls_self_id = 0;
++    tls_self.reset();
++}
++
+ ThreadStatePtr KernelState::get_thread(SceUID thread_id) {
++    if (thread_id == tls_self_id && tls_self)
++        return tls_self;
+     return lock_and_find(thread_id, threads, mutex);
+ }
+ 
+diff --git a/vita3k/kernel/src/sync_primitives.cpp b/vita3k/kernel/src/sync_primitives.cpp
+index 4a03944c5..49637d5c3 100644
+--- a/vita3k/kernel/src/sync_primitives.cpp
++++ b/vita3k/kernel/src/sync_primitives.cpp
+@@ -15,10 +15,13 @@
+ // with this program; if not, write to the Free Software Foundation, Inc.,
+ // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ 
++#include <chrono>
+ #include <cpu/functions.h>
+ #include <kernel/state.h>
+ #include <kernel/sync_primitives.h>
++#include <kernel/thread/thread_state.h>
+ 
++#include <array>
+ #include <kernel/types.h>
+ #include <util/lock_and_find.h>
+ #include <util/log.h>
+@@ -49,13 +52,37 @@ inline static CondvarPtrs &get_condvars(KernelState &kernel, SyncWeight weight)
+     return weight == SyncWeight::Light ? kernel.lwcondvars : kernel.condvars;
+ }
+ 
++namespace {
++struct MutexCacheEntry {
++    SceUID uid = 0;
++    SyncWeight weight = SyncWeight::Light;
++    MutexPtr ptr;
++};
++thread_local std::array<MutexCacheEntry, 8> g_mutex_cache;
++thread_local uint32_t g_mutex_cache_next = 0;
++} // namespace
++
+ inline static int find_mutex(MutexPtr &mutex_out, MutexPtrs **mutexes_out, KernelState &kernel, const char *export_name, SceUID mutexid, SyncWeight weight) {
+     MutexPtrs &mutexes = get_mutexes(kernel, weight);
++
++    for (auto &entry : g_mutex_cache) {
++        if (entry.uid == mutexid && entry.weight == weight && entry.ptr
++            && !entry.ptr->deleted.load(std::memory_order_relaxed)) {
++            mutex_out = entry.ptr;
++            if (mutexes_out)
++                *mutexes_out = &mutexes;
++            return SCE_KERNEL_OK;
++        }
++    }
++
+     mutex_out = lock_and_find(mutexid, mutexes, kernel.mutex);
+     if (!mutex_out) {
+         return unknown_mutex_id(export_name, weight);
+     }
+ 
++    auto &slot = g_mutex_cache[g_mutex_cache_next++ % g_mutex_cache.size()];
++    slot = { mutexid, weight, mutex_out };
++
+     if (mutexes_out)
+         *mutexes_out = &mutexes;
+ 
+@@ -81,6 +108,8 @@ inline static int handle_timeout(KernelState &kernel, const ThreadStatePtr &thre
+     std::unique_lock<std::mutex> &primitive_lock, WaitingThreadQueuePtr &queue,
+     const ThreadDataQueueInterator<WaitingThreadData> &data_it, const char *export_name,
+     SceUInt *const timeout) {
++    guest_sched_release_for_block();
++
+     if (timeout) {
+         bool status = false;
+         auto start = std::chrono::steady_clock::now();
+@@ -796,6 +825,7 @@ int mutex_delete(KernelState &kernel, const char *export_name, SceUID thread_id,
+     }
+ 
+     if (mutex->waiting_threads->empty()) {
++        mutex->deleted.store(true, std::memory_order_relaxed);
+         const std::lock_guard<std::mutex> kernel_guard(kernel.mutex);
+         mutexes->erase(mutexid);
+     } else {
+diff --git a/vita3k/kernel/src/thread.cpp b/vita3k/kernel/src/thread.cpp
+index 53f40fced..5579692e1 100644
+--- a/vita3k/kernel/src/thread.cpp
++++ b/vita3k/kernel/src/thread.cpp
+@@ -24,13 +24,20 @@
+ 
+ #include <util/log.h>
+ 
++#include <array>
++#include <atomic>
+ #include <cassert>
+ #include <chrono>
++#include <condition_variable>
++#include <cstdlib>
+ #include <cstring>
+ #include <memory>
++#include <mutex>
++#include <set>
+ #include <sstream>
+ 
+ void ThreadSignal::wait() {
++    guest_sched_release_for_block();
+     std::unique_lock<std::mutex> lock(mutex);
+     recv_cond.wait(lock, [&]() { return signaled; });
+     signaled = false;
+@@ -87,6 +94,8 @@ int ThreadState::init(const char *name, Ptr<const void> entry_point, int init_pr
+     stack = alloc_block(mem, stack_size, alloc_name.c_str());
+     memset(stack.get_ptr<void>().get(mem), 0xcc, stack_size);
+ 
++    LOG_INFO("[THREAD] created \"{}\" (#{}) entry=0x{:X} prio={} affinity=0x{:X} stack=0x{:X}..0x{:X}", name, id, entry_point.address(), priority, affinity_mask, stack.get(), stack.get() + stack_size);
++
+     alloc_name = fmt::format("TLS for thread {} (#{})", name, id);
+     const size_t tls_size = KERNEL_TLS_SIZE + kernel.tls_msize;
+     tls = alloc_block(mem, tls_size, alloc_name.c_str());
+@@ -188,12 +197,271 @@ void ThreadState::exit_delete(bool exit) {
+     signal.send();
+ }
+ 
++// Guest execution gate (config: accurate-thread-scheduling).
++namespace {
++std::mutex g_sched_mutex;
++std::condition_variable g_sched_cv;
++constexpr size_t GUEST_CORES_MAX = 4;
++constexpr auto SCHED_DEADLINE = std::chrono::milliseconds(2);
++constexpr auto SCHED_MIN_SLICE = std::chrono::microseconds(50);
++constexpr auto SCHED_TIMESLICE = std::chrono::microseconds(250);
++
++thread_local bool tls_holds_token = false;
++thread_local int tls_token_priority = 0;
++thread_local CPUState *tls_token_cpu = nullptr;
++thread_local std::chrono::steady_clock::time_point tls_slice_start;
++
++int g_sched_running = 0;
++struct Holder {
++    CPUState *cpu;
++    int priority;
++    std::chrono::steady_clock::time_point since;
++    const char *name;
++    SceUID id;
++};
++
++std::array<Holder, GUEST_CORES_MAX> g_sched_holders{};
++// Do not "correct" this to 3 because the Vita has 3 cores - use the guest-cores config if you want to test it.
++int g_sched_cores = 1;
++
++std::array<uint16_t, 256> g_sched_waiter_counts{};
++int g_sched_waiters_total = 0;
++std::atomic<int> g_sched_best_waiter{ 256 };
++
++void waiter_add(int priority) {
++    g_sched_waiter_counts[priority]++;
++    g_sched_waiters_total++;
++    if (priority < g_sched_best_waiter.load(std::memory_order_relaxed))
++        g_sched_best_waiter.store(priority, std::memory_order_relaxed);
++}
++
++void waiter_remove(int priority) {
++    g_sched_waiter_counts[priority]--;
++    g_sched_waiters_total--;
++    int best = g_sched_best_waiter.load(std::memory_order_relaxed);
++    if (g_sched_waiters_total == 0) {
++        g_sched_best_waiter.store(256, std::memory_order_relaxed);
++    } else if (priority == best && g_sched_waiter_counts[priority] == 0) {
++        while (best < 256 && g_sched_waiter_counts[best] == 0)
++            best++;
++        g_sched_best_waiter.store(best, std::memory_order_relaxed);
++    }
++}
++
++std::atomic<uint64_t> g_sched_acquires{ 0 };
++std::atomic<uint64_t> g_sched_forced{ 0 };
++std::atomic<uint64_t> g_sched_preempts{ 0 };
++std::atomic<uint64_t> g_sched_wait_us{ 0 };
++std::atomic<uint64_t> g_sched_max_wait_us{ 0 };
++std::atomic<uint64_t> g_sched_fastpath{ 0 };
++std::atomic<uint64_t> g_sched_yield_slice{ 0 };
++std::atomic<uint64_t> g_sched_yield_preempted{ 0 };
++std::atomic<uint64_t> g_sched_yield_block{ 0 };
++std::atomic<uint64_t> g_sched_hold_us{ 0 };
++std::atomic<uint64_t> g_sched_hold_max_us{ 0 };
++std::atomic<int64_t> g_sched_last_report{ 0 };
++
++void sched_report(int64_t now_us) {
++    int64_t last = g_sched_last_report.load(std::memory_order_relaxed);
++    if (last != 0 && now_us - last < 10'000'000)
++        return;
++    if (!g_sched_last_report.compare_exchange_strong(last, now_us))
++        return;
++    if (last == 0)
++        return;
++    const uint64_t acquires = g_sched_acquires.exchange(0);
++    if (acquires == 0)
++        return;
++    const uint64_t fast = g_sched_fastpath.exchange(0);
++    const uint64_t held_us = g_sched_hold_us.exchange(0);
++    LOG_INFO("[GUEST-SCHED] 10s: acquires={} ({:.1f}% uncontended) preempts={} deadline_overrides={} wait_total_ms={:.1f} wait_max_ms={:.2f} | yields slice={} preempt={} block={} | held_total_ms={:.0f} held_avg_us={:.1f} held_max_ms={:.2f}",
++        acquires, acquires ? (100.0 * fast / acquires) : 0.0,
++        g_sched_preempts.exchange(0), g_sched_forced.exchange(0),
++        g_sched_wait_us.exchange(0) / 1000.0, g_sched_max_wait_us.exchange(0) / 1000.0,
++        g_sched_yield_slice.exchange(0), g_sched_yield_preempted.exchange(0), g_sched_yield_block.exchange(0),
++        held_us / 1000.0, acquires ? static_cast<double>(held_us) / acquires : 0.0,
++        g_sched_hold_max_us.exchange(0) / 1000.0);
++}
++
++void sched_acquire(int priority, SceInt32 affinity_mask, bool enabled, CPUState *cpu,
++    const std::string &name, SceUID id) {
++    if (affinity_mask != 0 || !enabled)
++        return;
++    if (tls_holds_token)
++        return; // already ours for the rest of this timeslice
++
++    const auto start = std::chrono::steady_clock::now();
++    std::unique_lock<std::mutex> lock(g_sched_mutex);
++
++    if (g_sched_running < g_sched_cores && g_sched_waiters_total == 0) {
++        g_sched_running++;
++        for (auto &h : g_sched_holders) {
++            if (!h.cpu) {
++                h = { cpu, priority, start, name.c_str(), id };
++                break;
++            }
++        }
++        g_sched_acquires.fetch_add(1, std::memory_order_relaxed);
++        g_sched_fastpath.fetch_add(1, std::memory_order_relaxed);
++        tls_holds_token = true;
++        tls_token_priority = priority;
++        tls_token_cpu = cpu;
++        tls_slice_start = start;
++        return;
++    }
++
++    waiter_add(priority);
++
++    auto preempt_lower = [&](const std::chrono::steady_clock::time_point now) {
++        for (auto &h : g_sched_holders) {
++            if (h.cpu && h.priority > priority && now - h.since >= SCHED_MIN_SLICE) {
++                stop(*h.cpu);
++                g_sched_preempts.fetch_add(1, std::memory_order_relaxed);
++            }
++        }
++    };
++    preempt_lower(start);
++
++    const auto deadline = start + SCHED_DEADLINE;
++    while (g_sched_running >= g_sched_cores || g_sched_best_waiter.load(std::memory_order_relaxed) < priority) {
++        if (g_sched_cv.wait_until(lock, deadline) == std::cv_status::timeout) {
++            g_sched_forced.fetch_add(1, std::memory_order_relaxed);
++            static std::atomic<int64_t> last_logged_us{ 0 };
++            const int64_t now_forced_us = std::chrono::duration_cast<std::chrono::microseconds>(
++                std::chrono::steady_clock::now().time_since_epoch())
++                                              .count();
++            int64_t prev_logged = last_logged_us.load(std::memory_order_relaxed);
++            if (now_forced_us - prev_logged >= 10'000'000
++                && last_logged_us.compare_exchange_strong(prev_logged, now_forced_us)) {
++                int holder_prio = -1;
++                for (const auto &h : g_sched_holders) {
++                    if (h.cpu)
++                        holder_prio = h.priority;
++                }
++                LOG_WARN("[GUEST-SCHED] \"{}\" (#{} prio {}) forced through after {}ms; holder prio {}", name, id, priority, std::chrono::duration_cast<std::chrono::milliseconds>(SCHED_DEADLINE).count(), holder_prio);
++            }
++            break;
++        }
++        preempt_lower(std::chrono::steady_clock::now());
++    }
++    waiter_remove(priority);
++    g_sched_running++;
++    for (auto &h : g_sched_holders) {
++        if (!h.cpu) {
++            h = { cpu, priority, std::chrono::steady_clock::now(), name.c_str(), id };
++            break;
++        }
++    }
++
++    tls_holds_token = true;
++    tls_token_priority = priority;
++    tls_token_cpu = cpu;
++    tls_slice_start = std::chrono::steady_clock::now();
++
++    const auto waited_us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count());
++    g_sched_acquires.fetch_add(1, std::memory_order_relaxed);
++    g_sched_wait_us.fetch_add(waited_us, std::memory_order_relaxed);
++    uint64_t prev_max = g_sched_max_wait_us.load(std::memory_order_relaxed);
++    while (waited_us > prev_max && !g_sched_max_wait_us.compare_exchange_weak(prev_max, waited_us)) {
++    }
++}
++
++void sched_release_internal(CPUState *cpu) {
++    const auto held_us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - tls_slice_start).count());
++    g_sched_hold_us.fetch_add(held_us, std::memory_order_relaxed);
++    uint64_t prev_hold = g_sched_hold_max_us.load(std::memory_order_relaxed);
++    while (held_us > prev_hold && !g_sched_hold_max_us.compare_exchange_weak(prev_hold, held_us)) {
++    }
++
++    bool has_waiters;
++    {
++        const std::lock_guard<std::mutex> lock(g_sched_mutex);
++        for (auto &h : g_sched_holders) {
++            if (h.cpu == cpu) {
++                h.cpu = nullptr;
++                break;
++            }
++        }
++        if (g_sched_running > 0)
++            g_sched_running--;
++        has_waiters = g_sched_waiters_total > 0;
++    }
++    tls_holds_token = false;
++    tls_token_cpu = nullptr;
++
++    if (has_waiters)
++        g_sched_cv.notify_all();
++
++    sched_report(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
++}
++
++void sched_maybe_yield(SceInt32 affinity_mask, bool enabled, CPUState *cpu) {
++    if (affinity_mask != 0 || !enabled || !tls_holds_token)
++        return;
++
++    const bool slice_over = (std::chrono::steady_clock::now() - tls_slice_start) >= SCHED_TIMESLICE;
++    const bool outranked = !slice_over && g_sched_best_waiter.load(std::memory_order_relaxed) < tls_token_priority;
++    if (slice_over || outranked) {
++        (slice_over ? g_sched_yield_slice : g_sched_yield_preempted).fetch_add(1, std::memory_order_relaxed);
++        sched_release_internal(cpu);
++    }
++}
++} // namespace
++
++void guest_sched_set_cores(int cores) {
++    const std::lock_guard<std::mutex> lock(g_sched_mutex);
++    g_sched_cores = std::clamp(cores, 1, static_cast<int>(GUEST_CORES_MAX));
++    if (g_sched_cores != cores)
++        LOG_WARN("[GUEST-SCHED] guest-cores {} out of range, using {}", cores, g_sched_cores);
++    LOG_INFO("[GUEST-SCHED] gate will run at most {} guest thread(s) at a time", g_sched_cores);
++}
++
++void guest_sched_release_for_block() {
++    if (tls_holds_token) {
++        g_sched_yield_block.fetch_add(1, std::memory_order_relaxed);
++        sched_release_internal(tls_token_cpu);
++    }
++}
++
++CPUState *guest_sched_token_cpu() {
++    return tls_holds_token ? tls_token_cpu : nullptr;
++}
++
++void guest_sched_forget_cpu(CPUState *cpu) {
++    if (!cpu)
++        return;
++    bool found = false;
++    bool has_waiters = false;
++    {
++        const std::lock_guard<std::mutex> lock(g_sched_mutex);
++        for (auto &h : g_sched_holders) {
++            if (h.cpu == cpu) {
++                LOG_WARN("[GUEST-SCHED] thread \"{}\" (#{} prio {}) destroyed while still holding the token - a release path is missing",
++                    h.name ? h.name : "?", h.id, h.priority);
++                h.cpu = nullptr;
++                found = true;
++                break;
++            }
++        }
++        if (found && g_sched_running > 0)
++            g_sched_running--;
++        has_waiters = g_sched_waiters_total > 0;
++    }
++    if (tls_token_cpu == cpu) {
++        tls_holds_token = false;
++        tls_token_cpu = nullptr;
++    }
++    if (found && has_waiters)
++        g_sched_cv.notify_all();
++}
++
+ void ThreadState::run_loop() {
+     bool guest_returned = false;
+ 
+-    // Set thread-local CPU state so signal handlers can access it.
+-    // The guard clears it on any exit so a recycled host thread never sees
+-    // a stale CPUState pointer.
++    struct TokenGuard {
++        ~TokenGuard() { guest_sched_release_for_block(); }
++    } token_guard;
++
+     set_current_cpu_state(cpu.get());
+     struct CpuStateGuard {
+         ~CpuStateGuard() { set_current_cpu_state(nullptr); }
+@@ -243,6 +511,7 @@ void ThreadState::run_loop() {
+ 
+         // Park until we have something to do.
+         if (status != ThreadStatus::run) {
++            guest_sched_release_for_block();
+             status_cond.wait(lock, [&] {
+                 return status == ThreadStatus::run || delete_requested;
+             });
+@@ -265,6 +534,7 @@ void ThreadState::run_loop() {
+         while (!delete_requested && !exit_requested && !guest_returned && status == ThreadStatus::run) {
+             if (world_stop_requested) {
+                 world_stopped = true;
++                guest_sched_release_for_block();
+                 update_status(ThreadStatus::suspend);
+                 continue;
+             }
+@@ -275,16 +545,26 @@ void ThreadState::run_loop() {
+ 
+             lock.unlock();
+ 
++            // Take the guest execution gate before running any guest code
++            const bool gated = kernel.accurate_thread_scheduling;
++            sched_acquire(priority, affinity_mask, gated, cpu.get(), name, id);
++
+             // Single step or run
+             const int res = do_step ? step(*cpu) : run(*cpu);
+ 
+             // handle svc call if this was what stopped the cpu
+             if (cpu->svc_called) {
+                 const uint32_t nid = *Ptr<uint32_t>(read_pc(*cpu) + 4).get(mem);
++                // breadcrumbs for the hang dump: free here, a global lock inside call_import
++                last_import_nid = nid;
++                last_import_lr = read_lr(*cpu);
+                 kernel.call_import(*cpu, nid, id);
+                 clear_exclusive(*cpu);
+             }
+ 
++            // hold the token across the HLE call; give it up on timeslice or preemption
++            sched_maybe_yield(affinity_mask, gated, cpu.get());
++
+             // handle pending abort (exception handler from page fault)
+             if (cpu->abort_pending.exchange(false))
+                 dispatch_abort(*cpu);
+@@ -401,6 +681,7 @@ uint32_t ThreadState::run_guest_function(Address callback_address, SceSize args,
+ 
+     start(args, argp);
+     {
++        guest_sched_release_for_block();
+         std::unique_lock<std::mutex> lock(mutex);
+         status_cond.wait(lock, [&]() { return status == ThreadStatus::dormant; });
+     }
+@@ -415,10 +696,17 @@ ThreadState::ThreadState(SceUID id, KernelState &kernel, MemState &mem)
+     , mem(mem) {
+ }
+ 
++ThreadState::~ThreadState() {
++    guest_sched_forget_cpu(cpu.get());
++}
++
+ void ThreadState::update_status(ThreadStatus status, std::optional<ThreadStatus> expected) {
+     if (expected)
+         assert(expected.value() == this->status);
+ 
++    if (status == ThreadStatus::wait && cpu && cpu.get() == guest_sched_token_cpu())
++        guest_sched_release_for_block();
++
+     // Don't apply the requested wait transition if being removed to not block deletion
+     if (status == ThreadStatus::wait && delete_requested)
+         return;
+@@ -445,6 +733,7 @@ void ThreadState::suspend() {
+ }
+ 
+ void ThreadState::suspend_and_wait() {
++    guest_sched_release_for_block();
+     std::unique_lock<std::mutex> lock(mutex);
+     vm_suspended = true;
+ 
+@@ -490,6 +779,7 @@ void ThreadState::request_world_stop() {
+ }
+ 
+ bool ThreadState::wait_world_stopped(std::chrono::steady_clock::time_point deadline) {
++    guest_sched_release_for_block();
+     std::unique_lock<std::mutex> lock(mutex);
+     return status_cond.wait_until(lock, deadline, [&] { return status != ThreadStatus::run || delete_requested; });
+ }
+diff --git a/vita3k/mem/src/mem.cpp b/vita3k/mem/src/mem.cpp
+index 510fcea16..bc2b763f0 100644
+--- a/vita3k/mem/src/mem.cpp
++++ b/vita3k/mem/src/mem.cpp
+@@ -302,6 +302,11 @@ bool handle_access_violation(MemState &state, uint8_t *addr, bool write) noexcep
+         fmt::print("Access: {}\n", log_hex(vaddr));
+     }
+ 
++    // never allow accesses to the null guard page - letting them through silently corrupts low memory
++    if (vaddr < 0x1000) {
++        return false;
++    }
++
+     // HACK: keep going recovery for faults with no covering protect_tree entry
+     const auto unhandled_but_valid = [&]() {
+         apply_host_protect(reinterpret_cast<uint8_t *>(align_down(fault_addr, state.host_page_size)),
+diff --git a/vita3k/modules/SceGxm/SceGxm.cpp b/vita3k/modules/SceGxm/SceGxm.cpp
+index b49a11919..53082fe06 100644
+--- a/vita3k/modules/SceGxm/SceGxm.cpp
++++ b/vita3k/modules/SceGxm/SceGxm.cpp
+@@ -17,6 +17,8 @@
+ 
+ #include "SceGxm.h"
+ 
++#include <chrono>
++#include <cpu/functions.h>
+ #include <modules/module_parent.h>
+ 
+ #include <span>
+@@ -2238,6 +2240,13 @@ EXPORT(int, sceGxmDisplayQueueAddEntry, Ptr<SceGxmSyncObject> oldBuffer, Ptr<Sce
+     if (!oldBuffer || !newBuffer)
+         return RET_ERROR(SCE_GXM_ERROR_INVALID_POINTER);
+ 
++    const auto queue_start = std::chrono::steady_clock::now();
++    struct QueueTimer {
++        std::chrono::steady_clock::time_point start;
++        ~QueueTimer() {
++        }
++    } queue_timer{ queue_start };
++
+     const Address address = alloc(emuenv.mem, emuenv.gxm.params.displayQueueCallbackDataSize, __FUNCTION__);
+     const Ptr<void> ptr(address);
+     memcpy(ptr.get(emuenv.mem), callbackData.get(emuenv.mem), emuenv.gxm.params.displayQueueCallbackDataSize);
+@@ -2272,15 +2281,18 @@ EXPORT(int, sceGxmDisplayQueueAddEntry, Ptr<SceGxmSyncObject> oldBuffer, Ptr<Sce
+ 
+     renderer::send_single_command(*emuenv.renderer, nullptr, renderer::CommandOpcode::NewFrame, false, frame, &emuenv.display, active_renderer_context);
+ 
+-    if (emuenv.gxm.params.displayQueueMaxPendingCount == 1)
++    if (emuenv.gxm.params.displayQueueMaxPendingCount == 1) {
+         // double buffering, not handled by the queue configuration
++        guest_sched_release_for_block();
+         emuenv.gxm.display_queue.wait_empty();
++    }
+ 
+     return 0;
+ }
+ 
+ EXPORT(int, sceGxmDisplayQueueFinish) {
+     TRACY_FUNC(sceGxmDisplayQueueFinish);
++    guest_sched_release_for_block();
+     emuenv.gxm.display_queue.wait_empty();
+ 
+     return 0;
+@@ -2650,6 +2662,7 @@ EXPORT(int, sceGxmEndScene, SceGxmContext *context, SceGxmNotification *vertexNo
+     SceGxmNotification empty_notification = { Ptr<uint32_t>(0), 0 };
+ 
+     // Add command to end the scene
++    guest_sched_release_for_block();
+     renderer::sync_surface_data(*emuenv.renderer, context->renderer.get(), vertexNotification ? *vertexNotification : empty_notification, fragmentNotification ? *fragmentNotification : empty_notification);
+ 
+     if (context->state.fragment_sync_object) {
+@@ -2712,6 +2725,7 @@ EXPORT(int, sceGxmFinish, SceGxmContext *context) {
+         return RET_ERROR(SCE_GXM_ERROR_INVALID_THREAD);
+ 
+     // Wait on this context's rendering finish code.
++    guest_sched_release_for_block();
+     renderer::finish(*emuenv.renderer, context->renderer.get());
+ 
+     return 0;
+@@ -3015,6 +3029,7 @@ EXPORT(int, sceGxmNotificationWait, const SceGxmNotification *notification) {
+     std::uint32_t volatile *value = notification->address.get(emuenv.mem);
+     const std::uint32_t target_value = notification->value;
+ 
++    guest_sched_release_for_block();
+     std::unique_lock<std::mutex> lock(emuenv.renderer->notification_mutex);
+     if (*value != target_value) {
+         emuenv.renderer->notification_ready.wait(lock, [&]() { return *value == target_value || emuenv.display.abort.load(); });
+@@ -4807,6 +4822,7 @@ EXPORT(int, sceGxmShaderPatcherReleaseFragmentProgram, SceGxmShaderPatcher *shad
+     SceGxmFragmentProgram *const fp = fragmentProgram.get(emuenv.mem);
+     --fp->reference_count;
+     if (fp->reference_count == 0) {
++        guest_sched_release_for_block();
+         while (fp->compile_threads_on.load(std::memory_order_acquire) > 0)
+             std::this_thread::yield();
+ 
+@@ -4832,6 +4848,7 @@ EXPORT(int, sceGxmShaderPatcherReleaseVertexProgram, SceGxmShaderPatcher *shader
+     SceGxmVertexProgram *const vp = vertexProgram.get(emuenv.mem);
+     --vp->reference_count;
+     if (vp->reference_count == 0) {
++        guest_sched_release_for_block();
+         while (vp->compile_threads_on.load(std::memory_order_acquire) > 0)
+             std::this_thread::yield();
+ 
+@@ -4914,6 +4931,7 @@ EXPORT(int, sceGxmSyncObjectDestroy, Ptr<SceGxmSyncObject> syncObject) {
+ EXPORT(int, sceGxmTerminate) {
+     TRACY_FUNC(sceGxmTerminate);
+     // Make sure everything is done in SDL side before killing Vita thread
++    guest_sched_release_for_block();
+     emuenv.gxm.display_queue.wait_empty();
+     gxm::destroy_all_contexts(emuenv, false);
+     gxm::destroy_all_render_targets(emuenv, false);
+@@ -5689,6 +5707,7 @@ EXPORT(int, sceGxmTransferFill, uint32_t fillColor, SceGxmTransferFormat destFor
+ EXPORT(int, sceGxmTransferFinish) {
+     TRACY_FUNC(sceGxmTransferFinish);
+     // same as sceGxmFinish
++    guest_sched_release_for_block();
+     renderer::finish(*emuenv.renderer, nullptr);
+ 
+     return 0;
+diff --git a/vita3k/modules/SceIofilemgr/SceIofilemgr.cpp b/vita3k/modules/SceIofilemgr/SceIofilemgr.cpp
+index ea18aff89..356156635 100644
+--- a/vita3k/modules/SceIofilemgr/SceIofilemgr.cpp
++++ b/vita3k/modules/SceIofilemgr/SceIofilemgr.cpp
+@@ -17,9 +17,14 @@
+ 
+ #include "SceIofilemgr.h"
+ 
++#include <cpu/functions.h>
+ #include <io/functions.h>
++#include <kernel/thread/thread_state.h>
+ #include <kernel/types.h>
+ 
++#include <chrono>
++#include <thread>
++
+ #include <util/tracy.h>
+ TRACY_MODULE_NAME(SceIofilemgr);
+ 
+@@ -272,6 +277,11 @@ EXPORT(int, sceIoLseek32, const SceUID fd, const int32_t offset, const SceIoSeek
+ 
+ EXPORT(int, sceIoRead, const SceUID fd, void *data, const SceSize size) {
+     TRACY_FUNC(sceIoRead, fd, data, size);
++    if (emuenv.cfg.current_config.file_loading_delay > 0) {
++        const uint32_t delay_us = emuenv.cfg.current_config.file_loading_delay * 1000 + size / 20;
++        guest_sched_release_for_block();
++        std::this_thread::sleep_for(std::chrono::microseconds(delay_us));
++    }
+     return read_file(data, emuenv.io, fd, size, export_name);
+ }
+ 
+diff --git a/vita3k/modules/SceLibKernel/SceLibKernel.cpp b/vita3k/modules/SceLibKernel/SceLibKernel.cpp
+index 5a57eb1d2..a309d6c22 100644
+--- a/vita3k/modules/SceLibKernel/SceLibKernel.cpp
++++ b/vita3k/modules/SceLibKernel/SceLibKernel.cpp
+@@ -629,7 +629,8 @@ EXPORT(SceUID, sceIoOpen, const char *file, const int flags, const SceMode mode)
+     }
+ 
+     if (emuenv.cfg.current_config.file_loading_delay > 0)
+-        std::this_thread::sleep_for(std::chrono::milliseconds(emuenv.cfg.current_config.file_loading_delay));
++        guest_sched_release_for_block();
++    std::this_thread::sleep_for(std::chrono::milliseconds(emuenv.cfg.current_config.file_loading_delay));
+ 
+     LOG_INFO("Opening file: {}", file);
+     return open_file(emuenv.io, file, flags, emuenv.vita_fs_path, export_name);
+@@ -642,6 +643,11 @@ EXPORT(int, sceIoOpenAsync) {
+ 
+ EXPORT(SceSSize, sceIoPread, SceUID fd, void *buf, SceSize nbyte, SceOff offset) {
+     TRACY_FUNC(sceIoPread, fd, buf, nbyte, offset);
++    if (emuenv.cfg.current_config.file_loading_delay > 0) {
++        const uint32_t delay_us = emuenv.cfg.current_config.file_loading_delay * 1000 + nbyte / 20;
++        guest_sched_release_for_block();
++        std::this_thread::sleep_for(std::chrono::microseconds(delay_us));
++    }
+     auto pos = tell_file(emuenv.io, fd, export_name);
+     if (pos < 0) {
+         return static_cast<SceSSize>(pos);
+diff --git a/vita3k/modules/SceNgsUser/SceNgs.cpp b/vita3k/modules/SceNgsUser/SceNgs.cpp
+index b47e05e05..e50735b26 100644
+--- a/vita3k/modules/SceNgsUser/SceNgs.cpp
++++ b/vita3k/modules/SceNgsUser/SceNgs.cpp
+@@ -19,6 +19,7 @@
+ 
+ #include "../SceProcessmgr/SceProcessmgr.h"
+ 
++#include <kernel/thread/thread_state.h>
+ #include <ngs/state.h>
+ #include <ngs/system.h>
+ #include <util/log.h>
+@@ -338,6 +339,7 @@ EXPORT(SceInt32, sceNgsRackRelease, ngs::Rack *rack, Ptr<void> callback) {
+         // but I don't think this is allowed (and if it is I don't know how to prevent this)
+         LOG_WARN_ONCE("sceNgsRackRelease called in a synchronous way during a ngs update, contact devs if your game softlocks now.");
+ 
++        guest_sched_release_for_block();
+         rack->system->voice_scheduler.condvar.wait(lock);
+         ngs::release_rack(emuenv.ngs, emuenv.mem, rack->system, rack);
+     } else {
+@@ -404,6 +406,7 @@ EXPORT(SceInt32, sceNgsSystemRelease, ngs::System *system) {
+         if (system->voice_scheduler.is_updating) {
+             LOG_WARN_ONCE("sceNgsSystemRelease called during a ngs update, contact devs if your game softlocks now.");
+ 
++            guest_sched_release_for_block();
+             system->voice_scheduler.condvar.wait(lock);
+         }
+     }
+diff --git a/vita3k/modules/module_parent.cpp b/vita3k/modules/module_parent.cpp
+index af2566f17..7fd74cb77 100644
+--- a/vita3k/modules/module_parent.cpp
++++ b/vita3k/modules/module_parent.cpp
+@@ -161,10 +161,6 @@ void call_import(EmuEnvState &emuenv, CPUState &cpu, uint32_t nid, SceUID thread
+         log_import_call('H', nid, thread_id, hle_nid_blacklist, lr);
+     }
+     set_last_import_call(nid, read_lr(cpu));
+-    if (const ThreadStatePtr breadcrumb_thread = emuenv.kernel.get_thread(thread_id)) {
+-        breadcrumb_thread->last_import_nid = nid;
+-        breadcrumb_thread->last_import_lr = read_lr(cpu);
+-    }
+ 
+     const ImportFn *fn = resolve_import(nid);
+     if (fn) {
+diff --git a/vita3k/renderer/include/renderer/texture_cache.h b/vita3k/renderer/include/renderer/texture_cache.h
+index 3860cced4..56105ab7a 100644
+--- a/vita3k/renderer/include/renderer/texture_cache.h
++++ b/vita3k/renderer/include/renderer/texture_cache.h
+@@ -47,6 +47,8 @@ static constexpr size_t TextureCacheSize = 1024;
+ 
+ typedef std::array<uint32_t, 4> TextureGxmDataRepr;
+ struct TextureCacheInfo {
++    // scene in which this texture's contents were last hashed
++    uint64_t last_hash_scene = 0;
+     uint64_t hash = 0;
+     SceGxmTexture texture;
+     int index = 0;
+@@ -105,6 +107,8 @@ protected:
+ public:
+     Backend backend;
+     bool use_protect = false;
++    // Scene the renderer is currently replaying
++    uint64_t current_scene = 0;
+     YUVConversionCache yuv_conversion_cache;
+     // use a separate sampler cache
+     bool use_sampler_cache = false;
+diff --git a/vita3k/renderer/include/renderer/vulkan/screen_renderer.h b/vita3k/renderer/include/renderer/vulkan/screen_renderer.h
+index 8e8302ea9..9d5cfc9dd 100644
+--- a/vita3k/renderer/include/renderer/vulkan/screen_renderer.h
++++ b/vita3k/renderer/include/renderer/vulkan/screen_renderer.h
+@@ -76,6 +76,10 @@ public:
+     int current_frame = 0;
+     // set when the swapchain needs to be rebuilt before the next acquire
+     bool need_rebuild = false;
++    // a size disagreement that lasts one frame should not cause a swapchain rebuild
++    int size_mismatch_frames = 0;
++    // why the last rebuild happened, for the log
++    const char *rebuild_reason = "initial";
+     // the swapchain images were created with eTransferDst (required by render_transfer)
+     bool support_swapchain_transfer_dst = false;
+ 
+@@ -99,6 +103,7 @@ private:
+     void create_render_pass();
+     void create_layout_sync();
+     void create_swapchain();
++    bool note_size_mismatch(bool mismatched);
+     vk::Pipeline create_graphics_pipeline_impl(std::array<vk::PipelineShaderStageCreateInfo, 2> &shader_stages);
+     bool create_graphics_pipelines();
+     void copy_to_vao(const void *data);
+diff --git a/vita3k/renderer/include/renderer/vulkan/surface_cache.h b/vita3k/renderer/include/renderer/vulkan/surface_cache.h
+index d260e6b71..6b03a3e42 100644
+--- a/vita3k/renderer/include/renderer/vulkan/surface_cache.h
++++ b/vita3k/renderer/include/renderer/vulkan/surface_cache.h
+@@ -23,6 +23,8 @@
+ #include <util/containers.h>
+ #include <vkutil/objects.h>
+ 
++#include <atomic>
++#include <chrono>
+ #include <functional>
+ #include <optional>
+ 
+@@ -48,6 +50,10 @@ enum struct SurfaceTiling {
+     Tiled
+ };
+ 
++extern std::atomic<uint32_t> f10_sync_count;
++extern std::atomic<uint32_t> f10_skip_count;
++extern std::atomic<uint64_t> f10_repack_us;
++
+ struct SurfaceCacheInfo {
+     vkutil::Image texture;
+     SurfaceTiling tiling;
+@@ -135,6 +141,9 @@ struct ColorSurfaceCacheInfo : public SurfaceCacheInfo {
+     // do we need some CPU convert/unswizzling part for surface sync
+     bool need_post_surface_sync = false;
+ 
++    // repack-format surfaces (CPU-converted writeback) sync at most once per throttle window
++    std::chrono::steady_clock::time_point last_repack_sync_time{};
++
+     // only for double buffer, do we need to sync the two views?
+     bool need_buffer_sync = false;
+ 
+diff --git a/vita3k/renderer/src/batch.cpp b/vita3k/renderer/src/batch.cpp
+index c88c9c00f..e5b4f13d7 100644
+--- a/vita3k/renderer/src/batch.cpp
++++ b/vita3k/renderer/src/batch.cpp
+@@ -18,6 +18,8 @@
+ #include <renderer/commands.h>
+ #include <renderer/driver_functions.h>
+ #include <renderer/functions.h>
++#include <array>
++#include <cpu/functions.h>
+ #include <renderer/state.h>
+ #include <renderer/types.h>
+ 
+@@ -109,12 +111,21 @@ static void process_batch(renderer::State &state, const FeatureState &features,
+             break;
+         }
+ 
+-        auto handler = handlers.find(cmd->opcode);
+-        if (handler == handlers.end()) {
++        static const std::array<CommandHandlerFunc *, 32> handler_table = [&]() {
++            std::array<CommandHandlerFunc *, 32> table{};
++            for (const auto &[op, fn] : handlers)
++                if (static_cast<size_t>(op) < table.size())
++                    table[static_cast<size_t>(op)] = fn;
++            return table;
++        }();
++
++        const size_t op_index = static_cast<size_t>(cmd->opcode);
++        CommandHandlerFunc *handler_fn = op_index < handler_table.size() ? handler_table[op_index] : nullptr;
++        if (!handler_fn) {
+             LOG_ERROR("Unimplemented command opcode {}", static_cast<int>(cmd->opcode));
+         } else {
+             CommandHelper helper(cmd);
+-            handler->second(state, mem, config, helper, features, command_list.context);
++            handler_fn(state, mem, config, helper, features, command_list.context);
+         }
+ 
+         Command *last_cmd = cmd;
+diff --git a/vita3k/renderer/src/renderer.cpp b/vita3k/renderer/src/renderer.cpp
+index 00cf0b2c9..5c8af7bd1 100644
+--- a/vita3k/renderer/src/renderer.cpp
++++ b/vita3k/renderer/src/renderer.cpp
+@@ -19,6 +19,10 @@
+ #include <renderer/state.h>
+ #include <renderer/types.h>
+ 
++#include <atomic>
++#include <chrono>
++#include <mutex>
++
+ #include <dialog/state.h>
+ #include <overlay/common_dialog.h>
+ #include <overlay/display_manager.h>
+diff --git a/vita3k/renderer/src/state_set.cpp b/vita3k/renderer/src/state_set.cpp
+index e983487ef..5a8843934 100644
+--- a/vita3k/renderer/src/state_set.cpp
++++ b/vita3k/renderer/src/state_set.cpp
+@@ -15,6 +15,9 @@
+ // with this program; if not, write to the Free Software Foundation, Inc.,
+ // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ 
++#include <array>
++#include <chrono>
++#include <cpu/functions.h>
+ #include <gxm/types.h>
+ #include <renderer/commands.h>
+ #include <renderer/driver_functions.h>
+@@ -558,11 +561,18 @@ COMMAND(handle_set_state) {
+         { GXMState::VisibilityIndex, cmd_set_state_visibility_index }
+     };
+ 
+-    auto result = handlers.find(gxm_state_to_set);
++    static const std::array<StateChangeHandlerFunc *, static_cast<size_t>(GXMState::TotalState)> handler_table = [&]() {
++        std::array<StateChangeHandlerFunc *, static_cast<size_t>(GXMState::TotalState)> table{};
++        for (const auto &[state, fn] : handlers)
++            table[static_cast<size_t>(state)] = fn;
++        return table;
++    }();
+ 
+-    if (result != handlers.end()) {
+-        // LOG_TRACE("State set: {}", (int)gxm_state_to_set);
+-        result->second(renderer, mem, config, helper, render_context);
++    const size_t state_index = static_cast<size_t>(gxm_state_to_set);
++    StateChangeHandlerFunc *fn = state_index < handler_table.size() ? handler_table[state_index] : nullptr;
++
++    if (fn) {
++        fn(renderer, mem, config, helper, render_context);
+     } else {
+         LOG_ERROR("Unknown state set command {}", static_cast<uint16_t>(gxm_state_to_set));
+     }
+diff --git a/vita3k/renderer/src/texture/cache.cpp b/vita3k/renderer/src/texture/cache.cpp
+index 212e7bae8..2d67ed247 100644
+--- a/vita3k/renderer/src/texture/cache.cpp
++++ b/vita3k/renderer/src/texture/cache.cpp
+@@ -17,6 +17,8 @@
+ 
+ #include <renderer/functions.h>
+ 
++#include <chrono>
++#include <cpu/functions.h>
+ #include <renderer/profile.h>
+ #include <renderer/texture_cache.h>
+ 
+@@ -709,6 +711,7 @@ void TextureCache::cache_and_bind_texture(const SceGxmTexture &gxm_texture, MemS
+         }
+ 
+         info->use_hash = should_use_hash;
++        info->last_hash_scene = current_scene;
+         if (info->use_hash) {
+             if (import_textures || export_textures)
+                 info->hash = hash_texture_nostride(gxm_texture, mem);
+@@ -722,13 +725,18 @@ void TextureCache::cache_and_bind_texture(const SceGxmTexture &gxm_texture, MemS
+         info = gxm_it->second;
+         configure = false;
+         if (info->use_hash) {
+-            const uint64_t previous_hash = info->hash;
+-            if (import_textures || export_textures)
+-                info->hash = hash_texture_nostride(gxm_texture, mem);
+-            else
+-                info->hash = hash_texture_data(gxm_texture, info->texture_size, mem) ^ 1;
+-
+-            upload = previous_hash != info->hash;
++            if (current_scene != 0 && info->last_hash_scene == current_scene) {
++                upload = false;
++            } else {
++                info->last_hash_scene = current_scene;
++                const uint64_t previous_hash = info->hash;
++                if (import_textures || export_textures)
++                    info->hash = hash_texture_nostride(gxm_texture, mem);
++                else
++                    info->hash = hash_texture_data(gxm_texture, info->texture_size, mem) ^ 1;
++
++                upload = previous_hash != info->hash;
++            }
+         } else {
+             range_protect_begin = align(gxm_texture.data_addr << 2, mem.host_page_size);
+             range_protect_end = align_down((gxm_texture.data_addr << 2) + info->texture_size, mem.host_page_size);
+diff --git a/vita3k/renderer/src/vulkan/context.cpp b/vita3k/renderer/src/vulkan/context.cpp
+index 7b56353b2..071768513 100644
+--- a/vita3k/renderer/src/vulkan/context.cpp
++++ b/vita3k/renderer/src/vulkan/context.cpp
+@@ -21,6 +21,7 @@
+ #include <renderer/vulkan/gxm_to_vulkan.h>
+ #include <renderer/vulkan/state.h>
+ 
++#include <cpu/functions.h>
+ #include <gxm/functions.h>
+ #include <renderer/functions.h>
+ 
+@@ -35,27 +36,36 @@ void VKContext::wait_thread_function(const MemState &mem) {
+     // try to wait for multiple fences at the same time if possible
+     std::vector<vk::Fence> fences;
+ 
++    uint64_t stat_fence_us = 0, stat_post_us = 0;
++    uint32_t stat_notifs = 0, stat_posts = 0, stat_frames = 0, stat_buffer_syncs = 0;
++    auto stat_last = std::chrono::steady_clock::now();
++    auto elapsed_us = [](std::chrono::steady_clock::time_point t0) {
++        return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count());
++    };
++
+     auto wait_for_fences = [&]() {
++        const auto t0 = std::chrono::steady_clock::now();
+         while (!fences.empty()) {
+             // timeout so we can check for shutdown
+             auto result = state.device.waitForFences(fences, VK_TRUE, 100'000'000ULL);
+             if (result == vk::Result::eSuccess) {
+                 // don't reset them
+                 fences.clear();
+-                return;
++                break;
+             }
+             if (result == vk::Result::eTimeout) {
+                 if (state.request_queue.is_aborted()) {
+                     fences.clear();
+-                    return;
++                    break;
+                 }
+                 continue;
+             }
+             LOG_ERROR("Could not wait for fences.");
+             assert(false);
+             fences.clear();
+-            return;
++            break;
+         }
++        stat_fence_us += elapsed_us(t0);
+     };
+ 
+     while (true) {
+@@ -70,6 +80,7 @@ void VKContext::wait_thread_function(const MemState &mem) {
+                        },
+                        [&](NotificationRequest &request) {
+                            if (request.notifications[0].address || request.notifications[1].address) {
++                               stat_notifs++;
+                                wait_for_fences();
+ 
+                                const std::shared_lock<std::shared_mutex> transition_lock(mem.external_transition_mutex);
+@@ -87,6 +98,7 @@ void VKContext::wait_thread_function(const MemState &mem) {
+                            }
+                        },
+                        [&](FrameDoneRequest &request) {
++                           stat_frames++;
+                            wait_for_fences();
+ 
+                            // don't reset them, the reset will be done in the new_frame function
+@@ -97,6 +109,7 @@ void VKContext::wait_thread_function(const MemState &mem) {
+                            new_frame_condv.notify_one();
+                        },
+                        [&](BufferSyncRequest &request) {
++                           stat_buffer_syncs++;
+                            wait_for_fences();
+                            const std::shared_lock<std::shared_mutex> transition_lock(mem.external_transition_mutex);
+                            auto mem_it = state.mapped_memories.lower_bound(request.location);
+@@ -120,11 +133,13 @@ void VKContext::wait_thread_function(const MemState &mem) {
+                            renderer::vulkan::surface_sync_internal_write = false;
+                        },
+                        [&](PostSurfaceSyncRequest &request) {
++                           const auto post_t0 = std::chrono::steady_clock::now();
+                            wait_for_fences();
+                            const std::shared_lock<std::shared_mutex> transition_lock(mem.external_transition_mutex);
+                            renderer::vulkan::surface_sync_internal_write = true;
+                            state.surface_cache.perform_post_surface_sync(mem, request.cache_info);
+                            renderer::vulkan::surface_sync_internal_write = false;
++                           stat_post_us += elapsed_us(post_t0);
+                        },
+                        [&](SyncSignalRequest &request) {
+                            wait_for_fences();
+@@ -604,17 +619,23 @@ void VKContext::stop_recording(const SceGxmNotification &notif1, const SceGxmNot
+             }
+         }
+ 
+-        if (surface_info && surface_info->need_post_surface_sync) {
++        // U2F10F10F10 guest write-back is throttled so run it after the notifications
++        const bool post_sync_after_notifications = surface_info && surface_info->need_post_surface_sync && surface_info->format == SCE_GXM_COLOR_BASE_FORMAT_U2F10F10F10;
++
++        if (surface_info && surface_info->need_post_surface_sync && !post_sync_after_notifications) {
+             state.request_queue.push(PostSurfaceSyncRequest{ surface_info });
+         }
+ 
+         if (notif1.address || notif2.address) {
+-            // notifications last
+             NotificationRequest request = {
+                 .notifications = { notif1, notif2 },
+             };
+             state.request_queue.push(request);
+         }
++
++        if (post_sync_after_notifications) {
++            state.request_queue.push(PostSurfaceSyncRequest{ surface_info });
++        }
+     }
+ }
+ 
+diff --git a/vita3k/renderer/src/vulkan/pipeline_cache.cpp b/vita3k/renderer/src/vulkan/pipeline_cache.cpp
+index a5eb7f6ee..4bfe50ee6 100644
+--- a/vita3k/renderer/src/vulkan/pipeline_cache.cpp
++++ b/vita3k/renderer/src/vulkan/pipeline_cache.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include <renderer/vulkan/pipeline_cache.h>
+ 
++#include <renderer/functions.h>
+ #include <renderer/vulkan/gxm_to_vulkan.h>
+ #include <renderer/vulkan/state.h>
+ #include <renderer/vulkan/types.h>
+diff --git a/vita3k/renderer/src/vulkan/scene.cpp b/vita3k/renderer/src/vulkan/scene.cpp
+index d0cd52287..1f95f1a8d 100644
+--- a/vita3k/renderer/src/vulkan/scene.cpp
++++ b/vita3k/renderer/src/vulkan/scene.cpp
+@@ -18,6 +18,7 @@
+ #include <renderer/vulkan/functions.h>
+ 
+ #include <gxm/functions.h>
++#include <renderer/functions.h>
+ #include <renderer/vulkan/gxm_to_vulkan.h>
+ 
+ #include <config/state.h>
+diff --git a/vita3k/renderer/src/vulkan/screen_renderer.cpp b/vita3k/renderer/src/vulkan/screen_renderer.cpp
+index 39545ee83..c334e5bd6 100644
+--- a/vita3k/renderer/src/vulkan/screen_renderer.cpp
++++ b/vita3k/renderer/src/vulkan/screen_renderer.cpp
+@@ -456,6 +456,7 @@ bool ScreenRenderer::acquire_swapchain_image() {
+         if (acquire_result == vk::Result::eErrorOutOfDateKHR
+             || acquire_result == vk::Result::eErrorSurfaceLostKHR) {
+             need_rebuild = true;
++            rebuild_reason = acquire_result == vk::Result::eErrorOutOfDateKHR ? "acquire: out of date" : "acquire: surface lost";
+             need_surface_recreate = acquire_result == vk::Result::eErrorSurfaceLostKHR;
+         } else {
+             LOG_WARN("Failed to get next image. Error: {}", vk::to_string(acquire_result));
+@@ -466,8 +467,10 @@ bool ScreenRenderer::acquire_swapchain_image() {
+         return false;
+     }
+ 
+-    if (acquire_result == vk::Result::eSuboptimalKHR)
+-        need_rebuild = !surface_matches_window_size();
++    if (acquire_result == vk::Result::eSuboptimalKHR && note_size_mismatch(!surface_matches_window_size())) {
++        need_rebuild = true;
++        rebuild_reason = "suboptimal + persistent size mismatch";
++    }
+ 
+     // wait for the previous frame using this image to finish
+     auto result = state.device.waitForFences(fences[swapchain_image_idx], VK_TRUE, next_image_timeout);
+@@ -580,9 +583,13 @@ void ScreenRenderer::swap_window() {
+ 
+     auto result = state.general_queue.presentKHR(&present_info);
+     if (result == vk::Result::eSuboptimalKHR) {
+-        need_rebuild = !surface_matches_window_size();
++        if (note_size_mismatch(!surface_matches_window_size())) {
++            need_rebuild = true;
++            rebuild_reason = "present: suboptimal + persistent size mismatch";
++        }
+     } else if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eErrorSurfaceLostKHR) {
+         need_rebuild = true;
++        rebuild_reason = result == vk::Result::eErrorOutOfDateKHR ? "present: out of date" : "present: surface lost";
+         need_surface_recreate = result == vk::Result::eErrorSurfaceLostKHR;
+     } else if (result != vk::Result::eSuccess) {
+         LOG_ERROR("Could not present KHR.");
+@@ -713,8 +720,12 @@ bool ScreenRenderer::ensure_swapchain() {
+     if (!window_has_drawable_size(state))
+         return false;
+ 
+-    if (!need_rebuild && !need_surface_recreate && swapchain && surface_matches_window_size())
+-        return true;
++    if (!need_rebuild && !need_surface_recreate && swapchain) {
++        // A one-frame disagreement between what Vulkan reports as the surface extent and what the window reports as its client size is not a resize
++        if (!note_size_mismatch(!surface_matches_window_size()))
++            return true;
++        rebuild_reason = "persistent window size mismatch";
++    }
+ 
+     if (!rebuild_swapchain_if_visible()) {
+         need_rebuild = true;
+@@ -726,12 +737,26 @@ bool ScreenRenderer::ensure_swapchain() {
+     return true;
+ }
+ 
++bool ScreenRenderer::note_size_mismatch(bool mismatched) {
++    if (!mismatched) {
++        size_mismatch_frames = 0;
++        return false;
++    }
++    return ++size_mismatch_frames >= 4;
++}
++
+ bool ScreenRenderer::rebuild_swapchain_if_visible() {
+     if (!window_has_drawable_size(state))
+         return false;
+ 
++    // This is the most expensive thing the emulator does outside loading
++    // it idles the device, which stalls the vblank thread too
++    auto *frame_host = static_cast<renderer::State &>(state).frame;
++    const auto rebuild_start = std::chrono::steady_clock::now();
+     state.device.waitIdle();
++    const auto idled = std::chrono::steady_clock::now();
+     destroy_swapchain();
++    const auto destroyed = std::chrono::steady_clock::now();
+ 
+ #ifdef __ANDROID__
+     if (!create())
+@@ -742,6 +767,15 @@ bool ScreenRenderer::rebuild_swapchain_if_visible() {
+ #endif
+ 
+     create_swapchain();
++    const auto created = std::chrono::steady_clock::now();
++    const auto ms = [](auto a, auto b) {
++        return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count() / 1000.0;
++    };
++    LOG_WARN("[SWAPCHAIN] rebuild ({}): window={}x{} -> swapchain={}x{} | waitIdle={:.1f}ms destroy={:.1f}ms create={:.1f}ms total={:.1f}ms",
++        rebuild_reason, frame_host->drawable_width(), frame_host->drawable_height(),
++        extent.width, extent.height, ms(rebuild_start, idled), ms(idled, destroyed),
++        ms(destroyed, created), ms(rebuild_start, created));
++    size_mismatch_frames = 0;
+     return static_cast<bool>(swapchain);
+ }
+ 
+diff --git a/vita3k/renderer/src/vulkan/surface_cache.cpp b/vita3k/renderer/src/vulkan/surface_cache.cpp
+index 2a3200e84..7a92a7082 100644
+--- a/vita3k/renderer/src/vulkan/surface_cache.cpp
++++ b/vita3k/renderer/src/vulkan/surface_cache.cpp
+@@ -38,11 +38,15 @@ extern "C" {
+ 
+ namespace renderer::vulkan {
+ thread_local bool surface_sync_internal_write = false;
+-}
++std::atomic<uint32_t> f10_sync_count{ 0 };
++std::atomic<uint32_t> f10_skip_count{ 0 };
++std::atomic<uint64_t> f10_repack_us{ 0 };
++} // namespace renderer::vulkan
+ 
+ static bool format_support_surface_sync(SceGxmColorBaseFormat format) {
+-    // we use rgba16 to emulate this format, don't even try to convert it back for now
+-    return format != SCE_GXM_COLOR_BASE_FORMAT_U2F10F10F10;
++    // U2F10F10F10 (emulated with RGBA16F) is converted back by pack_rgba16f_to_u2f10f10f10;
++    // games CPU-read such surfaces (e.g. Sonic Transformed's 4x4 auto-exposure measurement)
++    return true;
+ }
+ 
+ static bool format_support_swizzle(SceGxmColorBaseFormat format) {
+@@ -92,6 +96,41 @@ static void pack_rgba8_to_r4g4b4a4(uint8_t *dst, const uint8_t *src, uint32_t pi
+     }
+ }
+ 
++static bool surface_sync_needs_f10_repack(const ColorSurfaceCacheInfo &surface) {
++    return surface.format == SCE_GXM_COLOR_BASE_FORMAT_U2F10F10F10 && surface.texture.format == vk::Format::eR16G16B16A16Sfloat;
++}
++
++// F16 (s1e5m10) -> unsigned F10 (e5m5)
++static inline uint32_t half_to_f10(uint32_t h) {
++    // branchless: subtracting the sign bit yields an all-ones mask for positives, 0 for negatives
++    return ((h >> 5) & 0x3FF) & (((h >> 15) & 1) - 1);
++}
++
++// F16 alpha -> 2-bit unorm, rounding to the nearest of {0, 1/3, 2/3, 1}.
++static inline uint32_t half_to_unorm2(uint32_t h) {
++    if (h & 0x8000)
++        return 0;
++    return (h >= 0x3AAB) ? 3 : (h >= 0x3800) ? 2
++        : (h >= 0x3155)                      ? 1
++                                             : 0;
++}
++
++static void pack_rgba16f_to_u2f10f10f10(uint8_t *dst, const uint8_t *src, uint32_t pixel_stride, uint32_t height) {
++    const uint32_t count = pixel_stride * height;
++    uint32_t *dst_px = reinterpret_cast<uint32_t *>(dst);
++    const uint64_t *src_px = reinterpret_cast<const uint64_t *>(src);
++
++    for (uint32_t i = 0; i < count; i++) {
++        const uint64_t v = src_px[i];
++        const uint32_t r = half_to_f10(static_cast<uint32_t>(v) & 0xFFFF);
++        const uint32_t g = half_to_f10(static_cast<uint32_t>(v >> 16) & 0xFFFF);
++        const uint32_t b = half_to_f10(static_cast<uint32_t>(v >> 32) & 0xFFFF);
++        const uint32_t a = half_to_unorm2(static_cast<uint32_t>(v >> 48));
++
++        dst_px[i] = r | (g << 10) | (b << 20) | (a << 30);
++    }
++}
++
+ static void protect_surface(MemState &mem, ColorSurfaceCacheInfo &info) {
+     const bool trap_reads = (info.tiling == SurfaceTiling::Linear
+         && format_support_surface_sync(info.format));
+@@ -114,8 +153,13 @@ static void protect_surface(MemState &mem, ColorSurfaceCacheInfo &info) {
+ 
+     add_protect(mem, addr_start, addr_end - addr_start, perm,
+         [dirty, need_sync](Address, bool write) {
+-            if (write && dirty && !surface_sync_internal_write)
++            // ignore our own guest write-backs
++            if (write && surface_sync_internal_write)
++                return true;
++            if (write && dirty) {
+                 *dirty = true;
++                return true;
++            }
+             if (need_sync)
+                 *need_sync = true;
+             return true;
+@@ -360,6 +404,8 @@ bool VKSurfaceCache::try_upload_guest_content(ColorSurfaceCacheInfo &info, MemSt
+     const bool upload_supported = state.features.enable_memory_mapping
+         && info.tiling == SurfaceTiling::Linear
+         && format_support_surface_sync(info.format)
++        // guest U2F10F10F10 -> RGBA16F upload conversion is not implemented (sync is one-way)
++        && info.format != SCE_GXM_COLOR_BASE_FORMAT_U2F10F10F10
+         && info.swizzle.r == vk::ComponentSwizzle::eR
+         && !info.raw_image
+         && vk::blockSize(info.texture.format) > 0
+@@ -1942,6 +1988,17 @@ ColorSurfaceCacheInfo *VKSurfaceCache::perform_surface_sync() {
+     if (last_written_surface == nullptr || !*last_written_surface->need_surface_sync)
+         return nullptr;
+ 
++    // repack-format surfaces (CPU-converted writeback) sync at most once per 25ms
++    if (surface_sync_needs_f10_repack(*last_written_surface)) {
++        const auto now = std::chrono::steady_clock::now();
++        if (now - last_written_surface->last_repack_sync_time < std::chrono::milliseconds(25)) {
++            f10_skip_count.fetch_add(1, std::memory_order_relaxed);
++            return nullptr;
++        }
++        last_written_surface->last_repack_sync_time = now;
++        f10_sync_count.fetch_add(1, std::memory_order_relaxed);
++    }
++
+     VKContext *context = reinterpret_cast<VKContext *>(state.context);
+     vk::CommandBuffer cmd_buffer = context->render_cmd;
+ 
+@@ -1973,7 +2030,7 @@ ColorSurfaceCacheInfo *VKSurfaceCache::perform_surface_sync() {
+     }
+ 
+     const uint32_t pixel_stride = (last_written_surface->stride_bytes * 8) / gxm::bits_per_pixel(last_written_surface->format);
+-    const bool needs_copy_buffer = format_need_additional_memory(last_written_surface->format) || surface_sync_needs_u4u4u4u4_repack(*last_written_surface);
++    const bool needs_copy_buffer = format_need_additional_memory(last_written_surface->format) || surface_sync_needs_u4u4u4u4_repack(*last_written_surface) || surface_sync_needs_f10_repack(*last_written_surface);
+ 
+     // For macrotile-sync surfaces at non-integer scale factors, clamp the sync
+     // to only the rendered macroblocks.
+@@ -2071,7 +2128,8 @@ ColorSurfaceCacheInfo *VKSurfaceCache::perform_surface_sync() {
+ 
+         if (!copy_buffer.buffer) {
+             copy_buffer.size = static_cast<vk::DeviceSize>(pixel_stride) * last_written_surface->original_height * vk::blockSize(last_written_surface->texture.format);
+-            copy_buffer.init_buffer(vk::BufferUsageFlagBits::eTransferDst, vkutil::vma_mapped_alloc);
++            // the CPU repack reads this whole buffer back so it must be host-cached. Reading write-combined memory costs ~60ms for a 4MB surface.
++            copy_buffer.init_buffer(vk::BufferUsageFlagBits::eTransferDst, vkutil::vma_readback_alloc);
+         }
+ 
+         buffer = copy_buffer.buffer;
+@@ -2178,6 +2236,14 @@ void VKSurfaceCache::perform_post_surface_sync(const MemState &mem, ColorSurface
+         return;
+     }
+ 
++    if (surface_sync_needs_f10_repack(*surface)) {
++        const auto t0 = std::chrono::steady_clock::now();
++        pack_rgba16f_to_u2f10f10f10(pixels, static_cast<const uint8_t *>(surface->copy_buffer->mapped_data), pixel_stride, surface->original_height);
++        f10_repack_us.fetch_add(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count(), std::memory_order_relaxed);
++
++        return;
++    }
++
+     if (format_need_additional_memory(surface->format)) {
+         // special case, use a custom function
+         const bool is_swizzle_identity = surface->swizzle.r == vk::ComponentSwizzle::eR;
+diff --git a/vita3k/renderer/src/vulkan/texture.cpp b/vita3k/renderer/src/vulkan/texture.cpp
+index 6418798c0..39d42d2e2 100644
+--- a/vita3k/renderer/src/vulkan/texture.cpp
++++ b/vita3k/renderer/src/vulkan/texture.cpp
+@@ -15,6 +15,8 @@
+ // with this program; if not, write to the Free Software Foundation, Inc.,
+ // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ 
++#include <chrono>
++#include <cpu/functions.h>
+ #include <renderer/vulkan/functions.h>
+ 
+ #include <renderer/vulkan/gxm_to_vulkan.h>
+@@ -128,6 +130,7 @@ void sync_texture(VKContext &context, MemState &mem, std::size_t index, SceGxmTe
+         const bool needs_nearest = !context.state.texture_cache.format_supports_linear_filter(lookup_result->format);
+         context.state.texture_cache.cache_and_bind_sampler(texture, needs_nearest);
+     } else {
++        context.state.texture_cache.current_scene = context.scene_timestamp;
+         context.state.texture_cache.cache_and_bind_texture(texture, mem);
+         auto &image = context.state.texture_cache.current_texture->texture;
+         lookup_result = TextureLookupResult{
+diff --git a/vita3k/vkutil/include/vkutil/vkutil.h b/vita3k/vkutil/include/vkutil/vkutil.h
+index e9bd49600..e3cfc46f6 100644
+--- a/vita3k/vkutil/include/vkutil/vkutil.h
++++ b/vita3k/vkutil/include/vkutil/vkutil.h
+@@ -168,6 +168,13 @@ static constexpr vma::AllocationCreateInfo vma_mapped_alloc = {
+     .preferredFlags = vk::MemoryPropertyFlagBits::eHostCoherent
+ };
+ 
++static constexpr vma::AllocationCreateInfo vma_readback_alloc = {
++    .flags = vma::AllocationCreateFlagBits::eHostAccessRandom | vma::AllocationCreateFlagBits::eMapped,
++    .usage = vma::MemoryUsage::eAuto,
++    .requiredFlags = vk::MemoryPropertyFlagBits::eHostCoherent,
++    .preferredFlags = vk::MemoryPropertyFlagBits::eHostCached
++};
++
+ static constexpr vma::AllocationCreateInfo vma_host_visible = {
+     .flags = vma::AllocationCreateFlagBits::eHostAccessSequentialWrite,
+     .usage = vma::MemoryUsage::eAuto,
