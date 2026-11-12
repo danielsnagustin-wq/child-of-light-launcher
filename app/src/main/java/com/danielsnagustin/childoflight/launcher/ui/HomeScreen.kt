@@ -394,25 +394,24 @@ private fun GameCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = mutedTextColor(dark),
                     )
-                    // Ronda 0.2.64 (CPU/32-bit): aviso visible en Home
-                    // cuando el teléfono es de 32 bits: el motor
-                    // integrado necesita 64 bits (arm64) y en este
-                    // teléfono el juego no se puede abrir con él (la
-                    // APK nativa ni siquiera se instala en 32 bits:
-                    // INSTALL_FAILED_NO_MATCHING_ABIS; este aviso lo
-                    // ve quien tiene la APK pequeña). Sin mencionar
-                    // el núcleo por su nombre: "motor integrado".
-                    if (!DeviceCompat.is64BitDevice()) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            "Este teléfono es de 32 bits y el motor integrado necesita 64 bits (arm64). En este teléfono el juego no se puede abrir con el motor integrado. Funciona en teléfonos con procesador de 64 bits y Android 9 o superior (por ejemplo, Helio G99, Snapdragon, Dimensity, Exynos o Tensor de 64 bits).",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
                 } else {
                     PrimaryButton(strings.importGame.uppercase(), onClick = { onNavigate(Screen.IMPORT) })
+                }
+                // Ronda 0.2.65 (T-P2-2): el aviso de 32 bits ya no vive
+                // dentro de la rama gameOk: en un teléfono de 32 bits
+                // sin juego instalado no se veía y el usuario podía
+                // importar (proceso largo) para descubrir al pulsar
+                // JUGAR que el motor no se puede abrir. Se muestra
+                // siempre que el estado ya cargó y el teléfono es de
+                // 32 bits, con juego o sin él.
+                if (statusLoaded && !DeviceCompat.is64BitDevice()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        "Este teléfono es de 32 bits y el motor integrado necesita 64 bits (arm64). En este teléfono el juego no se puede abrir con el motor integrado. Funciona en teléfonos con procesador de 64 bits y Android 9 o superior (por ejemplo, Helio G99, Snapdragon, Dimensity, Exynos o Tensor de 64 bits).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
             }
             // Mientras JUGAR trabaja (sobre todo instalando el .pkg en
