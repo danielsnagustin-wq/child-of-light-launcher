@@ -47,8 +47,13 @@ class MemoryMappingMaskTest {
         assertFalse(MemoryMapping.NATIVE_BUFFER.isSupportedByMask(mask))
         assertEquals(MemoryMapping.DOUBLE_BUFFER, effectiveMappingMethod(MemoryMapping.NATIVE_BUFFER, mask))
         assertEquals(MemoryMapping.PAGE_TABLE, effectiveMappingMethod(MemoryMapping.PAGE_TABLE, mask))
+        // Orden intencionado: el del enum (MemoryMapping.entries), NO el
+        // orden numérico de los bits del pin. Es el mismo orden que
+        // fija fullMaskKeepsRequestedMethod (entries.toList()) y el que
+        // usan los chips de GPU y el diagnóstico: Double Buffer,
+        // Page Table, Native Buffer, External Host, Off.
         assertEquals(
-            listOf(MemoryMapping.DOUBLE_BUFFER, MemoryMapping.EXTERNAL_HOST, MemoryMapping.PAGE_TABLE),
+            listOf(MemoryMapping.DOUBLE_BUFFER, MemoryMapping.PAGE_TABLE, MemoryMapping.EXTERNAL_HOST),
             supportedMappingMethods(mask),
         )
     }
