@@ -24,31 +24,37 @@ import com.danielsnagustin.childoflight.launcher.model.presetSettings
  * diciendo lo mismo para quien la lea.
  *
  * P2-16: cada nota dice la diferencia REAL del preset con G99
- * Recomendado, calculada campo a campo desde [presetSettings]
- * (ningún preset tiene cero diferencias, así que ninguno se fusiona:
- * MALI_PERFORMANCE solo apaga la caché de texturas, MALI_BALANCED
- * solo cambia el filtro a FSR, ADRENO_PERFORMANCE solo cambia el
- * mapeo a Page Table, G99_QUALITY cambia 3 ajustes y
- * ADRENO_QUALITY_TURNIP cambia 5 — ronda 0.2.64: VSync ON ya no
- * cuenta, en Vulkan es inerte).
+ * Recomendado, calculada campo a campo desde [presetSettings].
+ * Ronda 0.2.65: DOS presets tienen CERO diferencias con Recomendado
+ * (MALI_PERFORMANCE y MALI_BALANCED: R-P1-5/R-P1-9 los dejaron
+ * idénticos en efecto — 1x, Bilinear, Double Buffer, cachés ON) y
+ * sus notas lo dicen así, sin inventar una diferencia. Siguen
+ * existiendo como entradas propias (etiqueta y defaultProfileFor).
+ * G99_QUALITY solo difiere en la resolución 2x (R-P1-8 quitó el FSR
+ * y R-P1-17 el HUD), GENERIC_QUALITY igual (2x, misma idea con
+ * etiqueta neutra para GPU sin perfil propio, RG-P2-16),
+ * ADRENO_PERFORMANCE solo en el mapeo Page Table,
+ * ADRENO_QUALITY_TURNIP difiere en 6 (2x, FXAA, 4x, Page Table,
+ * Turnip y HUD — el HUD es nuevo en 0.2.65, RG-P2-6 — y VSync ON ya
+ * no cuenta, en Vulkan es inerte, ronda 0.2.64).
  *
  * R5-A2-6: las notas describen el preset CANÓNICO, no el resultado
  * real cuando la preservación conserva un cambio manual (ver
- * preserveManualCacheChoices): por eso MALI_PERFORMANCE y
- * G99_QUALITY se matizan con "salvo tus cambios manuales
- * conservados".
+ * preserveManualCacheChoices).
  */
 fun presetCompatibilityNote(profile: GpuProfileId): String = when (profile) {
     GpuProfileId.G99_RECOMMENDED ->
-        "Recomendado en Helio G99 / Mali-G57: 1x estable, Double Buffer, sin Turnip. Double Buffer es el más seguro pero el más lento: si el juego va lento, prueba Page Table en Ajustes → GPU (en Mali suele ir mejor según el núcleo) y mide con la prueba de 30 s."
+        "Recomendado en Helio G99 / Mali-G57: 1x estable, Double Buffer, sin Turnip. Double Buffer es el más seguro pero el más lento: si el juego va lento, prueba Page Table en Ajustes → GPU y mide con la prueba de 30 s (es una recomendación del mantenedor, no del núcleo: no hay mediciones en este launcher)."
     GpuProfileId.G99_QUALITY ->
-        "2x con FSR en Mali y HUD de FPS activado: las únicas diferencias con Recomendado son la resolución 2x, el filtro FSR y el HUD, salvo tus cambios manuales conservados (si tenías el HUD apagado, se queda apagado). Si tu GPU no soporta FSR, el núcleo vuelve solo a Bilinear sin avisar. Prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado."
+        "2x con Bilinear: la única diferencia con Recomendado es la resolución 2x. Prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado."
     GpuProfileId.MALI_PERFORMANCE ->
-        "Mali genérico (no G99): la única diferencia con Recomendado es la caché de texturas OFF (libera RAM), salvo tus cambios manuales conservados (si la tenías ON, se queda ON). 1x siempre, Double Buffer en el preset (se puede cambiar a mano). Si va lento, prueba Page Table en Ajustes → GPU y mide con la prueba de 30 s. Sin Turnip: el driver Turnip no funciona en Mali."
+        "Mali genérico (no G99): en efecto es igual que Recomendado (1x, Bilinear, Double Buffer, cachés ON, sin Turnip): la única diferencia es la etiqueta. 1x siempre, Double Buffer en el preset (se puede cambiar a mano). Si va lento, prueba Page Table en Ajustes → GPU y mide con la prueba de 30 s. Sin Turnip: el driver Turnip no funciona en Mali."
     GpuProfileId.MALI_BALANCED ->
-        "Mali genérico: la única diferencia con Recomendado es el filtro FSR a 1x, si el FPS es estable. Si tu GPU no soporta FSR, el núcleo vuelve solo a Bilinear sin avisar. Sin Turnip: el driver Turnip no funciona en Mali."
+        "Mali genérico: en efecto es igual que Recomendado (1x, Bilinear, Double Buffer, sin Turnip): la única diferencia es la etiqueta. Sin Turnip: el driver Turnip no funciona en Mali."
+    GpuProfileId.GENERIC_QUALITY ->
+        "Genérico (Xclipse, PowerVR u otra GPU sin perfil propio): 2x con Bilinear. La única diferencia con Recomendado es la resolución 2x. Prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado."
     GpuProfileId.ADRENO_PERFORMANCE ->
         "Solo Snapdragon / Adreno: la única diferencia con Recomendado es el mapeo de memoria Page Table. En Mali se usa el perfil G99 / Mali. Sin Turnip."
     GpuProfileId.ADRENO_QUALITY_TURNIP ->
-        "Solo Snapdragon / Adreno: Vulkan + Turnip a 2x. Difiere de Recomendado en 5 ajustes: resolución 2x, filtro FXAA, anisotrópico 4x, Page Table y driver Turnip. Turnip no funciona en Mali."
+        "Solo Snapdragon / Adreno: Vulkan + Turnip a 2x. Difiere de Recomendado en 6 ajustes: resolución 2x, filtro FXAA, anisotrópico 4x, Page Table, driver Turnip y HUD de FPS activado (el HUD es la prueba visible de que Turnip cargó). Turnip no funciona en Mali."
 }
