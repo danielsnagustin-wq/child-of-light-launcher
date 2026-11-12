@@ -81,6 +81,22 @@ fun SettingsPerformanceScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 NoteText("El detalle y la posición solo se notan con el overlay de FPS activado.")
                 SettingSwitch("Mostrar mensajes de compilación de shaders", "OFF por defecto: pantalla limpia, sin avisos de shaders al arrancar o cambiar de escena. Actívalo si quieres verlos.", s.showCompileShaders) { vm.saveSettings(s.copy(showCompileShaders = it)) }
             }
+            // Ronda 0.2.66 — Ajustes experimentales. No hay una pantalla
+            // "Ajustes avanzados" en 0.2.65 (las 9 categorías son las de
+            // SettingsCategories): la sección vive aquí, en Rendimiento,
+            // con el título "Ajustes Experimentales" (decisión del usuario
+            // 2026-11-12: se queda en Rendimiento, marcado como experimental).
+            // Regla del proyecto: un interruptor sin efecto real no se
+            // crea. Por eso aquí hay UN solo interruptor (Audio SDL, con
+            // su parche adaptado en app/src/main/cpp/patches/): las demás
+            // familias no tienen interruptor porque su parche no se pudo
+            // adaptar limpio al núcleo actual (ver patches/experimental/).
+            item {
+                SectionTitle("Ajustes Experimentales")
+                NoteText("Solo para probar: pueden romper el sonido o el juego. Todos OFF por defecto. Cambiar uno exige salir del juego y volver a entrar. El modo seguro los apaga todos.")
+                SettingSwitch("Audio SDL experimental", "exp-audio-sdl en config.yml. Nuevo manejo del audio SDL: sin la espera que frena el hilo del juego, con la cola calibrada contra lo que falta por sonar y audio de baja latencia. Si el sonido cruje, se retrasa o se entrecorta, apágalo y vuelve al audio actual.", s.expAudioSdl) { vm.saveSettings(s.copy(expAudioSdl = it)) }
+                NoteText("Sin interruptor (aún no se pueden probar en esta compilación): caché de texturas / memoria baja y Double Buffer — sus parches del fork necesitan piezas que el núcleo actual no tiene y van en patches/experimental/ con su plan de portado. El polling del mando con 60 FPS tampoco lleva interruptor: solo actúa con el modo 60 FPS activado (Ajustes → CPU), y sus parches también están pendientes de reescribirse para el núcleo actual.")
+            }
         }
     }
 }
