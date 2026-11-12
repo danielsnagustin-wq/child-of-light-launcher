@@ -187,7 +187,7 @@ class Vita3kConfigGeneratorTest {
     fun quality2xEmitsResolution20() {
         val yaml = Vita3kConfigGenerator.generate(presetSettings(GpuProfileId.G99_QUALITY), "/data/vita3k")
         assertTrue(yaml.contains("resolution-multiplier: 2.0"))
-        assertTrue(yaml.contains("screen-filter: \"FSR\""))
+        assertTrue(yaml.contains("screen-filter: \"Bilinear\""))
     }
 
     @Test
