@@ -549,6 +549,30 @@ object Vita3kCoreBridge {
         }
     }
 
+    /**
+     * Máscara de métodos de mapeo de memoria soportados por el driver
+     * (ronda 0.2.64, P1-3 Mali). Reenvía a
+     * Java_org_vita3k_emulator_NativeLib_getSupportedMemoryMappingMask
+     * (native_config.cpp:804 del pin 3e43bc80): con el driver del
+     * sistema y sin sesión, enumera los dispositivos Vulkan y
+     * devuelve la máscara del primero. Bits (renderer/state.h:51):
+     * Disabled=1<<0, DoubleBuffer=1<<1, ExernalHost=1<<2,
+     * PageTable=1<<3, NativeBuffer=1<<4. [customDriverName] es el
+     * nombre del driver Turnip instalado ("" = driver del sistema).
+     * Devuelve 0 si no hay núcleo, si el JNI no está (APK pequeña) o
+     * si el núcleo no la devuelve: 0 = desconocida, la UI no filtra
+     * nada (ver MemoryMapping.isSupportedByMask / effectiveMapping-
+     * Method en el modelo).
+     */
+    fun getSupportedMemoryMappingMask(customDriverName: String = ""): Int {
+        if (!available) return 0
+        return try {
+            nativeGetSupportedMemoryMappingMask(customDriverName)
+        } catch (_: UnsatisfiedLinkError) {
+            0
+        }
+    }
+
     // --- Trofeos (Ronda 0.2.57, puente JNI de trofeos) ---
     // Solo lectura: el juego desbloquea, el launcher solo observa.
     // Reenvía a Java_org_vita3k_emulator_NativeLib_getTrophyCollections
@@ -599,6 +623,7 @@ object Vita3kCoreBridge {
     private external fun nativeInstallCustomDriver(zipPath: String): String
     private external fun nativeGetInstalledCustomDrivers(): Array<String>
     private external fun nativeRemoveCustomDriver(driverName: String): Boolean
+    private external fun nativeGetSupportedMemoryMappingMask(customDriverName: String): Int
     private external fun nativeOverlayAttach(): Boolean
     private external fun nativeOverlayDetach(): Boolean
     private external fun nativeOverlayIsAttached(): Boolean
