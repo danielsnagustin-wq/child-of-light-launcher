@@ -1,0 +1,20 @@
+diff --git a/vita3k/cpu/src/dynarmic_cpu.cpp b/vita3k/cpu/src/dynarmic_cpu.cpp
+index cdfb07c92..5c3a3a01b 100644
+--- a/vita3k/cpu/src/dynarmic_cpu.cpp
++++ b/vita3k/cpu/src/dynarmic_cpu.cpp
+@@ -289,6 +289,15 @@ std::unique_ptr<Dynarmic::A32::Jit> DynarmicCPU::make_jit() {
+         config.absolute_offset_page_table = true;
+     } else if (!log_mem && cpu_opt) {
+         config.fastmem_pointer = std::bit_cast<uintptr_t>(mem.memory.get());
++        // Launcher 0.2.66, experimento CPU-07 (Fase 3): accesos exclusivos
++        // LDREX/STXR por fastmem en vez de por callback. Solo se fija cuando
++        // hay fastmem de verdad (esta rama: sin page table y con cpu-opt).
++        // El aviso de upstream ("en x64 depende de cmpxchg") es para host
++        // x64; en host arm64 las semánticas exclusivas son nativas. Aun así
++        // es experimento con puerta de teléfono: si aparecen cuelgues en
++        // bloqueos del juego, se revierte entero (el camino por callback
++        // sigue siendo el default).
++        config.fastmem_exclusive_access = true;
+     }
+     config.hook_hint_instructions = true;
+     config.global_monitor = &shared_monitor;
