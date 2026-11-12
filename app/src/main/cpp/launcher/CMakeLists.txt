@@ -17,6 +17,9 @@
 #   setPauseReasonEnabled/setInputIntercepted
 # - driver_bridge.cpp: installCustomDriver/getInstalledCustomDrivers/
 #   removeCustomDriver (Turnip, solo Adreno)
+# - mapping_bridge.cpp: getSupportedMemoryMappingMask (ronda 0.2.64,
+#   P1-3 Mali: qué métodos de mapeo soporta el driver; sin ella la UI
+#   no sabe si el método pedido existe de verdad)
 # - input_overlay_bridge.cpp: overlay táctil -> mando virtual SDL de
 #   upstream (attach/detach/setButton/setAxis/setTouchState)
 # - trophy_bridge.cpp: getTrophyCollections (solo lectura del TRP
@@ -39,6 +42,7 @@ target_sources(vita3k PRIVATE
     src/install_bridge.cpp
     src/session_bridge.cpp
     src/driver_bridge.cpp
+    src/mapping_bridge.cpp
     src/input_overlay_bridge.cpp
     src/trophy_bridge.cpp
 )
