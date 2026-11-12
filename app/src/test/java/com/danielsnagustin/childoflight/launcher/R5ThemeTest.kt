@@ -59,11 +59,14 @@ class R5ThemeTest {
     }
 
     @Test
-    fun effectiveSettings_60fpsFuerzaVsyncOn() {
-        // Lo mismo para VSync: la pantalla GPU y diagnóstico muestra
-        // el efectivo, no el guardado.
-        val saved = LauncherSettings(fpsHack = true, vSync = false)
-        assertTrue(effectiveSettings(saved).vSync)
+    fun effectiveSettings_60fpsRespetaVsyncGuardada() {
+        // Ronda 0.2.64: el modo 60 FPS YA NO fuerza VSync ON (en
+        // Vulkan es inerte; su único mecanismo real es fps-hack):
+        // la VSync efectiva es la guardada, no true.
+        val savedOff = LauncherSettings(fpsHack = true, vSync = false)
+        assertFalse(effectiveSettings(savedOff).vSync)
+        val savedOn = LauncherSettings(fpsHack = true, vSync = true)
+        assertTrue(effectiveSettings(savedOn).vSync)
     }
 
     @Test
