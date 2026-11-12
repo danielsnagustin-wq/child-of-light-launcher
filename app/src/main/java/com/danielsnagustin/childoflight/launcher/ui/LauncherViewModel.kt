@@ -15,6 +15,7 @@ import com.danielsnagustin.childoflight.launcher.core.EmbeddedCoreLayout
 import com.danielsnagustin.childoflight.launcher.core.EmbeddedPkgInstaller
 import com.danielsnagustin.childoflight.launcher.core.Vita3kCoreBridge
 import com.danielsnagustin.childoflight.launcher.core.OverlayInputStats
+import com.danielsnagustin.childoflight.launcher.core.FrameProfileStats
 import com.danielsnagustin.childoflight.launcher.core.TouchStats
 import com.danielsnagustin.childoflight.launcher.data.AchievementRepository
 import com.danielsnagustin.childoflight.launcher.data.BundledTurnipDriver
@@ -64,6 +65,7 @@ import com.danielsnagustin.childoflight.launcher.model.applySafeMode
 import com.danielsnagustin.childoflight.launcher.ui.settings.audioFixTarget
 import com.danielsnagustin.childoflight.launcher.ui.settings.SettingsCategory
 import com.danielsnagustin.childoflight.launcher.ui.settings.categoryHasResettableSettings
+import com.danielsnagustin.childoflight.launcher.ui.settings.extractCpuLogLines
 import com.danielsnagustin.childoflight.launcher.ui.settings.extractRecentErrorLines
 import com.danielsnagustin.childoflight.launcher.ui.settings.guardTurnipDriver
 import com.danielsnagustin.childoflight.launcher.ui.settings.resetCategorySettings
@@ -255,6 +257,10 @@ internal fun restoreSafeModeSnapshot(snapshot: LauncherSettings, current: Launch
         // campos experimentales (ver applySafeMode); al salir,
         // vuelven los valores anteriores con la misma regla.
         hashlessTextureCache = keepIfTouched(current.hashlessTextureCache, forced.hashlessTextureCache, snapshot.hashlessTextureCache),
+        // Ronda 0.2.66: el modo seguro también apaga el audio SDL
+        // experimental (ver applySafeMode); al salir, vuelve el valor
+        // anterior con la misma regla.
+        expAudioSdl = keepIfTouched(current.expAudioSdl, forced.expAudioSdl, snapshot.expAudioSdl),
         memoryMapping = keepIfTouched(current.memoryMapping, forced.memoryMapping, snapshot.memoryMapping),
         fileLoadingDelay = keepIfTouched(current.fileLoadingDelay, forced.fileLoadingDelay, snapshot.fileLoadingDelay),
         // Ronda 0.2.64 (P1-4 Adreno): el modo seguro también neutraliza
@@ -305,6 +311,9 @@ internal fun preservedPresetFieldsDiffer(current: LauncherSettings, preset: Laun
         current.showFpsOverlay != preset.showFpsOverlay ||
         current.hashlessTextureCache != preset.hashlessTextureCache ||
         current.showCompileShaders != preset.showCompileShaders ||
+        // Ronda 0.2.66: el audio SDL experimental también sobrevive a
+        // aplicar un preset (preserveManualCacheChoices).
+        current.expAudioSdl != preset.expAudioSdl ||
         current.performanceOverlayDetail != preset.performanceOverlayDetail ||
         current.performanceOverlayPosition != preset.performanceOverlayPosition
 
@@ -1361,6 +1370,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     settings,
                     Vita3kConfigGenerator.vitaFsPathFor(library.vitaRoot).absolutePath,
                     gpu,
+                    // Ronda 0.2.66 (G11-02): la vista previa muestra el
+                    // mapeo EFECTIVO que se escribirá al lanzar, no el pedido.
+                    _supportedMappingMask.value,
                 ),
             )
         }
@@ -1869,7 +1881,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         runCatching {
             val settings = settingsRepo.settingsFlow.first()
             val gpu = settingsRepo.gpuInfoFlow.first()
-            Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu)
+            // Ronda 0.2.66 (G11-02): con máscara conocida se emite el
+            // mapeo efectivo (igual que en play()).
+            Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu, _supportedMappingMask.value)
         }.onFailure {
             LauncherLog.append(context, "config", "No se pudo escribir config.yml antes del firmware: ${it.message}")
         }
@@ -2661,6 +2675,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     // --- Jugar / benchmark ---
 
+    // Ronda 0.2.66 (AUD-P2-2): aviso visible cuando la sesión anterior
+    // del núcleo no se pudo destruir (-4) y los ajustes cambiados
+    // puede que no se apliquen en la partida que se acaba de lanzar.
+    private val staleSessionWarningText =
+        " La sesión anterior del núcleo no se pudo destruir: es posible que los ajustes cambiados no se apliquen en esta partida. Cierra la app por completo y vuelve a intentarlo."
+
     fun play() {
         viewModelScope.launch(Dispatchers.IO) {
             if (!tryBeginLaunch()) return@launch
@@ -2709,7 +2729,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // configWritten queda false y launch() lo escribe como antes.
             var configWritten = false
             runCatching {
-                Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu)
+                // Ronda 0.2.66 (G11-02): con máscara conocida se emite
+                // el mapeo efectivo, no el pedido.
+                Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu, _supportedMappingMask.value)
                 configWritten = true
             }.onFailure {
                 LauncherLog.append(context, "config", "No se pudo escribir config.yml antes del firmware: ${it.message}")
@@ -2732,6 +2754,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 },
                 configAlreadyWritten = configWritten,
                 launchStartedAtMillis = launchStartedAtMillis,
+                // Ronda 0.2.66 (G11-02): el config de repuesto de
+                // launchImpl también resuelve el mapeo efectivo.
+                memoryMappingMask = _supportedMappingMask.value,
             )
             _installProgress.value = null
             LauncherLog.append(context, "launch", "JUGAR resultado: ${outcome::class.simpleName} (${SystemClock.elapsedRealtime() - launchStartedAtMillis}ms desde JUGAR)")
@@ -2815,14 +2840,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         // EmbeddedFailed, no LaunchedEmbedded).
                         if (launcher.lastBlockedPkgPath != null) {
                             _alert.value = AlertInfo(
-                                "El juego se lanzó, pero un update o DLC no se pudo instalar y quedó bloqueado. Puedes borrar ese .pkg para no volver a intentarlo en cada JUGAR, o reimportarlo en Importar.",
+                                "El juego se lanzó, pero un update o DLC no se pudo instalar y quedó bloqueado. Puedes borrar ese .pkg para no volver a intentarlo en cada JUGAR, o reimportarlo en Importar." +
+                                    if (launcher.staleSessionWarning) "\n\nAviso:$staleSessionWarningText" else "",
                                 AlertAction.DELETE_BLOCKED_PKG,
                             )
                         } else {
                             // Sin Vulkan, el config.yml ya cayó a OpenGL solo;
                             // se avisa aquí porque es el momento en que importa.
                             _message.value = "Núcleo embebido: juego lanzado (${outcome.configPath})." +
-                                if (gpu?.vulkanSupported == false) " Sin Vulkan en este teléfono: se usa OpenGL, puede ir más lento o con fallos gráficos." else ""
+                                if (gpu?.vulkanSupported == false) " Sin Vulkan en este teléfono: se usa OpenGL, puede ir más lento o con fallos gráficos." else "" +
+                                if (launcher.staleSessionWarning) staleSessionWarningText else ""
                         }
                     }
                     is Vita3KLauncher.LaunchOutcome.EmbeddedCorePresent ->
@@ -3247,7 +3274,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // escritura falla, el flag queda false y launch() lo escribe.
             var configWritten = false
             runCatching {
-                Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu)
+                // Ronda 0.2.66 (G11-02): con máscara conocida se emite
+                // el mapeo efectivo, no el pedido (igual que en play()).
+                Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu, _supportedMappingMask.value)
                 configWritten = true
             }
             // Firmware: igual que en play(), instalar el PUP guardado
@@ -3263,6 +3292,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 configAlreadyWritten = configWritten,
                 prerequisites = pre,
                 launchStartedAtMillis = launchStartedAtMillis,
+                // Ronda 0.2.66 (G11-02): el config de repuesto de
+                // launchImpl también resuelve el mapeo efectivo.
+                memoryMappingMask = _supportedMappingMask.value,
             )
             LauncherLog.append(context, "launch", "Prueba 30 s resultado: ${outcome::class.simpleName} (${SystemClock.elapsedRealtime() - launchStartedAtMillis}ms desde el toque)")
             // P0-1 / P1-12: igual que en play(): si el resultado es un
@@ -3293,7 +3325,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         "Prueba de 30 s en marcha. ${Vita3KLauncher.FIRMWARE_WARNING_EXTERNAL}"
                     is Vita3KLauncher.LaunchOutcome.LaunchedEmbedded ->
                         "Prueba de 30 s en marcha (núcleo embebido). El FPS se mide solo mientras juegas; al volver se registra automáticamente." +
-                            if (gpu?.vulkanSupported == false) " Sin Vulkan en este teléfono: se usa OpenGL, puede ir más lento." else ""
+                            if (gpu?.vulkanSupported == false) " Sin Vulkan en este teléfono: se usa OpenGL, puede ir más lento." else "" +
+                            // Ronda 0.2.66 (AUD-P2-2): aviso visible si la
+                            // sesión anterior no se pudo destruir (-4).
+                            if (launcher.staleSessionWarning) staleSessionWarningText else ""
                     is Vita3KLauncher.LaunchOutcome.Blocked -> {
                         _pendingBenchmark.value = null
                         outcome.reason
@@ -4246,7 +4281,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             appendLine("Backend: ${resolveBackend(effective, gpu).label} | Resolución: ${effective.resolutionLabel} | Filtro: ${effective.screenFilter}")
             appendLine("Aniso: ${effective.anisotropicFiltering}x | VSync: ${effective.vSync} | Async: ${effective.asyncPipelineCompilation}")
             appendLine("High Accuracy: ${effective.highAccuracy} | Surface Sync: ${effective.surfaceSyncEnabled} | Memory Mapping: ${effective.memoryMapping}")
-            appendLine("Audio: ${effective.audioBackend} | Volumen: ${effective.audioVolume} | NGS: ${effective.ngsEnable}")
+            appendLine("Audio: ${effective.audioBackend} | Volumen: ${effective.audioVolume} | NGS: ${effective.ngsEnable} | Audio SDL experimental: ${effective.expAudioSdl}")
             appendLine("CPU opt (JIT): ${effective.cpuOpt} | FPS hack: ${effective.fpsHack}")
             appendLine("Modo seguro: ${effective.safeMode}")
             appendLine("Driver: ${effective.gpuDriver} | Turnip: ${effective.turnipVersion} (instalado: ${effective.turnipInstalled})")
@@ -4265,6 +4300,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     settings,
                     Vita3kConfigGenerator.vitaFsPathFor(library.vitaRoot).absolutePath,
                     gpu,
+                    // Ronda 0.2.66 (G11-02): el reporte muestra el
+                    // mapeo efectivo que se escribe al lanzar.
+                    _supportedMappingMask.value,
                 ),
             )
             appendLine("--- Tiempos de carga (T1/T2) ---")
@@ -4280,6 +4318,43 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             } else {
                 timingLines.forEach { appendLine(it) }
             }
+            appendLine()
+            // Ronda 0.2.66 (Fase L, INST-P0-2/INST-P0-3/INST-P1-1):
+            // perfil de frames. Los agregados acumulan desde que se
+            // activó el perfil en este proceso; el nº de muestras
+            // dice si la sesión midió algo o no. La lectura honesta
+            // vive en Snapshot.formatSummary(): ningún número de aquí
+            // se llama "presentado" (sin pin no hay medida de frames
+            // presentados) y un juego a 30 fps puede ser correcto.
+            appendLine("--- Perfil de frames (Fase L) ---")
+            appendLine("Perfil de frames: ${if (settings.frameProfile) "activado" else "desactivado"} (Ajustes → Diagnóstico)")
+            val frameProfile = FrameProfileStats.snapshot()
+            if (frameProfile.totalSamples == 0L) {
+                appendLine("Sin muestras todavía (activa el perfil y juega una partida para medirlas).")
+            } else {
+                appendLine(frameProfile.formatSummary())
+            }
+            appendLine()
+            // Ronda 0.2.66 (CPU-09, parte launcher): el diagnóstico
+            // de CPU del launcher muestra las líneas de CPU del log
+            // del núcleo (la única señal de CPU que existe hoy: el
+            // pin registra "CPU Optimisation state: …" al arrancar)
+            // y recomienda el overlay ON para la prueba. No hay
+            // contadores JIT ni tiempos por hilo en el launcher, y
+            // no se afirma si el build del núcleo habilita o no una
+            // herramienta de profiling (corrección Codex 9: eso no
+            // queda probado con las citas disponibles).
+            appendLine("--- Diagnóstico de CPU ---")
+            appendLine("CPU opt (JIT): ${effective.cpuOpt} (ver «Ajustes activos» arriba). El launcher no tiene contadores JIT ni tiempos de CPU por hilo: eso necesita instrumentación del núcleo.")
+            val nativeLogTail = LauncherLog.readNativeLogTail(File(library.vitaRoot, "vita3k.log"))
+            val cpuLines = extractCpuLogLines(nativeLogTail)
+            if (cpuLines.isEmpty()) {
+                appendLine("Sin líneas de CPU en la cola del log del núcleo (últimas 40 líneas).")
+            } else {
+                appendLine("Líneas de CPU del log del núcleo:")
+                cpuLines.forEach { appendLine(it) }
+            }
+            appendLine("Para la prueba de lentitud, activa el overlay de FPS (Ajustes → Rendimiento → Mostrar overlay de FPS) y el perfil de frames (Ajustes → Diagnóstico).")
             appendLine()
             appendLine("--- Errores recientes del log ---")
             val recentErrors = extractRecentErrorLines(recentLog)
@@ -4302,7 +4377,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // Ronda 0.2.65 (W-P1-8): la cabecera ya no nombra el
             // archivo interno del núcleo (nombre genérico).
             appendLine("--- Log del núcleo (últimas líneas) ---")
-            appendLine(LauncherLog.readNativeLogTail(File(library.vitaRoot, "vita3k.log")))
+            appendLine(nativeLogTail)
         }
         // Privacidad: el nombre del paquete no sale en el reporte
         // (ni en la cabecera ni en las rutas del log/config): se
