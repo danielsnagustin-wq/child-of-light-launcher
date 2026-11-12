@@ -1247,6 +1247,12 @@ class GamepadOverlayView @JvmOverloads constructor(
          * crece (pressAmount).
          */
         protected fun drawGlassBody(canvas: Canvas, rect: RectF, alpha: Float, ornaments: Boolean = true, fourWayOrnaments: Boolean = false) {
+            // 0.2.67 (fix crash reporte 0.2.66): un rect degenerado (ancho o alto 0,
+            // p. ej. onDraw antes del primer layout o durante la rotación) daba
+            // radius 0 y RadialGradient tiraba IllegalArgumentException
+            // ("ending radius must be > 0"), matando la app al tocar JUGAR.
+            // Con tamaño 0 no hay nada visible que dibujar: salir antes.
+            if (rect.width() <= 0f || rect.height() <= 0f) return
             val cx = rect.centerX()
             val cy = rect.centerY()
             val radius = rect.width() / 2f
