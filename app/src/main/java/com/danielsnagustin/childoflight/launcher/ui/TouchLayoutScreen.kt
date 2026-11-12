@@ -64,6 +64,7 @@ import com.danielsnagustin.childoflight.launcher.data.ControlShape
 import com.danielsnagustin.childoflight.launcher.data.IgniculusMode
 import com.danielsnagustin.childoflight.launcher.data.StickMode
 import com.danielsnagustin.childoflight.launcher.data.TouchControl
+import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping
 import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
 import com.danielsnagustin.childoflight.launcher.data.VitaButton
 
@@ -353,8 +354,17 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 NoteText("Midiendo la vista previa: los sliders de posición se activan al medirla.")
             }
             val density = LocalDensity.current
-            val halfXFrac = if (previewSize.width > 0) (with(density) { control.sizeDp.dp.toPx() } / 2f) / previewSize.width else 0f
-            val halfYFrac = if (previewSize.height > 0) (with(density) { control.sizeDp.dp.toPx() } / 2f) / previewSize.height else 0f
+            // 0.2.64 (A-7): el tamaño efectivo en px es el mismo que
+            // dibuja el juego (fracción del alto del juego si el
+            // control la trae, dp si no): el clamp de posición y la
+            // vista previa usan ese tamaño, no el sizeDp guardado.
+            val effectiveSizePx = if (previewSize.width > 0 && previewSize.height > 0) {
+                TouchOverlayMapping.controlSizePx(control, previewSize.height.toFloat(), density.density)
+            } else {
+                with(density) { control.sizeDp.dp.toPx() }
+            }
+            val halfXFrac = if (previewSize.width > 0) (effectiveSizePx / 2f) / previewSize.width else 0f
+            val halfYFrac = if (previewSize.height > 0) (effectiveSizePx / 2f) / previewSize.height else 0f
             // 0.2.58 (R7): el slider X del salto llega a 110 % (su
             // centro de fábrica es 1.012); con el rango 0..100 el
             // slider mostraría 101 fuera de rango y al moverlo
@@ -363,7 +373,19 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             val xRange = if (control.id == "btn_jump") 0..110 else 0..100
             SettingSlider("Posición X", (control.xFraction * 100).toInt(), xRange, { updateControl(control.copy(xFraction = TouchLayoutRepository.clampCenterFraction(it / 100f, halfXFrac, if (control.id == "btn_jump") TouchLayoutRepository.JUMP_MAX_X_FRACTION else null))) }, enabled = previewMeasured) { "$it%" }
             SettingSlider("Posición Y", (control.yFraction * 100).toInt(), 0..100, { updateControl(control.copy(yFraction = TouchLayoutRepository.clampCenterFraction(it / 100f, halfYFrac))) }, enabled = previewMeasured) { "$it%" }
-            SettingSlider("Tamaño", control.sizeDp, 40..260, { updateControl(control.copy(sizeDp = it)) }) { "${it}dp" }
+            // 0.2.64 (A-7): el slider muestra el tamaño EFECTIVO en
+            // dp en ESTE teléfono (fracción x alto del juego /
+            // densidad si el control trae fracción) y al moverlo el
+            // control pasa a modo dp (sizeFraction = null): un tamaño
+            // editado a mano es dp, no fracción. Sin limpiar la
+            // fracción, el slider no haría nada (la fracción manda
+            // sobre sizeDp en el dibujado).
+            val effectiveSizeDp = if (previewSize.height > 0) {
+                (effectiveSizePx / density.density).toInt().coerceIn(40, 260)
+            } else {
+                control.sizeDp
+            }
+            SettingSlider("Tamaño", effectiveSizeDp, 40..260, { updateControl(control.copy(sizeDp = it, sizeFraction = null)) }) { "${it}dp" }
             SettingSlider("Opacidad", (control.opacity * 100).toInt(), 10..100, { updateControl(control.copy(opacity = it / 100f)) }) { "$it%" }
 
             Text("Forma", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
@@ -571,10 +593,13 @@ private fun TouchPreview(
                 .onSizeChanged { previewSize = it; onPreviewSizeChanged(it) },
         ) {
             previewControls.forEach { control ->
-                    val size = control.sizeDp.dp
-                    val shape = if (control.shape == ControlShape.CIRCLE) CircleShape else RoundedCornerShape(8.dp)
+                    // 0.2.64 (A-7): el tamaño dibujado es el efectivo
+                    // (fracción del alto de la previa si el control
+                    // la trae, dp si no), igual que en el juego.
                     val density = LocalDensity.current
-                    val sizePx = with(density) { size.toPx() }
+                    val sizePx = TouchOverlayMapping.controlSizePx(control, previewSize.height.toFloat(), density.density)
+                    val size = with(density) { sizePx.toDp() }
+                    val shape = if (control.shape == ControlShape.CIRCLE) CircleShape else RoundedCornerShape(8.dp)
                     val isTested = testMode && lastTestedId == control.id
                     Box(
                         modifier = Modifier
