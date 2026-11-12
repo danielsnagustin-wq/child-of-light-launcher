@@ -7,6 +7,7 @@ import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.MemoryMapping
+import com.danielsnagustin.childoflight.launcher.model.maskBit
 import com.danielsnagustin.childoflight.launcher.model.PerformanceOverlayDetail
 import com.danielsnagustin.childoflight.launcher.model.PerformanceOverlayPosition
 import com.danielsnagustin.childoflight.launcher.model.apply60FpsMode
