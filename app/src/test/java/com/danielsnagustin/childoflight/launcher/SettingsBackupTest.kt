@@ -130,12 +130,17 @@ class SettingsBackupTest {
 
     @Test
     fun editedResolutionSnapsToOfferedValue() {
-        // R2-S04: un backup editado a mano con 1.5x no llega al
-        // config.yml: se ajusta al valor que ofrece la UI (1x).
+        // R2-S04: un backup editado a mano con 1.7x no llega al
+        // config.yml: se ajusta al valor que ofrece la UI más
+        // cercano (1.5x). 1.5x SÍ lo ofrece la UI ("1.5x (1440x816)")
+        // y se queda en 1.5, así que el caso de ajuste es 1.7 -> 1.5.
+        // Lo de 1.5 -> 1x solo era verdad cuando el snap era
+        // {0.5, 1, 2, 3, 4}; ahora el snap es {0.5, 1, 1.25, 1.5,
+        // 2, 3, 4} (SettingsRepository.clampResolution).
         val json = "{\"format\":\"col-settings-backup\",\"version\":1," +
-            "\"resolutionMultiplier\":1.5}"
+            "\"resolutionMultiplier\":1.7}"
         val decoded = decodeSettingsBackup(json, LauncherSettings(), UiPreferences()).getOrThrow()
-        assertEquals(1f, decoded.first.resolutionMultiplier, 0.001f)
+        assertEquals(1.5f, decoded.first.resolutionMultiplier, 0.001f)
         val json2 = "{\"format\":\"col-settings-backup\",\"version\":1," +
             "\"resolutionMultiplier\":2.6}"
         val decoded2 = decodeSettingsBackup(json2, LauncherSettings(), UiPreferences()).getOrThrow()
