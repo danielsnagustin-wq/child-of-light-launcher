@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.danielsnagustin.childoflight.launcher.model.GpuBackend
 import com.danielsnagustin.childoflight.launcher.model.effectiveSettings
 import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 import com.danielsnagustin.childoflight.launcher.data.DeviceCompat
@@ -111,7 +112,17 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 // apply60FpsMode las fuerza ON aunque la guardada sea
                 // OFF (p. ej. textureCache OFF en ≤ 4 GB), y sin esto
                 // la línea mentía igual que R4-P2-10 en los demás sitios.
-                Text("Configuración efectiva: perfil ${effective.activeProfile.label} · ${resolveBackend(effective, gpu).label} · ${effective.resolutionLabel} · filtro ${effective.screenFilter} · VSync ${if (effective.vSync) "sí" else "no"} · modo 60 FPS ${if (effective.fpsHack) "sí" else "no"} · caché de texturas ${if (effective.textureCache) "sí" else "no"} · caché de shaders ${if (effective.shaderCache) "sí" else "no"}.", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = cardTextColor(dark))
+                // Ronda 0.2.64: con backend Vulkan la VSync es inerte
+                // (solo la consume OpenGL): se muestra "— (sin efecto
+                // en Vulkan)" en vez de un "sí" que no significa nada.
+                val vsyncEffectiveText = if (resolveBackend(effective, gpu) == GpuBackend.VULKAN) {
+                    "— (sin efecto en Vulkan)"
+                } else if (effective.vSync) {
+                    "sí"
+                } else {
+                    "no"
+                }
+                Text("Configuración efectiva: perfil ${effective.activeProfile.label} · ${resolveBackend(effective, gpu).label} · ${effective.resolutionLabel} · filtro ${effective.screenFilter} · VSync $vsyncEffectiveText · modo 60 FPS ${if (effective.fpsHack) "sí" else "no"} · caché de texturas ${if (effective.textureCache) "sí" else "no"} · caché de shaders ${if (effective.shaderCache) "sí" else "no"}.", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = cardTextColor(dark))
                 if (s.safeMode) {
                     NoteText("Modo seguro activado: los valores efectivos de arriba (1x, SDL, High Accuracy OFF) mandan sobre los guardados.")
                 }
