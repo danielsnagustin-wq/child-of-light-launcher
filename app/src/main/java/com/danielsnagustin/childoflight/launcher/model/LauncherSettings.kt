@@ -102,14 +102,31 @@ data class GpuInfo(
     val vulkanVersionLabel: String = "Desconocido",
     val vulkanSupported: Boolean = false,
     /**
+     * Vulkan USABLE para el núcleo (ronda 0.2.65, RG-P2-12): no
+     * basta el booleano vulkanSupported (system feature LEVEL o
+     * VERSION): se consulta también la versión reportada
+     * (vulkanVersionLabel, leída por GpuDetector con
+     * FEATURE_VULKAN_HARDWARE_VERSION y los códigos VK_MAKE_VERSION
+     * 1.0–1.3). Un "Sin Vulkan" explícito contradice un booleano
+     * true obsoleto/corrupto (p. ej. DataStore de otra detección) y
+     * manda: sin Vulkan usable. "Desconocido" o "Vulkan (versión no
+     * determinada)" NO contradicen nada: la etiqueta solo no se
+     * determinó y manda el booleano. El núcleo solo pide
+     * VK_API_VERSION_1_0 (pin, renderer.cpp:193,406,901,1760), así
+     * que cualquier 1.x reportada es usable: no se exige 1.1+.
+     */
+    val hasUsableVulkan: Boolean
+        get() = vulkanSupported && vulkanVersionLabel != "Sin Vulkan",
+    /**
      * Anisotrópico máximo del dispositivo (ronda 0.2.64, P2-2 Mali):
      * GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT leído por GLES en la
      * detección (GpuDetector), null si no se pudo leer (sin
      * extensión o sin contexto EGL). Es el límite del muestreador
      * del mismo silicio que el límite Vulkan (maxSamplerAnisotropy);
      * el generador lo usa como tope del valor emitido y la UI lo usa
-     * para no ofrecer valores por encima. Sin él no hay clamp: el
-     * núcleo no expone su máximo por JNI en el pin (verificado).
+     * para no ofrecer valores por encima. Sin él el tope seguro es
+     * 8x (ronda 0.2.65, RC-P2-6): el núcleo no expone su máximo por
+     * JNI en el pin (verificado).
      */
     val maxAnisotropy: Int? = null,
     val detectedAtMillis: Long = 0L,
@@ -144,11 +161,23 @@ data class GpuInfo(
      * o CXTP. El dato ya estaba recogido (renderer); solo se usa
      * para matizar la nota de Diagnóstico por gama (ronda 0.2.64,
      * H-03). NO sube a 2x sin prueba en teléfono.
+     *
+     * Ronda 0.2.65 (G-P2-11): antes solo se miraba el renderer: un
+     * "DXT" suelto en el renderer de otra GPU (o un renderer
+     * PowerVR de gama baja con esas letras en otro campo) casaba
+     * mal. Ahora se exige también evidencia de vendor PowerVR /
+     * Imagination: el campo vendor clasificado, el vendorString
+     * GLES ("Imagination Technologies") o el propio renderer
+     * nombrando PowerVR. El token DXT/CXTP sigue siendo necesario:
+     * un PowerVR Rogue sin DXT no es gama alta.
      */
     val isPowerVrDxt: Boolean
         get() {
             val r = renderer.uppercase()
-            return r.contains("DXT") || r.contains("CXTP")
+            val v = vendorString.uppercase()
+            val isPowerVrVendor = vendor == GpuVendor.POWERVR ||
+                v.contains("IMAGINATION") || r.contains("POWERVR")
+            return isPowerVrVendor && (r.contains("DXT") || r.contains("CXTP"))
         }
     /** El usuario confirmó el 2026-11-07: Child of Light va MUY BIEN en este teléfono. */
     val isUserVerifiedDevice: Boolean get() = isHelioG99 && isMaliG57
@@ -175,7 +204,7 @@ enum class GpuProfileId(val label: String, val description: String) {
     ),
     G99_QUALITY(
         "G99 — Calidad (probar 2x)",
-        "Igual que Recomendado pero a 2x con FSR. Probar 30 s: si baja de 28 fps, vuelve a 1x.",
+        "Igual que Recomendado pero a 2x con Bilinear, sin HUD. Probar 30 s: si la mediana baja de 28 fps, vuelve a 1x.",
     ),
     MALI_PERFORMANCE(
         "Mali — Rendimiento",
@@ -183,7 +212,11 @@ enum class GpuProfileId(val label: String, val description: String) {
     ),
     MALI_BALANCED(
         "Mali — Equilibrado",
-        "Mali genérico: 1x con FSR/Bilinear si el FPS es estable.",
+        "Mali genérico: 1x con Bilinear.",
+    ),
+    GENERIC_QUALITY(
+        "Genérico — Calidad (2x)",
+        "Vulkan, 2x, Bilinear. Para GPU sin perfil propio (Xclipse, PowerVR u otra): probar 30 s; si la mediana baja de 28 fps, vuelve a 1x.",
     ),
     ADRENO_PERFORMANCE(
         "Snapdragon / Adreno — Rendimiento",
@@ -298,7 +331,33 @@ data class LauncherSettings(
     /** true = Surface Sync activado (más preciso). false = Disabled (más rápido). */
     val surfaceSyncEnabled: Boolean = false,
     val memoryMapping: MemoryMapping = MemoryMapping.DOUBLE_BUFFER,
+    /**
+     * Ronda 0.2.65 (R-P1-5): en Vulkan es INERTE. Verificado en el
+     * pin: ningún código Vulkan lee config.texture_cache (el
+     * renderer Vulkan llama a cache_and_bind_texture incondicional,
+     * texture.cpp:130); el único consumo es OpenGL
+     * (gl/sync_state.cpp:420-424), donde OFF es activamente más
+     * lento (re-sube cada textura sin caché). Por eso YA NO
+     * diferencia presets (MALI_PERFORMANCE y G99_RECOMMENDED llevan
+     * el mismo valor) ni la variante low-RAM: en el teléfono no
+     * ahorra nada. La clave se sigue emitiendo en el generador para
+     * el camino OpenGL. El arreglo REAL (leerla en Vulkan) necesita
+     * pin. El interruptor manual se conserva: en OpenGL sí hace algo.
+     */
     val textureCache: Boolean = true,
+    /**
+     * Ronda 0.2.65 (R-P1-6): en Vulkan NO es "la caché de shaders"
+     * en disco: solo controla el PRECOMPILADO de shaders conocidos
+     * al arrancar (pin, app.cpp:281: mete hashes conocidos en la
+     * cola de precompilado; pipeline_cache.cpp y renderer.cpp:1285,
+     * 1840 cargan/guardan la caché en disco INCONDICIONALMENTE).
+     * OFF no ahorra disco/RAM apreciable y SÍ quita lo que evita
+     * tirones en escenas nuevas (los shaders se compilan en caliente
+     * en mitad del juego). Etiqueta honesta: "Precompilar shaders
+     * conocidos al arrancar" (el texto del interruptor vive en
+     * SettingsPerformanceScreen, fuera de este archivo: hay que
+     * re-etiquetarlo allí). Default ON: es lo correcto. No tocar.
+     */
     val shaderCache: Boolean = true,
     // --- CPU ---
     /** cpu-opt en config.yml. El backend Dynarmic es el default de Vita3K; no hay clave cpu-backend en config.h. */
@@ -306,6 +365,16 @@ data class LauncherSettings(
     /** fps-hack en config.yml (30 -> 60). */
     val fpsHack: Boolean = false,
     val fileLoadingDelay: Int = 0,
+    /**
+     * Ronda 0.2.65 (RG-P2-15): "turbo-mode" del núcleo (config.h:149,
+     * bool, default false). En el pin solo hace algo en Adreno CON
+     * driver personalizado: VKState::set_turbo_mode llama a
+     * adrenotools_set_turbo (vulkan/renderer.cpp:1849-1856) y solo
+     * bajo USE_ADRENO_TOOLS + support_custom_drivers(). En Mali (el
+     * teléfono objetivo) y con el driver del sistema NO HACE NADA:
+     * el interruptor lo dice. OFF por defecto, como upstream.
+     */
+    val turboMode: Boolean = false,
     // --- Audio ---
     val audioVolume: Int = 100, // 0..100, clave audio-volume verificada
     val audioBackend: AudioBackend = AudioBackend.SDL,
@@ -329,11 +398,22 @@ data class LauncherSettings(
      * XXH3 de sus datos en cada frame: protege sus páginas en
      * solo-lectura y solo la vuelve a subir si el juego la modifica
      * (el page fault marca dirty). Las texturas pequeñas siguen con
-     * hash siempre. Por eso es seguro probarlo (OFF por defecto): no
-     * se confía a ciegas en dirección/tamaño, la detección de cambios
-     * sigue existiendo, solo cambia el mecanismo. Si alguna textura
-     * se ve incorrecta, se apaga y vuelve al hash de siempre. Medir
-     * con la prueba de 30 s (ON/OFF).
+     * hash siempre.
+     *
+     * Ronda 0.2.65 (R-P1-7): en Vulkan es IGNORADO: el renderer
+     * Vulkan lo tiene hardcodeado a true (pin,
+     * renderer/src/vulkan/renderer.cpp:1046:
+     * texture_cache.init(true, ...)); solo OpenGL pasa el valor
+     * (gl/renderer.cpp:268). En el teléfono SIEMPRE está ON, diga
+     * lo que diga este interruptor: ni el interruptor, ni la
+     * "neutralización" del modo seguro, ni ninguna prueba A/B
+     * ON/OFF tienen efecto en Vulkan. La clave se sigue emitiendo
+     * (para OpenGL) y el interruptor se conserva como preferencia
+     * para ese camino, pero NO se promete ninguna medición A/B con
+     * él en Vulkan (el texto que la prometía vive en
+     * SettingsPerformanceScreen, fuera de este archivo: hay que
+     * quitarlo allí). El arreglo REAL (pasar
+     * cfg.hashless_texture_cache en late_init) necesita pin.
      */
     val hashlessTextureCache: Boolean = false,
     /**
@@ -457,8 +537,9 @@ fun defaultProfileFor(gpu: GpuInfo): GpuProfileId = when {
     gpu.vendor == GpuVendor.ADRENO -> GpuProfileId.ADRENO_PERFORMANCE
     // Xclipse (ronda 0.2.64, H-02): sin datos de teléfono todavía,
     // perfil seguro provisional con etiqueta propia (no el genérico
-    // anónimo): 1x, Double Buffer, sin caché de texturas. Cuando haya
-    // mediciones en un Exynos, aquí colgará su perfil 2x si lo sostiene.
+    // anónimo): 1x, Double Buffer. El 2x ya se OFRECE como opción
+    // (GENERIC_QUALITY en profilesFor, ronda 0.2.65 RG-P2-16); el
+    // default sigue siendo 1x hasta que haya mediciones en un Exynos.
     gpu.vendor == GpuVendor.XCLIPSE -> GpuProfileId.MALI_PERFORMANCE
     // PowerVR, OTHER y UNKNOWN: perfil Mali seguro (1x, Double
     // Buffer, sin caché de texturas). NINGUNA GPU se queda sin perfil:
@@ -474,16 +555,21 @@ fun defaultProfileFor(gpu: GpuInfo): GpuProfileId = when {
  * UNKNOWN: el guard de applyPreset solo corregía el driver y el resto
  * del preset Adreno (2x, FXAA, anisotrópico 4x, Page Table) quedaba
  * aplicado en una GPU donde nunca se validó. Ahora la rama genérica
- * ofrece solo los dos seguros, igual que Mali. Sin GPU detectada
+ * ofrece los dos seguros de 1x, igual que Mali, más la opción 2x
+ * genérica (GENERIC_QUALITY, ronda 0.2.65 RG-P2-16: mismo efecto que
+ * G99 Calidad pero con etiqueta neutra). Sin GPU detectada
  * (null) no se ofrece nada: la pantalla muestra "Detectando GPU…".
  */
 fun profilesFor(gpu: GpuInfo?): List<GpuProfileId> {
     if (gpu == null) return emptyList()
     return when {
+        // Ronda 0.2.65 (G-P2-6): en Adreno SOLO presets Adreno.
+        // Antes se colaba G99_RECOMMENDED (etiqueta de otro GPU):
+        // un usuario Adreno lo aplicaba y corría un preset Mali
+        // (Double Buffer, 1x) creyendo que era "el recomendado".
         gpu.vendor == GpuVendor.ADRENO -> listOf(
             GpuProfileId.ADRENO_PERFORMANCE,
             GpuProfileId.ADRENO_QUALITY_TURNIP,
-            GpuProfileId.G99_RECOMMENDED,
         )
         gpu.isUserVerifiedDevice || gpu.isHelioG99 || gpu.isMaliG57 -> listOf(
             GpuProfileId.G99_RECOMMENDED,
@@ -494,28 +580,44 @@ fun profilesFor(gpu: GpuInfo?): List<GpuProfileId> {
             GpuProfileId.MALI_PERFORMANCE,
             GpuProfileId.MALI_BALANCED,
         )
-        // Xclipse, PowerVR, OTHER y UNKNOWN: solo los dos seguros.
+        // Xclipse, PowerVR, OTHER y UNKNOWN: los dos seguros de 1x
+        // más la opción 2x genérica (RG-P2-16).
         else -> listOf(
             GpuProfileId.MALI_PERFORMANCE,
             GpuProfileId.MALI_BALANCED,
+            GpuProfileId.GENERIC_QUALITY,
         )
     }
 }
 
 /**
  * Backend efectivo para el núcleo embebido. Si el ajuste pide Vulkan
- * pero el teléfono NO tiene Vulkan (GpuInfo.vulkanSupported == false),
- * se usa OpenGL: sin esto el núcleo arrancaría con un backend que el
- * teléfono no tiene y fallaría. Con gpu == null (aún sin detectar) no
- * se cambia nada: la detección ya ocurrió al primer arranque. Puro y
- * testeable (GpuProfileTest).
+ * pero el teléfono NO tiene Vulkan usable (GpuInfo.hasUsableVulkan:
+ * booleano de system feature + versión reportada, ronda 0.2.65
+ * RG-P2-12), se usa OpenGL: sin esto el núcleo arrancaría con un
+ * backend que el teléfono no tiene y fallaría. Con gpu == null (aún
+ * sin detectar) no se cambia nada: la detección ya ocurrió al primer
+ * arranque. Puro y testeable (GpuProfileTest). El camino normal no
+ * cambia: en el G99 (Vulkan 1.1+, soportado) sigue siendo Vulkan.
  */
 fun resolveBackend(settings: LauncherSettings, gpu: GpuInfo?): GpuBackend =
-    if (settings.backend == GpuBackend.VULKAN && gpu != null && !gpu.vulkanSupported) {
+    if (settings.backend == GpuBackend.VULKAN && gpu != null && !gpu.hasUsableVulkan) {
         GpuBackend.OPENGL
     } else {
         settings.backend
     }
+
+/**
+ * Motivo del fallback de [resolveBackend], o null si no hay
+ * fallback (ronda 0.2.65, RG-P2-12: la decisión queda registrada).
+ * Quien escribe el config.yml (Vita3kConfigGenerator.writeConfig)
+ * lo vuelca en el LauncherLog; generate() lo refleja además como
+ * comentario en el propio config.yml. Puro y testeable.
+ */
+fun resolveBackendReason(settings: LauncherSettings, gpu: GpuInfo?): String? {
+    if (settings.backend != GpuBackend.VULKAN || gpu == null || gpu.hasUsableVulkan) return null
+    return "Sin Vulkan usable (soportado=${gpu.vulkanSupported}, versión=${gpu.vulkanVersionLabel}): fallback a OpenGL"
+}
 
 /**
  * Todos los presets. Valores pensados para Child of Light (2D, UbiArt):
@@ -543,7 +645,14 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         activeProfile = profile,
         backend = GpuBackend.VULKAN,
         resolutionMultiplier = 2f,
-        screenFilter = ScreenFilter.FSR,
+        // Ronda 0.2.65 (R-P1-8): 2x con Bilinear, sin FSR: FSR es
+        // post-proceso (2 dispatches compute EASU+RCAS por frame
+        // sobre la imagen ya renderizada, pin screen_filters.cpp) y
+        // a 2x trabaja sobre 1920x1088 sin ahorrar un píxel; además
+        // puede caer en silencio a Bilinear si la superficie no es
+        // RGBA8 (renderer.cpp:1334-1337). El combo 2x+FSR+HUD era el
+        // más caro sin beneficio de upscaling.
+        screenFilter = ScreenFilter.BILINEAR,
         anisotropicFiltering = 1,
         vSync = false,
         asyncPipelineCompilation = true,
@@ -551,7 +660,31 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         surfaceSyncEnabled = false,
         memoryMapping = MemoryMapping.DOUBLE_BUFFER,
         cpuOpt = true, fpsHack = false, fileLoadingDelay = 0,
-        showFpsOverlay = true,
+        // R-P1-17: HUD OFF por defecto: el overlay lo dibuja el
+        // NÚCLEO (ImGui dentro de su propio pase, renderer.cpp:81-95)
+        // sobre la misma GPU Mali; la medición queda por la vía
+        // automática (getFps), sin robar GPU en cada frame medido.
+        showFpsOverlay = false,
+        gpuDriver = GpuDriver.SYSTEM, shaderCache = true, textureCache = true, performanceMode = true,
+    )
+    // Ronda 0.2.65 (RG-P2-16): el 2x genérico para GPU sin perfil
+    // propio (Xclipse, PowerVR, OTHER, UNKNOWN). Mismos valores que
+    // G99_QUALITY (2x, Bilinear, Double Buffer, sin HUD, Sistema):
+    // el preset es agnóstico al GPU; solo cambia la etiqueta, para
+    // no ofrecer "G99 — Calidad" a quien no tiene un G99 (G-P2-6).
+    GpuProfileId.GENERIC_QUALITY -> LauncherSettings(
+        activeProfile = profile,
+        backend = GpuBackend.VULKAN,
+        resolutionMultiplier = 2f,
+        screenFilter = ScreenFilter.BILINEAR,
+        anisotropicFiltering = 1,
+        vSync = false,
+        asyncPipelineCompilation = true,
+        highAccuracy = false,
+        surfaceSyncEnabled = false,
+        memoryMapping = MemoryMapping.DOUBLE_BUFFER,
+        cpuOpt = true, fpsHack = false, fileLoadingDelay = 0,
+        showFpsOverlay = false,
         gpuDriver = GpuDriver.SYSTEM, shaderCache = true, textureCache = true, performanceMode = true,
     )
     GpuProfileId.MALI_PERFORMANCE -> LauncherSettings(
@@ -566,13 +699,27 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         surfaceSyncEnabled = false,
         memoryMapping = MemoryMapping.DOUBLE_BUFFER, // 0.2.63 (B/C): elección del preset, NO fallback del núcleo: en el pin (renderer.cpp:748-766) DoubleBuffer y PageTable están SIEMPRE en la máscara soportada y NativeBuffer solo si el driver expone la importación de buffers; no hay ningún fallback especial para Mali. Double Buffer es además el método por defecto del núcleo (:750). Si va lento, probar Page Table.
         cpuOpt = true, fpsHack = false,
-        textureCache = false, shaderCache = true,
+        // Ronda 0.2.65 (R-P1-5): textureCache = true, igual que
+        // G99_RECOMMENDED. En Vulkan la clave es INERTE (ningún
+        // código Vulkan la lee; solo OpenGL, gl/sync_state.cpp:420),
+        // así que el false anterior no ahorraba nada y era la ÚNICA
+        // diferencia con G99_RECOMMENDED: dos presets con etiquetas
+        // distintas y el mismo efecto en el teléfono. El preset
+        // sigue existiendo como entrada propia para Mali genérico
+        // (etiqueta/descripción y defaultProfileFor), pero ya no
+        // miente con una diferencia que no existe.
+        textureCache = true, shaderCache = true,
     )
     GpuProfileId.MALI_BALANCED -> LauncherSettings(
         activeProfile = profile,
         backend = GpuBackend.VULKAN,
         resolutionMultiplier = 1f, // nunca 2x/3x/4x como recomendado en Mali
-        screenFilter = ScreenFilter.FSR,
+        // Ronda 0.2.65 (R-P1-9): Bilinear por defecto. A 1x el FSR
+        // no ahorra ni un píxel: solo añade 2 pasadas compute por
+        // frame para afilar una imagen a resolución nativa (y puede
+        // estar silenciosamente desactivado). FSR queda como opción
+        // manual, con su coste explicado en Ajustes → GPU.
+        screenFilter = ScreenFilter.BILINEAR,
         anisotropicFiltering = 1,
         vSync = false,
         asyncPipelineCompilation = true,
@@ -621,6 +768,13 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         cpuOpt = true, fpsHack = false,
         gpuDriver = GpuDriver.TURNIP,
         textureCache = true,
+        // Ronda 0.2.65 (RG-P2-6): overlay FPS ON en este preset: es
+        // la única prueba visible que tiene el usuario de que Turnip
+        // cargó y funciona (el FPS en pantalla). Sin él, Turnip
+        // podía estar caído al driver del sistema sin que nadie lo
+        // notara. La medición automática (getFps) sigue existiendo;
+        // el HUD es la evidencia visible.
+        showFpsOverlay = true,
     )
 }
 
@@ -630,6 +784,13 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
  * cerrar apps, PSN, entrega del .pkg, overlay táctil — y los que el
  * ViewModel restaura encima — performanceMode, autoRevert — NO entran:
  * que difieran no es divergir del preset). Puro y testeable en JVM.
+ * Ronda 0.2.65 (G-P2-9): gpuDriver NO entra. El driver es ortogonal
+ * al preset gráfico: tiene su propia sección (Driver GPU) y su propio
+ * estado en la UI, y el Turnip incluido del primer arranque se instala
+ * encima del preset por defecto (Rendimiento 1x en Adreno). Si el
+ * driver contara, ese primer arranque se marcaba "Perfil modificado"
+ * sin que el usuario tocara nada. Cambiar solo el driver ya no es
+ * "modificar el perfil"; cambiar un campo gráfico sí.
  */
 private fun presetProfileFields(s: LauncherSettings): List<Any> = listOf(
     s.backend,
@@ -651,7 +812,6 @@ private fun presetProfileFields(s: LauncherSettings): List<Any> = listOf(
     s.performanceOverlayPosition,
     s.hashlessTextureCache,
     s.showCompileShaders,
-    s.gpuDriver,
 )
 
 /**
@@ -675,7 +835,11 @@ private fun lowRamVariantFields(s: LauncherSettings): List<Any> = listOf(
     s.highAccuracy,
     s.surfaceSyncEnabled,
     s.memoryMapping,
-    s.textureCache,
+    // Ronda 0.2.65 (R-P1-5): textureCache FUERA: en Vulkan es
+    // inerte y la variante low-RAM ya no lo toca (antes era su
+    // único cambio sobre G99_RECOMMENDED). shaderCache tampoco
+    // entra: la variante lo deja ON (precompilado que evita
+    // tirones) y nunca lo cambió.
     s.shaderCache,
 )
 
@@ -685,8 +849,11 @@ private fun lowRamVariantFields(s: LauncherSettings): List<Any> = listOf(
  * cambia algo respecto al preset: si el preset ya es conservador de
  * por sí, como MALI_PERFORMANCE, no hay divergencia que registrar).
  * Es la divergencia "conservadora" del primer arranque en un teléfono
- * de 4 GB o menos: en G99_RECOMMENDED solo cambia textureCache
- * (true del preset canónico a false). Puro y testeable en JVM.
+ * de 4 GB o menos. Ronda 0.2.65 (R-P1-5): la variante YA NO toca
+ * textureCache (inerte en Vulkan): sobre G99_RECOMMENDED la variante
+ * es idéntica al preset y NO es divergencia; sobre un preset 2x
+ * (G99_QUALITY, ADRENO_QUALITY_TURNIP) sí lo es, porque baja a 1x
+ * con Bilinear. Puro y testeable en JVM.
  */
 fun isLowRamConservativeVariant(settings: LauncherSettings): Boolean {
     val preset = presetSettings(settings.activeProfile)
@@ -706,33 +873,27 @@ fun isLowRamConservativeVariant(settings: LauncherSettings): Boolean {
  * cualquier preset, sin aviso, y presetProfileFields SÍ los incluía,
  * así que la pérdida era invisible ("Perfil modificado" no salía).
  *
- * DECISIÓN (verificada campo a campo en presetSettings):
- * G99_RECOMMENDED y MALI_PERFORMANCE solo se diferencian en
- * textureCache (true frente a false): mismo backend, 1x, Bilinear,
- * anisotrópico 1, VSync OFF, async ON, High Accuracy OFF, Surface
- * Sync OFF, Double Buffer, cpuOpt, fpsHack OFF, fileLoadingDelay 0,
- * showFpsOverlay OFF, driver Sistema, shaderCache ON y
- * performanceMode ON por defecto. Por eso conservar la caché manual
- * puede borrar esa diferencia real: aplicar Mali Rendimiento sobre
- * un estado G99 deja textureCache ON y el resultado es idéntico al
- * preset G99 salvo la etiqueta. Eso NO se esconde: la divergencia
- * queda registrada (textureCache forma parte de
- * presetProfileFields, así que divergesFromPreset da true) y la
- * pantalla General muestra "Perfil modificado" nombrando la caché
- * de texturas explícitamente. El aviso es obligatorio precisamente
- * en este caso; sin él, conservar sería tan silencioso como
- * restablecer.
+ * DECISIÓN (ronda 0.2.65, R-P1-5: la afirmación anterior de este
+ * bloque quedó obsoleta): G99_RECOMMENDED y MALI_PERFORMANCE YA NO
+ * se diferencian en textureCache: en Vulkan esa clave es inerte y
+ * los dos presets llevan true. Conservar la caché manual sigue
+ * pudiendo borrar una diferencia real en OTROS presets (p. ej.
+ * aplicar un preset 2x sobre un estado con textureCache OFF), y
+ * eso NO se esconde: la divergencia queda registrada
+ * (textureCache forma parte de presetProfileFields, así que
+ * divergesFromPreset da true) y la pantalla General muestra
+ * "Perfil modificado" nombrando la caché de texturas
+ * explícitamente. El aviso es obligatorio precisamente en este
+ * caso; sin él, conservar sería tan silencioso como restablecer.
  *
  * EXCEPCIÓN lowRam: en el primer arranque (lowRam = true) NO se
  * conserva nada de esto: la variante conservadora ES el valor del
- * preset en ese camino (textureCache OFF) y el current que llega
- * son los defaults de fábrica (textureCache ON), así que conservar
+ * preset en ese camino (1x con Bilinear sobre un preset 2x) y el
+ * current que llega son los defaults de fábrica, así que conservar
  * desharía la variante y rompería la cadena R4-P0-9 (la variante
  * lowRam solo existe en el primer arranque y queda registrada como
  * divergencia conservadora, ver isLowRamConservativeVariant).
- * Sin current tampoco se conserva nada: el preset queda tal cual
- * (así MALI_PERFORMANCE mantiene textureCache OFF cuando no hay
- * ajustes guardados).
+ * Sin current tampoco se conserva nada: el preset queda tal cual.
  *
  * Puro y testeable en JVM (GpuProfileTest).
  */
@@ -757,6 +918,11 @@ fun preserveManualCacheChoices(preset: LauncherSettings, current: LauncherSettin
  * 2x manual (la sobrecarga por resolución mira el valor efectivo).
  * El destino del revert NO vive aquí: lo elige el llamador según la
  * GPU (ADRENO_PERFORMANCE en Adreno, G99_RECOMMENDED en G99/Mali).
+ * Ronda 0.2.65 (R-P1-19): el fpsAvg que entra aquí es la MEDIANA
+ * (averageBenchmarkFps), no la media: el umbral 28 se mantiene
+ * porque la robustez ya la da la mediana, y el juego está capado a
+ * 30 (margen de 2 fps). Firma intacta: el llamador la usa tras cada
+ * muestreo.
  */
 fun shouldAutoRevertTo1x(fpsAvg: Float?, profile: GpuProfileId, autoRevertEnabled: Boolean): Boolean {
     if (!autoRevertEnabled) return false
@@ -791,6 +957,12 @@ fun shouldAutoRevertTo1x(fpsAvg: Float?, resolutionMultiplier: Float, autoRevert
  * driver ACTIVO vuelve a Sistema. effectiveSettings() lo aplica, así
  * que el config.yml emite custom-driver-name: "" mientras dure.
  * restoreSafeModeSnapshot restaura el driver anterior al salir.
+ * Ronda 0.2.65 (R-P1-10 + G-P2-8): también fuerza cpuOpt = true
+ * (sin él, un usuario que apagó cpu-opt entraba en modo seguro con
+ * la CPU sin optimizar: kernel.cpp:96-101,176, cpu_opt controla las
+ * optimizaciones Dynarmic) y el driver Sistema ya estaba forzado
+ * aquí desde 0.2.64 — la parte de G-P2-8 que me tocaba ya estaba
+ * hecha; solo faltaba el texto que lo menciona (otro agente).
  */
 fun applySafeMode(settings: LauncherSettings): LauncherSettings = settings.copy(
     safeMode = true,
@@ -804,6 +976,7 @@ fun applySafeMode(settings: LauncherSettings): LauncherSettings = settings.copy(
     audioBackend = AudioBackend.SDL,
     ngsEnable = true,
     shaderCache = true,
+    cpuOpt = true,
     fpsHack = false,
     hashlessTextureCache = false,
     memoryMapping = MemoryMapping.DOUBLE_BUFFER,
@@ -840,6 +1013,9 @@ fun effectiveSettings(settings: LauncherSettings): LauncherSettings =
  * de mapeo que el usuario tuviera puesto. Ronda 0.2.64 (frame pacing):
  * el fps-hack está DESCARTADO como causa de la lentitud (el usuario
  * probó OFF y ON con el mismo resultado): no se toca como causa.
+ * Ronda 0.2.65 (RC-P2-4): el paquete también fuerza
+ * fileLoadingDelay = 0: el retraso de 0,5 s/frame quedaba fuera del
+ * modo y alargaba la carga en cada frame de carga.
  */
 fun apply60FpsMode(settings: LauncherSettings): LauncherSettings = settings.copy(
     resolutionMultiplier = 1f,
@@ -854,6 +1030,7 @@ fun apply60FpsMode(settings: LauncherSettings): LauncherSettings = settings.copy
     cpuOpt = true,
     ngsEnable = true,
     fpsHack = true,
+    fileLoadingDelay = 0,
 )
 
 /**
@@ -862,12 +1039,13 @@ fun apply60FpsMode(settings: LauncherSettings): LauncherSettings = settings.copy
  * (detectGpu). Es una variante VISIBLE, no silenciosa: los ajustes
  * guardados quedan como divergencia conservadora del preset (ver
  * isLowRamConservativeVariant y divergesFromPreset) y el mensaje de
- * detección dice que la caché de texturas quedó OFF. "Restablecer
- * ajustes", aplicar un preset a mano, "Restablecer esta categoría" y
- * el auto-revert de la prueba de 30 s usan el preset CANÓNICO
- * (textureCache explícito en presetSettings), nunca lowRam: el mismo
- * preset da siempre el mismo valor de texture-cache. Nunca sobrescribe
- * un perfil que el usuario eligió a mano
+ * detección dice que se aplicó el perfil conservador (1x con
+ * Bilinear; ronda 0.2.65: YA NO dice que la caché de texturas quedó
+ * OFF, porque la variante ya no la toca — en Vulkan es inerte).
+ * "Restablecer ajustes", aplicar un preset a mano, "Restablecer esta
+ * categoría" y el auto-revert de la prueba de 30 s usan el preset
+ * CANÓNICO, nunca lowRam: el mismo preset da siempre los mismos
+ * valores. Nunca sobrescribe un perfil que el usuario eligió a mano
  * (p. ej. G99 Calidad 2x sigue disponible si el usuario lo elige, y
  * el auto-revert a 1x por debajo de 28 fps sigue activo).
  *
@@ -876,16 +1054,15 @@ fun apply60FpsMode(settings: LauncherSettings): LauncherSettings = settings.copy
  * anisotrópico 1, Double Buffer, VSync off, High Accuracy off,
  * Surface Sync off.
  *
- * Caché: config.yml NO tiene claves de TAMAÑO de caché (verificado
- * en Vita3kConfigGenerator contra config.h: solo existen los
- * booleanos texture-cache y shader-cache). La única palanca es el
- * booleano: texture-cache OFF (las texturas decodificadas en RAM/VRAM
- * son el mayor gasto evitable del launcher; se pagan con recargas al
- * cambiar de escena) y shader-cache ON (es caché en DISCO: evita
- * recompilar shaders en cada arranque y su huella en RAM es
- * transitoria). Sin verificar en dispositivo: el coste real de
- * texture-cache OFF en este juego no está medido; si se nota
- * tirón al cambiar de escena, el usuario puede reactivarlo en Ajustes.
+ * Caché (ronda 0.2.65, R-P1-5): la variante YA NO toca
+ * texture-cache. config.yml NO tiene claves de TAMAÑO de caché
+ * (verificado en Vita3kConfigGenerator contra config.h: solo existen
+ * los booleanos texture-cache y shader-cache), y el booleano
+ * texture-cache es INERTE en Vulkan (ningún código Vulkan lo lee;
+ * solo OpenGL lo usa): apagarlo no liberaba RAM en el teléfono, así
+ * que no era una palanca de memoria baja real. shader-cache queda ON
+ * (es el precompilado que evita tirones; su huella en RAM es
+ * transitoria y su caché en disco evita recompilar en cada arranque).
  */
 fun applyLowRamDefaults(settings: LauncherSettings): LauncherSettings = settings.copy(
     resolutionMultiplier = 1f,
@@ -895,7 +1072,6 @@ fun applyLowRamDefaults(settings: LauncherSettings): LauncherSettings = settings
     highAccuracy = false,
     surfaceSyncEnabled = false,
     memoryMapping = MemoryMapping.DOUBLE_BUFFER,
-    textureCache = false,
     shaderCache = true,
 )
 
@@ -906,25 +1082,30 @@ fun applyLowRamDefaults(settings: LauncherSettings): LauncherSettings = settings
 enum class BenchmarkSource { MANUAL_OVERLAY, AUTO_MEASURED, NOT_MEASURED }
 
 /**
- * Media de las muestras de FPS de una prueba de 30 s medida por el
- * núcleo (EmbeddedGameActivity muestrea Vita3kCoreBridge.getFps()
- * cada segundo). Solo cuentan las muestras válidas (> 0: -1 es "sin
- * juego" y 0 es "sin medir"). Media RECORTADA (R2-P2-29): se quitan
- * el mínimo y el máximo para que un tirón a 1 fps o un pico a 240 no
- * decidan la prueba; con menos de 3 muestras válidas no hay nada
- * que recortar y es la media simple. null = sin muestras válidas.
- * Pura y testeable en JVM.
+ * FPS representativo de las muestras de una prueba de 30 s medida
+ * por el núcleo (EmbeddedGameActivity muestrea
+ * Vita3kCoreBridge.getFps() cada segundo). Solo cuentan las muestras
+ * válidas (> 0: -1 es "sin juego" y 0 es "sin medir"). MEDIANA
+ * (ronda 0.2.65, R-P1-19): la media recortada anterior solo quitaba
+ * 1 mínimo y 1 máximo, así que un tirón de compilación de shaders
+ * (3-5 s a ~10 fps) no se recortaba: 25 muestras a 30 + 5 a 10 daban
+ * media 26,7 y un falso revert a 1x, aunque el estado estacionario
+ * fuera 30 estables. La mediana es inmune a esa minoría: con 5
+ * muestras bajas de 30, la mediana sigue siendo 30. Con un número
+ * par de muestras es la media de las dos centrales (30 y 60 -> 45).
+ * null = sin muestras válidas. Pura y testeable en JVM.
+ * La decisión de revertir sigue en shouldAutoRevertTo1x (umbral 28,
+ * sin tocar: la mediana ya es el valor robusto que entra ahí).
  */
 fun averageBenchmarkFps(samples: List<Float>): Float? {
-    val valid = samples.filter { it > 0f }
+    val valid = samples.filter { it > 0f }.sorted()
     if (valid.isEmpty()) return null
-    val trimmed = if (valid.size >= 3) {
-        val sorted = valid.sorted()
-        sorted.subList(1, sorted.size - 1)
+    val mid = valid.size / 2
+    return if (valid.size % 2 == 1) {
+        valid[mid]
     } else {
-        valid
+        (valid[mid - 1] + valid[mid]) / 2f
     }
-    return trimmed.sum() / trimmed.size
 }
 
 data class BenchmarkRun(
