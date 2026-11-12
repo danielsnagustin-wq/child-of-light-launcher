@@ -71,15 +71,21 @@ fun SettingsAudioScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (
                             Spacer(modifier = Modifier.height(8.dp))
                             changes.forEach { change ->
                                 val same = change.before == change.after
+                                // Ronda 0.2.65 (A-P2-3): la fila "Caché de
+                                // shaders" es el AJUSTE (activar su uso),
+                                // no borrar archivos: se etiqueta como
+                                // tal para que no se contradiga con el
+                                // "no se borra la caché" de abajo.
+                                val displayLabel = if (change.label == "Caché de shaders") "Caché de shaders (ajuste)" else change.label
                                 Text(
-                                    "· ${change.label}: ${change.before} → ${change.after}" + if (same) " (ya está así)" else "",
+                                    "· $displayLabel: ${change.before} → ${change.after}" + if (same) " (ya está así)" else "",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = if (same) mutedTextColor(dark) else cardTextColor(dark),
                                 )
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "No se toca la caché de shaders: el siguiente arranque no se vuelve más lento por esto. Tus valores anteriores quedan guardados y puedes deshacer el cambio después.",
+                                "«Caché de shaders (ajuste)» solo activa su uso: no se borra la caché guardada. La limpieza es un botón aparte en Rendimiento. Tus valores anteriores quedan guardados y puedes deshacer el cambio después.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = mutedTextColor(dark),
                             )
@@ -112,7 +118,7 @@ fun SettingsAudioScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (
             item {
                 SectionTitle("Corregir audio")
                 Button(onClick = { showFixPreview = true }, modifier = Modifier.fillMaxWidth()) { Text("Corregir audio") }
-                NoteText("Muestra antes qué va a cambiar (SDL + NGS ON + caché de shaders ON) y guarda tus valores para poder deshacer. No limpia la caché de shaders. Vuelve a lanzar el juego para aplicar el cambio.")
+                NoteText("Muestra antes qué va a cambiar (SDL + NGS ON + ajuste de caché de shaders ON) y guarda tus valores para poder deshacer. No borra la caché guardada (eso es un botón aparte en Rendimiento). Vuelve a lanzar el juego para aplicar el cambio.")
                 if (audioFixSnapshot != null) {
                     Spacer(modifier = Modifier.height(8.dp))
                     PremiumCard {
@@ -122,7 +128,7 @@ fun SettingsAudioScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (
                             fontWeight = FontWeight.SemiBold,
                             color = cardTextColor(dark),
                         )
-                        NoteText("Deshacer restaura el backend, NGS y la caché de shaders de antes.")
+                        NoteText("Deshacer restaura el backend, NGS y el ajuste de caché de shaders de antes.")
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedButton(onClick = { vm.undoFixAudio() }, modifier = Modifier.fillMaxWidth()) { Text("Deshacer") }
                         Spacer(modifier = Modifier.height(8.dp))
