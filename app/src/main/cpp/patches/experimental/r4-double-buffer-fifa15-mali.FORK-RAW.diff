@@ -1,0 +1,77 @@
+diff --git a/vita3k/renderer/include/renderer/vulkan/surface_cache.h b/vita3k/renderer/include/renderer/vulkan/surface_cache.h
+index 665e71992..a2ac6db08 100644
+--- a/vita3k/renderer/include/renderer/vulkan/surface_cache.h
++++ b/vita3k/renderer/include/renderer/vulkan/surface_cache.h
+@@ -423,6 +423,8 @@ public:
+     // mapped memory buffer so the shader reads up-to-date data. Returns true if the address
+     // belongs to such a surface.
+     bool sync_surface_for_gpu_read(Address address, uint32_t size);
++    // how far guest data can be copied from address before reaching a colour surface
++    Address color_surface_limit(Address address) const;
+     int sync_surfaces_for_cpu_read(MemState &mem, Address address, uint32_t size);
+ 
+     // If non-null, the return value must be sent as a PostSurfaceSyncRequest
+diff --git a/vita3k/renderer/src/vulkan/scene.cpp b/vita3k/renderer/src/vulkan/scene.cpp
+index 6c9d9f4b5..09fefca6f 100644
+--- a/vita3k/renderer/src/vulkan/scene.cpp
++++ b/vita3k/renderer/src/vulkan/scene.cpp
+@@ -49,6 +49,28 @@ static bool draw_drops_fragments_beyond_far_plane(const GxmRecordState &record)
+     return drop_fragments_beyond_far_plane && front_drops && back_drops;
+ }
+ 
++// a vertex program can read a uniform buffer past its declared size so Double Buffer copies the rest of a large buffer too
++constexpr uint32_t UNIFORM_SLACK_MIN_DECLARED = 1024;
++constexpr uint32_t UNIFORM_SLACK_WINDOW = 16 * 1024;
++
++static void copy_uniform_slack(VKContext &context, MemState &mem, const Address address, const uint32_t declared) {
++    VKState &state = context.state;
++    const auto mapping = state.mapped_memories.lower_bound(address);
++    if (mapping == state.mapped_memories.end() || static_cast<uint64_t>(address) >= static_cast<uint64_t>(mapping->first) + mapping->second.size)
++        return;
++    const vkutil::Buffer *buffer = std::get_if<vkutil::Buffer>(&mapping->second.buffer_impl);
++    const uint8_t *guest = Ptr<const uint8_t>(address).get(mem);
++    if (!buffer || !buffer->mapped_data || !guest)
++        return;
++
++    const uint64_t end = std::min<uint64_t>({ static_cast<uint64_t>(address) + UNIFORM_SLACK_WINDOW,
++        static_cast<uint64_t>(mapping->first) + mapping->second.size, state.surface_cache.color_surface_limit(address) });
++    if (end <= static_cast<uint64_t>(address) + declared)
++        return;
++    uint8_t *mirror = reinterpret_cast<uint8_t *>(buffer->mapped_data) + (address - mapping->first);
++    memcpy(mirror + declared, guest + declared, static_cast<size_t>(end - address - declared));
++}
++
+ void set_uniform_buffer(VKContext &context, MemState &mem, const ShaderProgram *program, const bool vertex_shader, const int block_num, const int size, Ptr<uint8_t> data) {
+     auto offset = program->uniform_buffer_data_offsets.at(block_num);
+     if (offset == static_cast<std::uint32_t>(-1)) {
+@@ -61,6 +83,8 @@ void set_uniform_buffer(VKContext &context, MemState &mem, const ShaderProgram *
+ 
+         if (!aliases_surface && context.state.mapping_method == MappingMethod::DoubleBuffer) {
+             context.state.buffer_trapping.access_buffer(data.address(), data_size_upload, mem, false, true);
++            if (data_size_upload >= UNIFORM_SLACK_MIN_DECLARED && !context.state.has_shader_store)
++                copy_uniform_slack(context, mem, data.address(), data_size_upload);
+         }
+ 
+         const uint64_t buffer_address = context.state.get_matching_device_address(data.address());
+diff --git a/vita3k/renderer/src/vulkan/surface_cache.cpp b/vita3k/renderer/src/vulkan/surface_cache.cpp
+index e8d1c36eb..e50339216 100644
+--- a/vita3k/renderer/src/vulkan/surface_cache.cpp
++++ b/vita3k/renderer/src/vulkan/surface_cache.cpp
+@@ -2698,6 +2698,17 @@ bool VKSurfaceCache::sync_surface_for_gpu_read(Address address, uint32_t size) {
+     return true;
+ }
+ 
++Address VKSurfaceCache::color_surface_limit(const Address address) const {
++    auto it = color_address_lookup.upper_bound(address);
++    const Address next = it == color_address_lookup.end() ? ~0u : it->first;
++    if (it != color_address_lookup.begin()) {
++        --it;
++        if (static_cast<uint64_t>(it->first) + it->second->total_bytes > address)
++            return address;
++    }
++    return next;
++}
++
+ int VKSurfaceCache::sync_surfaces_for_cpu_read(MemState &mem, Address address, uint32_t size) {
+     if (!state.features.enable_memory_mapping || state.disable_surface_sync || !state.context)
+         return 0;
