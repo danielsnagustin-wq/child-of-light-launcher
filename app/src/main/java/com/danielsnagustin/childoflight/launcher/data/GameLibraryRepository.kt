@@ -3249,8 +3249,13 @@ class GameLibraryRepository(private val context: Context) {
                 ?.forEach { pkg ->
                     val size = pkg.length()
                     val ok = pkg.delete()
-                    File(pkg.parentFile, "${pkg.nameWithoutExtension}.work.bin").delete()
+                    // Ronda 0.2.65 (A-P2-5): la licencia (.work.bin)
+                    // solo se borra si el .pkg se borró de verdad.
+                    // Antes se borraba siempre: si el .pkg fallaba,
+                    // el DLC quedaba instalado SIN licencia (roto)
+                    // y ya no había forma de recuperarla.
                     if (ok) {
+                        File(pkg.parentFile, "${pkg.nameWithoutExtension}.work.bin").delete()
                         deletedStoredPkg = true
                         LauncherLog.append(context, "delete", "DLC .pkg $dlcId borrado de $titleId ($size bytes, ${pkg.path})")
                     } else {
