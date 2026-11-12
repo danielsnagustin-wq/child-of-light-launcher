@@ -126,12 +126,14 @@ class LogicAuditFixesTest {
         assertEquals(1f, SettingsRepository.clampResolution(Float.NaN))
         assertEquals(0.5f, SettingsRepository.clampResolution(0.5f))
         assertEquals(2f, SettingsRepository.clampResolution(2f))
-        // R2-S04: la UI solo ofrece 0.5x/1x/2x/3x/4x: un valor
+        // R2-S04: la UI ofrece 0.5x/1x/1.25x/1.5x/2x/3x/4x (ronda
+        // 0.2.65, W-P1-1: el núcleo acepta 1.25x/1.5x de verdad,
+        // resolution-multiplier es float en el pin): un valor
         // intermedio (p. ej. de un backup editado a mano) se ajusta
         // al valor ofrecido más cercano; en empate, al menor
         // (conservador).
-        assertEquals(1f, SettingsRepository.clampResolution(1.5f))
-        assertEquals(1f, SettingsRepository.clampResolution(1.2f))
+        assertEquals(1.5f, SettingsRepository.clampResolution(1.5f))
+        assertEquals(1.25f, SettingsRepository.clampResolution(1.2f))
         assertEquals(2f, SettingsRepository.clampResolution(2.5f))
         assertEquals(3f, SettingsRepository.clampResolution(2.9f))
         assertEquals(3f, SettingsRepository.clampResolution(3.5f))
