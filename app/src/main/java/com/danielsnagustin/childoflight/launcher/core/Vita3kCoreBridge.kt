@@ -118,12 +118,23 @@ object Vita3kCoreBridge {
     private fun loadLibrary(name: String): Boolean {
         return try {
             System.loadLibrary(name)
+            // Cargó bien (sea el .so real o el stub): no hay error que
+            // recordar, aunque el intento anterior fallara.
+            lastLoadError = null
             true
         } catch (e: UnsatisfiedLinkError) {
-            lastLoadError = "System.loadLibrary($name): ${e.message}"
+            // Ronda 0.2.65 (J-P2-1): el primer error es el real
+            // ("Vita3K"); el intento del stub solo se hace si el real
+            // falló, y su error tapaba al real en el informe. Solo se
+            // guarda el primer error; el del stub no lo sobrescribe.
+            if (lastLoadError == null) {
+                lastLoadError = "System.loadLibrary($name): ${e.message}"
+            }
             false
         } catch (e: Exception) {
-            lastLoadError = "System.loadLibrary($name): ${e.javaClass.simpleName}: ${e.message}"
+            if (lastLoadError == null) {
+                lastLoadError = "System.loadLibrary($name): ${e.javaClass.simpleName}: ${e.message}"
+            }
             false
         }
     }
@@ -193,16 +204,18 @@ object Vita3kCoreBridge {
      * no-op en upstream y el juego arrancaba con los ajustes de la
      * primera sesión.
      *
-     * CONTRATO (oleada 2):
+     * CONTRATO (oleada 2, revisado ronda 0.2.65 R-P1-11):
      * - Devuelve OK (0) si la sesión se destruyó; NOT_IMPLEMENTED
      *   (-1) sin núcleo; NOT_INITIALIZED (-2) si no había sesión
      *   que destruir; SESSION_ACTIVE (-4) si hay una partida en
      *   curso, lanzándose o parándose: NO se destruyó nada.
-     * - Llamar solo desde el hilo principal (UI) y solo cuando no
-     *   hay partida en curso: desde EmbeddedGameActivity.onDestroy()
-     *   DESPUÉS de super.onDestroy() (la SDLActivity ya envió QUIT
-     *   al hilo SDL y esperó hasta 1 s a que termine) o al inicio
-     *   de tryLaunchEmbedded() cuando isAppRunning() es false.
+     * - Llamar solo cuando no hay partida en curso y el hilo SDL ya
+     *   terminó (join): el teardown destruye el emuenv entero con el
+     *   renderer Vulkan y es pesado; en Main congela la UI al salir
+     *   y al arrancar. El llamador de Vita3KLauncher lo ejecuta en
+     *   IO (destroyStaleSessionIfIdle); desde EmbeddedGameActivity
+     *   .onDestroy() va DESPUÉS de super.onDestroy() (la SDLActivity
+     *   ya envió QUIT al hilo SDL y esperó hasta 1 s a que termine).
      *   Nunca llamar mientras el juego está en curso o lanzándose.
      * - Si devuelve SESSION_ACTIVE repetidamente, la vía segura es
      *   reiniciar el proceso del launcher entre sesiones, no forzar
@@ -372,11 +385,30 @@ object Vita3kCoreBridge {
         }
     }
 
-    /** Activa o quita un motivo de pausa (PAUSE_REASON_*). */
+    /**
+     * Activa o quita un motivo de pausa (PAUSE_REASON_*).
+     *
+     * Ronda 0.2.65 (J-P2-4): el pin solo acepta UN bit por llamada
+     * (native_session.cpp:22-36: to_pause_reason es un switch sobre
+     * 1, 2 y 4; una máscara combinada cae en None y el núcleo la
+     * rechaza en silencio devolviendo false). Por eso una máscara
+     * combinada se envía bit a bit (USER, MENU, BACKGROUND por
+     * separado) y el resultado es true solo si todos llegaron. Con
+     * un solo bit el comportamiento es el de antes: una sola llamada
+     * nativa. Sin bits conocidos (0 o bits fuera de 1|2|4) no se llama
+     * al núcleo y se devuelve false: no hay nada que activar.
+     */
     fun setPauseReasonEnabled(reasonMask: Int, enabled: Boolean): Boolean {
         if (!available) return false
+        val bits = listOf(PAUSE_REASON_USER, PAUSE_REASON_MENU, PAUSE_REASON_BACKGROUND)
+            .filter { reasonMask and it != 0 }
+        if (bits.isEmpty()) return false
         return try {
-            nativeSetPauseReasonEnabled(reasonMask, enabled)
+            var allOk = true
+            for (bit in bits) {
+                if (!nativeSetPauseReasonEnabled(bit, enabled)) allOk = false
+            }
+            allOk
         } catch (_: UnsatisfiedLinkError) {
             false
         }
@@ -563,13 +595,42 @@ object Vita3kCoreBridge {
      * si el núcleo no la devuelve: 0 = desconocida, la UI no filtra
      * nada (ver MemoryMapping.isSupportedByMask / effectiveMapping-
      * Method en el modelo).
+     *
+     * Ronda 0.2.65 (G-P2-1): con el driver del sistema y SIN sesión
+     * el pin devuelve 1 (Disabled) porque get_emuenv() es nulo
+     * (native_config.cpp:597-607: sin emuenv cae al valor por
+     * defecto 1 << 0). Ese 1 NO es la máscara del driver: es "aún no
+     * hay sesión". Preguntarla antes de init hacía que
+     * effectiveMappingMethod mintiera (decía Double Buffer efectivo
+     * mientras el núcleo corría Disabled). Por eso con el driver del
+     * sistema y sin init se devuelve 0 (desconocida) sin preguntar
+     * al núcleo. Con un driver personalizado el pin enumera los
+     * dispositivos Vulkan directamente (native_config.cpp:809-813)
+     * y no necesita sesión: ese camino sí se pregunta antes de init.
      */
     fun getSupportedMemoryMappingMask(customDriverName: String = ""): Int {
         if (!available) return 0
+        if (customDriverName.isEmpty() && !isInitialized()) return 0
         return try {
             nativeGetSupportedMemoryMappingMask(customDriverName)
         } catch (_: UnsatisfiedLinkError) {
             0
+        }
+    }
+
+    /**
+     * Estado del driver personalizado pedido (ronda 0.2.65, R-P1-12).
+     * Devuelve [máscara, cargado] o null si no hay dato (sin núcleo,
+     * sin JNI o fallo nativo). cargado: 0 = no pedido, 1 = cargado,
+     * 2 = pedido pero NO cargado (el núcleo usa el driver del sistema).
+     * Con cargado == 2 la UI debe decir "Turnip pedido pero no cargado".
+     */
+    fun getCustomDriverSupportInfo(customDriverName: String = ""): IntArray? {
+        if (!available) return null
+        return try {
+            nativeGetCustomDriverSupportInfo(customDriverName)
+        } catch (_: UnsatisfiedLinkError) {
+            null
         }
     }
 
@@ -624,6 +685,7 @@ object Vita3kCoreBridge {
     private external fun nativeGetInstalledCustomDrivers(): Array<String>
     private external fun nativeRemoveCustomDriver(driverName: String): Boolean
     private external fun nativeGetSupportedMemoryMappingMask(customDriverName: String): Int
+    private external fun nativeGetCustomDriverSupportInfo(customDriverName: String): IntArray?
     private external fun nativeOverlayAttach(): Boolean
     private external fun nativeOverlayDetach(): Boolean
     private external fun nativeOverlayIsAttached(): Boolean
