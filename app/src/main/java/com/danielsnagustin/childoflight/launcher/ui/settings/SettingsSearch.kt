@@ -171,6 +171,7 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     entry("Surface Sync activado", "surface sync sincronizacion superficie rapido", SettingsCategory.GPU),
     entry("Memory Mapping", "memory mapping double buffer page table native external off", SettingsCategory.GPU),
     entry("Driver GPU", "driver gpu turnip sistema adreno mali personalizado", SettingsCategory.GPU),
+    entry("Modo turbo (Adreno)", "turbo adreno rendimiento maximo driver", SettingsCategory.GPU),
     // R6-P2-11: "Driver GPU" + "Driver personalizado" eran dos entradas
     // para el mismo control (los chips de la pantalla GPU): fusionadas
     // en una sola (el nombre "personalizado" sigue en las claves, así
