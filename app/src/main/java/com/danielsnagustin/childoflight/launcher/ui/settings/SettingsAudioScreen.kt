@@ -39,8 +39,11 @@ import com.danielsnagustin.childoflight.launcher.ui.LocalUiPreferences
  * "Corregir audio" ya no actúa a ciegas: antes de aplicar muestra un
  * diálogo con cada parámetro que va a cambiar (antes -> después),
  * guarda los valores anteriores y deja un botón "Deshacer" que los
- * restaura. Honesto en el diálogo: la caché de shaders limpiada no
- * se recupera, se vuelve a llenar sola al jugar.
+ * restaura. Ronda 0.2.64 (H-1 tiempo de carga): ya NO limpia la caché
+ * de shaders — el audio no tiene nada que ver con ella y borrarla
+ * dejaba el siguiente arranque recompilando todo (~2 min). La
+ * limpieza sigue existiendo como botón aparte en Rendimiento, con su
+ * aviso.
  *
  */
 @Composable
@@ -76,7 +79,7 @@ fun SettingsAudioScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "También se limpia la caché de shaders. Lo limpiado no se recupera: se vuelve a llenar sola al jugar. La próxima vez que entres al juego tardará más en cargar (los shaders se vuelven a compilar) y la primera partida puede ir a tirones: es normal, no es que el juego vaya lento. Tus valores anteriores quedan guardados y puedes deshacer el cambio después.",
+                                "No se toca la caché de shaders: el siguiente arranque no se vuelve más lento por esto. Tus valores anteriores quedan guardados y puedes deshacer el cambio después.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = mutedTextColor(dark),
                             )
@@ -109,7 +112,7 @@ fun SettingsAudioScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (
             item {
                 SectionTitle("Corregir audio")
                 Button(onClick = { showFixPreview = true }, modifier = Modifier.fillMaxWidth()) { Text("Corregir audio") }
-                NoteText("Muestra antes qué va a cambiar (SDL + NGS ON + caché de shaders ON y limpiada) y guarda tus valores para poder deshacer. Vuelve a lanzar el juego para aplicar el cambio.")
+                NoteText("Muestra antes qué va a cambiar (SDL + NGS ON + caché de shaders ON) y guarda tus valores para poder deshacer. No limpia la caché de shaders. Vuelve a lanzar el juego para aplicar el cambio.")
                 if (audioFixSnapshot != null) {
                     Spacer(modifier = Modifier.height(8.dp))
                     PremiumCard {
@@ -119,7 +122,7 @@ fun SettingsAudioScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (
                             fontWeight = FontWeight.SemiBold,
                             color = cardTextColor(dark),
                         )
-                        NoteText("Deshacer restaura el backend, NGS y la caché de shaders de antes. La caché de shaders limpiada no se recupera: se vuelve a llenar sola al jugar.")
+                        NoteText("Deshacer restaura el backend, NGS y la caché de shaders de antes.")
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedButton(onClick = { vm.undoFixAudio() }, modifier = Modifier.fillMaxWidth()) { Text("Deshacer") }
                         Spacer(modifier = Modifier.height(8.dp))
