@@ -47,6 +47,7 @@ class Vita3kConfigGeneratorTest {
         assertTrue(yaml.contains("ngs-enable: true"))
         assertTrue(yaml.contains("cpu-opt: true"))
         assertTrue(yaml.contains("fps-hack: false"))
+        assertTrue(yaml.contains("turbo-mode: false"))
         assertTrue(yaml.contains("performance-overlay: false"))
     }
 
@@ -494,6 +495,7 @@ class Vita3kConfigGeneratorTest {
             "custom-driver-name" to "string",
             "cpu-opt" to "bool",
             "fps-hack" to "bool",
+            "turbo-mode" to "bool",
             "file-loading-delay" to "int",
             "audio-backend" to "string",
             "audio-volume" to "int",
@@ -536,5 +538,35 @@ class Vita3kConfigGeneratorTest {
         for (key in expectedTypes.keys) {
             assertTrue("config.yml ya no emite '$key'", yaml.lines().any { it.startsWith("$key:") })
         }
+    }
+
+    @Test
+    fun turboModeIsEmittedOffByDefaultAndOnWhenEnabled() {
+        // Ronda 0.2.65 (RG-P2-15): turbo-mode existe en el núcleo
+        // (config.h:149, bool, default false) y ahora se emite: OFF
+        // por defecto, ON cuando el usuario lo enciende (Adreno con
+        // Turnip; en Mali no hace nada, pero la clave se emite igual).
+        val off = Vita3kConfigGenerator.generate(presetSettings(GpuProfileId.G99_RECOMMENDED), "/data/vita3k")
+        assertTrue(off.contains("turbo-mode: false"))
+        val on = Vita3kConfigGenerator.generate(
+            presetSettings(GpuProfileId.ADRENO_QUALITY_TURNIP).copy(turboMode = true),
+            "/data/vita3k",
+        )
+        assertTrue(on.contains("turbo-mode: true"))
+    }
+
+    @Test
+    fun anisoIsClampedToSafeMaxWhenDeviceMaxIsUnknown() {
+        // Ronda 0.2.65 (RC-P2-6): sin máximo conocido (proxy sin
+        // dato) el valor iba crudo al núcleo: por encima del límite
+        // del dispositivo es uso inválido de Vulkan. El tope seguro
+        // es 8x; con máximo conocido manda el del dispositivo.
+        val base = presetSettings(GpuProfileId.G99_RECOMMENDED).copy(anisotropicFiltering = 16)
+        val unknown = Vita3kConfigGenerator.generate(base, "/data/vita3k", null)
+        assertTrue(unknown.contains("anisotropic-filtering: 8"))
+        val max4 = Vita3kConfigGenerator.generate(base, "/data/vita3k", GpuInfo(maxAnisotropy = 4))
+        assertTrue(max4.contains("anisotropic-filtering: 4"))
+        val max16 = Vita3kConfigGenerator.generate(base, "/data/vita3k", GpuInfo(maxAnisotropy = 16))
+        assertTrue(max16.contains("anisotropic-filtering: 16"))
     }
 }
