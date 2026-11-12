@@ -72,6 +72,16 @@ import kotlin.math.sqrt
  * sobre la captura 1847x851 (defaultLayoutRectsStayInsideTheGame-
  * RectOnTheCapture) conserva su canvas y su densidad 2.07: solo
  * cambian los valores derivados de los tamaños nuevos.
+ *
+ * 0.2.64 (2026-11-11, A-7): los tamaños de fábrica se guardan
+ * además como fracción del alto del juego (sizeFraction): en el
+ * teléfono de referencia (juego 1080 px de alto) dan los mismos px
+ * que antes, pero en la captura 1847x851 (juego 851 px) el stick
+ * mide 383,9 px en vez de 174 dp x 2.07 = 360,2 px: la densidad
+ * 2.07 ya no manda en los controles de fábrica y los literales de
+ * defaultLayoutRectsStayInsideTheGameRectOnTheCapture se
+ * recalcularon (stick 55,8 px, salto 1788,4 px; el centro del
+ * salto, 1692,4 px, no cambia).
  */
 class CleanTouchLayoutTest {
 
@@ -222,18 +232,22 @@ class CleanTouchLayoutTest {
             }
         }
         // El stick ya NO se recorta al borde izquierdo del juego:
-        // su izquierda es 68 px en la captura (172.5 + 0.05 x 1502
-        // - 174 x 2.07 / 2 = 67,6), 105 px dentro de la barra.
+        // su izquierda es 56 px en la captura (172.5 + 0.05 x 1502
+        // - 383,9 / 2 = 55,8), 117 px dentro de la barra.
+        // 0.2.64 (A-7): el tamaño ya no es 174 dp x 2.07: es la
+        // fracción del alto del juego (0,4511 x 851 = 383,9 px),
+        // así que la densidad 2.07 ya no manda en los controles
+        // de fábrica (solo en los guardados sin fracción).
         val stickRect = controlRect(control(defaultTouchLayout(), "stick"), 1847f, 851f, 2.07f)
-        assertEquals(67.6f, stickRect.left, 1f)
+        assertEquals(55.8f, stickRect.left, 1f)
         assertTrue("el stick pisa la barra negra", stickRect.left < game.left - 0.01f)
         // El salto guardado en 1.012 queda con el centro en
         // 1692,4 px (0,5 px del centro medido en el mockup,
-        // 1691,9) y el borde derecho en 1782,4 px, 108 px dentro
-        // de la barra y 65 px dentro de la vista.
+        // 1691,9) y el borde derecho en 1788,4 px, 114 px dentro
+        // de la barra y 59 px dentro de la vista.
         val jumpRect = controlRect(control(defaultTouchLayout(), "btn_jump"), 1847f, 851f, 2.07f)
         assertEquals(1692.4f, (jumpRect.left + jumpRect.right) / 2f, 1f)
-        assertEquals(1782.4f, jumpRect.right, 1f)
+        assertEquals(1788.4f, jumpRect.right, 1f)
         assertTrue("el salto pisa la barra negra", jumpRect.right > game.right + 0.01f)
     }
 
