@@ -1,0 +1,120 @@
+diff --git a/vita3k/renderer/include/renderer/vulkan/surface_cache.h b/vita3k/renderer/include/renderer/vulkan/surface_cache.h
+index a2ac6db08..c026db152 100644
+--- a/vita3k/renderer/include/renderer/vulkan/surface_cache.h
++++ b/vita3k/renderer/include/renderer/vulkan/surface_cache.h
+@@ -109,6 +109,12 @@ struct ColorSurfaceCacheInfo : public SurfaceCacheInfo {
+     int32_t written_y0 = INT32_MAX;
+     int32_t written_x1 = 0;
+     int32_t written_y1 = 0;
++    // unscaled bounds of the last scene's draws (the only pixels a partial write-back may copy)
++    int32_t scene_x0 = 0;
++    int32_t scene_y0 = 0;
++    int32_t scene_x1 = 0;
++    int32_t scene_y1 = 0;
++    bool partial_write_back = false;
+ 
+     SceGxmColorBaseFormat format;
+     vk::ComponentMapping swizzle;
+diff --git a/vita3k/renderer/src/vulkan/context.cpp b/vita3k/renderer/src/vulkan/context.cpp
+index 3e3fc55c5..dad185fd4 100644
+--- a/vita3k/renderer/src/vulkan/context.cpp
++++ b/vita3k/renderer/src/vulkan/context.cpp
+@@ -660,8 +660,16 @@ void VKContext::stop_recording(const SceGxmNotification &notif1, const SceGxmNot
+ 
+             // we must sync the two buffers
+             if (surface_info && surface_info->need_buffer_sync) {
+-                if (render_target->has_macroblock_sync && state.res_multiplier != 1.0f
+-                    && rendered_rect_x1 > rendered_rect_x0 && rendered_rect_y1 > rendered_rect_y0) {
++                if (surface_info->partial_write_back) {
++                    // only the rows of the rect the GPU copied are fresh in the mirror the rest of it may be older than guest memory
++                    const uint32_t bpp = gxm::bits_per_pixel(surface_info->format) / 8;
++                    const uint32_t row_stride_bytes = surface_info->stride_bytes;
++                    const Address rect_start = surface_info->data.address() + static_cast<uint32_t>(surface_info->post_sync_y0) * row_stride_bytes + static_cast<uint32_t>(surface_info->post_sync_x0) * bpp;
++                    const uint32_t rect_row_bytes = surface_info->post_sync_width * bpp;
++                    const uint32_t rect_row_count = surface_info->post_sync_height;
++                    if (rect_row_count > 0 && rect_row_bytes > 0)
++                        state.request_queue.push(BufferSyncRequest{ rect_start, (rect_row_count - 1) * row_stride_bytes + rect_row_bytes, row_stride_bytes, rect_row_bytes, rect_row_count });
++                } else if (render_target->has_macroblock_sync && state.res_multiplier != 1.0f && rendered_rect_x1 > rendered_rect_x0 && rendered_rect_y1 > rendered_rect_y0) {
+                     const uint32_t bpp = gxm::bits_per_pixel(surface_info->format) / 8;
+                     const uint32_t row_stride_bytes = surface_info->stride_bytes;
+                     const int32_t nx0 = static_cast<int32_t>(rendered_rect_x0 / state.res_multiplier);
+@@ -672,12 +680,7 @@ void VKContext::stop_recording(const SceGxmNotification &notif1, const SceGxmNot
+                     const uint32_t rect_row_bytes = static_cast<uint32_t>(nx1 - nx0) * bpp;
+                     const uint32_t rect_row_count = static_cast<uint32_t>(ny1 - ny0);
+                     if (rect_row_count > 0 && rect_row_bytes > 0)
+-                        state.request_queue.push(BufferSyncRequest{
+-                            rect_start,
+-                            (rect_row_count - 1) * row_stride_bytes + rect_row_bytes,
+-                            row_stride_bytes,
+-                            rect_row_bytes,
+-                            rect_row_count });
++                        state.request_queue.push(BufferSyncRequest{ rect_start, (rect_row_count - 1) * row_stride_bytes + rect_row_bytes, row_stride_bytes, rect_row_bytes, rect_row_count });
+                 } else {
+                     state.request_queue.push(BufferSyncRequest{ surface_info->data.address(), static_cast<uint32_t>(surface_info->total_bytes) });
+                 }
+diff --git a/vita3k/renderer/src/vulkan/surface_cache.cpp b/vita3k/renderer/src/vulkan/surface_cache.cpp
+index e50339216..a99390d25 100644
+--- a/vita3k/renderer/src/vulkan/surface_cache.cpp
++++ b/vita3k/renderer/src/vulkan/surface_cache.cpp
+@@ -611,11 +611,19 @@ bool VKSurfaceCache::try_upload_guest_content(ColorSurfaceCacheInfo &info, MemSt
+ }
+ 
+ void VKSurfaceCache::note_scene_draw_rect(int32_t x0, int32_t y0, int32_t x1, int32_t y1) {
+-    if (!last_written_surface || x1 <= x0 || y1 <= y0)
++    if (!last_written_surface)
+         return;
+     ColorSurfaceCacheInfo &info = *last_written_surface;
+-    // scaled -> unscaled, rounded outward to the 32px tile the hardware writes back as a whole
++    info.scene_x0 = info.scene_x1 = 0;
++    info.scene_y0 = info.scene_y1 = 0;
++    if (x1 <= x0 || y1 <= y0)
++        return;
+     const float inv = 1.0f / state.res_multiplier;
++    info.scene_x0 = std::clamp<int32_t>(static_cast<int32_t>(std::floor(x0 * inv)), 0, info.original_width);
++    info.scene_y0 = std::clamp<int32_t>(static_cast<int32_t>(std::floor(y0 * inv)), 0, info.original_height);
++    info.scene_x1 = std::clamp<int32_t>(static_cast<int32_t>(std::ceil(x1 * inv)), 0, info.original_width);
++    info.scene_y1 = std::clamp<int32_t>(static_cast<int32_t>(std::ceil(y1 * inv)), 0, info.original_height);
++    // scaled -> unscaled, rounded outward to the 32px tile the hardware writes back as a whole
+     int32_t ux0 = static_cast<int32_t>(std::floor(x0 * inv / 32.0f)) * 32;
+     int32_t uy0 = static_cast<int32_t>(std::floor(y0 * inv / 32.0f)) * 32;
+     int32_t ux1 = static_cast<int32_t>(std::ceil(x1 * inv / 32.0f)) * 32;
+@@ -2862,13 +2870,29 @@ ColorSurfaceCacheInfo *VKSurfaceCache::perform_surface_sync() {
+             rt_clamped = true;
+         }
+     }
++    bool partial_scene_sync = false;
+     if (is_small_writeback_surface(last_written_surface->tiling, last_written_surface->original_width, last_written_surface->original_height)) {
+         const ColorSurfaceCacheInfo &ws = *last_written_surface;
+         const bool covers_all = ws.written_x0 <= 0 && ws.written_y0 <= 0
+             && ws.written_x1 >= static_cast<int32_t>(ws.original_width)
+             && ws.written_y1 >= static_cast<int32_t>(ws.original_height);
+-        if (!covers_all)
+-            return nullptr;
++        if (!covers_all) {
++            // a surface drawn only in part (NFS Most Wanted's exposure meter atlas, read by the CPU) gives back just what
++            // this scene drew: those pixels are fresh while the rest of our image may be older than guest memory
++            const int32_t px0 = std::max(sync_x0, ws.scene_x0);
++            const int32_t py0 = std::max(sync_y0, ws.scene_y0);
++            const int32_t px1 = std::min(sync_x0 + static_cast<int32_t>(sync_w), ws.scene_x1);
++            const int32_t py1 = std::min(sync_y0 + static_cast<int32_t>(sync_h), ws.scene_y1);
++            if (ws.tiling != SurfaceTiling::Linear || needs_copy_buffer || px1 <= px0 || py1 <= py0)
++                return nullptr;
++            sync_x0 = px0;
++            sync_y0 = py0;
++            sync_w = static_cast<uint32_t>(px1 - px0);
++            sync_h = static_cast<uint32_t>(py1 - py0);
++            clamp_sync = true;
++            rt_clamped = true;
++            partial_scene_sync = true;
++        }
+     }
+ 
+     bool skip_writeback = false;
+@@ -3003,6 +3027,7 @@ ColorSurfaceCacheInfo *VKSurfaceCache::perform_surface_sync() {
+     last_written_surface->post_sync_y0 = sync_y0;
+     last_written_surface->post_sync_width = sync_w;
+     last_written_surface->post_sync_height = sync_h;
++    last_written_surface->partial_write_back = partial_scene_sync;
+ 
+     vk::BufferImageCopy copy{
+         .bufferOffset = offset,
