@@ -47,6 +47,10 @@ fun resetCategorySettings(current: LauncherSettings, category: SettingsCategory)
             highAccuracy = preset.highAccuracy,
             surfaceSyncEnabled = preset.surfaceSyncEnabled,
             memoryMapping = preset.memoryMapping,
+            // Ronda 0.2.65 (RG-P2-15): el modo turbo es opción de GPU:
+            // restablecer la categoría lo devuelve al valor del preset
+            // (OFF; ningún preset lo enciende).
+            turboMode = preset.turboMode,
             // El driver sí forma parte del preset (Turnip solo en
             // ADRENO_QUALITY_TURNIP); la info del driver instalado
             // se conserva, igual que en applyPreset (M21).
@@ -155,12 +159,25 @@ fun categoryHasResettableSettings(category: SettingsCategory): Boolean =
  * ni siquiera muestra los chips de driver (SettingsGpuScreen solo
  * muestra texto). También se aplica al restablecer todo y al importar
  * una copia de seguridad de otro teléfono. Pura, testeable en JVM.
+ *
+ * Ronda 0.2.65 (G-P2-7): al volver al sistema se limpian TAMBIÉN los
+ * tres flags del driver (turnipInstalled, turnipVersion,
+ * customDriverName): antes solo se corregía gpuDriver y el estado
+ * fantasma ("Turnip instalado" sin zip en disco, visible en
+ * Diagnóstico) sobrevivía a la importación de una copia de otro
+ * teléfono. Cuando el guard NO actúa (Adreno con Turnip instalado),
+ * los flags se conservan tal cual.
  */
 fun guardTurnipDriver(settings: LauncherSettings, gpuVendor: GpuVendor?): LauncherSettings =
     if (settings.gpuDriver == GpuDriver.TURNIP &&
         (gpuVendor != GpuVendor.ADRENO || !settings.turnipInstalled)
     ) {
-        settings.copy(gpuDriver = GpuDriver.SYSTEM)
+        settings.copy(
+            gpuDriver = GpuDriver.SYSTEM,
+            turnipInstalled = false,
+            turnipVersion = "",
+            customDriverName = "",
+        )
     } else {
         settings
     }
