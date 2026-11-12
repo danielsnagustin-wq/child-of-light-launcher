@@ -39,17 +39,17 @@ import com.danielsnagustin.childoflight.launcher.model.presetSettings
  * ADRENO_QUALITY_TURNIP difiere en 5 ajustes, no 6 (Page Table ya
  * no cuenta como diferencia).
  *
- * R5-A2-6: las notas describen el preset CANÓNICO, no el resultado
- * real cuando la preservación conserva un cambio manual (ver
- * preserveManualCacheChoices).
+ * R5-A2-6: las notas SÍ matizan la preservación: la diferencia
+ * descrita es la del preset canónico y el resultado real conserva
+ * los cambios manuales (ver preserveManualCacheChoices).
  */
 fun presetCompatibilityNote(profile: GpuProfileId): String = when (profile) {
     GpuProfileId.G99_RECOMMENDED ->
         "Recomendado en Helio G99 / Mali-G57: 1x estable, Page Table, sin Turnip. Page Table es el nuevo valor por defecto (ronda 0.2.66): la hipótesis es que Double Buffer es el método más caro en Mali, pero aún no está medido en este teléfono. Mide con la prueba de 30 s; si va lento o hay glitches, prueba Double Buffer en Ajustes → GPU."
     GpuProfileId.G99_QUALITY ->
-        "2x con Bilinear: la única diferencia con Recomendado es la resolución 2x. Prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado."
+        "2x con Bilinear: la única diferencia con Recomendado es la resolución 2x (salvo tus cambios manuales conservados). Prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado."
     GpuProfileId.MALI_PERFORMANCE ->
-        "Mali genérico (no G99): en efecto es igual que Recomendado (1x, Bilinear, Page Table, cachés ON, sin Turnip): la única diferencia es la etiqueta. 1x siempre, Page Table en el preset (se puede cambiar a mano). Si va lento, prueba Double Buffer en Ajustes → GPU y mide con la prueba de 30 s. Sin Turnip: el driver Turnip no funciona en Mali."
+        "Mali genérico (no G99): en efecto es igual que Recomendado (1x, Bilinear, Page Table, cachés ON, sin Turnip): la única diferencia es la etiqueta (salvo tus cambios manuales conservados). 1x siempre, Page Table en el preset (se puede cambiar a mano). Si va lento, prueba Double Buffer en Ajustes → GPU y mide con la prueba de 30 s. Sin Turnip: el driver Turnip no funciona en Mali."
     GpuProfileId.MALI_BALANCED ->
         "Mali genérico: en efecto es igual que Recomendado (1x, Bilinear, Page Table, sin Turnip): la única diferencia es la etiqueta. Sin Turnip: el driver Turnip no funciona en Mali."
     GpuProfileId.GENERIC_QUALITY ->
