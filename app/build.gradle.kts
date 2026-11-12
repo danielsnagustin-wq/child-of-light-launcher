@@ -23,8 +23,8 @@ android {
         applicationId = "com.danielsnagustin.childoflight.launcher"
         minSdk = 28
         targetSdk = 35
-        versionCode = 66
-        versionName = "0.2.64"
+        versionCode = 67
+        versionName = "0.2.65"
 
         if (vita3kTreePresent) {
             // Solo arm64-v8a: el procesador objetivo es arm64 y así el
