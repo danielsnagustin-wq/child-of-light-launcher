@@ -5,6 +5,7 @@ import com.danielsnagustin.childoflight.launcher.model.GpuBackend
 import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
+import com.danielsnagustin.childoflight.launcher.model.effectiveMappingMethod
 import com.danielsnagustin.childoflight.launcher.model.effectiveSettings
 import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 import com.danielsnagustin.childoflight.launcher.model.resolveBackendReason
@@ -32,12 +33,22 @@ import java.nio.charset.StandardCharsets
  * - backend-renderer ("Vulkan"), resolution-multiplier (float 0.5/1.0/2.0/3.0/4.0),
  *   screen-filter ("Bilinear"), v-sync (bool), anisotropic-filtering (int),
  *   async-pipeline-compilation (bool), high-accuracy (bool),
+ *   validation-layer (bool, false siempre: ronda 0.2.66, G11-07),
  *   disable-surface-sync (bool, INVERTIDO: true = Surface Sync Disabled),
  *   memory-mapping ("double-buffer" / "external-host" / "page-table" /
  *   "native-buffer" — solo Android — y cualquier otro valor, p. ej. "off",
  *   equivale a Disabled por fall-through en el parser del renderer),
  *   texture-cache, shader-cache, audio-backend ("SDL" / "Cubeb"),
- *   audio-volume (int), ngs-enable (bool), cpu-opt (bool),
+ *   audio-volume (int), ngs-enable (bool),
+ *   audio-device-sample-frames (int, default 512; 0.2.66, parche
+ *   aud-p2-1: tamaño de búfer de dispositivo SDL),
+ *   cpu-opt (bool),
+ *   exp-audio-sdl (bool, OFF por defecto; ronda 0.2.66, parche
+ *   experimental R1 en app/src/main/cpp/patches/r1-audio-sdl-exp.patch:
+ *   la clave la DEFINE ese parche en config.h del núcleo (CONFIG_INDIVIDUAL),
+ *   no el pin 3e43bc80: sin el parche aplicado, el núcleo ignora la clave
+ *   en silencio y el interruptor no hace nada. El generador la emite
+ *   siempre para que el config.yml sea el mismo con y sin parche),
  *   fps-hack (bool), turbo-mode (bool, solo Adreno con driver
  *   personalizado; en Mali no hace nada, pin config.h:149),
  *   file-loading-delay (int),
@@ -53,17 +64,21 @@ import java.nio.charset.StandardCharsets
  *   mensajes ocultos, pantalla limpia),
  *
  * Semántica real en Vulkan (ronda 0.2.65, R-P1-5/6/7 — leer antes de
- * tocar estos interruptores):
- * - texture-cache: INERTE en Vulkan (ningún código Vulkan lee
- *   config.texture_cache; texture.cpp:130 cachea incondicional).
- *   Solo OpenGL la usa (gl/sync_state.cpp:420-424). Se sigue
- *   emitiendo para ese camino; en el teléfono no hace nada.
- * - shader-cache: en Vulkan solo controla el PRECOMPILADO de
- *   shaders conocidos al arrancar (app.cpp:281); la caché en disco
- *   se carga/guarda incondicionalmente (pipeline_cache.cpp,
- *   renderer.cpp:1285,1840). OFF no ahorra disco y quita lo que
- *   evita tirones. La etiqueta honesta es "Precompilar shaders
- *   conocidos al arrancar" (ver LauncherSettings.shaderCache).
+ * tocar estos interruptores; actualizado 0.2.66 con los parches C-01/C-02):
+ * - texture-cache: desde la 0.2.66 (parche c-01) Vulkan SÍ la honra:
+ *   con false no se consulta ni se rellena la caché (cada draw vuelve
+ *   a subir la textura). Antes era INERTE en Vulkan (ningún código
+ *   Vulkan leía config.texture_cache; texture.cpp:130 cacheaba
+ *   incondicional) y solo OpenGL la usaba (gl/sync_state.cpp:420-424).
+ * - shader-cache: en Vulkan controla el PRECOMPILADO de shaders
+ *   conocidos al arrancar (app.cpp:281) y, desde la 0.2.66 (parche
+ *   c-02), TAMBIÉN la lectura y la escritura de los .spv en disco:
+ *   con false no se lee ni se escribe caché. Antes la caché en disco
+ *   se cargaba/guardaba incondicionalmente (pipeline_cache.cpp,
+ *   renderer.cpp:1285,1840) y OFF no ahorraba disco. La etiqueta
+ *   honesta sigue siendo "Precompilar shaders conocidos al arrancar"
+ *   (ver LauncherSettings.shaderCache) porque el precompilado es lo
+ *   que más se nota; el ahorro de disco es un efecto añadido.
  * - hashless-texture-cache: IGNORADO en Vulkan, siempre ON
  *   (renderer.cpp:1046 hardcodeado a true; solo GL pasa el valor,
  *   gl/renderer.cpp:268). Se sigue emitiendo para OpenGL.
@@ -100,10 +115,12 @@ import java.nio.charset.StandardCharsets
  *   informativos" en config; lo más cercano es warn-missing-firmware
  *   (config.h:197) y show-live-area-screen (:167), ninguno es un
  *   aviso informativo general. Por eso NO se emite.
- * - frame limiter, frame skipping, accurate thread scheduling y
- *   audio buffer size: sin clave en config.h ni en config.cpp.
- *   No tienen efecto real en el launcher y se eliminaron del
- *   modelo de ajustes (auditoría de funcionalidad 2026-11-08).
+ * - frame limiter, frame skipping y accurate thread scheduling:
+ *   sin clave en config.h ni en config.cpp. No tienen efecto real
+ *   en el launcher y se eliminaron del modelo de ajustes (auditoría
+ *   de funcionalidad 2026-11-08). (El "audio buffer size" salió de
+ *   esta lista en la 0.2.66: ahora SÍ tiene clave real,
+ *   audio-device-sample-frames, AUD-P2-1.)
  * - cpu-backend separado (no hay clave: Dynarmic es el backend por
  *   defecto y cpu-opt controla sus optimizaciones)
  */
@@ -113,8 +130,14 @@ object Vita3kConfigGenerator {
      * gpu = GPU detectada (opcional, null = sin detectar): si el ajuste
      * pide Vulkan pero el teléfono NO tiene Vulkan, el backend emitido
      * es OpenGL (resolveBackend). Sin gpu no se cambia nada.
+     * memoryMappingMask = máscara de métodos de mapeo soportados por
+     * el driver (ronda 0.2.66, G11-02; ver
+     * Vita3kCoreBridge.getSupportedMemoryMappingMask): null o 0 =
+     * desconocida, se emite el pedido tal cual; conocida, se emite el
+     * método EFECTIVO (effectiveMappingMethod) para que el núcleo no
+     * caiga a Double Buffer en silencio.
      */
-    fun generate(settings: LauncherSettings, vitaFsPath: String, gpu: GpuInfo? = null): String {
+    fun generate(settings: LauncherSettings, vitaFsPath: String, gpu: GpuInfo? = null, memoryMappingMask: Int? = null): String {
         // T-P2-4: solo se emite desde ajustes saneados (claves
         // conocidas, tipos y rangos): un valor inválido (DataStore o
         // backup editado a mano) se corrige al default seguro antes
@@ -170,6 +193,14 @@ object Vita3kConfigGenerator {
         sb.appendLine("anisotropic-filtering: $aniso")
         sb.appendLine("async-pipeline-compilation: ${s.asyncPipelineCompilation}")
         sb.appendLine("high-accuracy: ${s.highAccuracy}")
+        // Ronda 0.2.66 (G11-07 / fork P15): validation-layer
+        // VERIFICADO (config.h:138, bool, default true en upstream).
+        // Si la capa de validación de Vulkan está presente, el pin la
+        // activa con su coste; en Android de serie normalmente no
+        // existe, así que en este teléfono probablemente no hace nada
+        // — pero el launcher lo cierra de forma determinista
+        // emitiendo false siempre.
+        sb.appendLine("validation-layer: false")
         // disable-surface-sync es el inverso de surfaceSyncEnabled.
         sb.appendLine("# GPU — disable-surface-sync es el INVERSO de Surface Sync: true = Disabled (más rápido), false = Enabled (más preciso).")
         sb.appendLine("disable-surface-sync: ${!s.surfaceSyncEnabled}")
@@ -179,8 +210,16 @@ object Vita3kConfigGenerator {
         // "native-buffer" -> NativeBuffer (solo Android). Cualquier otro
         // valor ("off" incluido) cae en Disabled por fall-through. Los 5
         // valores del enum MemoryMapping son, por tanto, válidos tal cual.
+        // Ronda 0.2.66 (G11-02): con máscara conocida se emite el método
+        // EFECTIVO, no el pedido: si el pedido no está en la máscara, el
+        // núcleo caería a Double Buffer EN SILENCIO (renderer.cpp:1019-
+        // 1022). Con máscara desconocida (null/0) se deja el pedido.
+        val effectiveMapping = effectiveMappingMethod(s.memoryMapping, memoryMappingMask ?: 0)
+        if (effectiveMapping != s.memoryMapping) {
+            sb.appendLine("# GPU — memory-mapping: el pedido (${s.memoryMapping.vita3kValue}) no está en la máscara soportada por el driver (máscara ${memoryMappingMask ?: 0}): se emite el efectivo (${effectiveMapping.vita3kValue}).")
+        }
         sb.appendLine("# GPU — memory-mapping verificado (renderer.cpp late_init): \"double-buffer\" / \"external-host\" / \"page-table\" / \"native-buffer\" (solo Android); \"off\" = Disabled.")
-        sb.appendLine("memory-mapping: \"${escapeYamlDoubleQuoted(s.memoryMapping.vita3kValue)}\"")
+        sb.appendLine("memory-mapping: \"${escapeYamlDoubleQuoted(effectiveMapping.vita3kValue)}\"")
         // Ronda 0.2.65 (R-P1-5): texture-cache es INERTE en Vulkan
         // (ningún código Vulkan lee config.texture_cache;
         // texture.cpp:130 cachea incondicional). Solo OpenGL la usa
@@ -232,8 +271,24 @@ object Vita3kConfigGenerator {
         // cualquier otro valor deja el adapter a null y el audio no arranca.
         sb.appendLine("# Audio — audio-backend verificado (audio.cpp set_backend): \"SDL\" o \"Cubeb\".")
         sb.appendLine("audio-backend: \"${escapeYamlDoubleQuoted(s.audioBackend.vita3kValue)}\"")
+        // Ronda 0.2.66 (parches experimentales, R1): exp-audio-sdl es la
+        // clave que lee el parche r1-audio-sdl-exp.patch (la define él en
+        // config.h; el pin no la tiene). OFF = el audio es el actual.
+        // Sin el parche aplicado en la compilación, el núcleo ignora la
+        // clave en silencio: el interruptor no hace nada hasta que el
+        // workflow aplique los parches (paso git apply, otro equipo).
+        sb.appendLine("exp-audio-sdl: ${s.expAudioSdl}")
         sb.appendLine("audio-volume: ${s.audioVolume}")
         sb.appendLine("ngs-enable: ${s.ngsEnable}")
+        // Ronda 0.2.66 (AUD-P2-1): clave REAL en config.h
+        // (audio-device-sample-frames, default 512; parche
+        // aud-p2-1-audio-device-sample-frames.patch): tamaño de
+        // búfer de dispositivo SDL (SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES).
+        // Se emite siempre con el default del pin (512, el valor que
+        // ya usaba el adaptador SDL): no hay ajuste de UI para esto en
+        // esta ronda; el valor fijo evita que el generador emita una
+        // clave sin efecto (eso era el AUD-P2-1 original).
+        sb.appendLine("audio-device-sample-frames: 512")
         // --- Overlay ---
         // performance-overlay-detail/position VERIFICADOS (pin 3e43bc80,
         // config.h:187,188): ints con default MINIMUM = 0 y TOP_LEFT = 0.
@@ -357,24 +412,38 @@ object Vita3kConfigGenerator {
 
     /**
      * T-P2-4: valida un config.yml YA GENERADO, línea a línea:
-     * claves conocidas (solo las 27 que emite generate()), tipos
+     * claves conocidas (solo las 31 que emite generate()), tipos
      * (bool/int/float/string entrecomillada) y rangos sensatos, sin
      * duplicados. Es la segunda red tras sanitizedSettings(): si
      * esto falla, hay un bug en el generador, no en los ajustes.
      * Vacío = válido. Puro y testeable en JVM.
+     *
+     * Ronda 0.2.66 (REGLA DE ORO): cada clave nueva que emita generate()
+     * DEBE estar aquí. Las 4 de esta ronda: "validation-layer" (bool,
+     * G11-07, Fase 0), "audio-backend" (string, AUD-P0-1 de la Fase 0:
+     * generate() la emitía desde siempre pero el validador no la conocía
+     * y writeConfig() regeneraba con defaults en cada lanzamiento),
+     * "audio-device-sample-frames" (int, AUD-P2-1, Fase 2) y
+     * "exp-audio-sdl" (bool, R1, interruptores experimentales).
      */
     fun validateGeneratedConfig(content: String): List<String> {
         val problems = mutableListOf<String>()
         val seen = mutableSetOf<String>()
         val boolKeys = setOf(
             "v-sync", "async-pipeline-compilation", "high-accuracy",
+            "validation-layer",
             "disable-surface-sync", "texture-cache", "shader-cache",
             "cpu-opt", "fps-hack", "turbo-mode", "ngs-enable", "performance-overlay",
             "hashless-texture-cache", "show-compile-shaders", "show-welcome",
+            "exp-audio-sdl",
         )
         val intRanges = mapOf(
             "anisotropic-filtering" to 1..16,
             "audio-volume" to 0..100,
+            // Ronda 0.2.66 (AUD-P2-1): la clave nueva que emite
+            // generate() tiene que estar aquí o se repite AUD-P0-1
+            // (clave desconocida → writeConfig regenera defaults).
+            "audio-device-sample-frames" to 64..4096,
             "file-loading-delay" to 0..30,
             "performance-overlay-detail" to 0..3,
             "performance-overlay-position" to 0..5,
@@ -384,6 +453,14 @@ object Vita3kConfigGenerator {
             "backend-renderer" to setOf("Vulkan", "OpenGL"),
             "screen-filter" to setOf("Bilinear", "Nearest", "Bicubic", "FXAA", "FSR"),
             "memory-mapping" to setOf("double-buffer", "external-host", "page-table", "native-buffer", "off"),
+            // Ronda 0.2.66 (AUD-P0-1): generate() emite audio-backend
+            // siempre (:230-236) y el validador no lo conocía: caía en
+            // "clave desconocida" y writeConfig regeneraba con
+            // defaults en CADA lanzamiento (ningún ajuste llegaba al
+            // núcleo). Nunca más: cada clave que emite generate()
+            // DEBE estar en este validador (ver el test invariante
+            // en R11Fase0Test).
+            "audio-backend" to setOf("SDL", "Cubeb"),
         )
         for (rawLine in content.lines()) {
             val line = rawLine.trim()
@@ -513,7 +590,7 @@ object Vita3kConfigGenerator {
      * ese mismo ux0 equivocado. generate() ya recibe el parámetro
      * como vitaFsPath: aquí se le pasa la ruta correcta.
      */
-    fun writeConfig(context: Context, settings: LauncherSettings, vitaRoot: File, gpu: GpuInfo? = null): File {
+    fun writeConfig(context: Context, settings: LauncherSettings, vitaRoot: File, gpu: GpuInfo? = null, memoryMappingMask: Int? = null): File {
         val vitaFs = vitaFsPathFor(vitaRoot)
         // T-P2-4: validar ANTES de escribir. Los valores inválidos
         // se corrigen a defaults seguros en generate() (vía
@@ -527,7 +604,21 @@ object Vita3kConfigGenerator {
         if (backendReason != null) {
             LauncherLog.append(context, "gpu", "config.yml: $backendReason")
         }
-        var content = generate(settings, vitaFs.absolutePath, gpu)
+        // Ronda 0.2.66 (G11-02): con máscara conocida se registra el
+        // método de mapeo EFECTIVO que se emite (el pedido puede no
+        // estar soportado por el driver). Se calcula sobre los
+        // ajustes efectivos (modo seguro / 60 FPS ya fuerzan Double
+        // Buffer antes de resolver), igual que hace generate().
+        if (memoryMappingMask != null && memoryMappingMask != 0) {
+            val requested = effectiveSettings(settings).memoryMapping
+            val effective = effectiveMappingMethod(requested, memoryMappingMask)
+            if (effective != requested) {
+                LauncherLog.append(context, "gpu", "config.yml: memory-mapping efectivo ${effective.label} (pedido: ${requested.label}, máscara: $memoryMappingMask): el pedido no está soportado por el driver; sin esto el núcleo caería a Double Buffer en silencio")
+            } else {
+                LauncherLog.append(context, "gpu", "config.yml: memory-mapping efectivo ${effective.label} (pedido: ${requested.label}, máscara: $memoryMappingMask)")
+            }
+        }
+        var content = generate(settings, vitaFs.absolutePath, gpu, memoryMappingMask)
         // T-P2-4, segunda red: si el YAML generado sigue siendo
         // inválido (bug del generador, no de los ajustes), no se
         // escribe tal cual: se regenera con los defaults seguros y
@@ -535,7 +626,7 @@ object Vita3kConfigGenerator {
         val yamlProblems = validateGeneratedConfig(content)
         if (yamlProblems.isNotEmpty()) {
             LauncherLog.append(context, "config", "config.yml generado inválido (${yamlProblems.joinToString("; ")}): se regenera con defaults seguros")
-            content = generate(LauncherSettings(), vitaFs.absolutePath, gpu)
+            content = generate(LauncherSettings(), vitaFs.absolutePath, gpu, memoryMappingMask)
         }
         if (!vitaRoot.exists()) vitaRoot.mkdirs()
         val file = File(vitaRoot, "config.yml")
