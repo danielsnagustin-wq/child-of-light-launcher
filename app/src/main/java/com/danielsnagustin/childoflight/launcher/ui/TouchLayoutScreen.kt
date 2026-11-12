@@ -375,17 +375,30 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             SettingSlider("Posición Y", (control.yFraction * 100).toInt(), 0..100, { updateControl(control.copy(yFraction = TouchLayoutRepository.clampCenterFraction(it / 100f, halfYFrac))) }, enabled = previewMeasured) { "$it%" }
             // 0.2.64 (A-7): el slider muestra el tamaño EFECTIVO en
             // dp en ESTE teléfono (fracción x alto del juego /
-            // densidad si el control trae fracción) y al moverlo el
-            // control pasa a modo dp (sizeFraction = null): un tamaño
-            // editado a mano es dp, no fracción. Sin limpiar la
-            // fracción, el slider no haría nada (la fracción manda
-            // sobre sizeDp en el dibujado).
+            // densidad si el control trae fracción).
+            // 0.2.65 (X-P2-3): al moverlo la unidad resultante es
+            // coherente con la del control: si el control está en
+            // modo fracción (perfiles de fábrica), el tamaño nuevo
+            // se guarda TAMBIÉN como fracción (la del dp elegido
+            // en el teléfono de referencia); si ya está en modo dp
+            // (perfiles guardados, A-7), sigue en dp. Antes el
+            // slider siempre ponía sizeFraction = null y el perfil
+            // editado mezclaba unidades (un control en dp y el
+            // resto en fracción).
             val effectiveSizeDp = if (previewSize.height > 0) {
                 (effectiveSizePx / density.density).toInt().coerceIn(40, 260)
             } else {
                 control.sizeDp
             }
-            SettingSlider("Tamaño", effectiveSizeDp, 40..260, { updateControl(control.copy(sizeDp = it, sizeFraction = null)) }) { "${it}dp" }
+            SettingSlider("Tamaño", effectiveSizeDp, 40..260, { newSizeDp ->
+                updateControl(
+                    if (control.sizeFraction != null) {
+                        control.copy(sizeDp = newSizeDp, sizeFraction = TouchOverlayMapping.sizeFractionForReferenceDp(newSizeDp))
+                    } else {
+                        control.copy(sizeDp = newSizeDp, sizeFraction = null)
+                    },
+                )
+            }) { "${it}dp" }
             SettingSlider("Opacidad", (control.opacity * 100).toInt(), 10..100, { updateControl(control.copy(opacity = it / 100f)) }) { "$it%" }
 
             Text("Forma", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
@@ -632,7 +645,16 @@ private fun TouchPreview(
                             )
                             .border(
                                 width = if (isTested) 2.dp else 1.dp,
-                                color = if (isTested) ColTurquoise else ColIceBlue.copy(alpha = 0.7f),
+                                // 0.2.65 (U-P2-2): en tema claro el
+                                // estado "probado" es azul lavanda,
+                                // como el texto de "Probado" de esta
+                                // misma pantalla; el turquesa fijo
+                                // no contrastaba sobre fondo claro.
+                                color = if (isTested) {
+                                    if (isDarkUi(LocalUiPreferences.current)) ColTurquoise else ColLavenderBlue
+                                } else {
+                                    ColIceBlue.copy(alpha = 0.7f)
+                                },
                                 shape = shape,
                             )
                             .pointerInput(control.id, testMode) {
