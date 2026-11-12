@@ -1,0 +1,212 @@
+diff --git a/android/app/src/main/java/org/vita3k/emulator/data/EmulatorConfig.kt b/android/app/src/main/java/org/vita3k/emulator/data/EmulatorConfig.kt
+index e59b9f1f8..ff317e65e 100644
+--- a/android/app/src/main/java/org/vita3k/emulator/data/EmulatorConfig.kt
++++ b/android/app/src/main/java/org/vita3k/emulator/data/EmulatorConfig.kt
+@@ -23,7 +23,7 @@ class EmulatorConfig {
+     @JvmField var vSync: Boolean = true
+     @JvmField var anisotropicFiltering: Int = 1
+     @JvmField var asyncPipelineCompilation: Boolean = false
+-    @JvmField var accurateThreadScheduling: Boolean = false
++    @JvmField var accurateThreadScheduling: Boolean = true
+     @JvmField var exportTextures: Boolean = false
+     @JvmField var importTextures: Boolean = false
+     @JvmField var exportAsPng: Boolean = true
+diff --git a/vita3k/config/include/config/config.h b/vita3k/config/include/config/config.h
+index 381c33047..158ee2e7e 100644
+--- a/vita3k/config/include/config/config.h
++++ b/vita3k/config/include/config/config.h
+@@ -167,7 +167,7 @@ using PhysicalKeyCode = input::PhysicalKeyCode;
+     code(int, "anisotropic-filtering", 1, anisotropic_filtering)                                        \
+     code(bool, "texture-cache", true, texture_cache)                                                    \
+     code(bool, "async-pipeline-compilation", false, async_pipeline_compilation)                          \
+-    code(bool, "accurate-thread-scheduling", false, accurate_thread_scheduling)                         \
++    code(bool, "accurate-thread-scheduling", true, accurate_thread_scheduling)                          \
+     code(bool, "preempt-on-wake", false, preempt_on_wake)                                               \
+     code(int, "preempt-on-wake-us", 1000, preempt_on_wake_us)                                             \
+     code(int, "guest-cores", 3, guest_cores)  /* the Vita gives an application three of its four cores */ \
+diff --git a/vita3k/config/include/config/state.h b/vita3k/config/include/config/state.h
+index f75d01d5f..4b0910a0b 100644
+--- a/vita3k/config/include/config/state.h
++++ b/vita3k/config/include/config/state.h
+@@ -80,7 +80,7 @@ struct Config {
+         bool v_sync = true;
+         int anisotropic_filtering = 1;
+         bool async_pipeline_compilation = false;
+-        bool accurate_thread_scheduling = false;
++        bool accurate_thread_scheduling = true;
+         bool preempt_on_wake = false;
+         int preempt_on_wake_us = 1000;
+         int guest_cores = 3;
+diff --git a/vita3k/config/src/settings.cpp b/vita3k/config/src/settings.cpp
+index bd92f518f..9ea3127f0 100644
+--- a/vita3k/config/src/settings.cpp
++++ b/vita3k/config/src/settings.cpp
+@@ -203,7 +203,7 @@ bool load_custom_config(Config::CurrentConfig &out, const fs::path &config_path,
+         out.v_sync = gpu.attribute("v-sync").as_bool();
+         out.anisotropic_filtering = gpu.attribute("anisotropic-filtering").as_int();
+         out.async_pipeline_compilation = gpu.attribute("async-pipeline-compilation").as_bool();
+-        out.accurate_thread_scheduling = gpu.attribute("accurate-thread-scheduling").as_bool();
++        out.accurate_thread_scheduling = gpu.attribute("accurate-thread-scheduling").as_bool(true);
+         out.preempt_on_wake = gpu.attribute("preempt-on-wake").as_bool();
+         out.preempt_on_wake_us = gpu.attribute("preempt-on-wake-us").as_int(1000);
+         out.guest_cores = gpu.attribute("guest-cores").as_int(1);
+diff --git a/vita3k/display/src/display.cpp b/vita3k/display/src/display.cpp
+index ab1e97a10..215285e22 100644
+--- a/vita3k/display/src/display.cpp
++++ b/vita3k/display/src/display.cpp
+@@ -179,6 +179,9 @@ static void vblank_sync_thread(EmuEnvState &emuenv) {
+             static uint64_t last_dumped_setframe = ~0ull;
+             static uint64_t last_break_vblanks = 0;
+             static uint64_t last_provable_break_setframe = ~0ull;
++            static uint64_t last_provable_break_vblank = 0;
++            static bool provable_handed_over = false;
++            static uint64_t flip_streak_start_vblank = ~0ull;
+             static uint64_t last_provable_dryrun_setframe = ~0ull;
+             static uint64_t last_progress_value = 0;
+             static uint64_t last_progress_change_vblank = 0;
+@@ -210,6 +213,9 @@ static void vblank_sync_thread(EmuEnvState &emuenv) {
+                 last_dumped_setframe = ~0ull;
+                 last_break_vblanks = 0;
+                 last_provable_break_setframe = ~0ull;
++                last_provable_break_vblank = 0;
++                provable_handed_over = false;
++                flip_streak_start_vblank = ~0ull;
+                 last_provable_dryrun_setframe = ~0ull;
+                 last_progress_value = 0;
+                 last_progress_change_vblank = 0;
+@@ -316,11 +322,22 @@ static void vblank_sync_thread(EmuEnvState &emuenv) {
+             // Cycle breaker
+             constexpr uint64_t PROVABLE_DRYRUN_VBLANKS = 120;
+             constexpr uint64_t PROVABLE_BREAK_VBLANKS = 300;
++            constexpr uint64_t PROVABLE_RECOVERY_VBLANKS = 600;
++            constexpr uint64_t FLIP_STREAK_MAX_GAP_VBLANKS = 30;
+             const int64_t now_epoch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+             const bool world_stop_quiet = (now_epoch_ms - emuenv.kernel.last_world_stop_epoch_ms.load(std::memory_order_relaxed)) >= 5000;
+             // deferred-unmap collapses remaps WITHOUT world-stops, blinding the veto above; transitions are stamped regardless
+             const bool mem_transition_quiet = !emuenv.renderer
+                 || (now_epoch_ms - emuenv.renderer->last_mem_transition_epoch_ms.load(std::memory_order_relaxed)) >= 5000;
++            // ten seconds of steady frames ends a wedge the cycle breaker handed to the stall breaker
++            if (stall_vblanks > FLIP_STREAK_MAX_GAP_VBLANKS)
++                flip_streak_start_vblank = ~0ull;
++            else if (flip_streak_start_vblank == ~0ull)
++                flip_streak_start_vblank = vblanks;
++            if (provable_handed_over && flip_streak_start_vblank != ~0ull && vblanks - flip_streak_start_vblank >= PROVABLE_RECOVERY_VBLANKS) {
++                provable_handed_over = false;
++                LOG_INFO("HANG WATCHDOG: frames flowed for {} vblanks, provable-cycle breaker re-armed", vblanks - flip_streak_start_vblank);
++            }
+             if (!never_flipped && stall_vblanks > PROVABLE_DRYRUN_VBLANKS && unpaused && renderer_idle_vblanks > PROVABLE_DRYRUN_VBLANKS && last_provable_dryrun_setframe != setframe) {
+                 last_provable_dryrun_setframe = setframe;
+                 emuenv.kernel.try_break_provable_evf_cycle(true);
+@@ -330,10 +347,18 @@ static void vblank_sync_thread(EmuEnvState &emuenv) {
+                 // if (!IsDebuggerPresent())  // Debug speed can make a normal load look exactly like a wedge hang
+ #endif
+                 {
+-                    const int broken = emuenv.kernel.try_break_provable_evf_cycle();
+-                    if (broken > 0) {
+-                        last_provable_break_setframe = setframe;
+-                        LOG_ERROR("HANG WATCHDOG: provable-cycle breaker released {} dead event flag(s) after {} vblanks", broken, stall_vblanks);
++                    // a game that wedges again within 10s of a release was not recovered and each frame it draws restarts the stall breaker's 15 s clock
++                    if (!provable_handed_over && last_provable_break_vblank != 0 && setframe >= last_provable_break_vblank && setframe - last_provable_break_vblank < PROVABLE_RECOVERY_VBLANKS) {
++                        provable_handed_over = true;
++                        LOG_ERROR("HANG WATCHDOG: the game wedged again {} vblanks after the last provable-cycle release, leaving this wedge to the stall breaker", setframe - last_provable_break_vblank);
++                    }
++                    if (!provable_handed_over) {
++                        const int broken = emuenv.kernel.try_break_provable_evf_cycle();
++                        if (broken > 0) {
++                            last_provable_break_setframe = setframe;
++                            last_provable_break_vblank = vblanks;
++                            LOG_ERROR("HANG WATCHDOG: provable-cycle breaker released {} dead event flag(s) after {} vblanks", broken, stall_vblanks);
++                        }
+                     }
+                 }
+             }
+diff --git a/vita3k/kernel/include/kernel/state.h b/vita3k/kernel/include/kernel/state.h
+index 7cf3e04f8..8ba7a2503 100644
+--- a/vita3k/kernel/include/kernel/state.h
++++ b/vita3k/kernel/include/kernel/state.h
+@@ -110,7 +110,7 @@ struct KernelState {
+     std::mutex mutex;
+     CodecEngineBlocks codec_blocks;
+ 
+-    bool accurate_thread_scheduling = false;
++    bool accurate_thread_scheduling = true;
+     bool preempt_on_wake = false;
+     int preempt_on_wake_us = 1000;
+ 
+@@ -204,6 +204,7 @@ struct KernelState {
+     void log_eventflag_history();
+     void log_condvar_history();
+     int try_break_provable_evf_cycle(bool dry_run = false);
++    void clear_evf_cycle_history();
+     std::atomic<int64_t> last_world_stop_epoch_ms{ 0 };
+     // Last resort recovery for a full deadlock (called by the hang watchdog)
+     int try_break_frame_sync_deadlock(std::vector<SceUID> &already_nudged);
+diff --git a/vita3k/kernel/src/kernel.cpp b/vita3k/kernel/src/kernel.cpp
+index 187e46b95..04d86d033 100644
+--- a/vita3k/kernel/src/kernel.cpp
++++ b/vita3k/kernel/src/kernel.cpp
+@@ -472,6 +472,7 @@ void KernelState::deinit(MemState &mem) {
+     lwmutexes.clear();
+     rwlocks.clear();
+     eventflags.clear();
++    clear_evf_cycle_history();
+     msgpipes.clear();
+     callbacks.clear();
+ 
+diff --git a/vita3k/kernel/src/sync_primitives.cpp b/vita3k/kernel/src/sync_primitives.cpp
+index 1faa6fc04..5a7c81dcb 100644
+--- a/vita3k/kernel/src/sync_primitives.cpp
++++ b/vita3k/kernel/src/sync_primitives.cpp
+@@ -93,6 +93,8 @@ std::atomic<uint64_t> evf_ring_next{ 0 };
+ // every thread that EVER set each flag: the provable-cycle breaker needs "who could wake this"
+ std::mutex evf_setters_mutex;
+ std::unordered_map<SceUID, std::set<SceUID>> evf_setters;
++std::mutex evf_dead_since_mutex;
++std::unordered_map<SceUID, uint64_t> evf_dead_since;
+ 
+ void evf_record(SceUID evf, SceUID thread, uint8_t op, uint32_t bits, uint32_t flags_after, uint32_t woken) {
+     if (op == 0 && thread > 0) {
+@@ -1766,8 +1768,6 @@ int KernelState::try_break_provable_evf_cycle(bool dry_run) {
+     }
+ 
+     constexpr uint64_t PROVABLE_DEAD_STABLE_MS = 3000;
+-    static std::mutex dead_since_mutex;
+-    static std::unordered_map<SceUID, uint64_t> dead_since;
+     const uint64_t now_ms = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+ 
+     int broken = 0;
+@@ -1789,8 +1789,8 @@ int KernelState::try_break_provable_evf_cycle(bool dry_run) {
+         dead_now.insert(uid);
+         uint64_t dead_for_ms = 0;
+         {
+-            const std::lock_guard<std::mutex> lock(dead_since_mutex);
+-            dead_for_ms = now_ms - dead_since.try_emplace(uid, now_ms).first->second;
++            const std::lock_guard<std::mutex> lock(evf_dead_since_mutex);
++            dead_for_ms = now_ms - evf_dead_since.try_emplace(uid, now_ms).first->second;
+         }
+         const bool stable = dead_for_ms >= PROVABLE_DEAD_STABLE_MS;
+         LOG_WARN("[EVFCYCLE]{} flag {} '{}' looks PROVABLY dead for {} ms: every historical setter is itself blocked on a flag with waiters - {} bits 0x{:X}",
+@@ -1802,12 +1802,21 @@ int KernelState::try_break_provable_evf_cycle(bool dry_run) {
+         broken++;
+     }
+     {
+-        const std::lock_guard<std::mutex> lock(dead_since_mutex);
+-        std::erase_if(dead_since, [&dead_now](const auto &entry) { return !dead_now.count(entry.first); });
++        const std::lock_guard<std::mutex> lock(evf_dead_since_mutex);
++        std::erase_if(evf_dead_since, [&dead_now](const auto &entry) { return !dead_now.count(entry.first); });
+     }
+     return broken;
+ }
+ 
++void KernelState::clear_evf_cycle_history() {
++    {
++        const std::lock_guard<std::mutex> lock(evf_setters_mutex);
++        evf_setters.clear();
++    }
++    const std::lock_guard<std::mutex> lock(evf_dead_since_mutex);
++    evf_dead_since.clear();
++}
++
+ void KernelState::log_eventflag_history() {
+     std::vector<std::pair<SceUID, EventFlagPtr>> evsnap;
+     {
