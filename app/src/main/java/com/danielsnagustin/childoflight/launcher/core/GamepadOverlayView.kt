@@ -1,14 +1,18 @@
 package com.danielsnagustin.childoflight.launcher.core
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RadialGradient
 import android.graphics.RectF
+import android.graphics.Region
 import android.graphics.Shader
 import android.os.SystemClock
 import android.util.AttributeSet
@@ -33,6 +37,9 @@ import com.danielsnagustin.childoflight.launcher.data.StickMode
 import com.danielsnagustin.childoflight.launcher.data.TouchControl
 import com.danielsnagustin.childoflight.launcher.data.VitaButton
 import org.libsdl.app.SDLSurface
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
@@ -139,13 +146,21 @@ class GamepadOverlayView @JvmOverloads constructor(
     /** Opacidad general del overlay (0.1..1): multiplica la opacidad de cada botón. */
     var generalOpacity: Float = 1f
         set(value) {
-            field = value.coerceIn(0.1f, 1f)
+            val coerced = value.coerceIn(0.1f, 1f)
+            // 0.2.65 (O-P2-5): si no cambió, no invalidar: la
+            // Activity asigna opacidad y neón en cada onResume
+            // aunque sean los mismos y antes eso redibujaba los 7
+            // hijos dos veces por volver al juego.
+            if (field == coerced) return
+            field = coerced
             refreshChildren()
         }
 
     /** Halo azul hielo (neón) alrededor de los botones. */
     var neonGlow: Boolean = false
         set(value) {
+            // 0.2.65 (O-P2-5): igual que generalOpacity.
+            if (field == value) return
             field = value
             refreshChildren()
         }
@@ -197,6 +212,35 @@ class GamepadOverlayView @JvmOverloads constructor(
     private val routedPointers = LinkedHashMap<Int, OverlayControlView>()
 
     /**
+     * 0.2.65 (R-P1-16): última posición reenviada de cada dedo
+     * encaminado a mano (coordenadas del overlay). Un MOVE que no
+     * movió el dedo ≥ 1 px desde el último reenviado no se le
+     * vuelve a mandar al hijo: a 60-120 Hz de muestreo táctil la
+     * mayoría de MOVEs son sub-píxel y solo crean un MotionEvent
+     * sintético por nada. La posición real se acumula (no se
+     * pierde deriva: en cuanto el total desde el último envío
+     * llega a 1 px, se reenvía).
+     */
+    private val routedLastForwarded = HashMap<Int, Pair<Float, Float>>()
+
+    /**
+     * 0.2.65 (O-P2-4): huella del último ACTION_DOWN ofrecido a
+     * los hijos y declinado. EmuSurface re-ofrece a este overlay
+     * cada DOWN que llega a la superficie con una copia idéntica
+     * (mismo downTime, puntero y coordenadas): en el camino normal
+     * los hijos ya lo declinaron una vez con el mismo estado, así
+     * que la copia solo les haría procesar el DOWN dos veces. Si
+     * la copia coincide exactamente con el último DOWN declinado,
+     * se descarta aquí; un DOWN nuevo siempre trae otro downTime.
+     * No es el dedupe principal (ese vive en EmuSurface): esto
+     * solo evita que el overlay vea el mismo DOWN dos veces.
+     */
+    private var lastDeclinedDownTime: Long = -1L
+    private var lastDeclinedDownPointerId: Int = -1
+    private var lastDeclinedDownX: Float = Float.NaN
+    private var lastDeclinedDownY: Float = Float.NaN
+
+    /**
      * R4-P1-16: decide qué punteros no consumidos por ningún control
      * se reenvían a la superficie SDL (lógica pura, sin Android:
      * MultiTouchRouter, probada en MultiTouchRouterTest).
@@ -217,6 +261,17 @@ class GamepadOverlayView @JvmOverloads constructor(
         setBackgroundColor(Color.TRANSPARENT)
         isClickable = false
         isFocusable = false
+        // 0.2.65 (O-P2-3): aceleración por hardware explícita: los
+        // onDraw usan clipPath, RadialGradient y rotaciones, todo
+        // soportado en HW, pero nada lo garantizaba y una caída a
+        // software los haría mucho más caros por frame.
+        setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        // 0.2.65 (M-P2-3): las alas de la pausa llevan topMargin
+        // negativo (-34 px): con el recorte por defecto del padre
+        // sus puntas superiores sobrevivían por ~2 px y cualquier
+        // cambio futuro las recortaría sin que ningún test lo
+        // cazara. Sin recorte, las alas se dibujan enteras.
+        clipChildren = false
     }
 
     companion object {
@@ -233,6 +288,10 @@ class GamepadOverlayView @JvmOverloads constructor(
         private const val GLASS_SILVER: Int = -2299659
         /** Turquesa #75D6CE (brillo al pulsar). */
         private const val GLASS_TURQUOISE: Int = -9054514
+        /** Azul profundo #182644 (ojos y sonrisa de Igniculus). */
+        private const val IGNICULUS_DEEP_BLUE: Int = -15194556
+        /** Plata pálida #EAF4FB (texto e iconos). */
+        private const val GLASS_PALE_WHITE: Int = -1379077
     }
 
     /** Controles del perfil activo (solo se muestran los visibles). Suelta todo lo pulsado antes de reconstruir. */
@@ -265,6 +324,7 @@ class GamepadOverlayView @JvmOverloads constructor(
         // guarda a quién pertenecían: se vacía para no reenviarles
         // más MOVE/UP de un gesto que ya no existe.
         routedPointers.clear()
+        routedLastForwarded.clear()
         for (i in 0 until childCount) {
             (getChildAt(i) as? OverlayControlView)?.release()
         }
@@ -314,6 +374,32 @@ class GamepadOverlayView @JvmOverloads constructor(
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if (forwardingSyntheticTouch) return false
         when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                // 0.2.65 (O-P2-4): copia re-ofrecida por EmuSurface
+                // del DOWN que los hijos ya declinaron: no se les
+                // vuelve a ofrecer. El primer dedo consumido nunca
+                // llega aquí (la superficie no lo ve), así que un
+                // DOWN consumido no puede duplicarse por este camino.
+                val pointerId = event.getPointerId(0)
+                val x = event.getX(0)
+                val y = event.getY(0)
+                if (event.downTime == lastDeclinedDownTime &&
+                    pointerId == lastDeclinedDownPointerId &&
+                    x == lastDeclinedDownX && y == lastDeclinedDownY
+                ) {
+                    return false
+                }
+                lastDeclinedDownTime = event.downTime
+                lastDeclinedDownPointerId = pointerId
+                lastDeclinedDownX = x
+                lastDeclinedDownY = y
+                val handled = super.dispatchTouchEvent(event)
+                if (handled) {
+                    lastDeclinedDownTime = -1L
+                    lastDeclinedDownPointerId = -1
+                }
+                return handled
+            }
             MotionEvent.ACTION_POINTER_DOWN -> {
                 val handled = super.dispatchTouchEvent(event)
                 if (handled) return true
@@ -366,6 +452,8 @@ class GamepadOverlayView @JvmOverloads constructor(
                 return handled || forwarded || routed
             }
             MotionEvent.ACTION_UP -> {
+                lastDeclinedDownTime = -1L
+                lastDeclinedDownPointerId = -1
                 val handled = super.dispatchTouchEvent(event)
                 val index = event.actionIndex
                 val pointerId = event.getPointerId(index)
@@ -384,6 +472,8 @@ class GamepadOverlayView @JvmOverloads constructor(
                 return handled || forwarded || routed
             }
             MotionEvent.ACTION_CANCEL -> {
+                lastDeclinedDownTime = -1L
+                lastDeclinedDownPointerId = -1
                 val handled = super.dispatchTouchEvent(event)
                 endForwardedTouchesToSdl()
                 endAllRoutedPointers(MotionEvent.ACTION_CANCEL)
@@ -479,9 +569,19 @@ class GamepadOverlayView @JvmOverloads constructor(
             val (pointerId, owner) = it.next()
             val index = event.findPointerIndex(pointerId)
             if (index < 0) continue
+            // 0.2.65 (R-P1-16): coalescar MOVEs sub-píxel (ver
+            // routedLastForwarded): sin esto cada MOVE crea un
+            // MotionEvent sintético aunque el dedo no se moviera.
+            val x = event.getX(index) - owner.left
+            val y = event.getY(index) - owner.top
+            val last = routedLastForwarded[pointerId]
+            if (last != null && abs(x - last.first) < 1f && abs(y - last.second) < 1f) {
+                continue
+            }
+            routedLastForwarded[pointerId] = x to y
             val synthetic = obtainSinglePointerEvent(
                 event.downTime, event.eventTime, MotionEvent.ACTION_MOVE,
-                pointerId, event.getX(index) - owner.left, event.getY(index) - owner.top,
+                pointerId, x, y,
             )
             try {
                 if (owner.dispatchTouchEvent(synthetic)) routed = true
@@ -490,7 +590,10 @@ class GamepadOverlayView @JvmOverloads constructor(
             }
             // El hijo soltó el dedo (se salió del botón): ya no es
             // suyo; el siguiente MOVE no se le reenvía.
-            if (!owner.hasActivePointer) it.remove()
+            if (!owner.hasActivePointer) {
+                it.remove()
+                routedLastForwarded.remove(pointerId)
+            }
         }
         return routed
     }
@@ -498,6 +601,7 @@ class GamepadOverlayView @JvmOverloads constructor(
     /** 0.2.64 (D-P1-1): UP de un dedo encaminado a mano, a su hijo. */
     private fun endRoutedPointer(event: MotionEvent, index: Int, pointerId: Int, action: Int): Boolean {
         val owner = routedPointers.remove(pointerId) ?: return false
+        routedLastForwarded.remove(pointerId)
         val x = if (index >= 0) event.getX(index) - owner.left else owner.width / 2f
         val y = if (index >= 0) event.getY(index) - owner.top else owner.height / 2f
         val synthetic = obtainSinglePointerEvent(
@@ -519,6 +623,7 @@ class GamepadOverlayView @JvmOverloads constructor(
      */
     private fun endAllRoutedPointers(action: Int) {
         if (routedPointers.isEmpty()) return
+        routedLastForwarded.clear()
         val now = SystemClock.uptimeMillis()
         for ((pointerId, owner) in routedPointers) {
             val synthetic = obtainSinglePointerEvent(
@@ -738,7 +843,35 @@ class GamepadOverlayView @JvmOverloads constructor(
                 params.topMargin = expected.topMargin
                 wings.layoutParams = params
             }
+            updateWingsExclusion()
         }
+    }
+
+    /**
+     * 0.2.65 (M-P2-3): recalcula el rect que las alas de la pausa
+     * no deben pintar (el botón Volver, en coordenadas locales de
+     * la vista de alas). Se llama al reconstruir y en cada layout:
+     * si cambia el tamaño o gira el teléfono, pausa y círculo se
+     * mueven y la exclusión debe moverse con ellos.
+     */
+    private fun updateWingsExclusion() {
+        val wings = pauseWingsView ?: return
+        val pause = pauseWingsControl ?: return
+        if (width <= 0 || height <= 0) return
+        val density = resources.displayMetrics.density
+        val circle = mountedControls.firstOrNull { it.id == "btn_circle" }
+        if (circle == null) {
+            wings.excludedRect = null
+            return
+        }
+        val wingsLayout = pauseWingsLayout(childLayout(pause, width.toFloat(), height.toFloat(), density))
+        val circleLayout = childLayout(circle, width.toFloat(), height.toFloat(), density)
+        wings.excludedRect = RectF(
+            (circleLayout.leftMargin - wingsLayout.leftMargin).toFloat(),
+            (circleLayout.topMargin - wingsLayout.topMargin).toFloat(),
+            (circleLayout.leftMargin + circleLayout.sizePx - wingsLayout.leftMargin).toFloat(),
+            (circleLayout.topMargin + circleLayout.sizePx - wingsLayout.topMargin).toFloat(),
+        )
     }
 
     private fun rebuild() {
@@ -796,6 +929,7 @@ class GamepadOverlayView @JvmOverloads constructor(
         } else {
             pauseWingsView = null
         }
+        updateWingsExclusion()
         // 0.2.63 (G): diagnóstico del montaje (logcat, sin E/S de
         // fichero en el hilo de UI: LauncherLog.append es síncrono
         // y R5-A1-11 lo sacó de Main a propósito). Con perfil +
@@ -829,13 +963,19 @@ class GamepadOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * P-C2: clave del gradiente cacheado de drawGlassBody (centro + radio
-     * + tinte + alfa). Vive aquí (clase externa, no inner): Kotlin
-     * PROHÍBE las class dentro de una inner class ("'Class' is
-     * prohibited here", run #296, 2026-11-11) igual que las enum class
-     * (run #86). Por eso no puede vivir en OverlayControlView.
+     * P-C2: clave del gradiente cacheado de drawGlassBody (radio
+     * + tinte + alfa). 0.2.65 (R-P1-14): la clave ya NO incluye el
+     * centro: el gradiente se crea en coordenadas locales (centro
+     * (0,0)) y se traslada con setLocalMatrix a cada rect. Antes
+     * la clave llevaba (cx, cy) y el pomo del stick y el orbe de
+     * Igniculus, que se mueven en cada MOVE, reconstruían el
+     * RadialGradient + 2 arrays en cada frame. Vive aquí (clase
+     * externa, no inner): Kotlin PROHÍBE las class dentro de una
+     * inner class ("'Class' is prohibited here", run #296,
+     * 2026-11-11) igual que las enum class (run #86). Por eso no
+     * puede vivir en OverlayControlView.
      */
-    private data class GlassGradientKey(val cx: Float, val cy: Float, val radius: Float, val tint: Int, val alpha: Float)
+    private data class GlassGradientKey(val radius: Float, val tint: Int, val alpha: Float)
 
     private abstract inner class OverlayControlView(
         context: Context,
@@ -883,15 +1023,69 @@ class GamepadOverlayView @JvmOverloads constructor(
         /** Cantidad de pulsación 0..1: anima el brillo al pulsar y soltar. */
         protected var pressAmount: Float = 0f
             private set
-        private var pressAnimator: ValueAnimator? = null
+        /**
+         * 0.2.65 (O-P2-2): UN solo animador por vista para el brillo
+         * de pulsación y la gota. Antes eran dos (animatePress 120/
+         * 180 ms + ripple 350 ms) que invalidaban la vista en cada
+         * vsync cada uno, y animatePress se recreaba en cada MOVE
+         * del stick mientras el brillo aún no llegaba a 1. Ahora un
+         * único ValueAnimator de 350 ms (lo que dura la gota, lo
+         * más largo) invalida por frame y el brillo se interpola
+         * por tiempo (pressFrom -> pressTarget en 120 ms al pulsar
+         * o 180 ms al soltar) desde pressStartUptime. Si cambia el
+         * objetivo a mitad de animación, el animador en curso lo
+         * recoge sin recrearse; si al terminar sigue la gota o el
+         * brillo sin completar, se relanza solo.
+         */
+        private var motionAnimator: ValueAnimator? = null
+        private var pressTarget: Float = 0f
+        private var pressFrom: Float = 0f
+        private var pressStartUptime: Long = 0L
+        private var pressDurationMs: Long = 120L
 
         protected fun animatePress(to: Float) {
-            pressAnimator?.cancel()
-            val from = pressAmount
-            if (from == to) return
-            pressAnimator = ValueAnimator.ofFloat(from, to).apply {
-                duration = if (to > from) 120L else 180L
-                addUpdateListener { pressAmount = it.animatedValue as Float; invalidate() }
+            if (to == pressTarget && pressAmount == to) return
+            if (to == pressTarget && motionAnimator?.isRunning == true) return
+            pressFrom = pressAmount
+            pressTarget = to
+            pressStartUptime = SystemClock.uptimeMillis()
+            pressDurationMs = if (to > pressFrom) 120L else 180L
+            ensureMotionAnimator()
+        }
+
+        private fun ensureMotionAnimator() {
+            if (motionAnimator?.isRunning == true) return
+            motionAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = RippleState.DURATION_MS
+                addUpdateListener {
+                    val elapsed = SystemClock.uptimeMillis() - pressStartUptime
+                    val progress = if (pressDurationMs > 0L) {
+                        (elapsed.toFloat() / pressDurationMs).coerceIn(0f, 1f)
+                    } else {
+                        1f
+                    }
+                    pressAmount = pressFrom + (pressTarget - pressFrom) * progress
+                    invalidate()
+                }
+                addListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        val now = SystemClock.uptimeMillis()
+                        val pressDone = pressAmount == pressTarget ||
+                            now - pressStartUptime >= pressDurationMs
+                        val rippleDone = !rippleState.isActive || rippleState.isDone(now)
+                        if (pressDone && rippleDone) {
+                            pressAmount = pressTarget
+                            motionAnimator = null
+                            invalidate()
+                        } else {
+                            // Brillo sin completar o gota empezada
+                            // tarde: otra vuelta con los mismos
+                            // pressFrom/pressTarget/pressStartUptime.
+                            motionAnimator = null
+                            ensureMotionAnimator()
+                        }
+                    }
+                })
                 start()
             }
         }
@@ -907,7 +1101,6 @@ class GamepadOverlayView @JvmOverloads constructor(
          * frame y la vista calcula radio y alfa con uptimeMillis.
          */
         protected val rippleState = RippleState()
-        private var rippleAnimator: ValueAnimator? = null
         protected val ripplePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#75D6CE")
             style = Paint.Style.STROKE
@@ -925,9 +1118,19 @@ class GamepadOverlayView @JvmOverloads constructor(
         private val tintColor: Int = parseHex(control.colorHex)
         /** P-C2: rect reutilizable de drawGlassBody (halo, brillo y anillos): sin RectF nuevo por frame. */
         private val tmpRect = RectF()
-        /** P-C2: gradiente radial cacheado de drawGlassBody; null hasta el primer dibujado. */
-        private var cachedGradient: RadialGradient? = null
-        private var cachedGradientKey: GlassGradientKey? = null
+        /** P-C2: gradientes radiales cacheados de drawGlassBody, por (radio, tinte, alfa); null hasta el primer dibujado. */
+        private val gradientCache = LinkedHashMap<GlassGradientKey, RadialGradient>()
+        /** 0.2.65 (R-P1-14): matriz reutilizable para trasladar el gradiente local a cada rect, sin Matrix nueva por frame. */
+        private val gradientMatrix = Matrix()
+        /** 0.2.65 (O-P2-1): rects reutilizables de onDraw (cuerpo, pomo, orbe y glifos): sin RectF nuevo por dibujado. */
+        protected val bodyRect = RectF()
+        protected val knobRect = RectF()
+        protected val orbRectF = RectF()
+        protected val glyphRect = RectF()
+        /** 0.2.65 (O-P2-1): lados de la corona floral, sin floatArrayOf nuevo por dibujado. */
+        protected val crownSides = floatArrayOf(-1f, 1f)
+        /** 0.2.65 (O-P2-6): alfa efectivo cacheado; refreshStyle() lo invalida cuando cambia la opacidad. */
+        private var cachedEffectiveAlpha: Float? = null
         /** P-C3: Paths reutilizables de adornos e iconos (reset() antes de reconstruir, como rippleClipPath). */
         private val diamondPath = Path()
         private val leftLeafPath = Path()
@@ -942,12 +1145,11 @@ class GamepadOverlayView @JvmOverloads constructor(
 
         protected fun startRipple(x: Float, y: Float) {
             rippleState.start(x, y, SystemClock.uptimeMillis())
-            rippleAnimator?.cancel()
-            rippleAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-                duration = RippleState.DURATION_MS
-                addUpdateListener { invalidate() }
-                start()
-            }
+            // 0.2.65 (O-P2-2): la gota ya no tiene animador propio:
+            // el animador único (ensureMotionAnimator) invalida por
+            // frame mientras dura; RippleState calcula radio y alfa
+            // por tiempo, así que solo hace falta despertarlo.
+            ensureMotionAnimator()
             invalidate()
         }
 
@@ -995,8 +1197,8 @@ class GamepadOverlayView @JvmOverloads constructor(
             // redibujar: cancelarla evita invalidar una vista suelta.
             // No se cancela en release(): la gota debe durar sus
             // 350 ms completos aunque el dedo se levante antes.
-            rippleAnimator?.cancel()
-            rippleAnimator = null
+            motionAnimator?.cancel()
+            motionAnimator = null
         }
 
         init {
@@ -1005,10 +1207,20 @@ class GamepadOverlayView @JvmOverloads constructor(
         }
 
         /** Opacidad efectiva del control: la suya por la general. */
-        protected fun effectiveAlpha(): Float =
-            (control.opacity * generalOpacity).coerceIn(0f, 1f)
+        protected fun effectiveAlpha(): Float {
+            // 0.2.65 (O-P2-6): cacheada por vista: la opacidad del
+            // control no cambia en la vida de la vista y la general
+            // solo cambia por su setter, que pasa por refreshStyle()
+            // e invalida esta caché. Sin esto se recalculaba en
+            // cada onDraw, hasta 6 veces por dibujado del stick.
+            cachedEffectiveAlpha?.let { return it }
+            val alpha = (control.opacity * generalOpacity).coerceIn(0f, 1f)
+            cachedEffectiveAlpha = alpha
+            return alpha
+        }
 
         fun refreshStyle() {
+            cachedEffectiveAlpha = null
             invalidate()
         }
 
@@ -1056,20 +1268,28 @@ class GamepadOverlayView @JvmOverloads constructor(
                 drawShapeInto(canvas, tmpRect, glowPaint)
             }
             // Cristal: degradado radial con el color del control en medio.
-            // P-C2: el gradiente se cachea por (centro, radio, tinte, alfa):
+            // P-C2: el gradiente se cachea por (radio, tinte, alfa):
             // un botón quieto no reconstruye RadialGradient ni sus arrays
-            // en cada frame. La clave incluye cx/cy: al girar el teléfono
-            // (rebuild) o al moverse el pomo del stick / el orbe de
-            // Igniculus, el cristal se recentra en vez de quedar descentrado.
+            // en cada frame. 0.2.65 (R-P1-14): el gradiente vive en
+            // coordenadas LOCALES (centro (0,0)) y se traslada con
+            // setLocalMatrix al centro de cada rect: el pomo del stick
+            // y el orbe de Igniculus se mueven en cada MOVE y antes la
+            // clave incluía (cx, cy), así que reconstruían el gradiente
+            // en cada frame. Ahora solo cambia si cambia el radio, el
+            // tinte o el alfa. La matriz se reutiliza (el shader copia
+            // sus valores al fijarla). La caché guarda hasta 4
+            // gradientes: el stick dibuja base y pomo con radios
+            // distintos en el mismo onDraw y con un solo hueco
+            // alternaría recreándolos en cada frame.
             // 0.2.63 (A-8): el borde era demasiado oscuro sobre el juego
             // (alfa 0,62 sobre fondo oscuro se leía como disco azul
             // marino opaco; el mockup es hielo translúcido): borde
             // 0,62 -> 0,40 y medio 0,30 -> 0,40.
-            val gradientKey = GlassGradientKey(cx, cy, radius, tintColor, alpha)
-            var gradient = cachedGradient
-            if (cachedGradientKey != gradientKey || gradient == null) {
+            val gradientKey = GlassGradientKey(radius, tintColor, alpha)
+            var gradient = gradientCache[gradientKey]
+            if (gradient == null) {
                 gradient = RadialGradient(
-                    cx, cy, radius,
+                    0f, 0f, radius,
                     intArrayOf(
                         Color.argb((alpha * 0.34f * 255).toInt(), 226, 238, 248),
                         Color.argb((alpha * 0.40f * 255).toInt(), Color.red(tintColor), Color.green(tintColor), Color.blue(tintColor)),
@@ -1078,9 +1298,14 @@ class GamepadOverlayView @JvmOverloads constructor(
                     floatArrayOf(0f, 0.55f, 1f),
                     Shader.TileMode.CLAMP,
                 )
-                cachedGradient = gradient
-                cachedGradientKey = gradientKey
+                if (gradientCache.size >= 4) {
+                    val eldest = gradientCache.keys.firstOrNull()
+                    if (eldest != null) gradientCache.remove(eldest)
+                }
+                gradientCache[gradientKey] = gradient
             }
+            gradientMatrix.setTranslate(cx, cy)
+            gradient.setLocalMatrix(gradientMatrix)
             fillPaint.shader = gradient
             drawShapeInto(canvas, rect, fillPaint)
             fillPaint.shader = null
@@ -1192,7 +1417,7 @@ class GamepadOverlayView @JvmOverloads constructor(
             val crownS = (orbR * 0.16f).coerceAtLeast(3f * density)
             drawDiamondOrnament(canvas, cx, cy - orbR * 0.98f, crownS)
             // Hojas que se abren a los lados siguiendo la curva del orbe.
-            for (s in floatArrayOf(-1f, 1f)) {
+            for (s in crownSides) {
                 upperLeafPath.reset()
                 upperLeafPath.apply {
                     moveTo(cx + s * 0.10f * orbR, cy - 0.96f * orbR)
@@ -1329,7 +1554,8 @@ class GamepadOverlayView @JvmOverloads constructor(
         private fun drawGlyphSquare(canvas: Canvas, cx: Float, cy: Float, r: Float) {
             iconStrokePaint.strokeWidth = 0.12f * r
             val a = 0.42f * r
-            canvas.drawRoundRect(RectF(cx - a, cy - a, cx + a, cy + a), 0.08f * r, 0.08f * r, iconStrokePaint)
+            glyphRect.set(cx - a, cy - a, cx + a, cy + a)
+            canvas.drawRoundRect(glyphRect, 0.08f * r, 0.08f * r, iconStrokePaint)
         }
 
         private fun drawGlyphTriangle(canvas: Canvas, cx: Float, cy: Float, r: Float) {
@@ -1348,8 +1574,10 @@ class GamepadOverlayView @JvmOverloads constructor(
             val w = 0.16f * r
             val h = 0.72f * r
             val radius = 0.08f * r
-            canvas.drawRoundRect(RectF(cx - 0.24f * r - w / 2, cy - h / 2, cx - 0.24f * r + w / 2, cy + h / 2), radius, radius, iconPaint)
-            canvas.drawRoundRect(RectF(cx + 0.24f * r - w / 2, cy - h / 2, cx + 0.24f * r + w / 2, cy + h / 2), radius, radius, iconPaint)
+            glyphRect.set(cx - 0.24f * r - w / 2, cy - h / 2, cx - 0.24f * r + w / 2, cy + h / 2)
+            canvas.drawRoundRect(glyphRect, radius, radius, iconPaint)
+            glyphRect.set(cx + 0.24f * r - w / 2, cy - h / 2, cx + 0.24f * r + w / 2, cy + h / 2)
+            canvas.drawRoundRect(glyphRect, radius, radius, iconPaint)
             // 0.2.64 (A-2): las alas ya NO se dibujan aquí: vivían
             // pegadas al círculo, dentro del cuadrado del botón, y
             // se recortaban. Ahora son PauseWingsView, una vista
@@ -1379,13 +1607,15 @@ class GamepadOverlayView @JvmOverloads constructor(
             }
             canvas.drawPath(bladePath, iconPaint)
             // Guarda: barra horizontal bajo la hoja.
+            glyphRect.set(cx - 0.26f * r, cy + 0.04f * r, cx + 0.26f * r, cy + 0.12f * r)
             canvas.drawRoundRect(
-                RectF(cx - 0.26f * r, cy + 0.04f * r, cx + 0.26f * r, cy + 0.12f * r),
+                glyphRect,
                 0.04f * r, 0.04f * r, iconPaint,
             )
             // Empuñadura y pomo.
+            glyphRect.set(cx - 0.05f * r, cy + 0.12f * r, cx + 0.05f * r, cy + 0.42f * r)
             canvas.drawRoundRect(
-                RectF(cx - 0.05f * r, cy + 0.12f * r, cx + 0.05f * r, cy + 0.42f * r),
+                glyphRect,
                 0.03f * r, 0.03f * r, iconPaint,
             )
             canvas.drawCircle(cx, cy + 0.47f * r, 0.06f * r, iconPaint)
@@ -1416,7 +1646,9 @@ class GamepadOverlayView @JvmOverloads constructor(
 
         private fun drawIgniculusIcon(canvas: Canvas, cx: Float, cy: Float, r: Float, alpha: Float) {
             // Halo turquesa detrás.
-            glowPaint.color = Color.parseColor("#75D6CE")
+            // 0.2.65 (R-P1-15): colores como const Int, sin
+            // Color.parseColor en cada dibujado (aquí iban 5).
+            glowPaint.color = GLASS_TURQUOISE
             glowPaint.alpha = (alpha * 0.35f * 255).toInt()
             canvas.drawCircle(cx, cy, r * 0.85f, glowPaint)
             // Cuerpo: gotita/llama azul hielo.
@@ -1431,7 +1663,7 @@ class GamepadOverlayView @JvmOverloads constructor(
             }
             canvas.drawPath(bodyPath, iconPaint)
             // Llamita turquesa encima de la cabeza (diseno 51025).
-            glowPaint.color = Color.parseColor("#75D6CE")
+            glowPaint.color = GLASS_TURQUOISE
             glowPaint.alpha = (alpha * 0.85f * 255).toInt()
             wispPath.reset()
             wispPath.apply {
@@ -1442,16 +1674,16 @@ class GamepadOverlayView @JvmOverloads constructor(
             }
             canvas.drawPath(wispPath, glowPaint)
             // Ojos: dos puntitos azul profundo.
-            glowPaint.color = Color.parseColor("#182644")
+            glowPaint.color = IGNICULUS_DEEP_BLUE
             glowPaint.alpha = (alpha * 0.95f * 255).toInt()
             canvas.drawCircle(cx - 0.12f * r, cy + 0.02f * r, 0.055f * r, glowPaint)
             canvas.drawCircle(cx + 0.12f * r, cy + 0.02f * r, 0.055f * r, glowPaint)
             // Sonrisa.
             iconStrokePaint.strokeWidth = 0.045f * r
-            iconStrokePaint.color = Color.parseColor("#182644")
-            val smile = RectF(cx - 0.12f * r, cy + 0.08f * r, cx + 0.12f * r, cy + 0.28f * r)
-            canvas.drawArc(smile, 20f, 140f, false, iconStrokePaint)
-            iconStrokePaint.color = Color.parseColor("#EAF4FB")
+            iconStrokePaint.color = IGNICULUS_DEEP_BLUE
+            glyphRect.set(cx - 0.12f * r, cy + 0.08f * r, cx + 0.12f * r, cy + 0.28f * r)
+            canvas.drawArc(glyphRect, 20f, 140f, false, iconStrokePaint)
+            iconStrokePaint.color = GLASS_PALE_WHITE
             // Destellos dentro del orbe, alrededor de la carita.
             iconPaint.alpha = (alpha * 0.95f * 255).toInt()
             drawSparkle(canvas, cx + 0.48f * r, cy - 0.35f * r, 0.07f * r)
@@ -1493,7 +1725,8 @@ class GamepadOverlayView @JvmOverloads constructor(
         override val hasActivePointer: Boolean get() = pointerId != -1
 
         override fun onDraw(canvas: Canvas) {
-            val rect = RectF(0f, 0f, width.toFloat(), height.toFloat())
+            bodyRect.set(0f, 0f, width.toFloat(), height.toFloat())
+            val rect = bodyRect
             if (sdlButton == null) {
                 // P2-23: botón "Sin asignar": no es pulsable (su toque
                 // pasa a la superficie SDL, ver onTouchEvent) y no debe
@@ -1572,6 +1805,15 @@ class GamepadOverlayView @JvmOverloads constructor(
         private var pointerId: Int = -1
         private var knobNx: Float = 0f
         private var knobNy: Float = 0f
+        /**
+         * 0.2.65 (R-P1-13): última posición del pomo ya DIBUJADA.
+         * updateFromPoint compara contra ella: un MOVE que no mueve
+         * el pomo ≥ 0.5 px no redibuja el stick entero (~35-40 ops
+         * de canvas). Los ejes se mandan igual (sendAxes ya
+         * deduplica por valor) y el brillo se anima igual.
+         */
+        private var drawnKnobNx: Float = 0f
+        private var drawnKnobNy: Float = 0f
         private var lastAxes: Pair<Short, Short> = 0.toShort() to 0.toShort()
         private var lastDpad: Set<VitaButton> = emptySet()
 
@@ -1584,7 +1826,8 @@ class GamepadOverlayView @JvmOverloads constructor(
         }
 
         override fun onDraw(canvas: Canvas) {
-            val rect = RectF(0f, 0f, width.toFloat(), height.toFloat())
+            bodyRect.set(0f, 0f, width.toFloat(), height.toFloat())
+            val rect = bodyRect
             // Stick grande (diseno 51025): cristal con adornos de
             // diamante en los 4 puntos, anillo interior luminoso y
             // dos diamantitos dentro del anillo (este y oeste).
@@ -1594,7 +1837,7 @@ class GamepadOverlayView @JvmOverloads constructor(
             // como una bola de cristal pequeña sobre su guía.
             drawGlassBody(canvas, rect, effectiveAlpha(), fourWayOrnaments = true)
             val radius = rect.width() / 2f
-            strokePaint.color = Color.parseColor("#BFE6F7")
+            strokePaint.color = GLASS_PALE_BLUE
             strokePaint.alpha = (effectiveAlpha() * 0.5f * 255).toInt()
             strokePaint.strokeWidth = 1.5f * density
             canvas.drawCircle(rect.centerX(), rect.centerY(), radius * 0.85f, strokePaint)
@@ -1609,7 +1852,7 @@ class GamepadOverlayView @JvmOverloads constructor(
             val knobRadius = radius * 0.34f
             val cx = rect.centerX() + knobNx * radius * 0.55f
             val cy = rect.centerY() + knobNy * radius * 0.55f
-            val knobRect = RectF(cx - knobRadius, cy - knobRadius, cx + knobRadius, cy + knobRadius)
+            knobRect.set(cx - knobRadius, cy - knobRadius, cx + knobRadius, cy + knobRadius)
             drawGlassBody(canvas, knobRect, effectiveAlpha(), ornaments = false)
         }
 
@@ -1618,6 +1861,8 @@ class GamepadOverlayView @JvmOverloads constructor(
                 pointerId = -1
                 knobNx = 0f
                 knobNy = 0f
+                drawnKnobNx = 0f
+                drawnKnobNy = 0f
                 sendAxes(0.toShort(), 0.toShort())
                 sendDpad(emptySet())
                 animatePress(0f)
@@ -1661,6 +1906,15 @@ class GamepadOverlayView @JvmOverloads constructor(
             sendAxes(axes.first, axes.second)
             sendDpad(dpadForStick(nx, ny))
             animatePress(1f)
+            // 0.2.65 (R-P1-13): el pomo se desplaza radius * 0.55
+            // por unidad de nx/ny; si desde el último dibujado no
+            // se movió ni 0.5 px, no hay nada nuevo que dibujar.
+            val dx = nx - drawnKnobNx
+            val dy = ny - drawnKnobNy
+            val movedPx = sqrt(dx * dx + dy * dy) * radius * 0.55f
+            if (movedPx < 0.5f) return
+            drawnKnobNx = nx
+            drawnKnobNy = ny
             invalidate()
         }
 
@@ -1743,6 +1997,22 @@ class GamepadOverlayView @JvmOverloads constructor(
         private var downTime: Long = 0L
         private var joystickActive: Boolean = false
         private var directTouchActive: Boolean = false
+        /**
+         * 0.2.65 (R-P1-16): último destino reenviado al juego. Un
+         * MOVE que no mueve el destino ≥ 1 px no se reenvía: el
+         * toque sintético por la Activity completa en cada MOVE
+         * era el camino más caro del overlay. DOWN/UP siempre se
+         * reenvían; solo el MOVE se coalesca.
+         */
+        private var lastForwardedTargetX: Float = Float.NaN
+        private var lastForwardedTargetY: Float = Float.NaN
+        /**
+         * 0.2.65 (R-P1-15): último centro del orbe ya dibujado
+         * (-1 = aún no se dibujó). invalidateOrbIfMoved compara
+         * contra él para invalidar solo el rect del orbe.
+         */
+        private var lastDrawnOrbCx: Float = -1f
+        private var lastDrawnOrbCy: Float = -1f
 
         /**
          * R6-P2-23: dedos apoyados AHORA sobre la zona en modo Toque
@@ -1790,7 +2060,7 @@ class GamepadOverlayView @JvmOverloads constructor(
             val cx = width / 2f
             val cy = height / 2f
             val alpha = effectiveAlpha()
-            strokePaint.color = Color.parseColor("#BFE6F7")
+            strokePaint.color = GLASS_PALE_BLUE
             strokePaint.alpha = (alpha * 0.5f * 255).toInt()
             strokePaint.strokeWidth = 1.5f * density
             canvas.drawCircle(cx, cy, width * 0.45f, strokePaint)
@@ -1809,7 +2079,12 @@ class GamepadOverlayView @JvmOverloads constructor(
                 cy
             }
             val orbR = width * 0.42f
-            val orbRect = RectF(iconCx - orbR, iconCy - orbR, iconCx + orbR, iconCy + orbR)
+            orbRectF.set(iconCx - orbR, iconCy - orbR, iconCx + orbR, iconCy + orbR)
+            val orbRect = orbRectF
+            // 0.2.65 (R-P1-15): el orbe dibujado queda registrado
+            // para que invalidateOrbIfMoved sepa dónde estaba.
+            lastDrawnOrbCx = iconCx
+            lastDrawnOrbCy = iconCy
             // 0.2.63 (A-4): la zona tiene opacidad 0,25 para que el
             // juego se vea a través, pero el orbe heredaba ese
             // 0,25 y salía gris apagado; el mockup lo muestra como
@@ -1830,6 +2105,41 @@ class GamepadOverlayView @JvmOverloads constructor(
             rippleRect.set(orbRect)
             drawRipple(canvas, rippleRect, alpha)
             drawIcon(canvas, IconKind.IGNICULUS, iconCx, iconCy, width * 0.42f, orbAlpha)
+        }
+
+        /**
+         * 0.2.65 (R-P1-15): invalida solo el rect del orbe (viejo +
+         * nuevo, con margen para la corona floral, que llega a
+         * 1.14 x orbR por arriba) y solo si el orbe se movió
+         * ≥ 0.5 px desde el último dibujado. En Toque directo el
+         * orbe no se mueve nunca: el llamador ni siquiera llama.
+         */
+        private fun invalidateOrbIfMoved() {
+            if (lastDrawnOrbCx < 0f || lastDrawnOrbCy < 0f) {
+                invalidate()
+                return
+            }
+            val orbR = width * 0.42f
+            if (orbR <= 0f) return
+            val iconCx = if (joystickActive) {
+                (targetOverlayX - left).coerceIn(0f, width.toFloat())
+            } else {
+                width / 2f
+            }
+            val iconCy = if (joystickActive) {
+                (targetOverlayY - top).coerceIn(0f, height.toFloat())
+            } else {
+                height / 2f
+            }
+            val dx = iconCx - lastDrawnOrbCx
+            val dy = iconCy - lastDrawnOrbCy
+            if (sqrt(dx * dx + dy * dy) < 0.5f) return
+            val margin = orbR * 1.2f
+            val l = min(lastDrawnOrbCx, iconCx) - margin
+            val t = min(lastDrawnOrbCy, iconCy) - margin
+            val r = max(lastDrawnOrbCx, iconCx) + margin
+            val b = max(lastDrawnOrbCy, iconCy) + margin
+            invalidate(l.toInt(), t.toInt(), r.toInt() + 1, b.toInt() + 1)
         }
 
         override fun release() {
@@ -1919,7 +2229,13 @@ class GamepadOverlayView @JvmOverloads constructor(
                         targetOverlayY = top + event.getY(index)
                     }
                     forwardTouch(MotionEvent.ACTION_MOVE, event.eventTime)
-                    invalidate()
+                    // 0.2.65 (R-P1-15): en Toque directo el orbe no
+                    // se mueve: no se redibuja nada por MOVE. En
+                    // Joystick solo se invalida el rect del orbe si
+                    // se movió ≥ 0.5 px (invalidateOrbIfMoved).
+                    if (control.igniculusMode == IgniculusMode.JOYSTICK) {
+                        invalidateOrbIfMoved()
+                    }
                     return true
                 }
                 MotionEvent.ACTION_POINTER_UP -> {
@@ -2013,8 +2329,21 @@ class GamepadOverlayView @JvmOverloads constructor(
          * false para que ningún botón del overlay consuma el toque
          * sintético (si el destino cae sobre un botón, lo pulsaría).
          */
-        private fun forwardTouch(action: Int, eventTime: Long = SystemClock.uptimeMillis()) {
-            val activity = context as? Activity ?: return
+        private fun forwardTouch(action: Int, eventTime: Long = SystemClock.uptimeMillis()): Boolean {
+            val activity = context as? Activity ?: return false
+            // 0.2.65 (R-P1-16): coalescar MOVEs: si el destino no
+            // se movió ≥ 1 px desde el último reenviado, no se manda
+            // otro sintético por la Activity completa. DOWN y UP
+            // siempre se reenvían: el juego debe ver el toque
+            // empezar y terminar exactamente una vez.
+            if (action == MotionEvent.ACTION_MOVE &&
+                abs(targetOverlayX - lastForwardedTargetX) < 1f &&
+                abs(targetOverlayY - lastForwardedTargetY) < 1f
+            ) {
+                return false
+            }
+            lastForwardedTargetX = targetOverlayX
+            lastForwardedTargetY = targetOverlayY
             // R6-P1-16: el obtain de 6 args ponía id siempre 0, sin
             // source y sin pressure, con el downTime del gesto. Ahora
             // se usa MotionEventHelper (14 args: pointerId real del
@@ -2026,6 +2355,7 @@ class GamepadOverlayView @JvmOverloads constructor(
                 downTime, eventTime, action, pointerId,
                 targetOverlayX, targetOverlayY,
             )
+            val delivered: Boolean
             try {
                 forwardingSyntheticTouch = true
                 // 0.2.63 (D): toque de la zona reenviado como táctil
@@ -2033,7 +2363,7 @@ class GamepadOverlayView @JvmOverloads constructor(
                 // de bug lo muestra). El reenvío pasa por EmuSurface
                 // con forwardingSyntheticTouch activo, así que no se
                 // cuenta dos veces.
-                val delivered = activity.dispatchTouchEvent(synthetic)
+                delivered = activity.dispatchTouchEvent(synthetic)
                 when (action) {
                     MotionEvent.ACTION_DOWN -> {
                         if (TouchStats.recordForwardedDown(delivered, targetOverlayX, targetOverlayY)) {
@@ -2049,6 +2379,7 @@ class GamepadOverlayView @JvmOverloads constructor(
                 forwardingSyntheticTouch = false
                 synthetic.recycle()
             }
+            return delivered
         }
     }
 }
@@ -2084,11 +2415,40 @@ private class PauseWingsView(context: Context) : View(context) {
     private val upperLeafPath = Path()
     private val lowerLeafPath = Path()
     private val starPath = Path()
+    /** 0.2.65 (O-P2-1): lados de las alas, sin floatArrayOf nuevo por dibujado. */
+    private val wingSides = floatArrayOf(-1f, 1f)
 
     /** Opacidad del adorno: la del botón de pausa (su opacidad x la general). */
     var ornamentAlpha: Float = 1f
         set(value) {
-            field = value.coerceIn(0f, 1f)
+            val coerced = value.coerceIn(0f, 1f)
+            // 0.2.65 (O-P2-5): si no cambió, no invalidar.
+            if (field == coerced) return
+            field = coerced
+            invalidate()
+        }
+
+    /**
+     * 0.2.65 (M-P2-3): rect del botón Volver (○) en coordenadas
+     * LOCALES de esta vista, o null si el perfil no lo trae. Las
+     * alas son más anchas que el botón de pausa y sus hojas
+     * cruzaban los bordes del círculo vecino: esa zona se recorta
+     * del dibujo (clipRect con DIFFERENCE) para que el ala pase
+     * POR DETRÁS del botón en vez de pintar sobre su cristal. Lo
+     * fija GamepadOverlayView (rebuild y onLayout) desde los
+     * layouts de pausa y círculo.
+     */
+    var excludedRect: RectF? = null
+        set(value) {
+            val old = field
+            if (old == null && value == null) return
+            if (old != null && value != null &&
+                old.left == value.left && old.top == value.top &&
+                old.right == value.right && old.bottom == value.bottom
+            ) {
+                return
+            }
+            field = value
             invalidate()
         }
 
@@ -2109,7 +2469,17 @@ private class PauseWingsView(context: Context) : View(context) {
         if (r <= 0f) return
         ornamentPaint.alpha = (ornamentAlpha * 0.85f * 255).toInt()
         iconPaint.alpha = (ornamentAlpha * 0.95f * 255).toInt()
-        for (s in floatArrayOf(-1f, 1f)) {
+        // 0.2.65 (M-P2-3): recortar el ala al rect del botón Volver
+        // (excludedRect): el ala no pinta sobre su cristal. El
+        // clipRect con DIFFERENCE sí está soportado en canvas con
+        // aceleración por hardware (el que no lo está es clipPath
+        // con ops distintas de INTERSECT).
+        val exclude = excludedRect
+        if (exclude != null) {
+            canvas.save()
+            canvas.clipRect(exclude, Region.Op.DIFFERENCE)
+        }
+        for (s in wingSides) {
             // Hoja superior: nace en el borde del círculo y barre
             // hacia arriba y hacia fuera, con la punta en ~4,15r
             // (el ancho total de la vista es 4,4 x el botón).
@@ -2135,6 +2505,7 @@ private class PauseWingsView(context: Context) : View(context) {
             drawWingSparkle(canvas, cx + s * 4.15f * r, cy - 0.75f * r, 0.10f * r)
             drawWingSparkle(canvas, cx + s * 4.15f * r, cy + 0.75f * r, 0.08f * r)
         }
+        if (exclude != null) canvas.restore()
     }
 
     /** Rombo pequeño con punto plata central (como drawDiamondOrnament). */
@@ -2206,7 +2577,14 @@ internal class MultiTouchRouter {
         val y: Float,
     )
 
-    private data class TrackedPointer(val downTime: Long, var x: Float, var y: Float)
+    private data class TrackedPointer(
+        val downTime: Long,
+        var x: Float,
+        var y: Float,
+        /** Última posición reenviada a SDL (0.2.65 R-P1-16: coalescencia de MOVEs). */
+        var forwardedX: Float = x,
+        var forwardedY: Float = y,
+    )
 
     private val forwarded = LinkedHashMap<Int, TrackedPointer>()
 
@@ -2233,6 +2611,16 @@ internal class MultiTouchRouter {
         val pointer = forwarded[pointerId] ?: return PointerAction.DROP
         pointer.x = x
         pointer.y = y
+        // 0.2.65 (R-P1-16): coalescar MOVEs: si el dedo no se movió
+        // ≥ 1 px desde el último MOVE reenviado, no se crea otro
+        // MotionEvent sintético. La posición real se guarda siempre,
+        // así que una deriva lenta en pasos sub-píxel sí se reenvía
+        // en cuanto el total llega a 1 px (nada se pierde).
+        if (abs(x - pointer.forwardedX) < 1f && abs(y - pointer.forwardedY) < 1f) {
+            return PointerAction.DROP
+        }
+        pointer.forwardedX = x
+        pointer.forwardedY = y
         return PointerAction.FORWARD_MOVE
     }
 
