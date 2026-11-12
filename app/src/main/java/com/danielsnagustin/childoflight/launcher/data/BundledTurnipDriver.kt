@@ -104,25 +104,36 @@ object BundledTurnipDriver {
     /** Tamaño máximo aceptado para el paquete (el zip real son ~3,5 MB). */
     const val MAX_PACKAGE_BYTES: Long = 32L * 1024L * 1024L
 
-    /** Variante incluida: build estándar Gmem de la R8 (6xx/7xx). */
-    enum class BundledTurnipVariant { STANDARD_GMEM }
+    /**
+     * Variante incluida: build estándar Gmem de la R8 (6xx/7xx).
+     * [A8XX_SEPARATE_BUILD_NO_BINARY] no es auto-instalable: es la
+     * variante REGISTRADA para 8xx, sin binario incluido (ver
+     * [selectKnownVariant]).
+     */
+    enum class BundledTurnipVariant { STANDARD_GMEM, A8XX_SEPARATE_BUILD_NO_BINARY }
 
     /**
      * Elige la variante incluida para un renderer GLES, o null si
      * para esa GPU NO se debe auto-instalar el zip incluido.
      *
-     * - 6xx (610-699) y 7xx altos (725/730/735/740/750): STANDARD_GMEM.
-     *   Es el build estándar de K11MCH1 para esas generaciones.
+     * - 6xx (610-699) y 7xx altos (702/725/730/732/735/740/750):
+     *   STANDARD_GMEM. Es el build estándar de K11MCH1 para esas
+     *   generaciones (ronda 0.2.65, G-P2-3: 702 y 732 son familia
+     *   7xx y usan el mismo build estándar; antes quedaban fuera).
      * - 710/720/722: null. El soporte en la R8 son "hacks" de
      *   descriptores y en releases anteriores se quitó y se repuso
      *   varias veces; no se auto-instala a ciegas. El usuario puede
      *   seguir instalando un zip a mano con el selector.
-     * - 8xx (810/825/829/830/840): null. La R8 lo marca "very beta
-     *   and hacky, use at your own risk" y lleva build aparte
-     *   (turnip_a8xx.zip, 2.477.437 bytes, en la misma release
-     *   v26.0.0-rc08): NO incluido en la APK. El usuario puede seguir
-     *   instalando un zip a mano con el selector, pero no se
-     *   auto-instala.
+     * - 8xx (810/825/829/830/840): null AQUÍ, a propósito. La R8 lo
+     *   marca "very beta and hacky, use at your own risk" y lleva
+     *   build aparte (turnip_a8xx.zip, 2.477.437 bytes, en la misma
+     *   release v26.0.0-rc08): NO incluido en la APK. Si esta
+     *   función devolviera una variante para 8xx, el llamador
+     *   (LauncherViewModel.ensureBundledTurnipDriver) instalaría el
+     *   zip STANDARD_GMEM, que NO es el build de 8xx. La variante
+     *   8xx vive en [selectKnownVariant] como
+     *   A8XX_SEPARATE_BUILD_NO_BINARY: registrada, sin binario,
+     *   solo para informar ("instálalo a mano con el selector").
      * - A32: null. Tiene edición especial aparte (turnip_A32).
      * - Mali / Immortalis / PowerVR / Xclipse / desconocido: null.
      *   Turnip no funciona fuera de Adreno.
@@ -136,9 +147,32 @@ object BundledTurnipDriver {
             ?: return null
         return when {
             model in 600..699 -> BundledTurnipVariant.STANDARD_GMEM
-            model in setOf(725, 730, 735, 740, 750) -> BundledTurnipVariant.STANDARD_GMEM
+            model in setOf(702, 725, 730, 732, 735, 740, 750) -> BundledTurnipVariant.STANDARD_GMEM
             else -> null
         }
+    }
+
+    /**
+     * Variante CONOCIDA para un renderer GLES, incluida la que NO
+     * tiene binario incluido. Devuelve lo mismo que [selectVariant]
+     * cuando hay binario auto-instalable, y además
+     * A8XX_SEPARATE_BUILD_NO_BINARY para Adreno 8xx (810/825/829/
+     * 830/840): la R8 tiene build aparte (turnip_a8xx.zip,
+     * 2.477.437 bytes, misma release v26.0.0-rc08, datos reales del
+     * repo K11MCH1/AdrenoToolsDrivers), pero NO está incluido en la
+     * APK, así que NO se auto-instala nada: el usuario lo instala a
+     * mano con el selector. Nunca se inventa un binario: mientras
+     * no haya un zip 8xx en assets, esta variante solo sirve para
+     * distinguir "8xx conocido, sin binario" de "GPU desconocida".
+     * Ningún llamador debe instalar ASSET_PATH a partir de ella.
+     */
+    fun selectKnownVariant(renderer: String): BundledTurnipVariant? {
+        selectVariant(renderer)?.let { return it }
+        val r = renderer.uppercase()
+        if (r.isBlank() || !r.contains("ADRENO") || r.contains("A32")) return null
+        val model = Regex("ADRENO[^0-9]*(\\d{3})").find(r)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            ?: return null
+        return if (model in 800..899) BundledTurnipVariant.A8XX_SEPARATE_BUILD_NO_BINARY else null
     }
 
     /** Resultado de validar un paquete de driver. */
