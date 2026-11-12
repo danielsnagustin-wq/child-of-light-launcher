@@ -21,9 +21,14 @@ launcher, el trabajo combinado debe cumplir la GPLv2.
    el commit fijado (el workflow lo clona de upstream). No
    distribuir nunca un APK con el núcleo sin que el código
    correspondiente esté publicado.
-4. **Modificaciones**: si se parchea el árbol Vita3K (no previsto
-   por ahora: el adaptador vive fuera del árbol), esas
-   modificaciones también deben publicarse.
+4. **Modificaciones**: el árbol Vita3K YA se parchea desde la 0.2.66
+   (Fase 2): los parches viven como archivos `.patch` en
+   `app/src/main/cpp/patches/` (top-level) y el workflow los aplica
+   con `git apply` sobre el pin en cada build — eso ES la
+   publicación de las modificaciones. Dos de ellos vienen del fork
+   Vita3K-Plus de nckstwrt (`839735d6` JIT, `d8aa6f2b` eye-plane
+   Mali; ver README, "Licencia y legal"); el resto son obra propia
+   sobre el pin 3e43bc80.
 
 ## Qué NO impone GPL
 
@@ -42,3 +47,12 @@ en local y el núcleo no está embebido. Esta nota es preventiva:
 cuando se active el workflow nativo y el primer APK con núcleo
 salga de CI, los puntos 1-2 deben estar hechos ANTES de entregar
 ese APK al usuario.
+
+## Actualización 2026-11-11 (ronda 0.2.66, Fase 2)
+
+Los parches del punto 4 ya existen (`app/src/main/cpp/patches/`,
+14 archivos, aplicados por el workflow con `git apply --check`
+sobre el pin `3e43bc80`). La revisión GPL pendiente sigue
+bloqueando distribuir cualquier APK con núcleo; la atribución a
+Vita3K-Plus (autor nckstwrt, commits `839735d6` y `d8aa6f2b`)
+ya está en el README ("Licencia y legal").
