@@ -1,0 +1,182 @@
+diff --git a/renderer/include/renderer/shaders.h b/renderer/include/renderer/shaders.h
+index f828eda6..01daf825 100644
+--- a/renderer/include/renderer/shaders.h
++++ b/renderer/include/renderer/shaders.h
+@@ -38,8 +38,8 @@ struct State;
+ // Shaders.
+ bool get_shaders_cache_hashs(State &renderer);
+ void save_shaders_cache_hashs(State &renderer, std::vector<ShadersHash> &shaders_cache_hashs);
+-std::string load_glsl_shader(const SceGxmProgram &program, const FeatureState &features, const shader::Hints &hints, bool maskupdate, const fs::path &shader_cache_path, const fs::path &shader_log_path, const std::string &shader_version, bool shader_cache);
+-std::vector<uint32_t> load_spirv_shader(const SceGxmProgram &program, const FeatureState &features, bool is_vulkan, const shader::Hints &hints, bool maskupdate, const fs::path &shader_cache_path, const fs::path &shader_log_path, const std::string &shader_version, bool shader_cache);
++std::string load_glsl_shader(const SceGxmProgram &program, const FeatureState &features, const shader::Hints &hints, bool maskupdate, const fs::path &shader_cache_path, const fs::path &shader_log_path, const std::string &shader_version, bool read_from_cache, bool write_to_cache);
++std::vector<uint32_t> load_spirv_shader(const SceGxmProgram &program, const FeatureState &features, bool is_vulkan, const shader::Hints &hints, bool maskupdate, const fs::path &shader_cache_path, const fs::path &shader_log_path, const std::string &shader_version, bool read_from_cache, bool write_to_cache);
+ std::string pre_load_shader_glsl(const fs::path &shader_path);
+ std::vector<uint32_t> pre_load_shader_spirv(const fs::path &shader_path);
+ 
+diff --git a/renderer/include/renderer/vulkan/pipeline_cache.h b/renderer/include/renderer/vulkan/pipeline_cache.h
+index 9dd0644a..1604c6d9 100644
+--- a/renderer/include/renderer/vulkan/pipeline_cache.h
++++ b/renderer/include/renderer/vulkan/pipeline_cache.h
+@@ -61,6 +61,11 @@ private:
+     bool use_async_compilation = false;
+     // how many threads are used in case async compilation is enabled
+     int nb_worker_threads = 0;
++    // Ronda 0.2.66 (C-02): config shader-cache, copiada en init()
++    // desde late_init. Con false no se lee ni se escribe la caché de
++    // shaders en disco (antes solo controlaba el precompilado de
++    // app.cpp:281 y los .spv se seguían escribiendo siempre).
++    bool shader_cache_enabled = true;
+ 
+     // does the GPU support vertex attributes with 3 components (like R16G16B16_UNORM), some (like AMD GPUs) don't
+     // this is needed when creating the input state
+@@ -126,7 +131,7 @@ public:
+     vk::PipelineLayout pipeline_layouts[17][17] = {};
+ 
+     PipelineCache(VKState &state);
+-    void init(bool support_rasterized_order_access);
++    void init(bool support_rasterized_order_access, bool enable_shader_cache);
+     void cleanup();
+ 
+     void read_pipeline_cache();
+diff --git a/renderer/src/gl/compile_program.cpp b/renderer/src/gl/compile_program.cpp
+index 46309280..803d0f39 100644
+--- a/renderer/src/gl/compile_program.cpp
++++ b/renderer/src/gl/compile_program.cpp
+@@ -221,9 +221,13 @@ static SharedGLObject get_or_compile_shader(const SceGxmProgram *program, const
+ 
+         // Need to compile new one and add it to cache
+         if (features.spirv_shader && spirv) {
+-            obj = compile_spirv(type, load_spirv_shader(*program, features, false, hints, maskupdate, shader_cache_path, shader_log_path, shader_version + "spv", shader_cache));
++            // Ronda 0.2.66 (C-02): OpenGL pasa su shader_cache
++            // (config.shader_cache, draw.cpp) como lectura Y escritura:
++            // la lectura no cambia; la escritura del .spv ahora también
++            // respeta el interruptor (antes era incondicional).
++            obj = compile_spirv(type, load_spirv_shader(*program, features, false, hints, maskupdate, shader_cache_path, shader_log_path, shader_version + "spv", shader_cache, shader_cache));
+         } else {
+-            obj = compile_glsl(type, load_glsl_shader(*program, features, hints, maskupdate, shader_cache_path, shader_log_path, shader_version, shader_cache));
++            obj = compile_glsl(type, load_glsl_shader(*program, features, hints, maskupdate, shader_cache_path, shader_log_path, shader_version, shader_cache, shader_cache));
+         }
+ 
+         cache.emplace(hash, obj);
+diff --git a/renderer/src/shaders.cpp b/renderer/src/shaders.cpp
+index 50cdfc7a..8723fb44 100644
+--- a/renderer/src/shaders.cpp
++++ b/renderer/src/shaders.cpp
+@@ -157,7 +157,7 @@ static R load_shader_generic(const fs::path &shader_path) {
+     return source;
+ }
+ 
+-static shader::GeneratedShader load_shader_generic(shader::Target target, const SceGxmProgram &program, const FeatureState &features, const shader::Hints &hints, bool maskupdate, const fs::path &shader_cache_path, const fs::path &shaderlog_path, const char *shader_type_str, const std::string &shader_version, bool shader_cache) {
++static shader::GeneratedShader load_shader_generic(shader::Target target, const SceGxmProgram &program, const FeatureState &features, const shader::Hints &hints, bool maskupdate, const fs::path &shader_cache_path, const fs::path &shaderlog_path, const char *shader_type_str, const std::string &shader_version, bool read_from_cache, bool write_to_cache) {
+     // TODO: no need to recompute the hash here
+     const std::string hash_text = hex_string(get_shader_hash(program));
+     // Set Shader Hash with Version
+@@ -170,7 +170,11 @@ static shader::GeneratedShader load_shader_generic(shader::Target target, const
+     };
+ 
+     const auto shader_path = get_shader_path(shader_type_str);
+-    if (shader_cache) {
++    // Ronda 0.2.66 (C-02): `read_from_cache` es la lectura (antes el
++    // parámetro se llamaba shader_cache y solo tapaba esta lectura);
++    // `write_to_cache` tapa la escritura del .spv al final, que antes
++    // era incondicional.
++    if (read_from_cache) {
+         if (target == shader::Target::GLSLOpenGL) {
+             std::string source = load_shader_generic<std::string>(shader_path);
+             if (!source.empty()) {
+@@ -209,7 +213,7 @@ static shader::GeneratedShader load_shader_generic(shader::Target target, const
+     const auto shaders_cache_path = fs::path(shader_cache_path);
+     fs::create_directories(shaders_cache_path);
+ 
+-    if (target != shader::Target::GLSLOpenGL) {
++    if (write_to_cache && target != shader::Target::GLSLOpenGL) {
+         const auto shader_dst_path = get_shader_path("spv");
+         fs_utils::dump_data(shader_dst_path, source.spirv.data(), sizeof(uint32_t) * source.spirv.size());
+     }
+@@ -217,7 +221,7 @@ static shader::GeneratedShader load_shader_generic(shader::Target target, const
+     return source;
+ }
+ 
+-std::string load_glsl_shader(const SceGxmProgram &program, const FeatureState &features, const shader::Hints &hints, bool maskupdate, const fs::path &shader_cache_path, const fs::path &shader_log_path, const std::string &shader_version, bool shader_cache) {
++std::string load_glsl_shader(const SceGxmProgram &program, const FeatureState &features, const shader::Hints &hints, bool maskupdate, const fs::path &shader_cache_path, const fs::path &shader_log_path, const std::string &shader_version, bool read_from_cache, bool write_to_cache) {
+     SceGxmProgramType program_type = program.get_type();
+ 
+     auto shader_type_to_str = [](SceGxmProgramType type) {
+@@ -226,17 +230,17 @@ std::string load_glsl_shader(const SceGxmProgram &program, const FeatureState &f
+ 
+     const char *shader_type_str = shader_type_to_str(program_type);
+ 
+-    return load_shader_generic(shader::Target::GLSLOpenGL, program, features, hints, maskupdate, shader_cache_path, shader_log_path, shader_type_str, shader_version, shader_cache).glsl;
++    return load_shader_generic(shader::Target::GLSLOpenGL, program, features, hints, maskupdate, shader_cache_path, shader_log_path, shader_type_str, shader_version, read_from_cache, write_to_cache).glsl;
+ }
+ 
+-std::vector<uint32_t> load_spirv_shader(const SceGxmProgram &program, const FeatureState &features, bool is_vulkan, const shader::Hints &hints, bool maskupdate, const fs::path &shader_cache_path, const fs::path &shader_log_path, const std::string &shader_version, bool shader_cache) {
++std::vector<uint32_t> load_spirv_shader(const SceGxmProgram &program, const FeatureState &features, bool is_vulkan, const shader::Hints &hints, bool maskupdate, const fs::path &shader_cache_path, const fs::path &shader_log_path, const std::string &shader_version, bool read_from_cache, bool write_to_cache) {
+     const shader::Target target = is_vulkan ? shader::Target::SpirVVulkan : shader::Target::SpirVOpenGL;
+     auto shader_type_to_str = [](SceGxmProgramType type) {
+         return (type == SceGxmProgramType::Vertex) ? "vert.spv.txt" : ((type == SceGxmProgramType::Fragment) ? "frag.spv.txt" : "unknown.spv.txt");
+     };
+     const char *shader_type_str = shader_type_to_str(program.get_type());
+ 
+-    return load_shader_generic(target, program, features, hints, maskupdate, shader_cache_path, shader_log_path, shader_type_str, shader_version, shader_cache).spirv;
++    return load_shader_generic(target, program, features, hints, maskupdate, shader_cache_path, shader_log_path, shader_type_str, shader_version, read_from_cache, write_to_cache).spirv;
+ }
+ 
+ std::string pre_load_shader_glsl(const fs::path &shader_path) {
+diff --git a/renderer/src/vulkan/pipeline_cache.cpp b/renderer/src/vulkan/pipeline_cache.cpp
+index 38bf8426..cbcd643d 100644
+--- a/renderer/src/vulkan/pipeline_cache.cpp
++++ b/renderer/src/vulkan/pipeline_cache.cpp
+@@ -69,7 +69,8 @@ PipelineCache::PipelineCache(VKState &state)
+     , pipeline_compile_queue_token(pipeline_compile_queue) {
+ }
+ 
+-void PipelineCache::init(bool support_rasterized_order_access) {
++void PipelineCache::init(bool support_rasterized_order_access, bool enable_shader_cache) {
++    shader_cache_enabled = enable_shader_cache;
+     vk::PipelineCacheCreateInfo pipeline_info{};
+     pipeline_cache = state.device.createPipelineCache(pipeline_info);
+ 
+@@ -510,7 +511,17 @@ vk::PipelineShaderStageCreateInfo PipelineCache::retrieve_shader(const SceGxmPro
+ 
+     const bool listed = manifest_lists(state, shaders_mutex, hash);
+ 
+-    if (*shader_module == shader_compiling && !masked_fetch && listed) {
++    // Ronda 0.2.66 (C-02): la caché en disco solo se usa si la config
++    // la activa. `listed` (el hash está en el manifiesto) decide si el
++    // .spv leído es compatible con las features actuales; sin la config
++    // no se lee nada (el manifiesto ni se carga con shader-cache=false,
++    // app.cpp:281) ni se escribe nada (ver load_spirv_shader). Pasar
++    // solo `listed` como antes hacía que un shader nuevo (no listado)
++    // se escribiera a disco aunque la caché estuviera apagada, y que
++    // un shader listado se leyera sin mirar la config.
++    const bool read_from_cache = listed && shader_cache_enabled;
++
++    if (*shader_module == shader_compiling && !masked_fetch && read_from_cache) {
+         precompile_shader(hash, false);
+     }
+ 
+@@ -533,7 +544,7 @@ vk::PipelineShaderStageCreateInfo PipelineCache::retrieve_shader(const SceGxmPro
+     if (masked_fetch)
+         features.direct_fragcolor = true;
+     const std::string version = masked_fetch ? shader_version + "-masked-fetch1" : shader_version;
+-    shader::usse::SpirvCode source = load_spirv_shader(*program, features, true, hints, maskupdate, state.shaders_path, state.shaders_log_path, version, listed);
++    shader::usse::SpirvCode source = load_spirv_shader(*program, features, true, hints, maskupdate, state.shaders_path, state.shaders_log_path, version, read_from_cache, shader_cache_enabled);
+ 
+     vk::ShaderModuleCreateInfo shader_info{
+         .codeSize = sizeof(uint32_t) * source.size(),
+diff --git a/renderer/src/vulkan/renderer.cpp b/renderer/src/vulkan/renderer.cpp
+index f4424a49..8f4f85f8 100644
+--- a/renderer/src/vulkan/renderer.cpp
++++ b/renderer/src/vulkan/renderer.cpp
+@@ -1047,7 +1047,9 @@ void VKState::late_init(const Config &cfg, const std::string_view game_id, MemSt
+         || std::string_view(physical_device_properties.deviceName).contains("NVIDIA");
+ #endif
+ 
+-    pipeline_cache.init(support_rasterized_order_access);
++    // Ronda 0.2.66 (C-02): la config shader-cache entra en el
++    // PipelineCache aquí (late_init tiene la config final).
++    pipeline_cache.init(support_rasterized_order_access, cfg.current_config.shader_cache);
+ 
+     texture_cache.init(true, texture_folder(), game_id);
+ }
