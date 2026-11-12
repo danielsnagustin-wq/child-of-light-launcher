@@ -1,0 +1,35 @@
+diff --git a/renderer/include/renderer/state.h b/renderer/include/renderer/state.h
+index 65b81052..8e252a9f 100644
+--- a/renderer/include/renderer/state.h
++++ b/renderer/include/renderer/state.h
+@@ -239,8 +239,28 @@ struct State {
+     }
+ 
+     void set_app(const char *title_id, const char *self_name) {
+-        shaders_path = cache_path / "shaders" / title_id / self_name;
+-        shaders_log_path = log_path / "shaderlog" / title_id / self_name;
++        // Ronda 0.2.66 (G11-05): el manifiesto de shaders se versiona
++        // por máscara de features: antes, al cambiar la versión del
++        // compilador O la máscara, get_shaders_cache_hashs borraba TODA
++        // la caché del juego (shaders.cpp:50-60) y la siguiente sesión
++        // recompilaba todo. Ahora cada máscara vive en su propio
++        // subdirectorio ("mask-<n>"), así que cambiar un ajuste GPU
++        // (que cambia la máscara) ya no destruye lo compilado con la
++        // máscara anterior: al volver al ajuste anterior, sus shaders
++        // siguen ahí. La máscara la da get_features_mask() (virtual:
++        // Vulkan la calcula con sus features; OpenGL devuelve 0, así
++        // que para GL el subdirectorio es siempre "mask-0" y el
++        // comportamiento no cambia). set_app es el único punto por el
++        // que pasan ambas rutas (la llama load_and_run antes de leer el
++        // manifiesto), así que un solo cambio cubre precompilado y
++        // compilado en caliente. La primera sesión tras el parche
++        // recompila una vez (el directorio viejo sin sufijo queda
++        // huérfano en disco, no se borra); los directorios de máscaras
++        // antiguas se acumulan y la limpieza de caché del launcher debe
++        // apuntar a todo shaders/<title>/<self>.
++        const std::string mask_dir = "mask-" + std::to_string(get_features_mask());
++        shaders_path = cache_path / "shaders" / title_id / self_name / mask_dir;
++        shaders_log_path = log_path / "shaderlog" / title_id / self_name / mask_dir;
+     }
+ };
+ } // namespace renderer
