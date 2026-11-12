@@ -1,0 +1,74 @@
+diff --git a/renderer/src/vulkan/renderer.cpp b/renderer/src/vulkan/renderer.cpp
+index 86f8fff4..cc955634 100644
+--- a/renderer/src/vulkan/renderer.cpp
++++ b/renderer/src/vulkan/renderer.cpp
+@@ -1587,26 +1587,47 @@ void VKState::unmap_memory(MemState &mem, Ptr<void> address) {
+     }
+ 
+     // we need to wait in case the buffer is being used
+-    device.waitIdle();
+-
++    // Ronda 0.2.66 (G11-03): ya no hay device.waitIdle() aquí: drenaba
++    // TODAS las colas GPU en cada unmap (parón total si el juego rota
++    // alocaciones mapeadas al cambiar de escena). La destrucción de los
++    // objetos GPU se difiere al destroy queue del frame en curso, que
++    // new_frame (context.cpp) vacía solo después de esperar los fences
++    // de ese slot de frame: el búfer ya no lo usa ningún comando en
++    // vuelo cuando se destruye. El apunte CPU (remove_external_mapping
++    // y buffer_trapping) sigue siendo inmediato: ningún draw nuevo
++    // puede referenciar el mapeo una vez borrado de mapped_memories.
++    // Nota: la infraestructura citada en el informe (FenceWaitRequest,
++    // context.cpp) acumula fences sin esperarlos; la que sí da la
++    // garantía es el DestroyQueue por frame, que ya usan scene.cpp y
++    // surface_cache.cpp para lo mismo.
+     switch (mapping_method) {
+-    case MappingMethod::ExernalHost:
+-        device.destroyBuffer(ite->second.buffer);
+-        device.freeMemory(std::get<ExternalBuffer>(ite->second.buffer_impl).memory);
++    case MappingMethod::ExernalHost: {
++        // El búfer y su memoria los destruye el destroy queue; add()
++        // los pone a null en la entrada para que erase() no los
++        // destruya dos veces.
++        ExternalBuffer &ext = std::get<ExternalBuffer>(ite->second.buffer_impl);
++        frame().destroy_queue.add(ite->second.buffer);
++        frame().destroy_queue.add(ext.memory);
+         break;
++    }
+ 
+     case MappingMethod::DoubleBuffer:
+         remove_external_mapping(mem, address.cast<uint8_t>().get(mem), ite->second.size);
+         // remove all the trapping related to these locations
+         buffer_trapping.remove_range(address.address(), address.address() + ite->second.size);
++        // El búfer VMA vive en buffer_impl: su destructor RAII lo
++        // liberaría AHORA (erase), con comandos en vuelo usándolo.
++        // add_buffer() lo mueve al destroy queue (y lo pone a null:
++        // ~Buffer ya no hace nada al borrar la entrada).
++        frame().destroy_queue.add_buffer(std::get<vkutil::Buffer>(ite->second.buffer_impl));
+         break;
+ 
+ #ifdef __ANDROID__
+     case MappingMethod::NativeBuffer: {
+         remove_external_mapping(mem, address.cast<uint8_t>().get(mem), ite->second.size);
+-        device.destroyBuffer(ite->second.buffer);
+         ExternalBuffer &buffer = std::get<ExternalBuffer>(ite->second.buffer_impl);
+-        device.freeMemory(buffer.memory);
++        frame().destroy_queue.add(ite->second.buffer);
++        frame().destroy_queue.add(buffer.memory);
+ 
+         AHardwareBuffer *hardware_buffer = reinterpret_cast<AHardwareBuffer *>(buffer.extra);
+         _AHardwareBuffer_unlock(hardware_buffer, nullptr);
+diff --git a/vkutil/src/objects.cpp b/vkutil/src/objects.cpp
+index 579a479d..f3a33c86 100644
+--- a/vkutil/src/objects.cpp
++++ b/vkutil/src/objects.cpp
+@@ -326,6 +326,10 @@ void DestroyQueue::destroy_objects() {
+             HANDLE_DESTROY(Framebuffer)
+             HANDLE_DESTROY(QueryPool)
+             HANDLE_DESTROY(DescriptorPool)
++            // Ronda 0.2.66 (G11-03): la memoria de dispositivo también
++            // puede diferirse (unmap_memory la encola junto a su búfer);
++            // antes no había caso y caía en "Unknown object type".
++            HANDLE_DESTROY(DeviceMemory)
+ 
+         default:
+             LOG_ERROR("Unknown object type {}", vk::to_string(type));
