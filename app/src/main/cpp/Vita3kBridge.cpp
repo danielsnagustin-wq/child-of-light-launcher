@@ -316,3 +316,14 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeRemov
     LOGW("nativeRemoveCustomDriver STUB (TODO-ETAPA2): núcleo no embebido");
     return JNI_FALSE;
 }
+
+// --- Ronda 0.2.64 (P1-3 Mali): máscara de mapeo de memoria ---
+// Mismo contrato que mapping_bridge.cpp: sin núcleo, 0 = desconocida
+// (la UI no filtra nada).
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetSupportedMemoryMappingMask(
+    JNIEnv * /* env */, jobject /* thiz */, jstring /* customDriverName */) {
+    LOGW("nativeGetSupportedMemoryMappingMask STUB: núcleo no embebido");
+    return 0;
+}
