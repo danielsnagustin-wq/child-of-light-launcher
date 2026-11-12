@@ -1,0 +1,262 @@
+diff --git a/app/src/app_init.cpp b/app/src/app_init.cpp
+index 7a06a85..f670bdd 100644
+--- a/app/src/app_init.cpp
++++ b/app/src/app_init.cpp
+@@ -583,6 +583,11 @@ bool late_init(EmuEnvState &state) {
+     // dispositivo de la config ANTES de crear el adaptador: el
+     // adaptador SDL lo lee en init() y no tiene acceso a la config.
+     state.audio.audio_device_sample_frames = state.cfg.current_config.audio_device_sample_frames;
++    // Launcher 0.2.66, R1: el interruptor experimental de audio SDL se lee en
++    // AudioState::init (el hint de baja latencia) y en cada salida de audio,
++    // así que se fija ANTES de init(). Cambiar el interruptor exige relanzar
++    // (como cambiar de backend), igual que el resto de claves de audio.
++    state.audio.exp_audio_sdl = state.cfg.current_config.exp_audio_sdl;
+     if (!state.audio.init(state.cfg.current_config.audio_backend)) {
+         LOG_WARN("Failed to initialize audio! Audio will not work.");
+     }
+diff --git a/audio/include/audio/impl/sdl_audio.h b/audio/include/audio/impl/sdl_audio.h
+index 9fddef4..8c3ba0f 100644
+--- a/audio/include/audio/impl/sdl_audio.h
++++ b/audio/include/audio/impl/sdl_audio.h
+@@ -50,6 +50,9 @@ struct SDLAudioOutPort : public AudioOutPort {
+     SDLAudioAdapter &adapter;
+     std::mutex mutex;
+     std::condition_variable cond_var;
++    // Launcher 0.2.66, R1 (Vita3K+ ff1515a+69757af): solo los usa el camino exp-audio-sdl ON.
++    std::atomic<uint32_t> pull_seq{ 0 };
++    std::atomic<uint64_t> play_end_us{ 0 };
+     SDLAudioOutPort(AudioStreamPtr stream, AudioAdapter &adapter)
+         : stream(std::move(stream))
+         , adapter(dynamic_cast<SDLAudioAdapter &>(adapter)) {}
+diff --git a/audio/include/audio/state.h b/audio/include/audio/state.h
+index 21b2b2a..84f1bb5 100644
+--- a/audio/include/audio/state.h
++++ b/audio/include/audio/state.h
+@@ -29,6 +29,10 @@
+ #define SCE_AUDIO_OUT_MAX_VOL 32768 //!< Maximum output port volume
+ #define SCE_AUDIO_VOLUME_0DB SCE_AUDIO_OUT_MAX_VOL //!< Maximum output port volume
+ 
++// Launcher 0.2.66, parche experimental R1 (audio SDL, Vita3K+ ff1515a+69757af):
++// keep at least this much audio queued on the host so a late guest audio thread does not reach the device
++constexpr int AUDIO_MIN_QUEUE_MS = 40;
++
+ struct AudioOutPort {
+     virtual ~AudioOutPort() = default;
+ 
+@@ -98,6 +102,9 @@ struct AudioState {
+     // late_init; el adaptador SDL lo usa en init(). AudioState no
+     // tiene puntero a la config, por eso se copia aquí.
+     int audio_device_sample_frames = 512;
++    // Launcher 0.2.66, parche experimental R1: interruptor "exp-audio-sdl" (config.yml).
++    // Lo fija app_init.cpp (late_init) desde cfg antes de init(); OFF = comportamiento actual.
++    bool exp_audio_sdl = false;
+ 
+     bool init(const std::string &adapter_name);
+     void deinit();
+diff --git a/audio/src/audio.cpp b/audio/src/audio.cpp
+index 3a65f6d..99892b8 100644
+--- a/audio/src/audio.cpp
++++ b/audio/src/audio.cpp
+@@ -86,7 +86,14 @@ void AudioState::set_backend(const std::string &adapter_name) {
+ }
+ 
+ AudioOutPortPtr AudioState::open_port(int nb_channels, int freq, int nb_sample) {
++    // Launcher 0.2.66, R1 (Vita3K+ ff1515a): guard against a dead backend or a failed port open instead of crashing.
++    if (!adapter)
++        return nullptr;
++
+     AudioOutPortPtr port = adapter->open_port(nb_channels, freq, nb_sample);
++    if (!port)
++        return nullptr;
++
+     set_volume(*port, port->volume);
+     return port;
+ }
+@@ -100,6 +107,11 @@ void AudioState::audio_output(AudioOutPort &out_port, const void *buffer) {
+     if (out_port.stopping)
+         return;
+ 
++    // Launcher 0.2.66, R1 (Vita3K+ ff1515a): el pacing de espera del 50% SOLO se salta
++    // con exp-audio-sdl ON. Con OFF, el bloque original sigue intacto (comportamiento actual).
++    if (exp_audio_sdl)
++        return;
++
+     uint64_t now = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+     uint64_t diff = now - out_port.last_output;
+     uint64_t to_wait = out_port.len_microseconds - diff;
+diff --git a/audio/src/impl/cubeb_audio.cpp b/audio/src/impl/cubeb_audio.cpp
+index a124bce..3ff72dd 100644
+--- a/audio/src/impl/cubeb_audio.cpp
++++ b/audio/src/impl/cubeb_audio.cpp
+@@ -131,8 +131,16 @@ AudioOutPortPtr CubebAudioAdapter::open_port(int nb_channels, int freq, int nb_s
+ 
+     port->len_bytes = nb_sample * nb_channels * sizeof(uint16_t);
+ 
+-    // allocate enough buffers to be able to satisfy a callback (+1 to make sure one buffer can be ready)
+-    const int nb_buffers = (latency + nb_sample - 1) / nb_sample + 1;
++    // Launcher 0.2.66, R1 (Vita3K+ ff1515a): con exp-audio-sdl ON, el anillo
++    // Cubeb crece para cubrir además 40 ms de cola mínima (AUDIO_MIN_QUEUE_MS);
++    // con OFF, el tamaño original (latencia + 1 búfer) sigue intacto.
++    // (El silencio al quedarse seco y el <cstring> del fork YA están en el pin
++    // por upstream posterior a la base del fork: no se re-aplican.)
++    const int nb_buffers = state.exp_audio_sdl
++        ? static_cast<int>(std::max((latency + static_cast<uint32_t>(nb_sample) - 1) / static_cast<uint32_t>(nb_sample),
++            (static_cast<uint32_t>(freq) * AUDIO_MIN_QUEUE_MS / 1000 + static_cast<uint32_t>(nb_sample) - 1) / static_cast<uint32_t>(nb_sample)))
++            + 1
++        : (latency + nb_sample - 1) / nb_sample + 1;
+     port->audio_buffers.resize(nb_buffers);
+     for (AudioBuffer &audio_buffer : port->audio_buffers) {
+         // initialize all the buffers
+diff --git a/audio/src/impl/sdl_audio.cpp b/audio/src/impl/sdl_audio.cpp
+index 84f223d..aee4dff 100644
+--- a/audio/src/impl/sdl_audio.cpp
++++ b/audio/src/impl/sdl_audio.cpp
+@@ -20,6 +20,7 @@
+ #include <SDL3/SDL_audio.h>
+ #include <SDL3/SDL_hints.h>
+ #include <algorithm> // Ronda 0.2.66 (AUD-P2-5): std::min
++#include <chrono> // Launcher 0.2.66, R1: steady_now_us (el <algorithm> de R1 ya lo puso AUD-P2-5)
+ #include <cstdint> // Ronda 0.2.66 (AUD-P2-5): std::uint8_t
+ #include <string> // Ronda 0.2.66 (AUD-P2-1): std::to_string para el hint
+ #include <vector> // Ronda 0.2.66 (AUD-P2-5): búfer de descarte
+@@ -36,14 +37,42 @@
+ #define SDL_CHECK_VOID(f_call) SDL_CHECK_EXT(f_call, )
+ #define SDL_CHECK_NEG(f_call) SDL_CHECK_EXT((f_call) >= 0, {})
+ 
++// Launcher 0.2.66, R1: la versión de 1 argumento es el umbral ORIGINAL del pin
++// (4x el búfer del dispositivo); la de 2 es la del fork (Vita3K+ ff1515a).
++// Solo el camino exp-audio-sdl ON usa la de 2 argumentos.
+ static int get_threshold_samples(const int device_buffer_samples) {
+     return 4 * device_buffer_samples;
+ }
+ 
++// SDL pulls whole device buffers, so keep enough queued that a pull still leaves two behind it
++static int get_threshold_samples(const int device_buffer_samples, const int device_freq) {
++    return std::max(3 * device_buffer_samples, AUDIO_MIN_QUEUE_MS * device_freq / 1000);
++}
++
++static uint64_t steady_now_us() {
++    return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
++}
++
+ void SDLCALL SDLAudioAdapter::thread_wakeup_callback(void *userdata, SDL_AudioStream *stream, int additional_amount, int total_amount) {
+     assert(userdata != nullptr);
+     assert(stream != nullptr);
+     SDLAudioOutPort *port = static_cast<SDLAudioOutPort *>(userdata);
++    // Launcher 0.2.66, R1 (Vita3K+ ff1515a): con exp-audio-sdl ON, cada pull del
++    // dispositivo actualiza el reloj de reproducción y despierta al productor
++    // al momento; con OFF, el callback original (umbral 4x) sigue intacto.
++    if (port->adapter.state.exp_audio_sdl) {
++        const uint64_t now_us = steady_now_us();
++        const uint64_t pull_us = static_cast<uint64_t>(port->adapter.device_buffer_samples) * 1000000 / std::max(port->adapter.dst_spec.freq, 1);
++        const uint64_t play_end = std::max(port->play_end_us.load(std::memory_order_relaxed), now_us) + pull_us;
++        port->play_end_us.store(std::min(play_end, now_us + 2 * pull_us), std::memory_order_relaxed);
++        // every pull takes data out of the stream: let the producer re-check the queue now rather than at its timeout
++        port->pull_seq.fetch_add(1, std::memory_order_release);
++        {
++            std::lock_guard<std::mutex> lock(port->mutex);
++        }
++        port->cond_var.notify_one();
++        return;
++    }
+     const int samples_available = port->adapter.get_rest_sample(*port);
+     if (samples_available < get_threshold_samples(port->adapter.device_buffer_samples) || additional_amount > 0) {
+         port->cond_var.notify_one();
+@@ -68,6 +97,11 @@ bool SDLAudioAdapter::init() {
+     // valor inválido vuelve al 512 de antes.
+     const int sample_frames = (state.audio_device_sample_frames > 0) ? state.audio_device_sample_frames : 512;
+     SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, std::to_string(sample_frames).c_str());
++    // Launcher 0.2.66, R8-audio (Vita3K+ 570cd24, solo el hunk de audio): con
++    // exp-audio-sdl ON se pide además audio de baja latencia en Android.
++    // Con OFF no se toca el hint (comportamiento actual: el pin no lo fija).
++    if (state.exp_audio_sdl)
++        SDL_SetHint(SDL_HINT_ANDROID_LOW_LATENCY_AUDIO, "1");
+     device_id = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nullptr);
+     SDL_CHECK_EXT(device_id > 0, false);
+     return true;
+@@ -105,6 +139,52 @@ void SDLAudioAdapter::audio_output(AudioOutPort &out_port, const void *buffer) {
+ 
+     //  Put audio to the port's stream and see how much is left to play.
+     SDLAudioOutPort &port = static_cast<SDLAudioOutPort &>(out_port);
++    // Launcher 0.2.66, R1 (Vita3K+ ff1515a+69757af): con exp-audio-sdl ON, la
++    // espera se calibra contra lo que falta por sonar (play_end_us) con
++    // tope de 2x la duración del búfer, y cada pull despierta al productor;
++    // con OFF, la espera de AUD-P2-5 (bucle con tope + descarte) sigue intacta.
++    if (state.exp_audio_sdl) {
++        const int threshold = get_threshold_samples(device_buffer_samples, dst_spec.freq);
++        const uint64_t deadline = steady_now_us() + port.len_microseconds * 2;
++        for (;;) {
++            const uint32_t seen_pulls = port.pull_seq.load(std::memory_order_acquire);
++            const int queued = get_rest_sample(port);
++            const uint64_t now = steady_now_us();
++            const uint64_t play_end = port.play_end_us.load(std::memory_order_relaxed);
++            const int unplayed = (play_end > now && dst_spec.freq > 0) ? static_cast<int>((play_end - now) * dst_spec.freq / 1000000) : 0;
++            if (queued + unplayed <= threshold || now >= deadline)
++                break;
++            uint64_t wait_us = deadline - now;
++            if (queued <= threshold)
++                wait_us = std::min<uint64_t>(wait_us, static_cast<uint64_t>(queued + unplayed - threshold) * 1000000 / dst_spec.freq + 1);
++            std::unique_lock<std::mutex> lock(port.mutex);
++            port.cond_var.wait_for(lock, std::chrono::microseconds(wait_us), [&] {
++                return port.pull_seq.load(std::memory_order_relaxed) != seen_pulls || out_port.stopping;
++            });
++            if (out_port.stopping)
++                return;
++        }
++        // Launcher 0.2.66, REBASE sobre AUD-P2-5: el camino R1 solo acota la
++        // ESPERA (tope 2x la duración del búfer), no la COLA: si el consumidor
++        // va lento, tras el tope se seguiría metiendo el búfer y la cola
++        // crecería sin límite (el problema que AUD-P2-5 arregla en el camino
++        // OFF). Por eso el descarte de AUD-P2-5 también vive aquí, adaptado
++        // al umbral R1 (2 argumentos): si tras la espera sigue sobrando audio,
++        // se descartan los bytes MÁS ANTIGUOS (hasta un búfer) antes de meter
++        // el nuevo. Sin este bloque, con exp-audio-sdl ON se perdía el
++        // comportamiento de AUD-P2-5; con él, la garantía es la misma en los
++        // dos caminos: la cola nunca crece más de un búfer por encima del umbral.
++        if (get_rest_sample(port) > threshold) {
++            const int bytes_available = SDL_GetAudioStreamAvailable(port.stream.get());
++            const int bytes_to_drop = std::min(bytes_available, out_port.len_bytes);
++            if (bytes_to_drop > 0) {
++                std::vector<std::uint8_t> discarded(bytes_to_drop);
++                SDL_GetAudioStreamData(port.stream.get(), discarded.data(), bytes_to_drop);
++            }
++        }
++        SDL_CHECK_VOID(SDL_PutAudioStreamData(port.stream.get(), buffer, out_port.len_bytes));
++        return;
++    }
+     // If there's lots of audio left to play, stop this thread.
+     // The audio callback will wake it up later when it's running out of data.
+     // Ronda 0.2.66 (AUD-P2-5): antes había UNA sola espera y después se
+@@ -150,6 +230,16 @@ int SDLAudioAdapter::get_rest_sample(AudioOutPort &out_port) {
+     auto &port = static_cast<SDLAudioOutPort &>(out_port);
+     const int bytes_available = SDL_GetAudioStreamAvailable(port.stream.get());
+     SDL_CHECK_NEG(bytes_available);
++    // Launcher 0.2.66, R1 (Vita3K+ 69757af): con exp-audio-sdl ON, el tamaño
++    // de frame se lee del formato real del stream (no del dst_spec asumido);
++    // con OFF, la conversión original con dst_spec sigue intacta.
++    if (state.exp_audio_sdl) {
++        SDL_AudioSpec out_spec;
++        if (!SDL_GetAudioStreamFormat(port.stream.get(), nullptr, &out_spec))
++            out_spec = dst_spec;
++        const int frame_size = SDL_AUDIO_FRAMESIZE(out_spec);
++        return frame_size > 0 ? bytes_available / frame_size : 0;
++    }
+     // we have the number of bytes left, we can convert it back to the number of samples left
+     return bytes_available / SDL_AUDIO_FRAMESIZE(dst_spec);
+ }
+diff --git a/config/include/config/config.h b/config/include/config/config.h
+index 81657c6..a878ecc 100644
+--- a/config/include/config/config.h
++++ b/config/include/config/config.h
+@@ -174,6 +174,11 @@ using PhysicalKeyCode = input::PhysicalKeyCode;
+     // SDLAudioAdapter usaba un 512 fijo en el código. Default 512 =
+     // el valor que ya usaba el adaptador, para no cambiar el sonido.
+     code(int, "audio-device-sample-frames", 512, audio_device_sample_frames)                           \
++    // Launcher (Child of Light) 0.2.66, parche experimental R1 (audio SDL, Vita3K+ ff1515a+69757af):
++    // interruptor "exp-audio-sdl". OFF (default) = comportamiento actual del pin; ON = nuevo
++    // manejo de búfer/underrun SDL. Solo existe si el parche está aplicado; sin él, config.cpp
++    // ignora la clave en silencio y el audio es el de siempre.
++    code(bool, "exp-audio-sdl", false, exp_audio_sdl)                                                   \
+     code(int, "sys-button", static_cast<int>(SCE_SYSTEM_PARAM_ENTER_BUTTON_CROSS), sys_button)          \
+     code(int, "sys-lang", static_cast<int>(SCE_SYSTEM_PARAM_LANG_ENGLISH_US), sys_lang)                 \
+     code(int, "sys-date-format", (int)SCE_SYSTEM_PARAM_DATE_FORMAT_MMDDYYYY, sys_date_format)           \
