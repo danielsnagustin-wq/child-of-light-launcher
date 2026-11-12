@@ -7,6 +7,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -49,6 +50,14 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
         if (uri != null) vm.installTurnip(uri)
     }
     val s = settings
+    // Ronda 0.2.65 (C-P2-2): al entrar, preguntar al núcleo la máscara
+    // de mapeo soportada: antes solo se preguntaba en Diagnóstico o al
+    // cambiar de driver, y esta pantalla mostraba el aviso de métodos
+    // no soportados con una máscara obsoleta (o null = sin aviso).
+    // Mismo patrón que GpuDiagnosticsScreen (solo si hay núcleo).
+    LaunchedEffect(Unit) {
+        if (vm.embeddedCorePresent()) vm.refreshMappingMask()
+    }
     SettingsCategoryScaffold(
         title = "GPU y gráficos",
         subtitle = "Backend, resolución, filtros y driver.",
@@ -75,6 +84,12 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
                 }
                 EnumChips("Filtro de pantalla", ScreenFilter.entries, s.screenFilter, { it.vita3kValue }) { vm.saveSettings(s.copy(screenFilter = it)) }
                 NoteText("FSR solo funciona con Vulkan y solo si la GPU lo soporta: si no, el núcleo vuelve solo a Bilinear sin avisar en la pantalla (solo queda en el log del núcleo). En OpenGL, FSR se comporta como Bilinear. Verificado en el código del núcleo (pin 3e43bc80).")
+                // Ronda 0.2.65 (RG-P2-4): FSR, FXAA y Bicúbico son pases
+                // de pantalla completa que cuestan FPS en Mali sin subir
+                // la resolución interna: se avisa, como ya se avisa de 2x.
+                if (gpu?.vendor == GpuVendor.MALI && s.screenFilter in listOf(ScreenFilter.FSR, ScreenFilter.FXAA, ScreenFilter.BICUBIC)) {
+                    NoteText("⚠ En Mali, ${s.screenFilter.vita3kValue} es un pase extra de pantalla completa: cuesta FPS sin subir la resolución interna. Si va lento, vuelve a Bilinear.")
+                }
                 // Ronda 0.2.64 (P2-2 Mali): los valores por encima del
                 // máximo del dispositivo (GpuInfo.maxAnisotropy, leído
                 // por GLES) no se ofrecen: el núcleo no limita el valor
@@ -83,7 +98,21 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
                 val anisoOptions = gpu?.maxAnisotropy?.let { max ->
                     listOf(1, 2, 4, 8, 16).filter { it <= max }
                 } ?: listOf(1, 2, 4, 8, 16)
-                EnumChips("Anisotrópico", anisoOptions, s.anisotropicFiltering, { "${it}x" }) { vm.saveSettings(s.copy(anisotropicFiltering = it)) }
+                // Ronda 0.2.65 (G-P2-10): si el valor guardado supera el
+                // máximo del teléfono (de antes de la detección, o de
+                // una copia importada), ningún chip quedaba marcado: se
+                // muestra recortado al máximo (el generador ya emite el
+                // valor recortado; el guardado no se toca aquí).
+                val displayedAniso = gpu?.maxAnisotropy?.let { minOf(s.anisotropicFiltering, it) } ?: s.anisotropicFiltering
+                EnumChips("Anisotrópico", anisoOptions, displayedAniso, { "${it}x" }) { vm.saveSettings(s.copy(anisotropicFiltering = it)) }
+                if (displayedAniso != s.anisotropicFiltering) {
+                    NoteText("El valor guardado (${s.anisotropicFiltering}x) supera el máximo de este teléfono (${gpu?.maxAnisotropy}x): se usa ${displayedAniso}x.")
+                }
+                // Ronda 0.2.65 (RG-P2-4): el anisotrópico alto multiplica
+                // las lecturas de textura y cuesta FPS en Mali.
+                if (gpu?.vendor == GpuVendor.MALI && s.anisotropicFiltering >= 8) {
+                    NoteText("⚠ En Mali, el anisotrópico ${s.anisotropicFiltering}x multiplica las lecturas de textura y cuesta FPS. Si va lento, baja a 1x o 2x.")
+                }
                 if (gpu?.maxAnisotropy != null) {
                     NoteText("Anisotrópico máximo de este teléfono: ${gpu?.maxAnisotropy}x (límite del driver).")
                 }
@@ -102,20 +131,30 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
                 // apagar el usuario (los presets lo ponen ON por
                 // defecto, pero nada lo fuerza).
                 SettingSwitch("Async Pipeline Compilation", "Compila shaders en segundo plano, menos tirones.", s.asyncPipelineCompilation) { vm.saveSettings(s.copy(asyncPipelineCompilation = it)) }
+                // Ronda 0.2.65 (RC-P2-2): con la compilación asíncrona
+                // OFF, cada pipeline nuevo se compila en el hilo de
+                // render: tirones en cada escena nueva.
+                if (!s.asyncPipelineCompilation) {
+                    NoteText("⚠ Con la compilación asíncrona OFF, cada shader nuevo se compila en el hilo de render: tirones al cambiar de escena o al ver efectos nuevos. Déjala ON salvo para diagnosticar.")
+                }
                 SettingSwitch("High Accuracy Rendering", "Más preciso, mucho más lento. OFF en todos los presets.", s.highAccuracy) { vm.saveSettings(s.copy(highAccuracy = it)) }
                 SettingSwitch("Surface Sync activado", "ON = más preciso. OFF = más rápido (recomendado en G99/Mali).", s.surfaceSyncEnabled) { vm.saveSettings(s.copy(surfaceSyncEnabled = it)) }
-                // Ronda 0.2.64 (P2-1 Mali): la Surface Sync es inerte
-                // con el mapeo OFF — todos los caminos Vulkan que la
-                // usan exigen mapeo activo (transfer.cpp:251,343;
-                // vulkan/context.cpp:626; surface_cache.cpp:1210) y
-                // en Vulkan el camino de escena se salta
-                // (scene.cpp:150). Con Page Table (Adreno) puede
-                // actuar; con Double Buffer (Mali) no funciona según
-                // las notas de Vita3K-Android v7.
-                if (!s.surfaceSyncEnabled && s.memoryMapping == MemoryMapping.OFF) {
-                    NoteText("Con el mapeo de memoria OFF, la Surface Sync no hace nada: solo tiene efecto con un método de mapeo activo. En Vulkan, la precisión extra va por la caché de superficies.")
+                // Ronda 0.2.65 (RC-P2-1): la nota vieja decía que con
+                // Double Buffer (Mali) la Surface Sync "no funciona":
+                // falso según el pin — perform_surface_sync() solo exige
+                // mapeo activo (surface_cache.cpp:1295-1300) y Double
+                // Buffer SÍ activa el mapeo (renderer.cpp:750-752,
+                // :1019-1023): con Double Buffer actúa por envío y
+                // cuesta. Solo es inerte con el mapeo OFF.
+                if (s.memoryMapping == MemoryMapping.OFF) {
+                    NoteText("Con el mapeo de memoria OFF, la Surface Sync no hace nada: solo actúa cuando hay un método de mapeo activo, incluido Double Buffer. Con el mapeo activo, activarla ejecuta una sincronización por envío y puede costar fluidez.")
                 }
                 EnumChips("Memory Mapping", MemoryMapping.entries, s.memoryMapping, { it.label }) { vm.saveSettings(s.copy(memoryMapping = it)) }
+                // Ronda 0.2.65 (RC-P2-3): OFF es el camino más lento
+                // (sin mapeo, todo pasa por copias por CPU).
+                if (s.memoryMapping == MemoryMapping.OFF) {
+                    NoteText("⚠ Mapeo OFF = el camino más lento: sin mapeo, todo pasa por copias por CPU. Solo para diagnosticar glitches.")
+                }
                 NoteText(
                     when (gpu?.vendor) {
                         // Ronda 0.2.64 (P1-1 Adreno): quitado el
@@ -124,8 +163,14 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
                         // Buffer en Adreno / Page Table en Mali;
                         // Vita3K-Plus defaultea Page Table) y hay
                         // cero mediciones en Child of Light.
-                        GpuVendor.ADRENO -> "Page Table (probar; si hay glitches, Double Buffer)."
-                        GpuVendor.MALI -> "Recomendado en Mali: Double Buffer (valor de los presets Mali). Si el juego va lento, prueba Page Table: en Mali suele ir mejor según el núcleo, y mide con la prueba de 30 s."
+                        // Ronda 0.2.65 (RG-P2-10): el método por defecto
+                        // aún no está medido en un Adreno real.
+                        GpuVendor.ADRENO -> "Page Table (probar; si hay glitches, Double Buffer). El método por defecto aún no está medido en un Adreno real: es una recomendación sin medir, no un resultado."
+                        // Ronda 0.2.65 (G-P2-5): "en Mali suele ir mejor
+                        // según el núcleo" era falso: el núcleo no
+                        // jerarquiza métodos; la recomendación es del
+                        // mantenedor.
+                        GpuVendor.MALI -> "Recomendado en Mali: Double Buffer (valor de los presets Mali). Si el juego va lento, prueba Page Table y mide con la prueba de 30 s (es una recomendación del mantenedor, no del núcleo)."
                         else -> "Recomendado: Double Buffer. Los 5 métodos están verificados contra el núcleo (pin 3e43bc80); \"off\" equivale a desactivado."
                     },
                 )
@@ -165,11 +210,26 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
                         if (it == GpuDriver.SYSTEM) vm.useSystemDriver() else vm.saveSettings(s.copy(gpuDriver = it))
                     }
                     Text("Turnip instalado: ${if (s.turnipInstalled) s.turnipVersion else "no"}", style = MaterialTheme.typography.bodyMedium)
+                    // Ronda 0.2.65 (C-P2-5): Turnip pedido pero no
+                    // cargado por el núcleo: se usa el sistema.
+                    val turnipNotLoaded by vm.turnipRequestedButNotLoaded.collectAsState()
+                    if (turnipNotLoaded) {
+                        NoteText("⚠ Turnip pedido pero no cargado: el núcleo usa el driver del sistema. Reinstala Turnip o vuelve al driver del sistema.")
+                    }
                     if (!s.turnipInstalled) {
                         NoteText("Turnip: no instalado. Instala un archivo .zip de Turnip abajo para poder elegirlo como driver.")
                     }
                     OutlinedButton(onClick = { pickTurnip.launch("*/*") }, modifier = Modifier.fillMaxWidth()) { Text("Instalar / cambiar Turnip (.zip)") }
-                    NoteText("Turnip es el driver Mesa open-source para Adreno. Se carga solo para esta app. Al cambiar de driver, el núcleo limpia la caché de shaders al arrancar.")
+                    // Ronda 0.2.65 (A-P2-2): quitada la afirmación no
+                    // verificada de que el núcleo limpia la caché de
+                    // shaders al cambiar de driver.
+                    NoteText("Turnip es el driver Mesa open-source para Adreno. Se carga solo para esta app. El cambio se aplica en el siguiente lanzamiento.")
+                    // Ronda 0.2.65 (RG-P2-15): turbo-mode existe en el
+                    // núcleo (config.h:149) pero nunca se ofrecía: pide
+                    // al driver el modo de máximo rendimiento. Solo
+                    // Adreno CON Turnip (adrenotools); en Mali y con el
+                    // driver del sistema no hace nada.
+                    SettingSwitch("Modo turbo (Adreno)", "Pide al driver el modo de máximo rendimiento. Solo funciona en Adreno con driver personalizado (Turnip): en Mali y con el driver del sistema no hace nada.", s.turboMode) { vm.saveSettings(s.copy(turboMode = it)) }
                 } else {
                     Text("Driver del sistema (${gpu?.renderer ?: "GPU no detectada"})", fontWeight = FontWeight.SemiBold)
                     NoteText(
