@@ -152,6 +152,44 @@ object TouchOverlayMapping {
     const val GAME_ASPECT_HEIGHT = 544f
 
     /**
+     * 0.2.64 (A-7): teléfono de referencia para convertir dp a
+     * fracción de pantalla (ver [sizeFractionForReferenceDp]): el
+     * teléfono del usuario, 1080x2340, densidad 2.80 medida en 4
+     * controles independientes (0.2.63 A-1), con el rect del juego a
+     * 1080 px de alto en horizontal. Un tamaño en dp de fábrica
+     * (stick 174, zona 104, espada 86, salto 87, pausa 52, círculo
+     * 41) es la fracción que ocupa de esos 1080 px.
+     */
+    const val REFERENCE_DENSITY = 2.80f
+    const val REFERENCE_GAME_HEIGHT_PX = 1080f
+
+    /**
+     * 0.2.64 (A-7): fracción de la altura del rect del juego que
+     * ocupa un control de [sizeDp] dp en el teléfono de referencia.
+     * Es la conversión que usan los perfiles de fábrica: en el
+     * teléfono de referencia da EXACTAMENTE el mismo tamaño en px
+     * que sizeDp x densidad (stick 174 dp -> 487,2 px -> 0,4511),
+     * y en cualquier otra pantalla el control ocupa la misma
+     * proporción del juego en vez de quedarse en dp fijos.
+     */
+    fun sizeFractionForReferenceDp(sizeDp: Int): Float =
+        sizeDp * REFERENCE_DENSITY / REFERENCE_GAME_HEIGHT_PX
+
+    /**
+     * 0.2.64 (A-7): tamaño de un control en píxeles para un rect de
+     * juego de [gameHeightPx] px de alto y densidad [density]. Con
+     * fracción (perfiles de fábrica) es fracción x alto del juego;
+     * sin ella (perfiles guardados, controles del usuario) es el
+     * modo legado sizeDp x densidad, idéntico a antes.
+     */
+    fun controlSizePx(control: TouchControl, gameHeightPx: Float, density: Float): Float =
+        if (control.sizeFraction != null) {
+            control.sizeFraction * gameHeightPx
+        } else {
+            control.sizeDp * density
+        }
+
+    /**
      * R4-P0-2: glifo PlayStation del botón, o null si no es un botón
      * de cara (D-Pad, START, L1/R1, L2/R2, GUIDE, sticks y NONE se
      * dibujan con flechas, pausa, etiqueta o nada, no con un glifo).
@@ -411,7 +449,10 @@ object TouchOverlayMapping {
      * rect: la espada en 0.914 queda entera dentro sin recorte.
      */
     fun controlRectInGameRect(control: TouchControl, gameRect: GameRect, density: Float): ControlRect {
-        val sizePx = control.sizeDp * density
+        // 0.2.64 (A-7): el tamaño sale de controlSizePx (fracción
+        // del alto del juego si el control la trae, dp x densidad
+        // si no). El resto de la matemática no cambia.
+        val sizePx = controlSizePx(control, gameRect.height(), density)
         val half = sizePx / 2f
         // 0.2.58 (R7-P1-05): solo el stick pisa la barra negra
         // izquierda: su borde izquierdo puede bajar hasta gameLeft
@@ -464,6 +505,30 @@ object TouchOverlayMapping {
      * los corrige si difieren; las fracciones guardadas (la
      * fuente de verdad) no se tocan nunca.
      */
+    /**
+     * 0.2.64 (A-2): layout de la vista de alas de la pausa
+     * (PauseWingsView). La vista es más ancha y más alta que el
+     * botón: en el mockup 51025 las alas se extienden ~4,4 veces el
+     * diámetro del botón a los lados y ~1,5 veces en vertical (las
+     * hojas barren hacia arriba y hacia abajo). Centrada en el
+     * botón: los márgenes salen del layout del botón de pausa.
+     */
+    const val PAUSE_WINGS_WIDTH_FACTOR = 4.4f
+    const val PAUSE_WINGS_HEIGHT_FACTOR = 1.5f
+
+    data class PauseWingsLayout(val widthPx: Int, val heightPx: Int, val leftMargin: Int, val topMargin: Int)
+
+    fun pauseWingsLayout(pauseLayout: OverlayChildLayout): PauseWingsLayout {
+        val widthPx = (pauseLayout.sizePx * PAUSE_WINGS_WIDTH_FACTOR).toInt().coerceAtLeast(1)
+        val heightPx = (pauseLayout.sizePx * PAUSE_WINGS_HEIGHT_FACTOR).toInt().coerceAtLeast(1)
+        return PauseWingsLayout(
+            widthPx = widthPx,
+            heightPx = heightPx,
+            leftMargin = pauseLayout.leftMargin + (pauseLayout.sizePx - widthPx) / 2,
+            topMargin = pauseLayout.topMargin + (pauseLayout.sizePx - heightPx) / 2,
+        )
+    }
+
     data class OverlayChildLayout(val sizePx: Int, val leftMargin: Int, val topMargin: Int)
 
     fun childLayout(control: TouchControl, viewWidthPx: Float, viewHeightPx: Float, density: Float): OverlayChildLayout {
