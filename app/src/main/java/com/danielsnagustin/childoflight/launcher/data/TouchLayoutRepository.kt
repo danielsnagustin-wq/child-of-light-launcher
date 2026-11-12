@@ -744,6 +744,10 @@ class TouchLayoutRepository(private val context: Context) {
          * tocó aunque sea un control, ya no coincide y la
          * migración no lo toca. Null para ids desconocidos (nunca
          * coincide con un perfil guardado).
+         * 0.2.64 (A-7, run #384): el snapshot lleva sizeFraction
+         * a null: un perfil guardado antes de la 0.2.64 no trae
+         * fracción (formato de 14 campos) y con la fracción del
+         * layout nuevo la igualdad nunca coincidía.
          */
         private fun cleanLayoutWithoutCircle(profileId: String): List<TouchControl>? {
             val clean = when (profileId) {
@@ -752,7 +756,7 @@ class TouchLayoutRepository(private val context: Context) {
                 "external-gamepad" -> externalGamepadLayout()
                 else -> return null
             }
-            return clean.filter { it.id != "btn_circle" }
+            return clean.filter { it.id != "btn_circle" }.map { it.copy(sizeFraction = null) }
         }
 
         /**
@@ -790,23 +794,28 @@ class TouchLayoutRepository(private val context: Context) {
                 "external-gamepad" -> externalGamepadLayout()
                 else -> return null
             }
+            // 0.2.64 (A-7, run #384): cada copia lleva
+            // sizeFraction a null: un perfil guardado antes de la
+            // 0.2.64 no trae fracción (formato de 14 campos) y con
+            // la fracción del layout nuevo la igualdad nunca
+            // coincidía.
             return clean.map { control ->
                 when (control.id) {
-                    "stick" -> control.copy(sizeDp = 210)
-                    "igniculus" -> control.copy(sizeDp = 156)
+                    "stick" -> control.copy(sizeDp = 210, sizeFraction = null)
+                    "igniculus" -> control.copy(sizeDp = 156, sizeFraction = null)
                     "btn_sword" -> if (control.xFraction == 0.914f) {
-                        control.copy(xFraction = 0.864f, sizeDp = 82)
+                        control.copy(xFraction = 0.864f, sizeDp = 82, sizeFraction = null)
                     } else {
-                        control.copy(sizeDp = 82)
+                        control.copy(sizeDp = 82, sizeFraction = null)
                     }
                     "btn_jump" -> if (control.xFraction == 1.012f) {
-                        control.copy(xFraction = 0.93f, sizeDp = 82)
+                        control.copy(xFraction = 0.93f, sizeDp = 82, sizeFraction = null)
                     } else {
-                        control.copy(sizeDp = 82)
+                        control.copy(sizeDp = 82, sizeFraction = null)
                     }
-                    "btn_start" -> control.copy(sizeDp = 56)
-                    "btn_circle" -> control.copy(sizeDp = 44)
-                    else -> control
+                    "btn_start" -> control.copy(sizeDp = 56, sizeFraction = null)
+                    "btn_circle" -> control.copy(sizeDp = 44, sizeFraction = null)
+                    else -> control.copy(sizeFraction = null)
                 }
             }
         }
@@ -842,23 +851,28 @@ class TouchLayoutRepository(private val context: Context) {
                 "external-gamepad" -> externalGamepadLayout()
                 else -> return null
             }
+            // 0.2.64 (A-7, run #384): cada copia lleva
+            // sizeFraction a null: un perfil guardado antes de la
+            // 0.2.64 no trae fracción (formato de 14 campos) y con
+            // la fracción del layout nuevo la igualdad nunca
+            // coincidía.
             return clean.map { control ->
                 when (control.id) {
-                    "stick" -> control.copy(sizeDp = 186)
-                    "igniculus" -> control.copy(sizeDp = 115)
+                    "stick" -> control.copy(sizeDp = 186, sizeFraction = null)
+                    "igniculus" -> control.copy(sizeDp = 115, sizeFraction = null)
                     "btn_sword" -> if (control.xFraction == 0.914f) {
-                        control.copy(xFraction = 0.864f, sizeDp = 82)
+                        control.copy(xFraction = 0.864f, sizeDp = 82, sizeFraction = null)
                     } else {
-                        control.copy(sizeDp = 82)
+                        control.copy(sizeDp = 82, sizeFraction = null)
                     }
                     "btn_jump" -> if (control.xFraction == 1.012f) {
-                        control.copy(xFraction = 0.93f, sizeDp = 82)
+                        control.copy(xFraction = 0.93f, sizeDp = 82, sizeFraction = null)
                     } else {
-                        control.copy(sizeDp = 82)
+                        control.copy(sizeDp = 82, sizeFraction = null)
                     }
-                    "btn_start" -> control.copy(sizeDp = 56)
-                    "btn_circle" -> control.copy(sizeDp = 44)
-                    else -> control
+                    "btn_start" -> control.copy(sizeDp = 56, sizeFraction = null)
+                    "btn_circle" -> control.copy(sizeDp = 44, sizeFraction = null)
+                    else -> control.copy(sizeFraction = null)
                 }
             }
         }
@@ -884,15 +898,20 @@ class TouchLayoutRepository(private val context: Context) {
                 "external-gamepad" -> externalGamepadLayout()
                 else -> return null
             }
+            // 0.2.64 (A-7, run #384): cada copia lleva
+            // sizeFraction a null: un perfil guardado antes de la
+            // 0.2.64 no trae fracción (formato de 14 campos) y con
+            // la fracción del layout nuevo la igualdad nunca
+            // coincidía.
             return clean.map { control ->
                 when (control.id) {
-                    "stick" -> control.copy(sizeDp = 186)
-                    "igniculus" -> control.copy(sizeDp = 115)
-                    "btn_sword" -> control.copy(sizeDp = if (profileId == "one-hand") 82 else 92)
-                    "btn_jump" -> control.copy(sizeDp = if (profileId == "one-hand") 82 else 92)
-                    "btn_start" -> control.copy(sizeDp = 56)
-                    "btn_circle" -> control.copy(sizeDp = 44)
-                    else -> control
+                    "stick" -> control.copy(sizeDp = 186, sizeFraction = null)
+                    "igniculus" -> control.copy(sizeDp = 115, sizeFraction = null)
+                    "btn_sword" -> control.copy(sizeDp = if (profileId == "one-hand") 82 else 92, sizeFraction = null)
+                    "btn_jump" -> control.copy(sizeDp = if (profileId == "one-hand") 82 else 92, sizeFraction = null)
+                    "btn_start" -> control.copy(sizeDp = 56, sizeFraction = null)
+                    "btn_circle" -> control.copy(sizeDp = 44, sizeFraction = null)
+                    else -> control.copy(sizeFraction = null)
                 }
             }
         }
