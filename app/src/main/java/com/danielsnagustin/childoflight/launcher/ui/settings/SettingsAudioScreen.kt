@@ -113,6 +113,14 @@ fun SettingsAudioScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (
                 // no si suena o no.
                 NoteText("SDL es el predeterminado porque arregla el ruido. Cubeb es la alternativa si SDL te da problemas: en las versiones actuales ambos deberían sonar sin crepitaciones ni cortes.")
                 SettingSwitch("NGS (audio del sistema Vita)", "ngs-enable en config.yml. ON recomendado.", s.ngsEnable) { vm.saveSettings(s.copy(ngsEnable = it)) }
+                // Ronda 0.2.66 (AUD-P2-3): con NGS OFF el núcleo
+                // devuelve OK sin inicializar nada (pin
+                // SceNgs.cpp:403-417) y un juego que depende de NGS
+                // puede quedarse sin sonido o colgarse. El cambio
+                // exige relanzar el juego (se lee al iniciar el núcleo).
+                if (!s.ngsEnable) {
+                    NoteText("⚠ Con NGS apagado, los juegos que dependen del audio del sistema Vita pueden quedarse sin sonido o colgarse: el núcleo devuelve OK sin inicializar nada. Vuelve a lanzar el juego para aplicar el cambio.")
+                }
                 SettingSlider("Volumen", s.audioVolume, 0..100, { vm.saveSettings(s.copy(audioVolume = it)) }) { "$it%" }
             }
             item {
