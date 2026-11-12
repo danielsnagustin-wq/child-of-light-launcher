@@ -147,8 +147,11 @@ jobs:
       # que ellos ni encima sin rebase aplica.
       # app/src/main/cpp/patches/; nunca patches/experimental/.
       # Las rutas dentro de cada .patch son relativas a la raíz del
-      # árbol Vita3K (sin prefijo vita3k/), por eso se aplica desde
-      # dentro de app/src/main/cpp/vita3k.
+      # CÓDIGO Vita3K, que vive en el subdirectorio vita3k/ del repo
+      # (vita3k/kernel/..., vita3k/renderer/...): por eso se aplica
+      # con --directory=vita3k desde la raíz del clon. Sin ese flag
+      # el run #509 falló con "No such file or directory" (las rutas
+      # kernel/... no existen en la raíz del repo).
       - name: Apply core patches (0.2.66)
         run: |
           cd app/src/main/cpp/vita3k
@@ -170,8 +173,8 @@ jobs:
             r1-audio-sdl-exp.patch; do
             f="../patches/$patch"
             [ -f "$f" ] || { echo "ERROR: falta el parche $f"; exit 1; }
-            git apply --check "$f" || { echo "ERROR: el parche $patch no aplica limpio sobre el pin ${VITA3K_PIN}"; exit 1; }
-            git apply "$f" || { echo "ERROR: git apply falló para $patch"; exit 1; }
+            git apply --check --directory=vita3k "$f" || { echo "ERROR: el parche $patch no aplica limpio sobre el pin ${VITA3K_PIN}"; exit 1; }
+            git apply --directory=vita3k "$f" || { echo "ERROR: git apply falló para $patch"; exit 1; }
             echo "Parche aplicado: $patch"
           done
           echo "15 parches aplicados sobre ${VITA3K_PIN}."
