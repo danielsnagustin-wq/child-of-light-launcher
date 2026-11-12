@@ -141,8 +141,13 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 )
             }
             if (g.isUserVerifiedDevice) {
-                Text("✓ Procesador verificado por el usuario: Child of Light va muy bien en este procesador.", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                NoteText("Por eso el preset por defecto es G99 Recomendado (1x): se optimiza para mantener esa fluidez estable, no para recortar de más.")
+                // Ronda 0.2.65 (U-P2-4): quitada la frase "Child of
+                // Light va muy bien en este procesador": promete un
+                // rendimiento que el síntoma abierto de lentitud
+                // contradice. Queda solo el hecho verificado (el
+                // procesador lo verificó el usuario) y el preset.
+                Text("✓ Procesador verificado por el usuario.", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                NoteText("Por eso el preset por defecto es G99 Recomendado (1x): prima la estabilidad, no recortar de más.")
             } else if (g.vendor.name == "MALI") {
                 // Ronda 0.2.64 (P2-3 Mali): la nota anterior decía que
                 // el núcleo trae un "vertex fix" para Mali: ese arreglo
@@ -159,7 +164,10 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 // 2200) / 1.3 (2400): suficiente para el núcleo. Sin
                 // Turnip (solo Adreno). Se puede probar 2x a mano con
                 // la prueba de 30 s; si baja de 28 fps, vuelve a 1x.
-                NoteText("Xclipse (Samsung/AMD RDNA): sin perfil propio todavía; se usa el perfil Mali seguro (1x, Double Buffer). Sin Turnip. Se puede probar 2x a mano con la prueba de 30 s; si baja de 28 fps, vuelve a 1x.")
+                // Ronda 0.2.65 (U-P2-3): sin el fabricante del teléfono
+                // en la UI visible (Xclipse es AMD RDNA; el nombre del
+                // fabricante no aporta nada al diagnóstico).
+                NoteText("Xclipse (AMD RDNA): sin perfil propio todavía; se usa el perfil Mali seguro (1x, Double Buffer). Sin Turnip. Se puede probar 2x a mano con la prueba de 30 s; si baja de 28 fps, vuelve a 1x.")
             } else if (g.vendor.name == "POWERVR") {
                 // Ronda 0.2.64 (H-03/H-06): nota por gama, no una sola
                 // para todo PowerVR. DXT/CXTP = gama alta (Tensor
@@ -185,6 +193,12 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         Text("Firmware: ${com.danielsnagustin.childoflight.launcher.data.FirmwareResolver.label(firmwareStatus)}")
         NoteText("El firmware nunca es un paso inicial: el primer uso solo pide juego + DLCs. Se importa en Importar, junto al juego y los DLC.")
         Text("Backend: ${settings?.backend?.label ?: "—"} · Driver: ${settings?.gpuDriver ?: "—"}${if (settings?.turnipInstalled == true) " (${settings?.turnipVersion})" else ""}")
+        // Ronda 0.2.65 (C-P2-5): Turnip pedido pero no cargado por el
+        // núcleo: la máscara y el rendimiento son los del sistema.
+        val turnipNotLoaded by vm.turnipRequestedButNotLoaded.collectAsState()
+        if (turnipNotLoaded) {
+            Text("⚠ Turnip pedido pero no cargado: se usa el driver del sistema.", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+        }
         Text("Resolución: ${settings?.resolutionLabel ?: "—"} · FPS overlay: ${if (settings?.showFpsOverlay == true) "sí" else "no"}")
 
         // Ola 3, Etapa 10: configuración activa resumida, último FPS y
@@ -236,7 +250,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         NoteText("El informe exportado (Reportar bug) es solo texto: dispositivo, ajustes, estado y errores recientes. No adjunta ningún archivo privado.")
 
         SectionTitle("Prueba de 30 segundos")
-        NoteText("Lanza el juego con el preset actual. El FPS se mide automáticamente mientras juegas y al volver se registra solo. Si no hay medición (app externa), juega 30 segundos mirando el FPS del overlay y regístralo a mano. Si el perfil es 2x (G99 Calidad o Adreno Calidad/Turnip) y baja de 28 fps, vuelve a 1x automáticamente.")
+        NoteText("Lanza el juego con el preset actual. El FPS se mide automáticamente mientras juegas y al volver se registra solo. Si no hay medición (app externa), juega 30 segundos mirando el FPS del overlay y regístralo a mano. La prueba mide solo en partida confirmada: juega hasta estar dentro de la partida (no en el título ni en los menús) antes de contar los 30 s; las muestras del título no miden el juego. Si el perfil es 2x (G99 Calidad o Adreno Calidad/Turnip) y baja de 28 fps, vuelve a 1x automáticamente.")
         PrimaryButton("Jugar 30 segundos", onClick = { vm.startBenchmark() }, enabled = !launching)
         if (pending != null) {
             Text("Prueba en marcha: ${pending?.profile?.label}. Al volver, el FPS se registra solo si el juego lo midió; si no, regístralo a mano.", fontWeight = FontWeight.Bold)
