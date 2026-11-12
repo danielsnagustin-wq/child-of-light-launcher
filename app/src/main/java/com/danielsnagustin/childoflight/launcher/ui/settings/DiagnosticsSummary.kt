@@ -44,3 +44,27 @@ fun extractRecentErrorLines(logText: String, maxLines: Int = 8): List<String> {
     }
     return collapsed.takeLast(limit)
 }
+
+/**
+ * Líneas de CPU del log del núcleo (ronda 0.2.66, CPU-09, parte
+ * launcher). Puro, testeable en JVM (DiagnosticsSummaryTest).
+ *
+ * El launcher no tiene contadores JIT ni tiempos de CPU por hilo:
+ * lo único que puede mostrar son las líneas del log del núcleo
+ * que hablan de CPU (el pin registra, entre otras, "CPU
+ * Optimisation state: …" al arrancar). Se devuelven las más
+ * recientes, sin inventar nada: si no hay ninguna, la lista está
+ * vacía y el reporte lo dice así. No se afirma aquí si el build
+ * del núcleo habilita o no una herramienta de profiling: eso no
+ * queda probado con las citas disponibles (corrección Codex 9).
+ */
+private val CPU_WORDS = listOf("cpu", "jit", "optimisation", "optimization", "dynarmic")
+
+fun extractCpuLogLines(logText: String, maxLines: Int = 8): List<String> {
+    if (logText.isBlank()) return emptyList()
+    val limit = maxLines.coerceAtLeast(1)
+    return logText.lines()
+        .map { it.trim() }
+        .filter { line -> line.isNotEmpty() && CPU_WORDS.any { word -> line.lowercase().contains(word) } }
+        .takeLast(limit)
+}
