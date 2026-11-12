@@ -36,7 +36,16 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeIsAppRunning(
     JNIEnv *env, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
-    const jboolean ok = Java_org_vita3k_emulator_NativeLib_isAppRunning(env, nullptr);
+    // J-P2-3: una excepción C++ sin capturar cruzando JNI aborta el
+    // proceso (SIGABRT). Se captura y se devuelve "no hay partida".
+    jboolean ok = JNI_FALSE;
+    try {
+        ok = Java_org_vita3k_emulator_NativeLib_isAppRunning(env, nullptr);
+    } catch (const std::exception &e) {
+        LOGE("nativeIsAppRunning: excepción C++ capturada: %s", e.what());
+    } catch (...) {
+        LOGE("nativeIsAppRunning: excepción C++ desconocida capturada");
+    }
     if (launcher_clear_pending_exception(env)) {
         return JNI_FALSE;
     }
@@ -50,7 +59,14 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeRequestAppQuit(
     JNIEnv *env, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
-    const jboolean ok = Java_org_vita3k_emulator_NativeLib_requestAppQuit(env, nullptr);
+    jboolean ok = JNI_FALSE;
+    try {
+        ok = Java_org_vita3k_emulator_NativeLib_requestAppQuit(env, nullptr);
+    } catch (const std::exception &e) {
+        LOGE("nativeRequestAppQuit: excepción C++ capturada: %s", e.what());
+    } catch (...) {
+        LOGE("nativeRequestAppQuit: excepción C++ desconocida capturada");
+    }
     if (launcher_clear_pending_exception(env)) {
         return JNI_FALSE;
     }
@@ -65,7 +81,14 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeIsAppPaused(
     JNIEnv *env, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
-    const jboolean ok = Java_org_vita3k_emulator_NativeLib_isAppPaused(env, nullptr);
+    jboolean ok = JNI_FALSE;
+    try {
+        ok = Java_org_vita3k_emulator_NativeLib_isAppPaused(env, nullptr);
+    } catch (const std::exception &e) {
+        LOGE("nativeIsAppPaused: excepción C++ capturada: %s", e.what());
+    } catch (...) {
+        LOGE("nativeIsAppPaused: excepción C++ desconocida capturada");
+    }
     if (launcher_clear_pending_exception(env)) {
         return JNI_FALSE;
     }
@@ -79,7 +102,14 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetRunningAppTitle(
     JNIEnv *env, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
-    jstring title = Java_org_vita3k_emulator_NativeLib_getRunningAppTitle(env, nullptr);
+    jstring title = nullptr;
+    try {
+        title = Java_org_vita3k_emulator_NativeLib_getRunningAppTitle(env, nullptr);
+    } catch (const std::exception &e) {
+        LOGE("nativeGetRunningAppTitle: excepción C++ capturada: %s", e.what());
+    } catch (...) {
+        LOGE("nativeGetRunningAppTitle: excepción C++ desconocida capturada");
+    }
     // P2-B1: evaluar el clear ANTES del null (el || cortocircuitaba
     // y el NewStringUTF("") corría con la excepción pendiente,
     // devolviendo null a un String no nulo de Kotlin).
@@ -97,7 +127,14 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetFirmwareInstallStateMask(
     JNIEnv *env, jobject /* thiz */) {
 #ifdef LAUNCHER_HAS_VITA3K
-    const jint mask = Java_org_vita3k_emulator_NativeLib_getFirmwareInstallStateMask(env, nullptr);
+    jint mask = 0;
+    try {
+        mask = Java_org_vita3k_emulator_NativeLib_getFirmwareInstallStateMask(env, nullptr);
+    } catch (const std::exception &e) {
+        LOGE("nativeGetFirmwareInstallStateMask: excepción C++ capturada: %s", e.what());
+    } catch (...) {
+        LOGE("nativeGetFirmwareInstallStateMask: excepción C++ desconocida capturada");
+    }
     if (launcher_clear_pending_exception(env)) {
         return 0;
     }
@@ -134,7 +171,14 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeSetPauseReasonEnabled(
     JNIEnv *env, jobject /* thiz */, jint reasonMask, jboolean enabled) {
 #ifdef LAUNCHER_HAS_VITA3K
-    const jboolean ok = Java_org_vita3k_emulator_NativeLib_setPauseReasonEnabled(env, nullptr, reasonMask, enabled);
+    jboolean ok = JNI_FALSE;
+    try {
+        ok = Java_org_vita3k_emulator_NativeLib_setPauseReasonEnabled(env, nullptr, reasonMask, enabled);
+    } catch (const std::exception &e) {
+        LOGE("nativeSetPauseReasonEnabled: excepción C++ capturada: %s", e.what());
+    } catch (...) {
+        LOGE("nativeSetPauseReasonEnabled: excepción C++ desconocida capturada");
+    }
     if (launcher_clear_pending_exception(env)) {
         return JNI_FALSE;
     }
@@ -149,7 +193,14 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeSetInputIntercepted(
     JNIEnv *env, jobject /* thiz */, jboolean intercepted) {
 #ifdef LAUNCHER_HAS_VITA3K
-    const jboolean ok = Java_org_vita3k_emulator_NativeLib_setInputIntercepted(env, nullptr, intercepted);
+    jboolean ok = JNI_FALSE;
+    try {
+        ok = Java_org_vita3k_emulator_NativeLib_setInputIntercepted(env, nullptr, intercepted);
+    } catch (const std::exception &e) {
+        LOGE("nativeSetInputIntercepted: excepción C++ capturada: %s", e.what());
+    } catch (...) {
+        LOGE("nativeSetInputIntercepted: excepción C++ desconocida capturada");
+    }
     if (launcher_clear_pending_exception(env)) {
         return JNI_FALSE;
     }
