@@ -7,6 +7,7 @@ import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.effectiveSettings
 import com.danielsnagustin.childoflight.launcher.model.resolveBackend
+import com.danielsnagustin.childoflight.launcher.model.resolveBackendReason
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
@@ -37,16 +38,41 @@ import java.nio.charset.StandardCharsets
  *   equivale a Disabled por fall-through en el parser del renderer),
  *   texture-cache, shader-cache, audio-backend ("SDL" / "Cubeb"),
  *   audio-volume (int), ngs-enable (bool), cpu-opt (bool),
- *   fps-hack (bool), file-loading-delay (int),
+ *   fps-hack (bool), turbo-mode (bool, solo Adreno con driver
+ *   personalizado; en Mali no hace nada, pin config.h:149),
+ *   file-loading-delay (int),
  *   performance-overlay (bool), performance-overlay-detail (int,
  *   default MINIMUM = 0; enum MINIMUM/LOW/MEDIUM/MAXIMUM verificado
  *   en config.h:29-34, clave en :187), performance-overlay-position (int,
  *   default TOP_LEFT = 0; enum verificado en config.h:36-43, clave en :188),
  *   hashless-texture-cache (bool, default false; consumo verificado
  *   en renderer/src/texture/cache.cpp: use_protect + protección de
- *   páginas para texturas grandes), show-compile-shaders (bool,
+ *   páginas para texturas grandes),
+ *   show-compile-shaders (bool,
  *   default true en upstream; el launcher emite false por defecto =
  *   mensajes ocultos, pantalla limpia),
+ *
+ * Semántica real en Vulkan (ronda 0.2.65, R-P1-5/6/7 — leer antes de
+ * tocar estos interruptores):
+ * - texture-cache: INERTE en Vulkan (ningún código Vulkan lee
+ *   config.texture_cache; texture.cpp:130 cachea incondicional).
+ *   Solo OpenGL la usa (gl/sync_state.cpp:420-424). Se sigue
+ *   emitiendo para ese camino; en el teléfono no hace nada.
+ * - shader-cache: en Vulkan solo controla el PRECOMPILADO de
+ *   shaders conocidos al arrancar (app.cpp:281); la caché en disco
+ *   se carga/guarda incondicionalmente (pipeline_cache.cpp,
+ *   renderer.cpp:1285,1840). OFF no ahorra disco y quita lo que
+ *   evita tirones. La etiqueta honesta es "Precompilar shaders
+ *   conocidos al arrancar" (ver LauncherSettings.shaderCache).
+ * - hashless-texture-cache: IGNORADO en Vulkan, siempre ON
+ *   (renderer.cpp:1046 hardcodeado a true; solo GL pasa el valor,
+ *   gl/renderer.cpp:268). Se sigue emitiendo para OpenGL.
+ *
+ * Validación (ronda 0.2.65, T-P2-4): generate() emite solo desde
+ * ajustes saneados (sanitizedSettings) y writeConfig() valida el
+ * YAML generado (claves conocidas, tipos y rangos) antes de
+ * escribir; si algo es inválido, se registra y se usa el default
+ * seguro, nunca se escribe un valor inválido.
  *   show-welcome (bool, default true en upstream; verificado en
  *   config.h:196; su único consumo verificado es el diálogo de
  *   bienvenida de la GUI Qt (gui-qt/src/main_window.cpp:1031-1037):
@@ -89,7 +115,11 @@ object Vita3kConfigGenerator {
      * es OpenGL (resolveBackend). Sin gpu no se cambia nada.
      */
     fun generate(settings: LauncherSettings, vitaFsPath: String, gpu: GpuInfo? = null): String {
-        val s = effectiveSettings(settings)
+        // T-P2-4: solo se emite desde ajustes saneados (claves
+        // conocidas, tipos y rangos): un valor inválido (DataStore o
+        // backup editado a mano) se corrige al default seguro antes
+        // de llegar al YAML, nunca se escribe tal cual.
+        val s = sanitizedSettings(effectiveSettings(settings))
         val backend = resolveBackend(s, gpu)
         val sb = StringBuilder()
         sb.appendLine("# config.yml generado por Child of Light Launcher")
@@ -106,7 +136,7 @@ object Vita3kConfigGenerator {
         // --- GPU ---
         sb.appendLine("# GPU — backend-renderer verificado (\"Vulkan\" / \"OpenGL\").")
         if (backend == GpuBackend.OPENGL && s.backend == GpuBackend.VULKAN) {
-            sb.appendLine("# Sin Vulkan en este teléfono: fallback automático a OpenGL (el ajuste pedía Vulkan).")
+            sb.appendLine("# Sin Vulkan usable en este teléfono (versión reportada: ${gpu?.vulkanVersionLabel ?: "desconocida"}): fallback automático a OpenGL (el ajuste pedía Vulkan).")
         }
         sb.appendLine("backend-renderer: \"${escapeYamlDoubleQuoted(backend.vita3kValue)}\"")
         sb.appendLine("# GPU — resolution-multiplier es float en config.h: 0.5 = 480x272, 1.0 = 960x544, 2.0 = 1920x1088, 3.0 = 2880x1632, 4.0 = 3840x2176.")
@@ -123,15 +153,17 @@ object Vita3kConfigGenerator {
         // por defecto; en OpenGL sí tiene efecto (el usuario puede
         // activarlo en Ajustes).
         sb.appendLine("v-sync: ${s.vSync}")
-        // Ronda 0.2.64 (P2-2 Mali): anisotrópico limitado al máximo
-        // del dispositivo (GpuInfo.maxAnisotropy, leído por GLES en
-        // la detección): el núcleo NO lo limita (set_anisotropic_
-        // filtering solo asigna, renderer.cpp:1651-1653) y el valor va
-        // crudo a VkSamplerCreateInfo.maxAnisotropy (texture.cpp:588):
-        // por encima del límite del dispositivo es uso inválido de
-        // Vulkan. Sin máximo conocido no se limita nada (la UI ya
-        // ofrece como mucho 16x).
-        val aniso = gpu?.maxAnisotropy?.let { minOf(s.anisotropicFiltering, it) } ?: s.anisotropicFiltering
+        // Ronda 0.2.64 (P2-2 Mali) + 0.2.65 (RC-P2-6): anisotrópico
+        // limitado al máximo del dispositivo (GpuInfo.maxAnisotropy,
+        // leído por GLES en la detección): el núcleo NO lo limita
+        // (set_anisotropic_filtering solo asigna, renderer.cpp:1651-
+        // 1653) y el valor va crudo a VkSamplerCreateInfo.maxAnisotropy
+        // (texture.cpp:588): por encima del límite del dispositivo es
+        // uso inválido de Vulkan. Sin máximo conocido el tope seguro
+        // es 8x (todas las familias que el launcher conoce — Adreno,
+        // Mali, PowerVR, Xclipse — exponen 8x o más); la UI ofrece
+        // como mucho 16x.
+        val aniso = gpu?.maxAnisotropy?.let { minOf(s.anisotropicFiltering, it) } ?: minOf(s.anisotropicFiltering, 8)
         if (aniso != s.anisotropicFiltering) {
             sb.appendLine("# Anisotrópico limitado al máximo del dispositivo (${gpu?.maxAnisotropy}x): el ajuste pedía ${s.anisotropicFiltering}x.")
         }
@@ -149,7 +181,16 @@ object Vita3kConfigGenerator {
         // valores del enum MemoryMapping son, por tanto, válidos tal cual.
         sb.appendLine("# GPU — memory-mapping verificado (renderer.cpp late_init): \"double-buffer\" / \"external-host\" / \"page-table\" / \"native-buffer\" (solo Android); \"off\" = Disabled.")
         sb.appendLine("memory-mapping: \"${escapeYamlDoubleQuoted(s.memoryMapping.vita3kValue)}\"")
+        // Ronda 0.2.65 (R-P1-5): texture-cache es INERTE en Vulkan
+        // (ningún código Vulkan lee config.texture_cache;
+        // texture.cpp:130 cachea incondicional). Solo OpenGL la usa
+        // (gl/sync_state.cpp:420-424). Se sigue emitiendo para ese
+        // camino; en el teléfono no hace nada. El arreglo real
+        // (leerla en Vulkan) necesita pin.
         sb.appendLine("texture-cache: ${s.textureCache}")
+        // Ronda 0.2.65 (R-P1-6): shader-cache en Vulkan solo
+        // controla el precompilado de shaders conocidos al arrancar
+        // (app.cpp:281); la caché en disco se carga/guarda siempre.
         sb.appendLine("shader-cache: ${s.shaderCache}")
         // --- Driver ---
         // Turnip SOLO si el driver activo es TURNIP: antes bastaba con
@@ -178,6 +219,12 @@ object Vita3kConfigGenerator {
         sb.appendLine("# CPU — cpu-opt verificado. No hay clave cpu-backend en config.h: Dynarmic es el backend por defecto.")
         sb.appendLine("cpu-opt: ${s.cpuOpt}")
         sb.appendLine("fps-hack: ${s.fpsHack}")
+        // Ronda 0.2.65 (RG-P2-15): turbo-mode verificado en el pin
+        // (config.h:149, bool, default false). Solo Adreno con driver
+        // personalizado: el núcleo lo aplica vía adrenotools_set_turbo
+        // (vulkan/renderer.cpp:1849-1856); en Mali y con el driver del
+        // sistema no hace nada. Se emite siempre (OFF por defecto).
+        sb.appendLine("turbo-mode: ${s.turboMode}")
         sb.appendLine("file-loading-delay: ${s.fileLoadingDelay}")
         // --- Audio ---
         // audio-backend VERIFICADO (audio.cpp:64-74, AudioState::set_backend):
@@ -194,13 +241,17 @@ object Vita3kConfigGenerator {
         // renderer/src/texture/cache.cpp): true = use_protect, las
         // texturas grandes se vigilan por protección de páginas en vez
         // de re-hashear en cada frame; las pequeñas siguen con hash.
-        // show-compile-shaders VERIFICADO (config.h:159): bool, default
-        // true en upstream; el launcher emite false por defecto
-        // (mensajes ocultos, pantalla limpia).
+        // Ronda 0.2.65 (R-P1-7): en Vulkan es IGNORADO y siempre ON
+        // (renderer.cpp:1046: texture_cache.init(true, ...); solo GL
+        // pasa el valor, gl/renderer.cpp:268). Se sigue emitiendo
+        // para OpenGL; en el teléfono el valor no tiene efecto.
         sb.appendLine("performance-overlay: ${s.showFpsOverlay}")
         sb.appendLine("performance-overlay-detail: ${s.performanceOverlayDetail.value}")
         sb.appendLine("performance-overlay-position: ${s.performanceOverlayPosition.value}")
         sb.appendLine("hashless-texture-cache: ${s.hashlessTextureCache}")
+        // show-compile-shaders VERIFICADO (config.h:159): bool, default
+        // true en upstream; el launcher emite false por defecto
+        // (mensajes ocultos, pantalla limpia).
         sb.appendLine("show-compile-shaders: ${s.showCompileShaders}")
         // --- Interfaz del núcleo ---
         // show-welcome VERIFICADO (config.h:196): bool, default true.
@@ -255,6 +306,135 @@ object Vita3kConfigGenerator {
         // --- Rutas ---
         sb.appendLine("pref-path: \"${escapeYamlDoubleQuoted(vitaFsPath)}\"")
         return sb.toString()
+    }
+
+    /**
+     * T-P2-4: problemas de un [LauncherSettings] ANTES de sanearlo:
+     * un valor fuera de su tipo/rango sensato (p. ej. volumen 500 o
+     * retraso -5 de un backup editado a mano). Los campos enum
+     * siempre son válidos por construcción (DataStore hace
+     * runCatching con default); solo se revisan los numéricos y
+     * los libres. Vacío = válido. Puro y testeable en JVM.
+     */
+    fun validateSettings(settings: LauncherSettings): List<String> {
+        val problems = mutableListOf<String>()
+        val res = settings.resolutionMultiplier
+        if (!res.isFinite() || res < 0.5f || res > 4f) {
+            problems += "resolution-multiplier fuera de rango: $res (válido 0.5..4)"
+        }
+        if (settings.anisotropicFiltering !in setOf(1, 2, 4, 8, 16)) {
+            problems += "anisotropic-filtering inválido: ${settings.anisotropicFiltering} (válido 1/2/4/8/16)"
+        }
+        if (settings.audioVolume !in 0..100) {
+            problems += "audio-volume fuera de rango: ${settings.audioVolume} (válido 0..100)"
+        }
+        if (settings.fileLoadingDelay !in 0..30) {
+            problems += "file-loading-delay fuera de rango: ${settings.fileLoadingDelay} (válido 0..30)"
+        }
+        if (!settings.touchOverlayOpacity.isFinite() || settings.touchOverlayOpacity < 0.1f || settings.touchOverlayOpacity > 1f) {
+            problems += "touch-overlay-opacity fuera de rango: ${settings.touchOverlayOpacity} (válido 0.1..1)"
+        }
+        return problems
+    }
+
+    /**
+     * T-P2-4: devuelve los ajustes con cada valor inválido
+     * corregido a su default seguro (nunca se escribe un valor
+     * inválido en config.yml). Resolución al snap más cercano
+     * (SettingsRepository.clampResolution, con 1.25x/1.5x desde
+     * 0.2.65), anisotrópico a 1, volumen a 0..100, retraso a 0..30,
+     * opacidad a 0.1..1. generate() lo aplica siempre; writeConfig()
+     * registra las correcciones con validateSettings().
+     * Puro y testeable en JVM.
+     */
+    fun sanitizedSettings(settings: LauncherSettings): LauncherSettings = settings.copy(
+        resolutionMultiplier = SettingsRepository.clampResolution(settings.resolutionMultiplier),
+        anisotropicFiltering = if (settings.anisotropicFiltering in setOf(1, 2, 4, 8, 16)) settings.anisotropicFiltering else 1,
+        audioVolume = settings.audioVolume.coerceIn(0, 100),
+        fileLoadingDelay = settings.fileLoadingDelay.coerceIn(0, 30),
+        touchOverlayOpacity = if (!settings.touchOverlayOpacity.isFinite()) 1f else settings.touchOverlayOpacity.coerceIn(0.1f, 1f),
+    )
+
+    /**
+     * T-P2-4: valida un config.yml YA GENERADO, línea a línea:
+     * claves conocidas (solo las 27 que emite generate()), tipos
+     * (bool/int/float/string entrecomillada) y rangos sensatos, sin
+     * duplicados. Es la segunda red tras sanitizedSettings(): si
+     * esto falla, hay un bug en el generador, no en los ajustes.
+     * Vacío = válido. Puro y testeable en JVM.
+     */
+    fun validateGeneratedConfig(content: String): List<String> {
+        val problems = mutableListOf<String>()
+        val seen = mutableSetOf<String>()
+        val boolKeys = setOf(
+            "v-sync", "async-pipeline-compilation", "high-accuracy",
+            "disable-surface-sync", "texture-cache", "shader-cache",
+            "cpu-opt", "fps-hack", "turbo-mode", "ngs-enable", "performance-overlay",
+            "hashless-texture-cache", "show-compile-shaders", "show-welcome",
+        )
+        val intRanges = mapOf(
+            "anisotropic-filtering" to 1..16,
+            "audio-volume" to 0..100,
+            "file-loading-delay" to 0..30,
+            "performance-overlay-detail" to 0..3,
+            "performance-overlay-position" to 0..5,
+            "psn-signed-in" to 0..1,
+        )
+        val stringKeys = mapOf(
+            "backend-renderer" to setOf("Vulkan", "OpenGL"),
+            "screen-filter" to setOf("Bilinear", "Nearest", "Bicubic", "FXAA", "FSR"),
+            "memory-mapping" to setOf("double-buffer", "external-host", "page-table", "native-buffer", "off"),
+        )
+        for (rawLine in content.lines()) {
+            val line = rawLine.trim()
+            if (line.isEmpty() || line.startsWith("#")) continue
+            val colon = line.indexOf(": ")
+            if (colon < 0) {
+                problems += "línea sin 'clave: valor': $line"
+                continue
+            }
+            val key = line.substring(0, colon)
+            val value = line.substring(colon + 2)
+            if (!seen.add(key)) problems += "clave duplicada: $key"
+            when {
+                key in boolKeys -> if (value != "true" && value != "false") {
+                    problems += "$key no es bool: $value"
+                }
+                key in intRanges -> {
+                    val n = value.toIntOrNull()
+                    if (n == null || n !in intRanges.getValue(key)) {
+                        problems += "$key fuera de rango: $value (válido ${intRanges.getValue(key)})"
+                    }
+                }
+                key == "resolution-multiplier" -> {
+                    val f = value.toFloatOrNull()
+                    if (f == null || !f.isFinite() || f < 0.5f || f > 4f) {
+                        problems += "resolution-multiplier fuera de rango: $value (válido 0.5..4)"
+                    }
+                }
+                key == "sys-lang" -> {
+                    val n = value.toIntOrNull()
+                    if (n == null || n !in setOf(1, 2, 3, 4, 5, 18)) {
+                        problems += "sys-lang inválido: $value"
+                    }
+                }
+                key in stringKeys -> {
+                    val unquoted = value.removeSurrounding("\"")
+                    if (value != "\"$unquoted\"" || unquoted !in stringKeys.getValue(key)) {
+                        problems += "$key inválido: $value"
+                    }
+                }
+                key == "custom-driver-name" || key == "pref-path" -> {
+                    if (!value.startsWith("\"") || !value.endsWith("\"") || value.length < 2) {
+                        problems += "$key no entrecomillado: $value"
+                    } else if (key == "pref-path" && value == "\"\"") {
+                        problems += "pref-path vacío"
+                    }
+                }
+                else -> problems += "clave desconocida: $key"
+            }
+        }
+        return problems
     }
 
     private fun formatFloat(value: Float): String {
@@ -335,7 +515,28 @@ object Vita3kConfigGenerator {
      */
     fun writeConfig(context: Context, settings: LauncherSettings, vitaRoot: File, gpu: GpuInfo? = null): File {
         val vitaFs = vitaFsPathFor(vitaRoot)
-        val content = generate(settings, vitaFs.absolutePath, gpu)
+        // T-P2-4: validar ANTES de escribir. Los valores inválidos
+        // se corrigen a defaults seguros en generate() (vía
+        // sanitizedSettings); aquí queda registrado qué se corrigió.
+        val settingProblems = validateSettings(effectiveSettings(settings))
+        if (settingProblems.isNotEmpty()) {
+            LauncherLog.append(context, "config", "config.yml: valores inválidos corregidos a defaults seguros: ${settingProblems.joinToString("; ")}")
+        }
+        // RG-P2-12: la decisión de backend queda registrada.
+        val backendReason = resolveBackendReason(effectiveSettings(settings), gpu)
+        if (backendReason != null) {
+            LauncherLog.append(context, "gpu", "config.yml: $backendReason")
+        }
+        var content = generate(settings, vitaFs.absolutePath, gpu)
+        // T-P2-4, segunda red: si el YAML generado sigue siendo
+        // inválido (bug del generador, no de los ajustes), no se
+        // escribe tal cual: se regenera con los defaults seguros y
+        // queda registrado. Nunca se escribe un valor inválido.
+        val yamlProblems = validateGeneratedConfig(content)
+        if (yamlProblems.isNotEmpty()) {
+            LauncherLog.append(context, "config", "config.yml generado inválido (${yamlProblems.joinToString("; ")}): se regenera con defaults seguros")
+            content = generate(LauncherSettings(), vitaFs.absolutePath, gpu)
+        }
         if (!vitaRoot.exists()) vitaRoot.mkdirs()
         val file = File(vitaRoot, "config.yml")
         val report = writeConfigIfChangedDetailed(file, content)
