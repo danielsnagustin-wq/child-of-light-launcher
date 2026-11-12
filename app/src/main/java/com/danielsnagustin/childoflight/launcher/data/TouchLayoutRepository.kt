@@ -674,6 +674,42 @@ class TouchLayoutRepository(private val context: Context) {
         }
 
         /**
+         * 0.2.65 (M-P2-4): igualdad de layout por campos
+         * relevantes, no por igualdad total de data class. El
+         * formato antiguo de 7 campos no guardaba colorHex ni
+         * visible: al decodificar, Igniculus queda en "#8CCBEB"
+         * (default) en vez de "#7FB3D5" y todos los controles en
+         * visible = true, así que un perfil de 7 campos no
+         * coincidía con NINGÚN snapshot y nunca llegaba al layout
+         * limpio. Esos dos campos son los únicos que se ignoran:
+         * el formato de 7 campos no los podía guardar, así que en
+         * un perfil así nunca son una edición del usuario; todo
+         * lo demás (id, kind, botón, posición, tamaño, fracción,
+         * etiqueta, opacidad, forma y modos) sigue siendo guarda:
+         * si el usuario movió, redimensionó, remapeó o renombró
+         * aunque sea un control, el perfil es suyo y no migra.
+         */
+        private fun matchesFactoryLayout(snapshot: List<TouchControl>?, controls: List<TouchControl>): Boolean {
+            if (snapshot == null) return false
+            if (snapshot.size != controls.size) return false
+            return snapshot.zip(controls).all { (a, b) ->
+                a.id == b.id &&
+                    a.kind == b.kind &&
+                    a.vitaButton == b.vitaButton &&
+                    a.xFraction == b.xFraction &&
+                    a.yFraction == b.yFraction &&
+                    a.sizeDp == b.sizeDp &&
+                    a.sizeFraction == b.sizeFraction &&
+                    a.label == b.label &&
+                    a.opacity == b.opacity &&
+                    a.shape == b.shape &&
+                    a.stickMode == b.stickMode &&
+                    a.igniculusMode == b.igniculusMode &&
+                    a.sensitivity == b.sensitivity
+            }
+        }
+
+        /**
          * 0.2.54: migra UN perfil predefinido de su layout viejo de
          * fábrica (rombo, transpuesto o estándar) al layout limpio
          * de fábrica. También migra un perfil que ya lleva el
@@ -705,10 +741,16 @@ class TouchLayoutRepository(private val context: Context) {
          * de 5 o el limpio con tamaños viejos o el limpio de 0.2.57
          * o el limpio de 0.2.62:
          * si el usuario movió,
-         * redimensionó, remapeó, ocultó o añadió aunque sea un
+         * redimensionó, remapeó o añadió aunque sea un
          * control, el perfil es suyo y no se toca (y siguen sus
          * migraciones actuales: rombo + valores de fábrica, que se
-         * mantienen). Idempotente: un perfil ya limpio con los
+         * mantienen). Ocultar un control o cambiar su color ya no
+         * bloquea la migración (0.2.65 M-P2-4): el formato de 7
+         * campos no guardaba esos dos campos y sin ignorarlos un
+         * perfil así quedaba atascado para siempre. Contrapartida:
+         * un perfil que solo difiera de fábrica en color o
+         * visibilidad migrará y los reseteará a fábrica.
+         * Idempotente: un perfil ya limpio con los
          * tamaños nuevos no coincide con ningún layout viejo y se
          * devuelve tal cual. Puro Kotlin, sin Context: testeable.
          */
@@ -725,12 +767,12 @@ class TouchLayoutRepository(private val context: Context) {
             val oldSizesWithoutCircle = oldSizesClean?.filter { it.id != "btn_circle" }
             val oldSizes057 = cleanLayoutWith057SwordJump(profile.id)
             val oldSizes062 = cleanLayoutWith062Sizes(profile.id)
-            if (legacyFactoryLayouts(profile.id).none { it == profile.controls } &&
-                withoutCircle != profile.controls &&
-                oldSizesClean != profile.controls &&
-                oldSizesWithoutCircle != profile.controls &&
-                oldSizes057 != profile.controls &&
-                oldSizes062 != profile.controls
+            if (legacyFactoryLayouts(profile.id).none { matchesFactoryLayout(it, profile.controls) } &&
+                !matchesFactoryLayout(withoutCircle, profile.controls) &&
+                !matchesFactoryLayout(oldSizesClean, profile.controls) &&
+                !matchesFactoryLayout(oldSizesWithoutCircle, profile.controls) &&
+                !matchesFactoryLayout(oldSizes057, profile.controls) &&
+                !matchesFactoryLayout(oldSizes062, profile.controls)
             ) return profile
             return profile.copy(controls = clean)
         }
@@ -1047,8 +1089,9 @@ class TouchLayoutRepository(private val context: Context) {
          * con el stick en 210 dp no debe quedarse en 186 dp, que
          * ya es un tamaño viejo. Una mano usa los mismos tamaños
          * nuevos en stick/zona/pausa/círculo (174/104/52/41 dp) y
-         * 77 dp en espada/salto; sus ramas de espada/salto no
-         * cambian (siguen en (0.83, 0.63) y (0.91, 0.79)).
+         * 77 dp en espada/salto; sus ramas de espada/salto
+         * (0.2.65, M-P2-2) bajan 82 dp -> 77 dp en (0.83, 0.63)
+         * y (0.91, 0.79), igual que el resto de la pasada.
          */
         fun migrateBuiltInFactoryValues(profile: ControlProfile): ControlProfile {
             if (!profile.isBuiltIn) return profile
@@ -1074,7 +1117,7 @@ class TouchLayoutRepository(private val context: Context) {
                                 abs(control.xFraction - oldX) <= FACE_SLOT_EPSILON &&
                                 abs(control.yFraction - oldY) <= FACE_SLOT_EPSILON
                             ) {
-                                control.copy(sizeDp = 104)
+                                control.copy(sizeDp = 104, sizeFraction = null)
                             } else if (hasCircle && control.kind == "stick" && control.sizeDp == 210 &&
                                 abs(control.xFraction - cleanX) <= FACE_SLOT_EPSILON &&
                                 abs(control.yFraction - cleanY) <= FACE_SLOT_EPSILON
@@ -1084,7 +1127,7 @@ class TouchLayoutRepository(private val context: Context) {
                                 // en su posición limpia: 174 dp
                                 // (0.2.63: el destino ya no es 186 dp,
                                 // que es el tamaño viejo de 0.2.62).
-                                control.copy(sizeDp = 174)
+                                control.copy(sizeDp = 174, sizeFraction = null)
                             } else if (hasCircle && control.kind == "stick" && control.sizeDp == 186 &&
                                 abs(control.xFraction - cleanX) <= FACE_SLOT_EPSILON &&
                                 abs(control.yFraction - cleanY) <= FACE_SLOT_EPSILON
@@ -1093,7 +1136,7 @@ class TouchLayoutRepository(private val context: Context) {
                                 // 0.2.62 (186 dp) en su posición
                                 // limpia, en un perfil editado a
                                 // medias: 174 dp.
-                                control.copy(sizeDp = 174)
+                                control.copy(sizeDp = 174, sizeFraction = null)
                             } else {
                                 control
                             }
@@ -1115,7 +1158,7 @@ class TouchLayoutRepository(private val context: Context) {
                                     // 0.2.63: el destino ya no es
                                     // 115 dp, que es el tamaño viejo
                                     // de 0.2.62: 104 dp.
-                                    control.copy(sizeDp = 104)
+                                    control.copy(sizeDp = 104, sizeFraction = null)
                                 } else if (hasCircle && control.sizeDp == 115 &&
                                     abs(control.xFraction - 0.78f) <= FACE_SLOT_EPSILON &&
                                     abs(control.yFraction - 0.80f) <= FACE_SLOT_EPSILON
@@ -1124,7 +1167,7 @@ class TouchLayoutRepository(private val context: Context) {
                                     // de 0.2.62 (115 dp) en su posición
                                     // limpia, en un perfil editado a
                                     // medias: 104 dp.
-                                    control.copy(sizeDp = 104)
+                                    control.copy(sizeDp = 104, sizeFraction = null)
                                 } else {
                                     control
                                 }
@@ -1142,7 +1185,7 @@ class TouchLayoutRepository(private val context: Context) {
                                     // 0.2.63: el destino ya no es
                                     // 115 dp, que es el tamaño viejo
                                     // de 0.2.62: 104 dp.
-                                    control.copy(sizeDp = 104)
+                                    control.copy(sizeDp = 104, sizeFraction = null)
                                 } else if (hasCircle && control.sizeDp == 115 &&
                                     abs(control.xFraction - 0.82f) <= FACE_SLOT_EPSILON &&
                                     abs(control.yFraction - 0.808f) <= FACE_SLOT_EPSILON
@@ -1151,7 +1194,7 @@ class TouchLayoutRepository(private val context: Context) {
                                     // de 0.2.62 (115 dp) en su posición
                                     // limpia, en un perfil editado a
                                     // medias: 104 dp.
-                                    control.copy(sizeDp = 104)
+                                    control.copy(sizeDp = 104, sizeFraction = null)
                                 } else {
                                     control
                                 }
@@ -1173,7 +1216,7 @@ class TouchLayoutRepository(private val context: Context) {
                                 abs(control.yFraction - 0.576f) <= FACE_SLOT_EPSILON &&
                                 control.sizeDp == 82
                             ) {
-                                control.copy(xFraction = 0.914f, sizeDp = 86)
+                                control.copy(xFraction = 0.914f, sizeDp = 86, sizeFraction = null)
                             } else if (hasCircle &&
                                 (profile.id == "default-g99" || profile.id == "external-gamepad") &&
                                 abs(control.xFraction - 0.914f) <= FACE_SLOT_EPSILON &&
@@ -1184,7 +1227,19 @@ class TouchLayoutRepository(private val context: Context) {
                                 // de 0.2.62 (92 dp) en su posición
                                 // limpia, en un perfil editado a
                                 // medias: 86 dp.
-                                control.copy(sizeDp = 86)
+                                control.copy(sizeDp = 86, sizeFraction = null)
+                            } else if (hasCircle &&
+                                profile.id == "one-hand" &&
+                                abs(control.xFraction - 0.83f) <= FACE_SLOT_EPSILON &&
+                                abs(control.yFraction - 0.63f) <= FACE_SLOT_EPSILON &&
+                                control.sizeDp == 82
+                            ) {
+                                // 0.2.65 (M-P2-2): una mano no tenía
+                                // rama de espada: un perfil de una
+                                // mano editado a medias se quedaba
+                                // en 82 dp mientras la fábrica es
+                                // 77 dp desde la 0.2.63.
+                                control.copy(sizeDp = 77, sizeFraction = null)
                             } else {
                                 control
                             }
@@ -1205,7 +1260,7 @@ class TouchLayoutRepository(private val context: Context) {
                                 abs(control.yFraction - 0.752f) <= FACE_SLOT_EPSILON &&
                                 control.sizeDp == 82
                             ) {
-                                control.copy(xFraction = 1.012f, sizeDp = 87)
+                                control.copy(xFraction = 1.012f, sizeDp = 87, sizeFraction = null)
                             } else if (hasCircle &&
                                 (profile.id == "default-g99" || profile.id == "external-gamepad") &&
                                 abs(control.xFraction - 1.012f) <= FACE_SLOT_EPSILON &&
@@ -1216,7 +1271,18 @@ class TouchLayoutRepository(private val context: Context) {
                                 // de 0.2.62 (92 dp) en su posición
                                 // limpia, en un perfil editado a
                                 // medias: 87 dp.
-                                control.copy(sizeDp = 87)
+                                control.copy(sizeDp = 87, sizeFraction = null)
+                            } else if (hasCircle &&
+                                profile.id == "one-hand" &&
+                                abs(control.xFraction - 0.91f) <= FACE_SLOT_EPSILON &&
+                                abs(control.yFraction - 0.79f) <= FACE_SLOT_EPSILON &&
+                                control.sizeDp == 82
+                            ) {
+                                // 0.2.65 (M-P2-2): una mano no tenía
+                                // rama de salto: igual que la espada,
+                                // un perfil editado a medias se
+                                // quedaba en 82 dp en vez de 77 dp.
+                                control.copy(sizeDp = 77, sizeFraction = null)
                             } else {
                                 control
                             }
@@ -1232,7 +1298,7 @@ class TouchLayoutRepository(private val context: Context) {
                                 abs(control.yFraction - 0.07f) <= FACE_SLOT_EPSILON &&
                                 control.sizeDp == 56
                             ) {
-                                control.copy(sizeDp = 52)
+                                control.copy(sizeDp = 52, sizeFraction = null)
                             } else {
                                 control
                             }
@@ -1246,7 +1312,7 @@ class TouchLayoutRepository(private val context: Context) {
                                 abs(control.yFraction - 0.07f) <= FACE_SLOT_EPSILON &&
                                 control.sizeDp == 44
                             ) {
-                                control.copy(sizeDp = 41)
+                                control.copy(sizeDp = 41, sizeFraction = null)
                             } else {
                                 control
                             }
