@@ -82,7 +82,9 @@ fun encodeSettingsBackup(settings: LauncherSettings, ui: UiPreferences): String 
     num("audioVolume", settings.audioVolume)
     str("audioBackend", settings.audioBackend.name)
     bool("ngsEnable", settings.ngsEnable)
+    bool("expAudioSdl", settings.expAudioSdl)
     bool("showFpsOverlay", settings.showFpsOverlay)
+    bool("frameProfile", settings.frameProfile)
     str("performanceOverlayDetail", settings.performanceOverlayDetail.name)
     str("performanceOverlayPosition", settings.performanceOverlayPosition.name)
     bool("hashlessTextureCache", settings.hashlessTextureCache)
@@ -156,7 +158,9 @@ fun decodeSettingsBackup(
         audioVolume = intValue(map["audioVolume"], current.audioVolume).coerceIn(0, 100),
         audioBackend = enumValue(map["audioBackend"], AudioBackend.entries.toTypedArray(), current.audioBackend),
         ngsEnable = boolValue(map["ngsEnable"], current.ngsEnable),
+        expAudioSdl = boolValue(map["expAudioSdl"], current.expAudioSdl),
         showFpsOverlay = boolValue(map["showFpsOverlay"], current.showFpsOverlay),
+        frameProfile = boolValue(map["frameProfile"], current.frameProfile),
         performanceOverlayDetail = enumValue(map["performanceOverlayDetail"], PerformanceOverlayDetail.entries.toTypedArray(), current.performanceOverlayDetail),
         performanceOverlayPosition = enumValue(map["performanceOverlayPosition"], PerformanceOverlayPosition.entries.toTypedArray(), current.performanceOverlayPosition),
         hashlessTextureCache = boolValue(map["hashlessTextureCache"], current.hashlessTextureCache),
