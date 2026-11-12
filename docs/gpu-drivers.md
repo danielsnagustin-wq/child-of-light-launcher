@@ -11,7 +11,7 @@ por revisión de código + búsqueda web de fuentes oficiales
 | GPU | Driver que usa el launcher hoy | ¿Driver personalizado empaquetable? | Fuente oficial + versión + licencia |
 |---|---|---|---|
 | Mali (incl. Mali-G57 MC2 del teléfono objetivo) | Driver Vulkan del sistema + presets 1x, Double Buffer, sin FXAA (G99 Recomendado / Mali Rendimiento / Mali Equilibrado) | **NO. No existe** un driver Mali empaquetable para Android en este núcleo | — (Panfrost es de Linux, ver abajo) |
-| Adreno / Snapdragon | Driver del sistema por defecto; Turnip opcional si el usuario instala un .zip a mano (perfil Adreno Calidad / Turnip) | **SÍ, preparado sin binario**: zip en `assets/drivers/turnip/`, auto-instalación al detectar Adreno, selección por modelo, fallback al sistema | K11MCH1/AdrenoToolsDrivers, **Turnip v26.0.0 Revisión 8** (2026-01-08, Mesa 26.0.0-devel, base `e9a83d530cce`, Vulkan 1.4.335, ~2 MB), licencia **MIT (Mesa)** |
+| Adreno / Snapdragon | Driver del sistema por defecto; Turnip opcional si el usuario instala un .zip a mano (perfil Adreno Calidad / Turnip) | **SÍ, preparado sin binario**: zip en `assets/drivers/turnip/`, auto-instalación al detectar Adreno, selección por modelo, fallback al sistema | K11MCH1/AdrenoToolsDrivers, **Turnip v26.0.0 Revisión 8** (2026-01-08, Mesa 26.0.0-devel, base `e9a83d530cce`, Vulkan 1.4.335, 3.478.156 bytes, SHA-256 verificado 2026-11-11), licencia **MIT (Mesa)** |
 | Otras (PowerVR, Xclipse, desconocida) | Driver del sistema, preset genérico 1x | NO (Turnip es solo Adreno; no hay equivalente) | — |
 
 ## TAREA 1 — Adreno / Turnip
@@ -84,21 +84,35 @@ por revisión de código + búsqueda web de fuentes oficiales
   guardado + driver instalado en el núcleo + clave escrita"; la
   confirmación de que el driver cargó de verdad sigue siendo solo
   en teléfono (log del núcleo / diagnóstico GPU).
-- Tampoco está verificado el layout exacto del zip R8 de K11MCH1
-  (meta.json frente a metadata.json, subcarpeta, nombre del .so).
-  La validación nueva es estricta a propósito y puede necesitar
-  ajuste cuando se tenga el zip real.
+- Layout del zip R8 VERIFICADO (ronda 0.2.64, 2026-11-11): el asset
+  `Turnip_v26.0.0_R8_Gmem.zip` de la release v26.0.0-rc08 trae
+  `meta.json` en la raíz (305 bytes, libraryName
+  `vulkan.ad07xx.so`, "Mesa Turnip driver v26.0.0 - R8 GMEM",
+  driverVersion "Vulkan 1.4.335", minApi 27) + `vulkan.ad07xx.so`
+  (17.159.433 bytes). La validación estricta (meta.json en raíz +
+  .so con el libraryName que declara) coincide con este layout real;
+  no hizo falta relajarla. SHA-256 registrado en
+  `BundledTurnipDriver.EXPECTED_SHA256`:
+  `b60bffe2844a271cd293011de307fe06d28549bd5b93d03749b7c9f39af4114b`
+  (3.478.156 bytes). No hay Turnip K11MCH1 más nuevo que la R8: las
+  releases posteriores (v840/v837, 2026-01-14) son drivers
+  propietarios Qualcomm, no Turnip.
 
 ### Qué haría falta para llevar un Turnip de raíz
 
 1. Binario: `Turnip_v26.0.0_R8_Gmem.zip` de la release v26.0.0 R8
-   de K11MCH1/AdrenoToolsDrivers (8 ene 2026). ~2 MB. MIT (Mesa).
+   de K11MCH1/AdrenoToolsDrivers (8 ene 2026). 3.478.156 bytes, SHA-256
+   `b60bffe2844a271cd293011de307fe06d28549bd5b93d03749b7c9f39af4114b`
+   (verificado 2026-11-11). MIT (Mesa).
    **No descargado ni incluido en este trabajo.**
 2. Antes de ponerlo: re-verificar la release vigente (la R8 ya no
    es la más reciente en general; p. ej. MrPurple publica T30, ago
-   2026), calcular su SHA-256 y rellenarlo en
+   2026; whitebelyash v32, sep 2026). NO se cambia de constructor
+   sin prueba en teléfono: la R8 sigue siendo la verificada. Si se
+   cambia, calcular su SHA-256 y rellenarlo en
    `BundledTurnipDriver.EXPECTED_SHA256`.
-3. Confirmar el layout del zip y ajustar la validación si hace falta.
+3. Layout del zip ya confirmado (ver arriba): la validación no
+   necesita ajuste.
 4. Verificar el punto anterior (custom-driver-name + carga en el
    núcleo fijado) y luego probar en un teléfono Adreno real.
 
@@ -106,7 +120,8 @@ por revisión de código + búsqueda web de fuentes oficiales
 
 - `data/BundledTurnipDriver.kt` (nuevo, Kotlin puro, testeable en
   JVM): `ASSET_PATH = "drivers/turnip/Turnip_v26.0.0_R8_Gmem.zip"`,
-  `EXPECTED_SHA256 = ""` (vacío hasta tener el binario),
+  `EXPECTED_SHA256 = "b60bffe2844a271cd293011de307fe06d28549bd5b93d03749b7c9f39af4114b"`
+  (verificado 2026-11-11 contra el asset de la release v26.0.0-rc08),
   `selectVariant(renderer)` (6xx y 725/730/735/740/750 →
   STANDARD_GMEM; 710/720/722, 8xx, A32, Mali, desconocido → null,
   sin auto-instalación), `validatePackage(zip)` (zip válido +
@@ -188,9 +203,9 @@ La variante incluida elegida es la estándar Gmem de la R8.
 2. Elegir la release Turnip vigente, descargar el zip, calcular
    SHA-256, rellenar `EXPECTED_SHA256`, poner el zip en
    `app/src/main/assets/drivers/turnip/` y confirmar su layout
-   contra `validatePackage` (ajustar si hace falta).
+   contra `validatePackage` (ya verificado: ver arriba).
 3. CI: correr los tests nuevos (`BundledTurnipDriverTest`) y
-   comprobar que el APK con el zip incluido crece ~2 MB y que el
+   comprobar que el APK con el zip incluido crece ~3,5 MB y que el
    job nativo no se rompe por el asset nuevo.
 4. Teléfono Adreno real: instalar, comprobar que el driver se
    activa (diagnóstico del núcleo / log) y que el juego no
