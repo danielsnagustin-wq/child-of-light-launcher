@@ -60,6 +60,24 @@ static inline jobjectArray stub_empty_string_array(JNIEnv *env) {
     return result;
 }
 
+// Array vacío de NativeTrophyCollection (mismo contrato que
+// trophy_bridge.cpp: sin núcleo, vacío). Si la clase no existe o no
+// hay memoria, nullptr con la excepción limpia: el wrapper Kotlin
+// convierte el null en vacío con su catch.
+static inline jobjectArray stub_empty_trophy_collection_array(JNIEnv *env) {
+    jclass collection_class = env->FindClass("org/vita3k/emulator/data/NativeTrophyCollection");
+    if (collection_class == nullptr) {
+        stub_clear_pending_exception(env);
+        return nullptr;
+    }
+    jobjectArray result = env->NewObjectArray(0, collection_class, nullptr);
+    if (result == nullptr) {
+        stub_clear_pending_exception(env);
+    }
+    env->DeleteLocalRef(collection_class);
+    return result;
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeInit(
     JNIEnv *env, jobject /* thiz */, jstring storagePath) {
@@ -326,4 +344,31 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetSu
     JNIEnv * /* env */, jobject /* thiz */, jstring /* customDriverName */) {
     LOGW("nativeGetSupportedMemoryMappingMask STUB: núcleo no embebido");
     return 0;
+}
+
+// --- Ronda 0.2.65 (R-P1-12): estado del driver personalizado ---
+// Mismo contrato que mapping_bridge.cpp: sin núcleo, null =
+// desconocido (el wrapper Kotlin lo trata como "sin dato": ni
+// máscara ni estado de carga). El array real es [máscara, cargado]
+// con cargado 0 = no pedido, 1 = cargado, 2 = pedido pero no cargado.
+
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetCustomDriverSupportInfo(
+    JNIEnv * /* env */, jobject /* thiz */, jstring /* customDriverName */) {
+    LOGW("nativeGetCustomDriverSupportInfo STUB: núcleo no embebido");
+    return nullptr;
+}
+
+// --- Ronda 0.2.57: trofeos ---
+// Mismo contrato que trophy_bridge.cpp: sin núcleo, array vacío
+// (nunca null con excepción pendiente). J-P2-2: este stub faltaba
+// (32/33 métodos puenteados); sin él, la APK sin núcleo lanzaba
+// UnsatisfiedLinkError al llamar a getTrophyCollections en vez de
+// devolver vacío.
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetTrophyCollections(
+    JNIEnv *env, jobject /* thiz */) {
+    LOGW("nativeGetTrophyCollections STUB: núcleo no embebido");
+    return stub_empty_trophy_collection_array(env);
 }
