@@ -1,7 +1,8 @@
 // runtime_bridge.cpp — puente JNI del arranque del núcleo (Etapa 2).
 //
 // Funciones JNI de com.danielsnagustin.childoflight.launcher.core.Vita3kCoreBridge
-// (init/loadGame/getFps/isInitialized/destroySession + prepareFrontend).
+// (init/loadGame/getFps/isInitialized/destroySession + prepareFrontend
+// + getPresentedFrameCount/getLastPresentTimeNs, 0.2.66).
 // Reenvían a upstream; sin árbol Vita3K compilan como stubs
 // NOT_IMPLEMENTED (LAUNCHER_HAS_VITA3K no definido).
 //
@@ -21,8 +22,16 @@
 //    confianza. Es la validación honesta, no un arranque fingido.
 // 4. getFps(): lee EmuEnvState::fps (vita3k/emuenv/include/emuenv/state.h).
 //    -1.0f si no hay sesión (sin partida en curso).
-// 5. isInitialized(): NativeLib.isInitialized de upstream (hay sesión).
-// 6. destroySession(): apagado REAL (P1-1): si no hay sesión activa,
+// 5. getPresentedFrameCount()/getLastPresentTimeNs() (0.2.66, gancho nº 1):
+//    frames PRESENTADOS por el swapchain (contador del pin en
+//    screen_renderer.cpp, parche hook1-present-counter.patch). Es la
+//    señal correcta: a diferencia de getFps() (frames emulados, contados
+//    ANTES del render), este contador solo avanza cuando presentKHR
+//    presenta una imagen. El launcher calcula presents/s muestreando
+//    contador + timestamp (Vita3kCoreBridge.getPresentedFrameCount /
+//    getLastPresentTimeNs).
+// 6. isInitialized(): NativeLib.isInitialized de upstream (hay sesión).
+// 7. destroySession(): apagado REAL (P1-1): si no hay sesión activa,
 //    destruye el controlador y el emuenv para que el próximo init()
 //    re-lea config.yml. La antigua shutdown() solo pedía
 //    SDL_EVENT_QUIT y no liberaba nada (P2-B6): se eliminó; pedir el
@@ -62,6 +71,14 @@ static constexpr jint kSessionActive = -4;
 #include <exception>
 #include <optional>
 #include <string>
+#include <cstdint> // Ronda 0.2.66 (gancho nº 1): uint64_t de los contadores
+
+// Ronda 0.2.66 (gancho nº 1, INST-P0-3 / R-P1-1): contadores del pin
+// (screen_renderer.cpp, parche hook1-present-counter.patch), extern "C".
+// Si el parche no está aplicado, el enlace falla y el build es rojo
+// (el workflow aplica los parches con --check antes de compilar).
+extern "C" uint64_t vita3k_presented_frame_count();
+extern "C" uint64_t vita3k_last_present_time_ns();
 
 // Copia de prepare_frontend_runtime() de upstream con nuestros metadatos.
 // SDL_SetMainReady debe llamarse antes de que SDL inicie (lo hace
@@ -230,8 +247,9 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeLoadG
 // negra por superficie perdida, fps es mayor que 0 igualmente. T2 y
 // la prueba de 30 s del launcher usan este valor y NO prueban que el
 // juego se vea (el launcher lo dice así en sus registros). La señal
-// correcta (frames presentados por el swapchain) necesita un contador
-// nuevo en el pin expuesto por JNI; no se inventa aquí.
+// correcta (frames presentados por el swapchain) es el gancho nº 1 de
+// la 0.2.66 (parche hook1-present-counter.patch), expuesto justo
+// debajo por nativeGetPresentedFrameCount / nativeGetLastPresentTimeNs.
 extern "C" JNIEXPORT jfloat JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetFps(
     JNIEnv * /* env */, jobject /* thiz */) {
@@ -254,6 +272,37 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetFp
 #else
     LOGI("nativeGetFps STUB (TODO-ETAPA2): sin núcleo, -1.0");
     return -1.0f;
+#endif
+}
+
+// Ronda 0.2.66 (INST-P0-3 / R-P1-1): frames PRESENTADOS por el
+// swapchain (gancho nº 1, parche hook1-present-counter.patch).
+// A diferencia de getFps() (frames emulados, contados ANTES del
+// render), este contador solo avanza cuando presentKHR presenta una
+// imagen: con pantalla negra por superficie perdida NO avanza. El
+// launcher calcula presents/s muestreando el contador + el timestamp
+// (Vita3kCoreBridge.getPresentedFrameCount / getLastPresentTimeNs).
+// Los contadores son std::atomic en el pin: lectura segura desde el
+// hilo UI sin el data race formal de EmuEnvState::fps.
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetPresentedFrameCount(
+    JNIEnv * /* env */, jobject /* thiz */) {
+#ifdef LAUNCHER_HAS_VITA3K
+    return static_cast<jlong>(vita3k_presented_frame_count());
+#else
+    LOGI("nativeGetPresentedFrameCount STUB (TODO-ETAPA2): sin núcleo, -1");
+    return -1;
+#endif
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetLastPresentTimeNs(
+    JNIEnv * /* env */, jobject /* thiz */) {
+#ifdef LAUNCHER_HAS_VITA3K
+    return static_cast<jlong>(vita3k_last_present_time_ns());
+#else
+    LOGI("nativeGetLastPresentTimeNs STUB (TODO-ETAPA2): sin núcleo, -1");
+    return -1;
 #endif
 }
 
