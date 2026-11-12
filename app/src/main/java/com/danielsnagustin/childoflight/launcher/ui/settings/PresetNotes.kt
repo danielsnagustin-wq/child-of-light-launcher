@@ -32,11 +32,12 @@ import com.danielsnagustin.childoflight.launcher.model.presetSettings
  * existiendo como entradas propias (etiqueta y defaultProfileFor).
  * G99_QUALITY solo difiere en la resolución 2x (R-P1-8 quitó el FSR
  * y R-P1-17 el HUD), GENERIC_QUALITY igual (2x, misma idea con
- * etiqueta neutra para GPU sin perfil propio, RG-P2-16),
- * ADRENO_PERFORMANCE solo en el mapeo Page Table,
- * ADRENO_QUALITY_TURNIP difiere en 6 (2x, FXAA, 4x, Page Table,
- * Turnip y HUD — el HUD es nuevo en 0.2.65, RG-P2-6 — y VSync ON ya
- * no cuenta, en Vulkan es inerte, ronda 0.2.64).
+ * etiqueta neutra para GPU sin perfil propio, RG-P2-16).
+ * Ronda 0.2.66 (G11-01): el mapeo por defecto pasó a Page Table en
+ * Mali/G99, así que ADRENO_PERFORMANCE TAMBIÉN es idéntico en
+ * efecto a Recomendado (antes solo difería en el mapeo) y
+ * ADRENO_QUALITY_TURNIP difiere en 5 ajustes, no 6 (Page Table ya
+ * no cuenta como diferencia).
  *
  * R5-A2-6: las notas describen el preset CANÓNICO, no el resultado
  * real cuando la preservación conserva un cambio manual (ver
@@ -44,17 +45,17 @@ import com.danielsnagustin.childoflight.launcher.model.presetSettings
  */
 fun presetCompatibilityNote(profile: GpuProfileId): String = when (profile) {
     GpuProfileId.G99_RECOMMENDED ->
-        "Recomendado en Helio G99 / Mali-G57: 1x estable, Double Buffer, sin Turnip. Double Buffer es el más seguro pero el más lento: si el juego va lento, prueba Page Table en Ajustes → GPU y mide con la prueba de 30 s (es una recomendación del mantenedor, no del núcleo: no hay mediciones en este launcher)."
+        "Recomendado en Helio G99 / Mali-G57: 1x estable, Page Table, sin Turnip. Page Table es el nuevo valor por defecto (ronda 0.2.66): la hipótesis es que Double Buffer es el método más caro en Mali, pero aún no está medido en este teléfono. Mide con la prueba de 30 s; si va lento o hay glitches, prueba Double Buffer en Ajustes → GPU."
     GpuProfileId.G99_QUALITY ->
         "2x con Bilinear: la única diferencia con Recomendado es la resolución 2x. Prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado."
     GpuProfileId.MALI_PERFORMANCE ->
-        "Mali genérico (no G99): en efecto es igual que Recomendado (1x, Bilinear, Double Buffer, cachés ON, sin Turnip): la única diferencia es la etiqueta. 1x siempre, Double Buffer en el preset (se puede cambiar a mano). Si va lento, prueba Page Table en Ajustes → GPU y mide con la prueba de 30 s. Sin Turnip: el driver Turnip no funciona en Mali."
+        "Mali genérico (no G99): en efecto es igual que Recomendado (1x, Bilinear, Page Table, cachés ON, sin Turnip): la única diferencia es la etiqueta. 1x siempre, Page Table en el preset (se puede cambiar a mano). Si va lento, prueba Double Buffer en Ajustes → GPU y mide con la prueba de 30 s. Sin Turnip: el driver Turnip no funciona en Mali."
     GpuProfileId.MALI_BALANCED ->
-        "Mali genérico: en efecto es igual que Recomendado (1x, Bilinear, Double Buffer, sin Turnip): la única diferencia es la etiqueta. Sin Turnip: el driver Turnip no funciona en Mali."
+        "Mali genérico: en efecto es igual que Recomendado (1x, Bilinear, Page Table, sin Turnip): la única diferencia es la etiqueta. Sin Turnip: el driver Turnip no funciona en Mali."
     GpuProfileId.GENERIC_QUALITY ->
         "Genérico (Xclipse, PowerVR u otra GPU sin perfil propio): 2x con Bilinear. La única diferencia con Recomendado es la resolución 2x. Prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado."
     GpuProfileId.ADRENO_PERFORMANCE ->
-        "Solo Snapdragon / Adreno: la única diferencia con Recomendado es el mapeo de memoria Page Table. En Mali se usa el perfil G99 / Mali. Sin Turnip."
+        "Solo Snapdragon / Adreno: en efecto es igual que Recomendado (1x, Bilinear, Page Table, cachés ON, sin Turnip): la única diferencia es la etiqueta. En Mali se usa el perfil G99 / Mali. Sin Turnip."
     GpuProfileId.ADRENO_QUALITY_TURNIP ->
-        "Solo Snapdragon / Adreno: Vulkan + Turnip a 2x. Difiere de Recomendado en 6 ajustes: resolución 2x, filtro FXAA, anisotrópico 4x, Page Table, driver Turnip y HUD de FPS activado (el HUD es la prueba visible de que Turnip cargó). Turnip no funciona en Mali."
+        "Solo Snapdragon / Adreno: Vulkan + Turnip a 2x. Difiere de Recomendado en 5 ajustes: resolución 2x, filtro FXAA, anisotrópico 4x, driver Turnip y HUD de FPS activado (el HUD es la prueba visible de que Turnip cargó). Turnip no funciona en Mali."
 }
