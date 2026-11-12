@@ -39,8 +39,11 @@ import com.danielsnagustin.childoflight.launcher.ui.SettingSwitch
  * se queda en los chips y en los presets: es seguro elegirlo, nunca
  * rompe nada; como mucho se comporta como Bilinear.
  *
- * NO se ofrece: turbo-mode (existe, solo Adreno), spirv-shader ni
- * cpu-pool-size (existen, semántica sin verificar).
+ * NO se ofrece: spirv-shader (sin verificar) ni cpu-pool-size:
+ * existe en config.h del núcleo (config.h:175) pero NADIE la lee
+ * (ronda 0.2.66, CPU-05): es una clave muerta, no se emite.
+ * turbo-mode SÍ se ofrece, abajo en Driver GPU (solo Adreno con
+ * Turnip).
  */
 @Composable
 fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Screen) -> Unit) {
@@ -170,8 +173,8 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
                         // según el núcleo" era falso: el núcleo no
                         // jerarquiza métodos; la recomendación es del
                         // mantenedor.
-                        GpuVendor.MALI -> "Recomendado en Mali: Double Buffer (valor de los presets Mali). Si el juego va lento, prueba Page Table y mide con la prueba de 30 s (es una recomendación del mantenedor, no del núcleo)."
-                        else -> "Recomendado: Double Buffer. Los 5 métodos están verificados contra el núcleo (pin 3e43bc80); \"off\" equivale a desactivado."
+                        GpuVendor.MALI -> "Recomendado en Mali: Page Table (valor de los presets Mali desde la 0.2.66). Hipótesis aún sin medir en este teléfono: Double Buffer sería el método más caro en Mali. Si va lento o hay glitches, prueba Double Buffer y mide con la prueba de 30 s."
+                        else -> "Recomendado: Page Table (valor de los presets desde la 0.2.66). Los 5 métodos están verificados contra el núcleo (pin 3e43bc80); \"off\" equivale a desactivado."
                     },
                 )
                 // Ronda 0.2.64 (P1-3 Mali): la máscara de métodos
@@ -180,14 +183,17 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
                 // filtran (EnumChips no soporta ítems deshabilitados
                 // y un método elegido que saliera de la lista
                 // rompería la selección): se avisa qué métodos el
-                // driver no soporta, porque si se elige uno de ellos
-                // el núcleo vuelve a Double Buffer en silencio.
+                // driver no soporta. Ronda 0.2.66 (G11-02): si se
+                // elige uno de ellos, el launcher ya no deja que el
+                // núcleo caiga a Double Buffer en silencio: al lanzar
+                // se emite el método efectivo soportado en config.yml
+                // y queda en el log.
                 val mappingMask by vm.supportedMappingMask.collectAsState(initial = null)
                 val unsupported = mappingMask?.let { mask ->
                     MemoryMapping.entries.filter { !it.isSupportedByMask(mask) }
                 } ?: emptyList()
                 if (unsupported.isNotEmpty()) {
-                    NoteText("En este teléfono el driver no soporta: ${unsupported.joinToString(", ") { it.label }}. Si eliges uno, el núcleo vuelve a Double Buffer en silencio.")
+                    NoteText("En este teléfono el driver no soporta: ${unsupported.joinToString(", ") { it.label }}. Si eliges uno, el launcher emite el método efectivo soportado (Double Buffer) en config.yml y lo deja en el log: el núcleo ya no cae en silencio.")
                 }
                 if (gpu?.isUserVerifiedDevice == true) {
                     NoteText("✓ Helio G99 · Mali-G57 MC2 — procesador verificado por ti. El preset por defecto es G99 Recomendado: 1x estable, sin recortar de más.")
@@ -240,7 +246,15 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
                         },
                     )
                     if (gpu?.vendor == GpuVendor.MALI) {
-                        NoteText("En Mali, si ves glitches gráficos, prueba el backend OpenGL como fallback (sección Renderizado, arriba).")
+                        // Ronda 0.2.66 (G11-04): OpenGL SOLO como
+                        // diagnóstico de glitches, avisando que será
+                        // más lento (en OpenGL la compilación de
+                        // shaders es síncrona en el hilo de render y
+                        // no hay compilación asíncrona de pipelines).
+                        // NO se quita el fallback automático de
+                        // resolveBackend (sin Vulkan usable, OpenGL
+                        // sigue siendo el último recurso).
+                        NoteText("En Mali, si ves glitches gráficos, puedes probar el backend OpenGL SOLO como diagnóstico (sección Renderizado, arriba): suele ir más lento que Vulkan (los shaders se compilan en el hilo de render). Si el glitch desaparece con OpenGL, es un problema del camino Vulkan; vuelve a Vulkan para jugar.")
                     }
                 }
             }
