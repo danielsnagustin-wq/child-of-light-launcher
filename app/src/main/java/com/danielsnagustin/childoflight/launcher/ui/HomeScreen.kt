@@ -46,6 +46,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.R
+import com.danielsnagustin.childoflight.launcher.data.DeviceCompat
 import com.danielsnagustin.childoflight.launcher.model.CardSize
 import com.danielsnagustin.childoflight.launcher.model.CardTransparency
 import com.danielsnagustin.childoflight.launcher.model.GameStatus
@@ -393,6 +394,23 @@ private fun GameCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = mutedTextColor(dark),
                     )
+                    // Ronda 0.2.64 (CPU/32-bit): aviso visible en Home
+                    // cuando el teléfono es de 32 bits: el motor
+                    // integrado necesita 64 bits (arm64) y en este
+                    // teléfono el juego no se puede abrir con él (la
+                    // APK nativa ni siquiera se instala en 32 bits:
+                    // INSTALL_FAILED_NO_MATCHING_ABIS; este aviso lo
+                    // ve quien tiene la APK pequeña). Sin mencionar
+                    // el núcleo por su nombre: "motor integrado".
+                    if (!DeviceCompat.is64BitDevice()) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            "Este teléfono es de 32 bits y el motor integrado necesita 64 bits (arm64). En este teléfono el juego no se puede abrir con el motor integrado. Funciona en teléfonos con procesador de 64 bits y Android 9 o superior (por ejemplo, Helio G99, Snapdragon, Dimensity, Exynos o Tensor de 64 bits).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
                 } else {
                     PrimaryButton(strings.importGame.uppercase(), onClick = { onNavigate(Screen.IMPORT) })
                 }
