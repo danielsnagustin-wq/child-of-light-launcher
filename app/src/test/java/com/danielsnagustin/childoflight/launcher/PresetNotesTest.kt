@@ -75,14 +75,17 @@ class PresetNotesTest {
         assertTrue(note.contains("HUD de FPS"))
     }
 
+    // Ronda 0.2.64: VSync ON ya no cuenta (en Vulkan es inerte): son
+    // 5 diferencias (2x, FXAA, 4x, Page Table, Turnip), no 6.
     @Test
-    fun turnipQualityListsAllSixDifferences() {
+    fun turnipQualityListsAllFiveDifferences() {
         val note = presetCompatibilityNote(GpuProfileId.ADRENO_QUALITY_TURNIP)
+        assertTrue(note.contains("5 ajustes"))
         assertTrue(note.contains("2x"))
         assertTrue(note.contains("FXAA"))
         assertTrue(note.contains("4x"))
-        assertTrue(note.contains("VSync ON"))
         assertTrue(note.contains("Page Table"))
         assertTrue(note.contains("Turnip"))
+        assertTrue(!note.contains("VSync ON"))
     }
 }
