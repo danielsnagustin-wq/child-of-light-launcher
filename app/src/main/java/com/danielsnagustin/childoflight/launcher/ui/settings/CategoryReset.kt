@@ -93,6 +93,9 @@ fun resetCategorySettings(current: LauncherSettings, category: SettingsCategory)
             performanceOverlayPosition = preset.performanceOverlayPosition,
             hashlessTextureCache = preset.hashlessTextureCache,
             showCompileShaders = preset.showCompileShaders,
+            // Ronda 0.2.66: los parches experimentales no son del preset:
+            // restablecer Rendimiento apaga el audio SDL experimental.
+            expAudioSdl = false,
             autoRevertTo1xIfBelow28Fps = preset.autoRevertTo1xIfBelow28Fps,
             performanceMode = preset.performanceMode,
         )
@@ -107,6 +110,9 @@ fun resetCategorySettings(current: LauncherSettings, category: SettingsCategory)
         SettingsCategory.DIAGNOSTICS -> current.copy(
             closeBackgroundApps = preset.closeBackgroundApps,
             safeMode = preset.safeMode,
+            // Ronda 0.2.66: el perfil de frames es de Diagnóstico y
+            // su default es OFF (el preset no lo define).
+            frameProfile = preset.frameProfile,
         )
     }
 }
