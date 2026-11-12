@@ -2,6 +2,7 @@ package com.danielsnagustin.childoflight.launcher
 
 import com.danielsnagustin.childoflight.launcher.launcher.Vita3KLauncher
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -25,16 +26,19 @@ class Vita3kLauncherWave2Test {
     }
 
     @Test
-    fun initFailureMinusOneNamesMissingCore() {
+    fun initFailureMinusOneReturnsGenericMessage() {
         val message = Vita3KLauncher.initFailureMessage(-1, "System.loadLibrary(Vita3K): prueba")
-        assertTrue(message.contains("no está presente en esta APK"))
-        assertTrue(message.contains("System.loadLibrary(Vita3K)"))
+        assertTrue(message.contains("No se pudo cargar el motor"))
+        assertFalse(message.contains("Vita3K"))
+        assertFalse(message.contains("System.loadLibrary"))
     }
 
     @Test
-    fun initFailureMinusOneWithoutLoadErrorStillNamesMissingCore() {
+    fun initFailureMinusOneWithoutLoadErrorReturnsGenericMessage() {
         val message = Vita3KLauncher.initFailureMessage(-1, null)
-        assertTrue(message.contains("no está presente en esta APK"))
+        assertTrue(message.contains("No se pudo cargar el motor"))
+        assertFalse(message.contains("Vita3K"))
+        assertFalse(message.contains("System.loadLibrary"))
     }
 
     @Test
