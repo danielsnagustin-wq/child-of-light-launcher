@@ -23,6 +23,7 @@ import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.faceGl
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.glowSdlButtons
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.iconOverrideFor
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.overlayChildOrder
+import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.pauseWingsLayout
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.stickAxes
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.stickAxesFor
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.toSdlButton
@@ -94,13 +95,15 @@ import kotlin.math.sqrt
  *
  * Dibujo: LA MISMA MATEMÁTICA que la vista previa del editor
  * (TouchOverlayMapping.controlRect): posición por fracción DEL RECT
- * DEL JUEGO 960x544 (R4-P1-1), tamaño en dp, opacidad por botón
- * multiplicada por la opacidad general. El estilo es el cristal
- * azul hielo de la imagen de referencia 51025 (fondo negro,
- * cristal azul hielo/lavanda con brillo): degradado radial, doble
- * borde luminoso, adornos de diamante y cristal en los 4 puntos
- * del stick, alas de hielo con estrellitas en la pausa, orbe de
- * Igniculus con corona floral y destellos, espada con destellos y
+ * DEL JUEGO 960x544 (R4-P1-1), tamaño en dp o en fracción del alto
+ * del juego (0.2.64 A-7), opacidad por botón multiplicada por la
+ * opacidad general. El estilo es el cristal azul hielo de la imagen
+ * de referencia 51025 (fondo negro, cristal azul hielo/lavanda con
+ * brillo): degradado radial, doble borde luminoso, adornos de
+ * diamante y cristal en los 4 puntos del stick, alas de hielo con
+ * estrellitas en la pausa (0.2.64 A-2: vista aparte PauseWingsView,
+ * más ancha que el botón), orbe de Igniculus con corona floral y
+ * destellos (0.2.64 A-3: drawFloralCrown), espada con destellos y
  * flecha fina de salto, brillo turquesa al pulsar. La vista previa
  * del editor sigue siendo esquemática y no refleja todos estos
  * adornos, solo la posición, el tamaño y el orbe interior.
@@ -159,13 +162,39 @@ class GamepadOverlayView @JvmOverloads constructor(
      */
     private var activeProfileId: String? = null
     /**
-     * 0.2.63 (G): controles montados en el mismo orden que los
+     * 0.2.64 (G): controles montados en el mismo orden que los
      * hijos (rebuild los añade en el orden de overlayChildOrder).
      * onLayout() los usa para re-derivar los márgenes de cada hijo
      * desde sus fracciones sin tocar el TouchControl del hijo
      * (protected en OverlayControlView).
      */
     private var mountedControls: List<TouchControl> = emptyList()
+
+    /**
+     * 0.2.64 (A-2): vista de alas de la pausa (PauseWingsView) y
+     * el control de pausa que centra. La vista NO es un control:
+     * no está en mountedControls (repositionChildrenFromFractions
+     * la actualiza aparte) ni consume toques. null si el perfil
+     * no trae botón de pausa (START).
+     */
+    private var pauseWingsView: PauseWingsView? = null
+    private var pauseWingsControl: TouchControl? = null
+
+    /**
+     * 0.2.64 (D-P1-1): punteros que el overlay encaminó A MANO a
+     * un botón o stick (segundo dedo sobre un botón mientras otro
+     * dedo mantiene un control). El framework solo entrega el
+     * ACTION_POINTER_DOWN a los hijos que ya son destino del gesto
+     * (el control mantenido); el botón bajo el segundo dedo nunca
+     * lo ve. Sin este mapa, ese dedo se reenviaba a SDL como toque
+     * libre: fantasma en el juego sobre el botón + pulsación
+     * perdida. La clave es el pointerId real del dedo; el valor,
+     * el hijo que lo recibió con un DOWN sintético. Sus MOVE/UP
+     * se le reenvían igual (sintéticos de un solo puntero, en
+     * coordenadas de la vista hija). Se vacía al soltar, cancelar
+     * o reconstruir (releaseAll).
+     */
+    private val routedPointers = LinkedHashMap<Int, OverlayControlView>()
 
     /**
      * R4-P1-16: decide qué punteros no consumidos por ningún control
@@ -231,6 +260,11 @@ class GamepadOverlayView @JvmOverloads constructor(
         // toque, el juego seguiría creyendo que el dedo está
         // apoyado. Terminarlo aquí, antes de soltar los controles.
         endForwardedTouchesToSdl()
+        // 0.2.64 (D-P1-1): los dedos encaminados a mano se sueltan
+        // con el release() de cada hijo (botón/stick); el mapa solo
+        // guarda a quién pertenecían: se vacía para no reenviarles
+        // más MOVE/UP de un gesto que ya no existe.
+        routedPointers.clear()
         for (i in 0 until childCount) {
             (getChildAt(i) as? OverlayControlView)?.release()
         }
@@ -239,6 +273,13 @@ class GamepadOverlayView @JvmOverloads constructor(
     private fun refreshChildren() {
         for (i in 0 until childCount) {
             (getChildAt(i) as? OverlayControlView)?.refreshStyle()
+        }
+        // 0.2.64 (A-2): las alas siguen la opacidad del botón de
+        // pausa (su opacidad x la general).
+        val wings = pauseWingsView
+        val pause = pauseWingsControl
+        if (wings != null && pause != null) {
+            wings.ornamentAlpha = pause.opacity * generalOpacity
         }
     }
 
@@ -260,6 +301,15 @@ class GamepadOverlayView @JvmOverloads constructor(
      * su camino normal (el framework lo entrega al hijo como
      * ACTION_DOWN al dividir el evento), y el modo JOYSTICK de
      * ZoneView sigue reenviando lo suyo vía activity.dispatchTouchEvent.
+     *
+     * 0.2.64 (D-P1-1): ANTES de reenviar a SDL, el puntero nuevo se
+     * ofrece al botón o stick que tenga debajo (tryRoutePointerToChild):
+     * el framework no lo hace (solo entrega el POINTER_DOWN a los
+     * hijos que ya son destino del gesto) y sin esto un segundo dedo
+     * sobre salto/espada se convertía en un toque fantasma en el
+     * juego (Igniculus saltaba al botón) y la pulsación se perdía.
+     * Un puntero encaminado a mano se sigue con MOVE/UP sintéticos
+     * (routedPointers); uno en zona vacía sigue el camino viejo a SDL.
      */
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if (forwardingSyntheticTouch) return false
@@ -271,6 +321,11 @@ class GamepadOverlayView @JvmOverloads constructor(
                 val pointerId = event.getPointerId(index)
                 val x = event.getX(index)
                 val y = event.getY(index)
+                // 0.2.64 (D-P1-1): segundo dedo sobre un botón o
+                // stick: que lo pulse él, no que se vaya a SDL como
+                // toque fantasma. Si ningún hijo lo quiere, el camino
+                // viejo (router -> SDL) sigue igual.
+                if (tryRoutePointerToChild(event, index, pointerId)) return true
                 val decision = multiTouchRouter.onPointerDown(
                     pointerId = pointerId,
                     downTime = event.downTime,
@@ -292,7 +347,8 @@ class GamepadOverlayView @JvmOverloads constructor(
             MotionEvent.ACTION_MOVE -> {
                 val handled = super.dispatchTouchEvent(event)
                 val forwarded = forwardPointerMovesToSdl(event)
-                return handled || forwarded
+                val routed = forwardRoutedMoves(event)
+                return handled || forwarded || routed
             }
             MotionEvent.ACTION_POINTER_UP -> {
                 val handled = super.dispatchTouchEvent(event)
@@ -304,7 +360,10 @@ class GamepadOverlayView @JvmOverloads constructor(
                 if (decision == MultiTouchRouter.PointerAction.FORWARD_UP && downTime != null) {
                     forwarded = forwardPointerUpToSdl(event, index, pointerId, downTime)
                 }
-                return handled || forwarded
+                // 0.2.64 (D-P1-1): el dedo encaminado a mano termina
+                // con su UP sintético en su hijo (no con el del router).
+                val routed = endRoutedPointer(event, index, pointerId, MotionEvent.ACTION_UP)
+                return handled || forwarded || routed
             }
             MotionEvent.ACTION_UP -> {
                 val handled = super.dispatchTouchEvent(event)
@@ -316,11 +375,18 @@ class GamepadOverlayView @JvmOverloads constructor(
                 if (decision == MultiTouchRouter.PointerAction.FORWARD_UP && downTime != null) {
                     forwarded = forwardPointerUpToSdl(event, index, pointerId, downTime)
                 }
-                return handled || forwarded
+                val routed = endRoutedPointer(event, index, pointerId, MotionEvent.ACTION_UP)
+                // El gesto termina: si quedara un puntero encaminado
+                // sin su UP (no debería: los demás ya pasaron por
+                // POINTER_UP), se termina aquí para no dejar un botón
+                // pulsado en el núcleo.
+                endAllRoutedPointers(MotionEvent.ACTION_UP)
+                return handled || forwarded || routed
             }
             MotionEvent.ACTION_CANCEL -> {
                 val handled = super.dispatchTouchEvent(event)
                 endForwardedTouchesToSdl()
+                endAllRoutedPointers(MotionEvent.ACTION_CANCEL)
                 return handled
             }
             else -> return super.dispatchTouchEvent(event)
@@ -349,6 +415,123 @@ class GamepadOverlayView @JvmOverloads constructor(
             }
         }
         return false
+    }
+
+    /**
+     * 0.2.64 (D-P1-1): ofrece el puntero nuevo al botón o stick que
+     * tenga debajo. Causa exacta del toque fantasma: el framework
+     * entrega ACTION_POINTER_DOWN solo a los hijos que YA son destino
+     * del gesto (el control mantenido), así que un segundo dedo sobre
+     * salto/espada nunca llegaba a su botón: el router lo reenviaba
+     * a SDL como toque libre (Igniculus saltaba al botón) y la
+     * pulsación se perdía. Aquí se le entrega a mano con un DOWN
+     * sintético de un solo puntero (pointerId real del dedo); si el
+     * hijo lo consume, el puntero queda en routedPointers y sus
+     * MOVE/UP se le reenvían igual. La zona Igniculus NO entra
+     * (isZone): su toque es táctil del juego y lo sigue el router.
+     * Tampoco un control que ya tiene un dedo activo: el framework
+     * ya se lo dio y reenviarlo lo duplicaría. El sintético nace
+     * con coordenadas LOCALES de la hija: dispatchTouchEvent
+     * directo no desplaza el evento (eso lo hace el ViewGroup al
+     * repartir) y el hijo calcula desde event.x/event.y.
+     */
+    private fun tryRoutePointerToChild(event: MotionEvent, index: Int, pointerId: Int): Boolean {
+        val x = event.getX(index)
+        val y = event.getY(index)
+        val candidates = ArrayList<OverlayControlView>(childCount)
+        val hits = ArrayList<RoutedChildHit>(childCount)
+        for (i in 0 until childCount) {
+            val child = getChildAt(i) as? OverlayControlView ?: continue
+            candidates += child
+            hits += RoutedChildHit(
+                left = child.left.toFloat(),
+                top = child.top.toFloat(),
+                right = (child.left + child.width).toFloat(),
+                bottom = (child.top + child.height).toFloat(),
+                isZone = child is ZoneView,
+                hasActivePointer = child.hasActivePointer,
+            )
+        }
+        val hitIndex = findRoutableChildIndex(hits, x, y)
+        if (hitIndex < 0) return false
+        val child = candidates[hitIndex]
+        val synthetic = obtainSinglePointerEvent(
+            event.downTime, event.eventTime, MotionEvent.ACTION_DOWN,
+            pointerId, x - child.left, y - child.top,
+        )
+        var consumed = false
+        try {
+            consumed = child.dispatchTouchEvent(synthetic)
+        } finally {
+            synthetic.recycle()
+        }
+        if (!consumed) return false
+        routedPointers[pointerId] = child
+        return true
+    }
+
+    /** 0.2.64 (D-P1-1): MOVE de cada dedo encaminado a mano, a su hijo. */
+    private fun forwardRoutedMoves(event: MotionEvent): Boolean {
+        if (routedPointers.isEmpty()) return false
+        var routed = false
+        val it = routedPointers.entries.iterator()
+        while (it.hasNext()) {
+            val (pointerId, owner) = it.next()
+            val index = event.findPointerIndex(pointerId)
+            if (index < 0) continue
+            val synthetic = obtainSinglePointerEvent(
+                event.downTime, event.eventTime, MotionEvent.ACTION_MOVE,
+                pointerId, event.getX(index) - owner.left, event.getY(index) - owner.top,
+            )
+            try {
+                if (owner.dispatchTouchEvent(synthetic)) routed = true
+            } finally {
+                synthetic.recycle()
+            }
+            // El hijo soltó el dedo (se salió del botón): ya no es
+            // suyo; el siguiente MOVE no se le reenvía.
+            if (!owner.hasActivePointer) it.remove()
+        }
+        return routed
+    }
+
+    /** 0.2.64 (D-P1-1): UP de un dedo encaminado a mano, a su hijo. */
+    private fun endRoutedPointer(event: MotionEvent, index: Int, pointerId: Int, action: Int): Boolean {
+        val owner = routedPointers.remove(pointerId) ?: return false
+        val x = if (index >= 0) event.getX(index) - owner.left else owner.width / 2f
+        val y = if (index >= 0) event.getY(index) - owner.top else owner.height / 2f
+        val synthetic = obtainSinglePointerEvent(
+            event.downTime, event.eventTime, action, pointerId, x, y,
+        )
+        try {
+            return owner.dispatchTouchEvent(synthetic)
+        } finally {
+            synthetic.recycle()
+        }
+    }
+
+    /**
+     * 0.2.64 (D-P1-1): termina TODOS los dedos encaminados a mano
+     * (gesto cancelado o terminado sin su UP). El UP/CANCEL no usa
+     * coordenadas en el hijo (release() no las mira): centro de la
+     * vista. Sin esto, un botón encaminado quedaría pulsado en el
+     * núcleo tras una cancelación.
+     */
+    private fun endAllRoutedPointers(action: Int) {
+        if (routedPointers.isEmpty()) return
+        val now = SystemClock.uptimeMillis()
+        for ((pointerId, owner) in routedPointers) {
+            val synthetic = obtainSinglePointerEvent(
+                now, now, action, pointerId,
+                owner.width / 2f, owner.height / 2f,
+            )
+            try {
+                owner.dispatchTouchEvent(synthetic)
+            } finally {
+                synthetic.recycle()
+            }
+        }
+        routedPointers.clear()
     }
 
     private fun findSdlSurface(): View? {
@@ -536,6 +719,26 @@ class GamepadOverlayView @JvmOverloads constructor(
                 child.layoutParams = params
             }
         }
+        // 0.2.64 (A-2): las alas no están en mountedControls (no son
+        // un control): su posición se re-deriva del botón de pausa,
+        // igual que los hijos. Sin esto, un cambio de tamaño movía
+        // el botón y dejaba las alas en su sitio viejo.
+        val wings = pauseWingsView
+        val pause = pauseWingsControl
+        if (wings != null && pause != null) {
+            val pauseLayout = childLayout(pause, width.toFloat(), height.toFloat(), density)
+            val expected = pauseWingsLayout(pauseLayout)
+            val params = wings.layoutParams as? LayoutParams
+            if (params != null && (params.width != expected.widthPx || params.height != expected.heightPx ||
+                    params.leftMargin != expected.leftMargin || params.topMargin != expected.topMargin)
+            ) {
+                params.width = expected.widthPx
+                params.height = expected.heightPx
+                params.leftMargin = expected.leftMargin
+                params.topMargin = expected.topMargin
+                wings.layoutParams = params
+            }
+        }
     }
 
     private fun rebuild() {
@@ -570,6 +773,29 @@ class GamepadOverlayView @JvmOverloads constructor(
         }
         mountedControls = ordered
         builtForSize = width to height
+        // 0.2.64 (A-2): las alas de la pausa como vista APARTE, más
+        // ancha que el botón (4,4 x de ancho, 1,5 x de alto, centrada
+        // en él): dentro del botón se recortaban al cuadrado y no
+        // podían extenderse como en el mockup. Es una vista sin
+        // toque (no consume nada: los toques la atraviesan hacia el
+        // botón de pausa o el de círculo) y va LA ÚLTIMA, encima de
+        // los controles, para que las hojas se dibujen sobre el
+        // cristal. Sin botón de pausa en el perfil, no hay alas.
+        pauseWingsControl = ordered.firstOrNull { it.kind == "button" && it.vitaButton == VitaButton.START }
+        val pauseControl = pauseWingsControl
+        if (pauseControl != null) {
+            val pauseLayout = childLayout(pauseControl, width.toFloat(), height.toFloat(), density)
+            val wingsLayout = pauseWingsLayout(pauseLayout)
+            val wings = PauseWingsView(context)
+            wings.ornamentAlpha = pauseControl.opacity * generalOpacity
+            val wingsParams = LayoutParams(wingsLayout.widthPx, wingsLayout.heightPx)
+            wingsParams.leftMargin = wingsLayout.leftMargin
+            wingsParams.topMargin = wingsLayout.topMargin
+            addView(wings, wingsParams)
+            pauseWingsView = wings
+        } else {
+            pauseWingsView = null
+        }
         // 0.2.63 (G): diagnóstico del montaje (logcat, sin E/S de
         // fichero en el hilo de UI: LauncherLog.append es síncrono
         // y R5-A1-11 lo sacó de Main a propósito). Con perfil +
@@ -709,7 +935,6 @@ class GamepadOverlayView @JvmOverloads constructor(
         private val arrowPath = Path()
         private val trianglePath = Path()
         private val upperLeafPath = Path()
-        private val lowerLeafPath = Path()
         private val bladePath = Path()
         private val starPath = Path()
         private val bodyPath = Path()
@@ -949,6 +1174,43 @@ class GamepadOverlayView @JvmOverloads constructor(
         }
 
         /**
+         * 0.2.64 (A-3): corona floral del orbe de Igniculus (diseno
+         * 51025): NO es el rombo genérico de drawOrnaments (ese era
+         * lo único que había: un diamante arriba y otro abajo). La
+         * corona del mockup es una tiara sobre el orbe: diamante
+         * central arriba, dos hojas que se abren a los lados
+         * siguiendo la curva del orbe, estrellita en cada punta, y
+         * diamantitos pequeños a izquierda, derecha y abajo. Se
+         * dibuja sobre el orbe (cx, cy, orbR) DESPUÉS del cristal
+         * (drawGlassBody con ornaments = false, para no duplicar
+         * los rombos) y se mueve con él en modo Joystick.
+         */
+        protected fun drawFloralCrown(canvas: Canvas, cx: Float, cy: Float, orbR: Float, alpha: Float) {
+            ornamentPaint.alpha = (alpha * 0.85f * 255).toInt()
+            iconPaint.alpha = (alpha * 0.95f * 255).toInt()
+            // Diamante central de la corona, sobre la parte superior del orbe.
+            val crownS = (orbR * 0.16f).coerceAtLeast(3f * density)
+            drawDiamondOrnament(canvas, cx, cy - orbR * 0.98f, crownS)
+            // Hojas que se abren a los lados siguiendo la curva del orbe.
+            for (s in floatArrayOf(-1f, 1f)) {
+                upperLeafPath.reset()
+                upperLeafPath.apply {
+                    moveTo(cx + s * 0.10f * orbR, cy - 0.96f * orbR)
+                    quadTo(cx + s * 0.55f * orbR, cy - 1.14f * orbR, cx + s * 0.78f * orbR, cy - 0.86f * orbR)
+                    quadTo(cx + s * 0.45f * orbR, cy - 0.80f * orbR, cx + s * 0.10f * orbR, cy - 0.96f * orbR)
+                    close()
+                }
+                canvas.drawPath(upperLeafPath, ornamentPaint)
+                drawSparkle(canvas, cx + s * 0.78f * orbR, cy - 0.86f * orbR, 0.05f * orbR)
+            }
+            // Diamantitos pequeños a izquierda, derecha y abajo.
+            val sideS = (orbR * 0.10f).coerceAtLeast(2.5f * density)
+            drawDiamondOrnament(canvas, cx - orbR * 0.96f, cy, sideS)
+            drawDiamondOrnament(canvas, cx + orbR * 0.96f, cy, sideS)
+            drawDiamondOrnament(canvas, cx, cy + orbR * 0.96f, sideS)
+        }
+
+        /**
          * Icono del botón según su VitaButton. null = sin icono: se dibuja la etiqueta en plata.
          * R4-P0-2: los 4 botones de cara llevan su glifo PlayStation
          * (X, círculo, cuadrado, triángulo) en vez de iconos
@@ -1088,40 +1350,10 @@ class GamepadOverlayView @JvmOverloads constructor(
             val radius = 0.08f * r
             canvas.drawRoundRect(RectF(cx - 0.24f * r - w / 2, cy - h / 2, cx - 0.24f * r + w / 2, cy + h / 2), radius, radius, iconPaint)
             canvas.drawRoundRect(RectF(cx + 0.24f * r - w / 2, cy - h / 2, cx + 0.24f * r + w / 2, cy + h / 2), radius, radius, iconPaint)
-            drawPauseWings(canvas, cx, cy, r, alpha)
-        }
-
-        /**
-         * Alas de hielo de la pausa (diseno 51025): a cada lado del
-         * circulo, dos hojitas de hielo que se abren hacia las
-         * esquinas con una estrellita en cada punta. La vista del
-         * boton recorta todo lo que sale de su cuadrado, asi que las
-         * alas no pueden extenderse como en la imagen: viven pegadas
-         * al circulo, dentro del hueco de las esquinas.
-         */
-        private fun drawPauseWings(canvas: Canvas, cx: Float, cy: Float, r: Float, alpha: Float) {
-            ornamentPaint.alpha = (alpha * 0.85f * 255).toInt()
-            iconPaint.alpha = (alpha * 0.95f * 255).toInt()
-            for (s in floatArrayOf(-1f, 1f)) {
-                upperLeafPath.reset()
-                upperLeafPath.apply {
-                    moveTo(cx + s * 0.80f * r, cy - 0.70f * r)
-                    quadTo(cx + s * 1.30f * r, cy - 1.15f * r, cx + s * 1.52f * r, cy - 0.85f * r)
-                    quadTo(cx + s * 1.15f * r, cy - 0.62f * r, cx + s * 0.80f * r, cy - 0.70f * r)
-                    close()
-                }
-                canvas.drawPath(upperLeafPath, ornamentPaint)
-                lowerLeafPath.reset()
-                lowerLeafPath.apply {
-                    moveTo(cx + s * 0.80f * r, cy + 0.70f * r)
-                    quadTo(cx + s * 1.30f * r, cy + 1.15f * r, cx + s * 1.52f * r, cy + 0.85f * r)
-                    quadTo(cx + s * 1.15f * r, cy + 0.62f * r, cx + s * 0.80f * r, cy + 0.70f * r)
-                    close()
-                }
-                canvas.drawPath(lowerLeafPath, ornamentPaint)
-                drawSparkle(canvas, cx + s * 1.52f * r, cy - 0.85f * r, 0.09f * r)
-                drawSparkle(canvas, cx + s * 1.52f * r, cy + 0.85f * r, 0.07f * r)
-            }
+            // 0.2.64 (A-2): las alas ya NO se dibujan aquí: vivían
+            // pegadas al círculo, dentro del cuadrado del botón, y
+            // se recortaban. Ahora son PauseWingsView, una vista
+            // aparte más ancha que el botón (ver rebuild()).
         }
 
         /**
@@ -1587,7 +1819,11 @@ class GamepadOverlayView @JvmOverloads constructor(
             // exterior de la zona y la gota conservan el 0,25
             // original.
             val orbAlpha = maxOf(alpha, 0.8f * generalOpacity)
-            drawGlassBody(canvas, orbRect, orbAlpha)
+            // 0.2.64 (A-3): el cristal va SIN los rombos genéricos
+            // (ornaments = false): la corona floral se dibuja aparte
+            // (drawFloralCrown) para no duplicar el rombo de arriba.
+            drawGlassBody(canvas, orbRect, orbAlpha, ornaments = false)
+            drawFloralCrown(canvas, iconCx, iconCy, orbR, orbAlpha)
             // Gota sobre el orbe (recortada a su anillo): nace donde
             // toca el dedo, en los dos modos. El rect es el del orbe
             // (0.42 x ancho en 0.2.54).
@@ -1818,6 +2054,122 @@ class GamepadOverlayView @JvmOverloads constructor(
 }
 
 /**
+ * 0.2.64 (A-2): alas de hielo de la pausa como vista APARTE, más
+ * ancha que el botón (ver TouchOverlayMapping.pauseWingsLayout:
+ * 4,4 x de ancho, 1,5 x de alto, centrada en el botón de pausa).
+ * Dentro del botón se recortaban al cuadrado y no podían
+ * extenderse como en el mockup 51025: dos hojas de hielo por lado
+ * que barren hacia las esquinas, nudito floral donde nacen del
+ * círculo y estrellita en cada punta (lavanda #A99ACD, puntas
+ * plata #EAF4FB, como los demás adornos). Es una vista de adorno:
+ * no consume ningún toque (onTouchEvent false, ni clicable ni
+ * enfocable): los toques la atraviesan hacia el botón de pausa o
+ * el de círculo. La monta rebuild() de GamepadOverlayView encima
+ * de los controles y le sigue la opacidad del botón de pausa.
+ *
+ * Clase a nivel de archivo (no inner): Kotlin prohíbe tipos dentro
+ * de una inner class (runs #86 y #296) y esta vista no es un control
+ * del overlay (no es OverlayControlView).
+ */
+private class PauseWingsView(context: Context) : View(context) {
+
+    private val ornamentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#A99ACD")
+        style = Paint.Style.FILL
+    }
+    private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#EAF4FB")
+        style = Paint.Style.FILL
+    }
+    private val upperLeafPath = Path()
+    private val lowerLeafPath = Path()
+    private val starPath = Path()
+
+    /** Opacidad del adorno: la del botón de pausa (su opacidad x la general). */
+    var ornamentAlpha: Float = 1f
+        set(value) {
+            field = value.coerceIn(0f, 1f)
+            invalidate()
+        }
+
+    init {
+        isClickable = false
+        isFocusable = false
+    }
+
+    /** Nunca consume: un toque sobre las alas es del botón de debajo. */
+    override fun onTouchEvent(event: MotionEvent): Boolean = false
+
+    override fun onDraw(canvas: Canvas) {
+        val cx = width / 2f
+        val cy = height / 2f
+        // Radio del círculo de cristal de la pausa: la vista mide
+        // PAUSE_WINGS_HEIGHT_FACTOR x el botón de alto.
+        val r = height / TouchOverlayMapping.PAUSE_WINGS_HEIGHT_FACTOR / 2f
+        if (r <= 0f) return
+        ornamentPaint.alpha = (ornamentAlpha * 0.85f * 255).toInt()
+        iconPaint.alpha = (ornamentAlpha * 0.95f * 255).toInt()
+        for (s in floatArrayOf(-1f, 1f)) {
+            // Hoja superior: nace en el borde del círculo y barre
+            // hacia arriba y hacia fuera, con la punta en ~4,15r
+            // (el ancho total de la vista es 4,4 x el botón).
+            upperLeafPath.reset()
+            upperLeafPath.apply {
+                moveTo(cx + s * 0.85f * r, cy - 0.65f * r)
+                quadTo(cx + s * 2.40f * r, cy - 1.30f * r, cx + s * 4.15f * r, cy - 0.75f * r)
+                quadTo(cx + s * 2.60f * r, cy - 0.50f * r, cx + s * 0.85f * r, cy - 0.65f * r)
+                close()
+            }
+            canvas.drawPath(upperLeafPath, ornamentPaint)
+            lowerLeafPath.reset()
+            lowerLeafPath.apply {
+                moveTo(cx + s * 0.85f * r, cy + 0.65f * r)
+                quadTo(cx + s * 2.40f * r, cy + 1.30f * r, cx + s * 4.15f * r, cy + 0.75f * r)
+                quadTo(cx + s * 2.60f * r, cy + 0.50f * r, cx + s * 0.85f * r, cy + 0.65f * r)
+                close()
+            }
+            canvas.drawPath(lowerLeafPath, ornamentPaint)
+            // Nudito floral donde el ala nace del círculo.
+            drawWingDiamond(canvas, cx + s * 0.95f * r, cy, 0.14f * r)
+            // Estrellitas en cada punta.
+            drawWingSparkle(canvas, cx + s * 4.15f * r, cy - 0.75f * r, 0.10f * r)
+            drawWingSparkle(canvas, cx + s * 4.15f * r, cy + 0.75f * r, 0.08f * r)
+        }
+    }
+
+    /** Rombo pequeño con punto plata central (como drawDiamondOrnament). */
+    private fun drawWingDiamond(canvas: Canvas, x: Float, y: Float, s: Float) {
+        starPath.reset()
+        starPath.apply {
+            moveTo(x, y - s)
+            lineTo(x + 0.55f * s, y)
+            lineTo(x, y + s)
+            lineTo(x - 0.55f * s, y)
+            close()
+        }
+        canvas.drawPath(starPath, ornamentPaint)
+        canvas.drawCircle(x, y, 0.22f * s, iconPaint)
+    }
+
+    /** Estrella de 4 puntas (como drawSparkle). */
+    private fun drawWingSparkle(canvas: Canvas, x: Float, y: Float, s: Float) {
+        starPath.reset()
+        starPath.apply {
+            moveTo(x, y - s)
+            lineTo(x + 0.25f * s, y - 0.25f * s)
+            lineTo(x + s, y)
+            lineTo(x + 0.25f * s, y + 0.25f * s)
+            lineTo(x, y + s)
+            lineTo(x - 0.25f * s, y + 0.25f * s)
+            lineTo(x - s, y)
+            lineTo(x - 0.25f * s, y - 0.25f * s)
+            close()
+        }
+        canvas.drawPath(starPath, iconPaint)
+    }
+}
+
+/**
  * R4-P1-16: qué hacer con cada puntero de un gesto multi-toque.
  *
  * Lógica PURA (sin MotionEvent ni Views): GamepadOverlayView le pasa
@@ -1904,4 +2256,37 @@ internal class MultiTouchRouter {
         forwarded.clear()
         return result
     }
+}
+
+/**
+ * 0.2.64 (D-P1-1): rectángulo de un hijo del overlay para decidir el
+ * encaminado manual del segundo dedo (puro, testeable en JVM, como
+ * MultiTouchRouter). La lista va en orden de hijos (el último es el
+ * de más arriba): la búsqueda va de atrás hacia delante para que un
+ * botón que se solape con la zona gane el toque.
+ */
+internal data class RoutedChildHit(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+    /** Zona Igniculus: su toque es táctil del juego, no de un control. */
+    val isZone: Boolean,
+    /** El control ya tiene un dedo: el framework ya se lo dio. */
+    val hasActivePointer: Boolean,
+)
+
+/**
+ * 0.2.64 (D-P1-1): índice del hijo al que encaminar el puntero
+ * (x, y), o -1 si ninguno lo quiere (entonces sigue el camino viejo:
+ * el router lo reenvía a SDL como toque libre). Se saltan la zona
+ * Igniculus y los controles con un dedo activo.
+ */
+internal fun findRoutableChildIndex(children: List<RoutedChildHit>, x: Float, y: Float): Int {
+    for (i in children.indices.reversed()) {
+        val child = children[i]
+        if (child.isZone || child.hasActivePointer) continue
+        if (x >= child.left && x < child.right && y >= child.top && y < child.bottom) return i
+    }
+    return -1
 }
