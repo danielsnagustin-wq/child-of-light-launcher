@@ -32,7 +32,7 @@ class LowRamProfileTest {
         assertEquals(1f, s.resolutionMultiplier, 0f)
         assertEquals(ScreenFilter.BILINEAR, s.screenFilter)
         assertEquals(1, s.anisotropicFiltering)
-        assertEquals(MemoryMapping.DOUBLE_BUFFER, s.memoryMapping)
+        assertEquals(MemoryMapping.PAGE_TABLE, s.memoryMapping)
         assertFalse(s.vSync)
         assertFalse(s.highAccuracy)
         assertFalse(s.surfaceSyncEnabled)
@@ -43,12 +43,15 @@ class LowRamProfileTest {
     }
 
     @Test
-    fun lowRamFromAdrenoQualityDropsFxaaAnisoAndPageTable() {
+    fun lowRamFromAdrenoQualityDropsFxaaAndAnisoKeepsPageTable() {
+        // Ronda 0.2.66 (G11-01, decisión del coordinador): lowRam
+        // fuerza Page Table (antes Double Buffer): el preset Adreno
+        // Calidad ya es Page Table y la variante lo mantiene.
         val s = applyLowRamDefaults(presetSettings(GpuProfileId.ADRENO_QUALITY_TURNIP))
         assertEquals(1f, s.resolutionMultiplier, 0f)
         assertEquals(ScreenFilter.BILINEAR, s.screenFilter)
         assertEquals(1, s.anisotropicFiltering)
-        assertEquals(MemoryMapping.DOUBLE_BUFFER, s.memoryMapping)
+        assertEquals(MemoryMapping.PAGE_TABLE, s.memoryMapping)
         assertFalse(s.vSync)
         // Ronda 0.2.65 (R-P1-5): la variante ya no toca textureCache
         // (inerte en Vulkan): queda ON, como en el preset.
@@ -74,16 +77,20 @@ class LowRamProfileTest {
     }
 
     @Test
-    fun lowRamAlreadyConservativePresetIsUnchanged() {
+    fun lowRamOnG99RecommendedIsIdentity() {
+        // Ronda 0.2.66 (G11-01, decisión del coordinador): el preset
+        // G99 Recomendado ya es 1x + Bilinear + Page Table, así que la
+        // variante lowRam NO cambia nada: el primer arranque en 4 GB
+        // es idéntico al preset, sin divergencia que registrar (esto
+        // es lo que ya decía el KDoc de isLowRamConservativeVariant
+        // desde 0.2.65; la Fase 0 lo había roto al dejar Double
+        // Buffer en la variante mientras el preset pasaba a Page
+        // Table). La red de seguridad es G11-02 (effectiveMapping).
         val base = presetSettings(GpuProfileId.G99_RECOMMENDED)
         val s = applyLowRamDefaults(base)
-        assertEquals(1f, s.resolutionMultiplier, 0f)
-        assertEquals(ScreenFilter.BILINEAR, s.screenFilter)
-        // Ronda 0.2.65 (R-P1-5): el preset recomendado ya es
-        // conservador en TODO (la caché era lo único que cambiaba la
-        // variante y ya no la toca): lowRam no cambia NADA.
-        assertTrue(s.textureCache)
         assertEquals(base, s)
+        assertFalse(isLowRamConservativeVariant(s))
+        assertFalse(divergesFromPreset(s))
     }
 
     // R4-P0-9: el mismo preset daba 3 valores de texture-cache según el
@@ -130,10 +137,9 @@ class LowRamProfileTest {
         // Bilinear y queda registrado como divergencia conservadora
         // (no silenciosa): la UI lo muestra como "perfil
         // conservador" y el mensaje de detección lo dice. Ronda
-        // 0.2.65 (R-P1-5): sobre G99 Recomendado (1x) la variante ya
-        // es idéntica al preset y NO es divergencia (ver
-        // lowRamFirstBootOnG99RecommendedIsIdenticalToPreset en
-        // GpuProfileTest); el caso 2x es el que conserva el registro.
+        // 0.2.66 (G11-01): sobre G99 Recomendado la variante es
+        // identidad (ver lowRamOnG99RecommendedIsIdentity); el caso
+        // 2x es el que baja resolución además del resto.
         val firstBoot = applyLowRamDefaults(presetSettings(GpuProfileId.G99_QUALITY))
         assertEquals(1f, firstBoot.resolutionMultiplier, 0f)
         assertEquals(ScreenFilter.BILINEAR, firstBoot.screenFilter)
@@ -142,10 +148,18 @@ class LowRamProfileTest {
     }
 
     @Test
-    fun lowRamVariantOfAlreadyConservativePresetIsNotADivergence() {
-        // MALI_PERFORMANCE ya es conservador de por sí: lowRam no
-        // cambia nada y no hay divergencia que registrar.
-        val s = applyLowRamDefaults(presetSettings(GpuProfileId.MALI_PERFORMANCE))
+    fun lowRamOnMaliPerformanceIsIdentity() {
+        // Ronda 0.2.66 (G11-01, decisión del coordinador): MALI_PERFORMANCE
+        // ya es 1x + Bilinear + Page Table (el preset conservador por
+        // sí mismo), así que la variante lowRam es identidad: no hay
+        // divergencia que registrar. Esto es lo que ya decía el KDoc
+        // de isLowRamConservativeVariant ("si el preset ya es
+        // conservador de por sí, como MALI_PERFORMANCE, no hay
+        // divergencia que registrar").
+        val base = presetSettings(GpuProfileId.MALI_PERFORMANCE)
+        val s = applyLowRamDefaults(base)
+        assertEquals(MemoryMapping.PAGE_TABLE, s.memoryMapping)
+        assertEquals(base, s)
         assertFalse(isLowRamConservativeVariant(s))
         assertFalse(divergesFromPreset(s))
     }
