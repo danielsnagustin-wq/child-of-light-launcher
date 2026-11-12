@@ -135,13 +135,15 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                 // arranque; "perfil modificado" es cualquier otra
                 // divergencia (p. ej. una caché manual conservada al
                 // aplicar un preset). Cuando la caché de texturas
-                // difiere del preset se dice explícitamente: es la
-                // única diferencia real entre G99 Recomendado y Mali
-                // Rendimiento, y conservarla al aplicar un preset la
-                // puede borrar (ver preserveManualCacheChoices).
+                // difiere del preset se dice explícitamente en el
+                // aviso (es el campo que más se conserva a mano al
+                // aplicar un preset, ver preserveManualCacheChoices).
+                // Ronda 0.2.65 (R-P1-5): la caché ya NO es lo que
+                // hace conservadora a la variante lowRam (en Vulkan
+                // es inerte y la variante no la toca): el sufijo "para
+                // ahorrar memoria" se quitó.
                 val profileStatusText: String? = when {
-                    isLowRamConservativeVariant(s) -> "Perfil conservador (poca RAM)" +
-                        if (!s.textureCache) " — caché de texturas OFF para ahorrar memoria." else ""
+                    isLowRamConservativeVariant(s) -> "Perfil conservador (poca RAM)"
                     divergesFromPreset(s) -> {
                         val presetCache = presetSettings(s.activeProfile).textureCache
                         "Perfil modificado" +
@@ -264,7 +266,7 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                     cardTransparency = uiPrefs?.cardTransparency ?: CardTransparency.OPAQUE,
                 ) {
                     Text(
-                        "Proyecto independiente, sin afiliación con Ubisoft, Sony / PlayStation ni con los autores del emulador.",
+                        "Proyecto independiente, sin afiliación con Ubisoft, Sony / PlayStation ni con los autores del motor.",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = cardTextColor(dark),
