@@ -70,7 +70,12 @@ class SettingsRepository(private val context: Context) {
         val AUDIO_VOLUME = intPreferencesKey("audio_volume")
         val AUDIO_BACKEND = stringPreferencesKey("audio_backend")
         val NGS_ENABLE = booleanPreferencesKey("ngs_enable")
+        // Ronda 0.2.66: interruptor experimental Audio SDL (R1).
+        val EXP_AUDIO_SDL = booleanPreferencesKey("exp_audio_sdl")
         val SHOW_FPS = booleanPreferencesKey("show_fps_overlay")
+        // Ronda 0.2.66 (Fase L): perfil de frames (diagnóstico de
+        // lag). Mismo patrón que SHOW_FPS; OFF por defecto.
+        val FRAME_PROFILE = booleanPreferencesKey("frame_profile")
         val OVERLAY_DETAIL = stringPreferencesKey("performance_overlay_detail")
         val OVERLAY_POSITION = stringPreferencesKey("performance_overlay_position")
         val HASHLESS_TEXTURE_CACHE = booleanPreferencesKey("hashless_texture_cache")
@@ -133,7 +138,7 @@ class SettingsRepository(private val context: Context) {
             asyncPipelineCompilation = p[Keys.ASYNC] ?: true,
             highAccuracy = p[Keys.HIGH_ACCURACY] ?: false,
             surfaceSyncEnabled = p[Keys.SURFACE_SYNC] ?: false,
-            memoryMapping = runCatching { MemoryMapping.valueOf(p[Keys.MEMORY_MAPPING] ?: "DOUBLE_BUFFER") }.getOrDefault(MemoryMapping.DOUBLE_BUFFER),
+            memoryMapping = runCatching { MemoryMapping.valueOf(p[Keys.MEMORY_MAPPING] ?: "PAGE_TABLE") }.getOrDefault(MemoryMapping.PAGE_TABLE),
             textureCache = p[Keys.TEXTURE_CACHE] ?: true,
             shaderCache = p[Keys.SHADER_CACHE] ?: true,
             cpuOpt = p[Keys.CPU_OPT] ?: true,
@@ -143,7 +148,9 @@ class SettingsRepository(private val context: Context) {
             audioVolume = (p[Keys.AUDIO_VOLUME] ?: 100).coerceIn(0, 100),
             audioBackend = runCatching { com.danielsnagustin.childoflight.launcher.model.AudioBackend.valueOf(p[Keys.AUDIO_BACKEND] ?: "SDL") }.getOrDefault(com.danielsnagustin.childoflight.launcher.model.AudioBackend.SDL),
             ngsEnable = p[Keys.NGS_ENABLE] ?: true,
+            expAudioSdl = p[Keys.EXP_AUDIO_SDL] ?: false,
             showFpsOverlay = p[Keys.SHOW_FPS] ?: false,
+            frameProfile = p[Keys.FRAME_PROFILE] ?: false,
             performanceOverlayDetail = runCatching { PerformanceOverlayDetail.valueOf(p[Keys.OVERLAY_DETAIL] ?: "MINIMUM") }.getOrDefault(PerformanceOverlayDetail.MINIMUM),
             performanceOverlayPosition = runCatching { PerformanceOverlayPosition.valueOf(p[Keys.OVERLAY_POSITION] ?: "TOP_LEFT") }.getOrDefault(PerformanceOverlayPosition.TOP_LEFT),
             hashlessTextureCache = p[Keys.HASHLESS_TEXTURE_CACHE] ?: false,
@@ -237,7 +244,9 @@ class SettingsRepository(private val context: Context) {
             p[Keys.AUDIO_VOLUME] = settings.audioVolume.coerceIn(0, 100)
             p[Keys.AUDIO_BACKEND] = settings.audioBackend.name
             p[Keys.NGS_ENABLE] = settings.ngsEnable
+            p[Keys.EXP_AUDIO_SDL] = settings.expAudioSdl
             p[Keys.SHOW_FPS] = settings.showFpsOverlay
+            p[Keys.FRAME_PROFILE] = settings.frameProfile
             p[Keys.OVERLAY_DETAIL] = settings.performanceOverlayDetail.name
             p[Keys.OVERLAY_POSITION] = settings.performanceOverlayPosition.name
             p[Keys.HASHLESS_TEXTURE_CACHE] = settings.hashlessTextureCache
