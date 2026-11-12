@@ -142,6 +142,19 @@ class Vita3KLauncher(private val context: Context) {
         private set
 
     /**
+     * Ronda 0.2.66 (AUD-P2-2): true si en ESTE lanzamiento
+     * destroyStaleSessionIfIdle devolvió SESSION_ACTIVE (-4): la
+     * sesión anterior del núcleo no se pudo destruir y los ajustes
+     * cambiados (audio, GPU) puede que no se apliquen en esta
+     * partida. El ViewModel lo lee tras launch() para avisar de
+     * forma visible (además del log): "cierra la app por completo
+     * y vuelve a intentarlo". Se resetea al empezar cada launch().
+     */
+    @Volatile
+    var staleSessionWarning: Boolean = false
+        private set
+
+    /**
      * Log de instrumentación T1/T2 (ronda 0.2.64, H-4): añade
      * "(Xms desde JUGAR)" cuando se conoce el t0 del toque de JUGAR
      * (launchStartedAtMillis > 0, elapsedRealtime). Con 0 (llamador
@@ -591,6 +604,11 @@ class Vita3KLauncher(private val context: Context) {
      * medir: los hitos del arranque se registran sin ms. play() y
      * startBenchmark() lo pasan; los hitos (init, lista de apps,
      * loadGame, Activity) se registran con "(Xms desde JUGAR)".
+     * memoryMappingMask (opcional, ronda 0.2.66 G11-02): máscara de
+     * métodos de mapeo soportados por el driver (null/0 =
+     * desconocida: se deja el pedido). Solo se usa para el
+     * config.yml de repuesto de launchImpl; el llamador ya la pasa
+     * a su propia escritura de config.yml.
      */
     suspend fun launch(
         library: GameLibraryRepository,
@@ -602,12 +620,16 @@ class Vita3KLauncher(private val context: Context) {
         configAlreadyWritten: Boolean = false,
         prerequisites: Prerequisites? = null,
         launchStartedAtMillis: Long = 0L,
+        memoryMappingMask: Int? = null,
     ): LaunchOutcome {
+        // Ronda 0.2.66 (AUD-P2-2): el aviso de sesión obsoleta es del
+        // lanzamiento actual, no del anterior.
+        staleSessionWarning = false
         // BUG (auditoría): writeConfig (file.writeText) y checkPrerequisites
         // pueden lanzar IOException y tumbar la corrutina del ViewModel en
         // play()/startBenchmark(). El lanzamiento nunca debe lanzar.
         return try {
-            launchImpl(library, settings, sessionManager, gpu, onInstallProgress, benchmark, configAlreadyWritten, prerequisites, launchStartedAtMillis)
+            launchImpl(library, settings, sessionManager, gpu, onInstallProgress, benchmark, configAlreadyWritten, prerequisites, launchStartedAtMillis, memoryMappingMask)
         } catch (e: Throwable) {
             // Throwable (no solo Exception): en un teléfono de 4 GB, un
             // OutOfMemoryError durante la instalación del .pkg (1,14 GB)
@@ -662,6 +684,7 @@ class Vita3KLauncher(private val context: Context) {
         configAlreadyWritten: Boolean = false,
         prerequisites: Prerequisites? = null,
         launchStartedAtMillis: Long = 0L,
+        memoryMappingMask: Int? = null,
     ): LaunchOutcome {
         // R4-P0-8: un solo escaneo del juego por lanzamiento. Si el
         // llamador ya comprobó los prerrequisitos (startBenchmark), se
@@ -708,7 +731,7 @@ class Vita3KLauncher(private val context: Context) {
         val configFile = if (configAlreadyWritten) {
             File(library.vitaRoot, "config.yml")
         } else {
-            Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu)
+            Vita3kConfigGenerator.writeConfig(context, settings, library.vitaRoot, gpu, memoryMappingMask)
         }
         logTiming("launch", launchStartedAtMillis, "config.yml listo")
         // Turnip: el config.yml ya dice custom-driver-name, pero el
@@ -888,8 +911,14 @@ class Vita3KLauncher(private val context: Context) {
                 LauncherLog.append(context, "launch", "Sesión anterior del núcleo destruida; el próximo init re-lee config.yml")
             -2 ->
                 LauncherLog.append(context, "launch", "Sin sesión anterior que destruir antes de init")
-            Vita3kCoreBridge.SESSION_ACTIVE ->
+            Vita3kCoreBridge.SESSION_ACTIVE -> {
+                // Ronda 0.2.66 (AUD-P2-2): además del log, aviso
+                // VISIBLE: el usuario cambió ajustes (audio/GPU) y
+                // esta partida puede correr con los viejos. El
+                // ViewModel lo muestra tras launch() (staleSessionWarning).
+                staleSessionWarning = true
                 LauncherLog.append(context, "launch", "destroySession devolvió SESSION_ACTIVE (-4): la partida seguía activa o parándose; no se destruyó nada. Si los ajustes no se aplican, cierra la app por completo (matar el proceso) y vuelve a intentarlo.")
+            }
             else ->
                 LauncherLog.append(context, "launch", "destroySession devolvió $rc antes de init; se sigue con el lanzamiento (si la sesión vieja sigue, los ajustes nuevos pueden no aplicarse hasta matar el proceso).")
         }
