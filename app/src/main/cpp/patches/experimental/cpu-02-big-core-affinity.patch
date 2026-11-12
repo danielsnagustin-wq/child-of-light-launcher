@@ -1,0 +1,44 @@
+diff --git a/vita3k/kernel/src/kernel.cpp b/vita3k/kernel/src/kernel.cpp
+index fa6622990..c338e55c5 100644
+--- a/vita3k/kernel/src/kernel.cpp
++++ b/vita3k/kernel/src/kernel.cpp
+@@ -63,6 +63,39 @@ static int SDLCALL thread_function(void *data) {
+     ThreadParams params = *static_cast<const ThreadParams *>(data);
+     SDL_SignalSemaphore(params.host_may_destroy_params);
+     ThreadStatePtr thread = std::move(params.thread);
++#ifdef __ANDROID__
++    // Launcher 0.2.66, experimento CPU-02 (Fase 3): el primer hilo guest que
++    // arranca es el principal (lo crea el cargador antes que ningún otro) y
++    // se fija a la mitad alta de los núcleos que la app tiene permitidos.
++    // En big.LITTLE los núcleos grandes suelen ser los de número más alto
++    // (en el G99: 6-7 A76, 0-5 A55): VERIFICAR en el teléfono con
++    // Cpus_allowed antes de darlo por bueno. Solo afinidad
++    // (sched_setaffinity, permitido para los propios hilos); NO se toca la
++    // prioridad: subirla exige privilegios que la app no tiene y
++    // SDL_SetThreadPriority(HIGH) sería un no-op silencioso en Android.
++    // El flag es por proceso: si el mismo proceso lanza dos sesiones, solo
++    // la primera fija la afinidad (documentado; el launcher usa un proceso
++    // por lanzamiento).
++    static std::atomic<bool> main_thread_pinned{ false };
++    if (!main_thread_pinned.exchange(true)) {
++        cpu_set_t allowed{};
++        if (sched_getaffinity(0, sizeof(allowed), &allowed) == 0) {
++            const int n = CPU_COUNT(&allowed);
++            if (n > 2) {
++                cpu_set_t big{};
++                CPU_ZERO(&big);
++                int seen = 0;
++                for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
++                    if (!CPU_ISSET(cpu, &allowed))
++                        continue;
++                    if (++seen > n / 2)
++                        CPU_SET(cpu, &big);
++                }
++                sched_setaffinity(0, sizeof(big), &big);
++            }
++        }
++    }
++#endif
+ #ifdef TRACY_ENABLE
+     if (!thread->name.empty()) {
+         tracy::SetThreadName(thread->name.c_str());
