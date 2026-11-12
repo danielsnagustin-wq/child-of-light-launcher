@@ -61,6 +61,11 @@ import org.libsdl.app.SDLSurface
  *   queda como SEGUIMIENTO: exige el cambio de arquitectura
  *   completo (overlay dentro de EmuSurface como el oficial, dueño
  *   de todos los punteros en una sola vista) y no se hace aquí.
+ *   0.2.64 (D-P1-1): el caso con el primer dedo EN un control y el
+ *   segundo sobre un botón SÍ está resuelto, en el overlay
+ *   (encaminado manual del puntero a su botón, routedPointers):
+ *   lo que queda pendiente es SOLO este caso espejo (primer dedo
+ *   en zona vacía).
  * El modo por defecto es DIRECT_TOUCH, así que el título no depende
  * de esto; el reenvío sintético del modo JOYSTICK no se toca (solo
  * se protege: mientras hay un sintético en vuelo,
