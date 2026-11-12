@@ -25,11 +25,12 @@ import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 object GpuDetector {
 
     fun detect(context: Context): GpuInfo {
-        val (renderer, vendor, glesVersion) = readGlesStrings()
+        val gles = readGlesStrings()
+        val (renderer, vendor, glesVersion) = Triple(gles.renderer, gles.vendor, gles.version)
         val soc = socModel()
         val vulkanSupported = hasVulkan(context)
         val vulkanLabel = vulkanVersionLabel(context)
-        val detectedVendor = classify(renderer, vendor)
+        val detectedVendor = classify(renderer, vendor, soc)
         return GpuInfo(
             vendor = detectedVendor,
             renderer = renderer.ifBlank { "No detectado" },
@@ -38,25 +39,34 @@ object GpuDetector {
             socModel = soc,
             vulkanVersionLabel = vulkanLabel,
             vulkanSupported = vulkanSupported,
+            maxAnisotropy = gles.maxAnisotropy,
             detectedAtMillis = System.currentTimeMillis(),
         )
     }
 
-    fun classify(renderer: String, vendor: String): GpuVendor {
+    fun classify(renderer: String, vendor: String, socModel: String = ""): GpuVendor {
         val r = renderer.uppercase()
         val v = vendor.uppercase()
+        val soc = socModel.uppercase()
         return when {
             r.contains("ADRENO") || v.contains("QUALCOMM") -> GpuVendor.ADRENO
             // M24: antes bastaba vendor.contains("ARM") para ser Mali; cualquier
             // GPU ARM no-Mali se clasificaba mal. Ahora solo el renderer manda
             // (Mali/Immortalis); un vendor ARM con otro renderer es OTHER.
             r.contains("MALI") || r.contains("IMMORTALIS") -> GpuVendor.MALI
+            // Xclipse (Samsung/AMD RDNA, Exynos 2200/2400/1480/2600;
+            // ronda 0.2.64, H-02): renderer "Samsung Xclipse 920/940"
+            // (confirmado por el workaround de Chromium) o SoC Exynos
+            // como respaldo si algún driver reporta otro renderer. La
+            // rama va DESPUÉS de Mali: un Exynos con Mali (p. ej. 2100,
+            // Mali-G78) sigue siendo Mali por su renderer.
+            r.contains("XCLIPSE") || soc.contains("EXYNOS") -> GpuVendor.XCLIPSE
             // PowerVR (Imagination): renderer "PowerVR ..." o vendor
             // "Imagination Technologies". Sin perfil propio: cae en el
             // perfil Genérico seguro (defaultProfileFor).
             r.contains("POWERVR") || v.contains("IMAGINATION") -> GpuVendor.POWERVR
-            // Xclipse (Samsung/AMD), Apple, emuladores y resto: OTHER ->
-            // perfil Genérico seguro. No se inventa un perfil para ellos.
+            // Apple, emuladores y resto: OTHER -> perfil Genérico
+            // seguro. No se inventa un perfil para ellos.
             r.isBlank() -> GpuVendor.UNKNOWN
             else -> GpuVendor.OTHER
         }
@@ -101,19 +111,35 @@ object GpuDetector {
         }
     }
 
+    /** Strings GLES + anisotrópico máximo, leídos en un solo contexto EGL. */
+    private data class GlesStrings(
+        val renderer: String,
+        val vendor: String,
+        val version: String,
+        val maxAnisotropy: Int?,
+    )
+
     /**
      * Lee GL_RENDERER / GL_VENDOR / GL_VERSION con un contexto EGL pbuffer.
      * Devuelve strings vacíos si no se puede crear el contexto.
+     *
+     * Anisotrópico máximo (ronda 0.2.64, P2-2 Mali): GL_MAX_TEXTURE_
+     * MAX_ANISOTROPY_EXT (0x84FF), solo si el driver anuncia
+     * GL_EXT_texture_filter_anisotropic. Es el límite del muestreador
+     * del mismo silicio que el límite Vulkan (maxSamplerAnisotropy,
+     * renderer.cpp:1647-1650): el pin NO lo expone por JNI, así que
+     * esta lectura GLES es el tope que el launcher puede conocer sin
+     * tocar el pin. null si no se puede leer: sin él no hay clamp.
      */
-    private fun readGlesStrings(): Triple<String, String, String> {
+    private fun readGlesStrings(): GlesStrings {
         var display = EGL14.EGL_NO_DISPLAY
         var context = EGL14.EGL_NO_CONTEXT
         var surface = EGL14.EGL_NO_SURFACE
         try {
             display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
-            if (display == EGL14.EGL_NO_DISPLAY) return Triple("", "", "")
+            if (display == EGL14.EGL_NO_DISPLAY) return GlesStrings("", "", "", null)
             val version = IntArray(2)
-            if (!EGL14.eglInitialize(display, version, 0, version, 1)) return Triple("", "", "")
+            if (!EGL14.eglInitialize(display, version, 0, version, 1)) return GlesStrings("", "", "", null)
             val attribList = intArrayOf(
                 EGL14.EGL_RENDERABLE_TYPE, 4, // EGL_OPENGL_ES2_BIT
                 EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT,
@@ -126,22 +152,23 @@ object GpuDetector {
             val numConfigs = IntArray(1)
             if (!EGL14.eglChooseConfig(display, attribList, 0, configs, 0, 1, numConfigs, 0) ||
                 numConfigs[0] == 0 || configs[0] == null
-            ) return Triple("", "", "")
+            ) return GlesStrings("", "", "", null)
             val pbufferAttribs = intArrayOf(
                 EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE,
             )
             surface = EGL14.eglCreatePbufferSurface(display, configs[0], pbufferAttribs, 0)
-            if (surface == EGL14.EGL_NO_SURFACE) return Triple("", "", "")
+            if (surface == EGL14.EGL_NO_SURFACE) return GlesStrings("", "", "", null)
             val contextAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
             context = EGL14.eglCreateContext(display, configs[0], EGL14.EGL_NO_CONTEXT, contextAttribs, 0)
-            if (context == EGL14.EGL_NO_CONTEXT) return Triple("", "", "")
-            if (!EGL14.eglMakeCurrent(display, surface, surface, context)) return Triple("", "", "")
+            if (context == EGL14.EGL_NO_CONTEXT) return GlesStrings("", "", "", null)
+            if (!EGL14.eglMakeCurrent(display, surface, surface, context)) return GlesStrings("", "", "", null)
             val renderer = GLES20.glGetString(GLES20.GL_RENDERER) ?: ""
             val vendor = GLES20.glGetString(GLES20.GL_VENDOR) ?: ""
             val versionStr = GLES20.glGetString(GLES20.GL_VERSION) ?: ""
-            return Triple(renderer, vendor, versionStr)
+            val maxAnisotropy = readMaxAnisotropyFromGl()
+            return GlesStrings(renderer, vendor, versionStr, maxAnisotropy)
         } catch (_: Exception) {
-            return Triple("", "", "")
+            return GlesStrings("", "", "", null)
         } finally {
             try {
                 if (display != EGL14.EGL_NO_DISPLAY) {
@@ -153,6 +180,27 @@ object GpuDetector {
             } catch (_: Exception) {
                 // Limpieza best-effort; la detección ya devolvió su resultado.
             }
+        }
+    }
+
+    /**
+     * GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT (0x84FF) con el contexto EGL
+     * ya activo (solo la llama readGlesStrings). Sin la extensión
+     * GL_EXT_texture_filter_anisotropic no hay anisotrópico que
+     * limitar: null. El valor se trunca a entero (el driver devuelve
+     * float, p. ej. 16.0) y se limita a 1..16, que es lo que ofrece
+     * la UI: un valor mayor no cambia nada visible.
+     */
+    private fun readMaxAnisotropyFromGl(): Int? {
+        return try {
+            val extensions = GLES20.glGetString(GLES20.GL_EXTENSIONS) ?: ""
+            if (!extensions.contains("GL_EXT_texture_filter_anisotropic")) return null
+            val out = FloatArray(1)
+            GLES20.glGetFloatv(0x84FF, out, 0)
+            val max = out[0].toInt()
+            if (max < 1) null else minOf(max, 16)
+        } catch (_: Exception) {
+            null
         }
     }
 }
