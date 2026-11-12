@@ -36,7 +36,9 @@ class LowRamProfileTest {
         assertFalse(s.vSync)
         assertFalse(s.highAccuracy)
         assertFalse(s.surfaceSyncEnabled)
-        assertFalse(s.textureCache)
+        // Ronda 0.2.65 (R-P1-5): la variante ya no toca textureCache
+        // (inerte en Vulkan): queda ON, como en el preset.
+        assertTrue(s.textureCache)
         assertTrue(s.shaderCache)
     }
 
@@ -48,7 +50,9 @@ class LowRamProfileTest {
         assertEquals(1, s.anisotropicFiltering)
         assertEquals(MemoryMapping.DOUBLE_BUFFER, s.memoryMapping)
         assertFalse(s.vSync)
-        assertFalse(s.textureCache)
+        // Ronda 0.2.65 (R-P1-5): la variante ya no toca textureCache
+        // (inerte en Vulkan): queda ON, como en el preset.
+        assertTrue(s.textureCache)
         assertTrue(s.shaderCache)
     }
 
@@ -75,9 +79,11 @@ class LowRamProfileTest {
         val s = applyLowRamDefaults(base)
         assertEquals(1f, s.resolutionMultiplier, 0f)
         assertEquals(ScreenFilter.BILINEAR, s.screenFilter)
-        // Lo único que cambia en el preset recomendado es la caché de texturas.
-        assertFalse(s.textureCache)
-        assertEquals(base.copy(textureCache = false), s)
+        // Ronda 0.2.65 (R-P1-5): el preset recomendado ya es
+        // conservador en TODO (la caché era lo único que cambiaba la
+        // variante y ya no la toca): lowRam no cambia NADA.
+        assertTrue(s.textureCache)
+        assertEquals(base, s)
     }
 
     // R4-P0-9: el mismo preset daba 3 valores de texture-cache según el
@@ -93,10 +99,15 @@ class LowRamProfileTest {
     fun everyPresetHasExplicitTextureCacheValue() {
         assertTrue(presetSettings(GpuProfileId.G99_RECOMMENDED).textureCache)
         assertTrue(presetSettings(GpuProfileId.G99_QUALITY).textureCache)
-        assertFalse(presetSettings(GpuProfileId.MALI_PERFORMANCE).textureCache)
+        // Ronda 0.2.65 (R-P1-5): Mali Rendimiento también ON (antes
+        // false): en Vulkan la clave es inerte y ya no diferencia
+        // presets. El valor sigue siendo explícito por preset.
+        assertTrue(presetSettings(GpuProfileId.MALI_PERFORMANCE).textureCache)
         assertTrue(presetSettings(GpuProfileId.MALI_BALANCED).textureCache)
         assertTrue(presetSettings(GpuProfileId.ADRENO_PERFORMANCE).textureCache)
         assertTrue(presetSettings(GpuProfileId.ADRENO_QUALITY_TURNIP).textureCache)
+        // Ronda 0.2.65 (RG-P2-16): el 2x genérico también ON.
+        assertTrue(presetSettings(GpuProfileId.GENERIC_QUALITY).textureCache)
     }
 
     @Test
@@ -114,12 +125,18 @@ class LowRamProfileTest {
     }
 
     @Test
-    fun lowRamFirstBootIsRecordedAsConservativeDivergence() {
-        // Primer arranque en 4 GB: solo cambia la caché de texturas
-        // respecto al canónico, y queda registrado como divergencia
-        // conservadora (no silenciosa): la UI lo muestra como
-        // "perfil conservador" y el mensaje de detección lo dice.
-        val firstBoot = applyLowRamDefaults(presetSettings(GpuProfileId.G99_RECOMMENDED))
+    fun lowRamFirstBootOn2xPresetIsRecordedAsConservativeDivergence() {
+        // Primer arranque en 4 GB sobre un preset 2x: baja a 1x con
+        // Bilinear y queda registrado como divergencia conservadora
+        // (no silenciosa): la UI lo muestra como "perfil
+        // conservador" y el mensaje de detección lo dice. Ronda
+        // 0.2.65 (R-P1-5): sobre G99 Recomendado (1x) la variante ya
+        // es idéntica al preset y NO es divergencia (ver
+        // lowRamFirstBootOnG99RecommendedIsIdenticalToPreset en
+        // GpuProfileTest); el caso 2x es el que conserva el registro.
+        val firstBoot = applyLowRamDefaults(presetSettings(GpuProfileId.G99_QUALITY))
+        assertEquals(1f, firstBoot.resolutionMultiplier, 0f)
+        assertEquals(ScreenFilter.BILINEAR, firstBoot.screenFilter)
         assertTrue(isLowRamConservativeVariant(firstBoot))
         assertTrue(divergesFromPreset(firstBoot))
     }
