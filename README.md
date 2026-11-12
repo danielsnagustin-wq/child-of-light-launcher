@@ -501,6 +501,15 @@ Verificado contra el código público de Vita3K (master 3e43bc80,
 - El launcher es código propio (Kotlin/Compose). Vita3K es GPLv2;
   al embeber su núcleo habrá que cumplir la GPLv2
   (publicar el código del núcleo y sus modificaciones).
+- Parcheo del núcleo (0.2.66): dos mejoras tomadas del fork
+  **Vita3K-Plus** de nckstwrt (<https://github.com/nckstwrt/Vita3K-Plus>,
+  rama `all-enhancements`): invalidación de la caché JIT al recargar
+  un módulo (commit `839735d6`) y guarda del eye-plane en Mali
+  (commit `d8aa6f2b`). Los parches, con su origen, están en
+  `app/src/main/cpp/patches/` (`p3-jit-invalidate-on-module-reload.patch`
+  y `p5-eye-plane-mali-guard.patch`); el resto de parches de esa
+  carpeta son obra propia sobre el pin `3e43bc80`. Vita3K-Plus es
+  también GPLv2.
 - Child of Light © Ubisoft. UbiArt es tecnología cerrada de Ubisoft.
   Este launcher no incluye ni distribuye el juego, sus assets, el
   firmware de Vita ni claves. El usuario debe aportar su copia legal.
