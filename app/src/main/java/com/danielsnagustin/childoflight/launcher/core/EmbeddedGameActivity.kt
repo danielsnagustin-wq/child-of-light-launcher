@@ -7,11 +7,16 @@ import android.content.res.Configuration
 import android.hardware.input.InputManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
+import android.view.Choreographer
+import android.view.FrameMetrics
 import android.view.KeyEvent
 import android.view.Surface
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
@@ -192,6 +197,46 @@ class EmbeddedGameActivity : SDLActivity() {
     private var benchmarkMode: Boolean = false
     private var benchmarkJob: Job? = null
     private val benchmarkSamples = mutableListOf<Float>()
+
+    /**
+     * Ronda 0.2.66 (Fase L, INST-P0-2/INST-P0-3): perfil de frames.
+     * true mientras Choreographer + FrameMetrics + sondeo a 4 Hz
+     * están activos (ajuste `frame_profile` ON). Se arranca en
+     * onResume y se para en onPause; los agregados viven en
+     * FrameProfileStats y sobreviven a la pausa (el menú de pausa
+     * no reinicia la medición). `frameProfileStartedThisActivity`
+     * marca si ya se reseteó en esta Activity: un JUGAR nuevo
+     * (Activity nueva) empieza con contadores limpios, pero volver
+     * del menú de pausa no los borra.
+     */
+    private var frameProfileActive: Boolean = false
+    private var frameProfileJob: Job? = null
+    private var frameProfileStartedThisActivity: Boolean = false
+
+    /**
+     * Callback de vsync: registra el tick y se re-registra. Solo
+     * mide ticks de vsync del panel, NO frames presentados del
+     * juego (ver FrameProfileStats). `object :` en vez de lambda
+     * SAM para que el re-registro use `this` sin auto-referencia
+     * del campo en su propio inicializador.
+     */
+    private val frameProfileChoreographerCallback = object : Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            if (!frameProfileActive) return
+            FrameProfileStats.recordVsync(frameTimeNanos)
+            Choreographer.getInstance().postFrameCallback(this)
+        }
+    }
+
+    /**
+     * Oyente de métricas de Views: registra TOTAL_DURATION del
+     * overlay. Solo la UI: la superficie del juego no se ve aquí
+     * (ver FrameProfileStats).
+     */
+    private val frameProfileMetricsListener = Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
+        if (!frameProfileActive) return@OnFrameMetricsAvailableListener
+        FrameProfileStats.recordFrameMetrics(metrics.getMetric(FrameMetrics.TOTAL_DURATION) / 1_000_000.0)
+    }
     /**
      * Ronda 0.2.64 (H-4 tiempo de carga, T1/T2): t0 del toque de
      * JUGAR (elapsedRealtime), leído del extra del intent. 0 = sin
@@ -607,11 +652,12 @@ class EmbeddedGameActivity : SDLActivity() {
      * cada attach/rebind. En la práctica es equivalente: el launcher
      * no expone táctil trasero en ningún sitio, así que forzar
      * frontal solo fija el estado que el juego necesita, y el valor
-     * por defecto del flag no se pudo verificar (el módulo touch/ no
-     * está en el pin: touch/functions.h no existe ahí, solo se
-     * referencia desde input_overlay.cpp:117, y la definición de
-     * set_rear_touchscreen no aparece en ningún .cpp/.h del pin).
-     * No se toca el comportamiento sin evidencia de diferencia real.
+     * por defecto del flag no se pudo verificar. CORRECCIÓN ronda
+     * 0.2.66: el módulo touch/ SÍ está en el pin:
+     * vita3k/touch/include/touch/functions.h:21 declara
+     * set_rear_touchscreen (definida en touch.cpp:32) e
+     * input_overlay.cpp:26 la incluye. No se toca el
+     * comportamiento sin evidencia de diferencia real.
      */
     private fun maybeAttachOverlayController() {
         // R4-P1-2: cada early-return deja su motivo en el log. Antes
@@ -885,6 +931,9 @@ class EmbeddedGameActivity : SDLActivity() {
         checkDisplayRotation("onResume")
         // Ronda 0.2.65 (P0-3): watchdog de pantalla negra.
         maybeStartBlackScreenWatchdog()
+        // Ronda 0.2.66 (Fase L): perfil de frames (solo si el
+        // ajuste frame_profile está ON).
+        maybeStartFrameProfiling()
         // Ronda 0.2.65 (R-P1-18): la prueba de 30 s ya no
         // auto-arranca 5 s después de on_launch. Si el usuario ya
         // confirmó que está jugando, se reanuda el muestreo; si no,
@@ -996,6 +1045,9 @@ class EmbeddedGameActivity : SDLActivity() {
         // Soltar todo lo pulsado al pausar: sin botones atascados al volver.
         overlayView?.releaseAll()
         stopBenchmarkSamplingAndSave()
+        // Ronda 0.2.66 (Fase L): parar el perfil de frames al
+        // pausar (se reanuda en onResume; los agregados se conservan).
+        stopFrameProfiling()
         // R4-P2-15: el motivo de pausa BACKGROUND se fija ANTES de
         // super.onPause(), como el oficial (suspendForBackgroundIfNeeded
         // antes de super.onPause()): antes se fijaba después y el juego
@@ -1175,6 +1227,81 @@ class EmbeddedGameActivity : SDLActivity() {
                 Toast.makeText(this@EmbeddedGameActivity, "Prueba de 30 s completa.", Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    /**
+     * Ronda 0.2.66 (Fase L, INST-P0-2/INST-P0-3): arranca el perfil
+     * de frames si el ajuste `frame_profile` está ON: Choreographer
+     * (cadencia de vsync), FrameMetrics (tiempo del overlay Views)
+     * y sondeo a 4 Hz de getFps() + contador de presentados (gancho
+     * nº 1, INST-P0-3: presents/s frente a fps emulado). El sondeo a
+     * 4 Hz NO crea datos por frame: getFps() sigue siendo el
+     * agregado de 1 s del núcleo (INST-P2-1, constancia), así que
+     * 4 Hz solo suaviza la lectura. Una línea agregada por segundo
+     * al log (tag frameprof, throttle estructural de 1 s en
+     * FrameProfileStats). Sin núcleo no se arranca nada. La primera
+     * vez en esta Activity se resetean los contadores (un JUGAR
+     * nuevo mide limpio); volver del menú de pausa no los borra.
+     */
+    private fun maybeStartFrameProfiling() {
+        if (frameProfileActive) return
+        overlayScope.launch {
+            if (isFinishing) return@launch
+            val enabled = runCatching {
+                SettingsRepository(this@EmbeddedGameActivity).settingsFlow.first()
+            }.getOrNull()?.frameProfile ?: false
+            if (!enabled || !Vita3kCoreBridge.available) return@launch
+            if (frameProfileActive || isFinishing) return@launch
+            if (!frameProfileStartedThisActivity) {
+                FrameProfileStats.reset()
+                frameProfileStartedThisActivity = true
+            }
+            frameProfileActive = true
+            Choreographer.getInstance().postFrameCallback(frameProfileChoreographerCallback)
+            runCatching {
+                window.addOnFrameMetricsAvailableListener(
+                    frameProfileMetricsListener,
+                    Handler(Looper.getMainLooper()),
+                )
+            }
+            frameProfileJob = overlayScope.launch {
+                var ticks = 0
+                while (isActive && frameProfileActive) {
+                    val fps = runCatching { Vita3kCoreBridge.getFps() }.getOrDefault(-1f)
+                    if (fps > 0f) FrameProfileStats.recordEmulatedFps(fps)
+                    // Gancho nº 1 (INST-P0-3): presents/s junto a
+                    // getFps(), en el mismo tick: la comparación
+                    // emulado vs presentado es la prueba de pantalla
+                    // negra. -1 = sin núcleo o sin parche: se ignora
+                    // dentro de recordPresented.
+                    val presentedCount = runCatching { Vita3kCoreBridge.getPresentedFrameCount() }.getOrDefault(-1L)
+                    val presentedTimeNs = runCatching { Vita3kCoreBridge.getLastPresentTimeNs() }.getOrDefault(-1L)
+                    FrameProfileStats.recordPresented(presentedCount, presentedTimeNs)
+                    ticks++
+                    if (ticks % 4 == 0 && FrameProfileStats.shouldLogSummary(System.currentTimeMillis())) {
+                        appendLogAsync("frameprof", FrameProfileStats.summaryLine())
+                    }
+                    delay(250)
+                }
+            }
+            appendLogAsync("frameprof", "Perfil de frames activado (Fase L + gancho 1): cadencia de vsync + overlay Views + FPS emulado y presents/s a 4 Hz")
+        }
+    }
+
+    /**
+     * Ronda 0.2.66 (Fase L): para el perfil de frames (onPause y
+     * onDestroy). Quita el callback de Choreographer y el oyente de
+     * FrameMetrics: sin esto el callback retendría la Activity. Los
+     * agregados ya medidos se conservan en FrameProfileStats hasta
+     * el próximo JUGAR (o hasta que el reporte los lea).
+     */
+    private fun stopFrameProfiling() {
+        if (!frameProfileActive && frameProfileJob == null) return
+        frameProfileActive = false
+        frameProfileJob?.cancel()
+        frameProfileJob = null
+        Choreographer.getInstance().removeFrameCallback(frameProfileChoreographerCallback)
+        runCatching { window.removeOnFrameMetricsAvailableListener(frameProfileMetricsListener) }
     }
 
     /**
@@ -1431,6 +1558,10 @@ class EmbeddedGameActivity : SDLActivity() {
     }
 
     override fun onDestroy() {
+        // Ronda 0.2.66 (Fase L): quitar el callback de Choreographer
+        // y el oyente de FrameMetrics antes de cancelar el ámbito
+        // (el callback retendría la Activity).
+        stopFrameProfiling()
         // Soltar el overlay y el mando virtual antes de pedir el cierre.
         runCatching { inputManager?.unregisterInputDeviceListener(gamepadListener) }
         overlayView?.releaseAll()
@@ -1530,8 +1661,14 @@ class EmbeddedGameActivity : SDLActivity() {
                 LauncherLog.append(this, "launch", "Sesión del núcleo destruida al salir del juego; el próximo JUGAR re-lee config.yml")
             -2 ->
                 LauncherLog.append(this, "launch", "Sin sesión que destruir al salir del juego")
-            Vita3kCoreBridge.SESSION_ACTIVE ->
+            Vita3kCoreBridge.SESSION_ACTIVE -> {
                 LauncherLog.append(this, "launch", "destroySession devolvió SESSION_ACTIVE (-4) al salir: la partida seguía activa; no se destruyó nada. Si los ajustes no se aplican en el próximo JUGAR, cierra la app por completo (matar el proceso).")
+                // Ronda 0.2.66 (AUD-P2-2): aviso VISIBLE además del
+                // log. destroyScope es IO: el Toast va al hilo principal.
+                runOnUiThread {
+                    Toast.makeText(this, "La sesión anterior del núcleo no se pudo destruir: si los ajustes no se aplican en el próximo JUGAR, cierra la app por completo y vuelve a intentarlo.", Toast.LENGTH_LONG).show()
+                }
+            }
             else ->
                 LauncherLog.append(this, "launch", "destroySession al salir devolvió $rc")
         }
