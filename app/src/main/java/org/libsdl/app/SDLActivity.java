@@ -224,6 +224,18 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
 
     // This is what SDL runs in. It invokes SDL_main(), eventually
     protected static Thread mSDLThread;
+
+    /**
+     * Ronda 0.2.65 (R-P1-2): el hilo SDL viejo puede seguir vivo tras
+     * onDestroy (join con timeout de 1 s). El lanzador espera a que
+     * muera antes de abrir la Activity nueva; si aun así llega muerto,
+     * handleNativeState lo anula para crear uno nuevo en vez de llamar
+     * nativeResume() sobre un hilo muerto.
+     */
+    public static boolean isSDLThreadAlive() {
+        Thread t = mSDLThread;
+        return t != null && t.isAlive();
+    }
     protected static boolean mSDLMainFinished = false;
     protected static boolean mActivityCreated = false;
     private static SDLFileDialogState mFileDialogState = null;
@@ -856,6 +868,11 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         // Try a transition to resumed state
         if (mNextNativeState == NativeState.RESUMED) {
             if (mSurface.mIsSurfaceReady && (mHasFocus || mHasMultiWindow) && mIsResumedCalled) {
+                // Ronda 0.2.65 (R-P1-2): un hilo muerto no debe recibir
+                // nativeResume(): se anula para crear uno nuevo.
+                if (mSDLThread != null && !mSDLThread.isAlive()) {
+                    mSDLThread = null;
+                }
                 if (mSDLThread == null) {
                     // This is the entry point to the C app.
                     // Start up the C app thread and enable sensor input for the first time
