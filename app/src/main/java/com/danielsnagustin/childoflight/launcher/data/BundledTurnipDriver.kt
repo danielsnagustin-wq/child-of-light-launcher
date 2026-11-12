@@ -21,13 +21,26 @@ import java.util.zip.ZipFile
  *
  * Fuente oficial del binario (NO descargado, NO incluido):
  * K11MCH1/AdrenoToolsDrivers en GitHub, release v26.0.0 Revisión 8
- * (publicada 2026-01-08, Mesa 26.0.0-devel, commit base e9a83d530cce,
- * Vulkan 1.4.335). Activos de esa release: Turnip_v26.0.0_R8_Gmem.zip
- * y Turnip_v26.0.0_R8_Autotuner.zip (~2 MB por zip en releases
- * anteriores: 2,14 MB la v24.3.0 R5). Licencia del código: MIT (Mesa).
+ * (tag v26.0.0-rc08, publicada 2026-01-08T01:03:08Z, Mesa
+ * 26.0.0-devel, commit base e9a83d530cce, Vulkan 1.4.335). Activos
+ * de esa release: Turnip_v26.0.0_R8_Gmem.zip (3.478.156 bytes) y
+ * Turnip_v26.0.0_R8_Autotuner.zip. Licencia del código: MIT (Mesa).
  * Los drivers "Qualcomm v615/v840" de ese mismo repo NO son Mesa:
  * son binarios propietarios extraídos de otros dispositivos y NO se
  * pueden empaquetar como driver libre.
+ *
+ * SHA-256 VERIFICADO (ronda 0.2.64, 2026-11-11, calculado sobre el
+ * asset descargado de la release v26.0.0-rc08; no hay Turnip K11MCH1
+ * más nuevo que la R8: las releases posteriores — v840/v837 del
+ * 2026-01-14 — son drivers propietarios Qualcomm, no Turnip):
+ * Turnip_v26.0.0_R8_Gmem.zip = 3.478.156 bytes, SHA-256
+ * b60bffe2844a271cd293011de307fe06d28549bd5b93d03749b7c9f39af4114b.
+ * Layout VERIFICADO del zip: meta.json en la raíz (305 bytes,
+ * libraryName "vulkan.ad07xx.so", nombre "Mesa Turnip driver
+ * v26.0.0 - R8 GMEM", driverVersion "Vulkan 1.4.335", minApi 27) +
+ * vulkan.ad07xx.so (17.159.433 bytes). La validación estructural
+ * (meta.json en raíz + .so con el libraryName que declara) coincide
+ * con este layout real.
  *
  * Estado de esta integración: PREPARADA, sin binario. El archivo
  * esperado es `assets/drivers/turnip/Turnip_v26.0.0_R8_Gmem.zip`
@@ -52,17 +65,17 @@ import java.util.zip.ZipFile
  *   el juego (ver Vita3kCoreBridge + Vita3KLauncher). Este archivo
  *   NO carga ningún .so: solo selecciona, valida e instala el zip.
  * - La R8 es de enero de 2026 y ya no es la Turnip más reciente en
- *   general (otros constructores publican revisiones más nuevas).
- *   Antes de poner el binario hay que re-verificar cuál es la
- *   release vigente y su SHA-256, y rellenar EXPECTED_SHA256.
+ *   general (otros constructores publican revisiones más nuevas:
+ *   MrPurple T30, 2026-08-17; whitebelyash v32, 2026-09-19). NO se
+ *   cambia de constructor sin prueba en teléfono: la R8 sigue siendo
+ *   la verificada (SHA arriba). Si se cambia, hay que re-verificar
+ *   la release vigente y su SHA-256, y rellenar EXPECTED_SHA256.
  * - Un mismo zip estándar NO cubre todos los Adreno: hay variantes
- *   por generación (ver selectVariant). Sin el binario en mano no se
- *   puede confirmar el layout exacto del zip R8 (meta.json frente a
- *   metadata.json, subcarpeta vulkan/, nombre del .so); la
- *   validación es estricta a propósito y puede necesitar relajarse
- *   cuando se tenga el zip real. Si la validación rechaza el zip
- *   incluido, la instalación manual por selector sigue funcionando
- *   igual que hoy (sin validación).
+ *   por generación (ver selectVariant). El layout del zip R8 YA está
+ *   verificado (ver arriba): la validación estructural coincide con
+ *   el zip real. Si la validación rechaza el zip incluido, la
+ *   instalación manual por selector sigue funcionando igual que hoy
+ *   (sin validación).
  *
  * Este objeto es Kotlin puro (sin android.*) para poder probarlo en
  * tests unitarios de la JVM.
@@ -79,16 +92,16 @@ object BundledTurnipDriver {
     const val EXPECTED_FILE_NAME = "Turnip_v26.0.0_R8_Gmem.zip"
 
     /**
-     * SHA-256 (hex, minúsculas) del zip incluido exacto.
-     * VACÍO a propósito: sin el binario en mano no hay hash que poner.
-     * Mientras esté vacío, la validación es solo estructural (zip +
-     * meta.json + .so) y el log avisa. Al poner el binario, rellenar
-     * con el hash de la release descargada; entonces un zip distinto
-     * (otra revisión, corrupto, manipulado) se rechaza.
+     * SHA-256 (hex, minúsculas) del zip incluido exacto. Verificado
+     * 2026-11-11 contra el asset de la release v26.0.0-rc08
+     * (3.478.156 bytes; ver KDoc del objeto). Mientras el binario no
+     * esté en assets, la validación es solo estructural (zip +
+     * meta.json + .so) y el log avisa. Con el binario puesto, un zip
+     * distinto (otra revisión, corrupto, manipulado) se rechaza.
      */
-    const val EXPECTED_SHA256 = ""
+    const val EXPECTED_SHA256 = "b60bffe2844a271cd293011de307fe06d28549bd5b93d03749b7c9f39af4114b"
 
-    /** Tamaño máximo aceptado para el paquete (el zip real ronda 2 MB). */
+    /** Tamaño máximo aceptado para el paquete (el zip real son ~3,5 MB). */
     const val MAX_PACKAGE_BYTES: Long = 32L * 1024L * 1024L
 
     /** Variante incluida: build estándar Gmem de la R8 (6xx/7xx). */
@@ -105,8 +118,11 @@ object BundledTurnipDriver {
      *   varias veces; no se auto-instala a ciegas. El usuario puede
      *   seguir instalando un zip a mano con el selector.
      * - 8xx (810/825/829/830/840): null. La R8 lo marca "very beta
-     *   and hacky, use at your own risk" y lleva build aparte; el
-     *   zip estándar no es para estos.
+     *   and hacky, use at your own risk" y lleva build aparte
+     *   (turnip_a8xx.zip, 2.477.437 bytes, en la misma release
+     *   v26.0.0-rc08): NO incluido en la APK. El usuario puede seguir
+     *   instalando un zip a mano con el selector, pero no se
+     *   auto-instala.
      * - A32: null. Tiene edición especial aparte (turnip_A32).
      * - Mali / Immortalis / PowerVR / Xclipse / desconocido: null.
      *   Turnip no funciona fuera de Adreno.
@@ -142,7 +158,15 @@ object BundledTurnipDriver {
      * meta.json exista dentro del zip. Si EXPECTED_SHA256 está
      * relleno, el hash debe coincidir. No extrae nada.
      */
-    fun validatePackage(zipFile: File): Result<PackageInfo> {
+    /**
+     * Valida un zip de driver (estructura + SHA-256 si se conoce).
+     * [expectedSha256] es el hash esperado; por defecto
+     * EXPECTED_SHA256 (el del zip R8 real, verificado 2026-11-11):
+     * un zip estructuralmente válido pero con otro hash se rechaza.
+     * Los tests pasan "" para probar solo la estructura con zips
+     * falsos (su hash nunca coincide con el real).
+     */
+    fun validatePackage(zipFile: File, expectedSha256: String = EXPECTED_SHA256): Result<PackageInfo> {
         if (!zipFile.isFile) {
             return Result.failure(IllegalArgumentException("No existe el paquete de driver: ${zipFile.name}"))
         }
@@ -188,7 +212,7 @@ object BundledTurnipDriver {
                     else -> soEntries.sortedBy { it.name }.first().name.substringAfterLast('/')
                 }
                 val hash = sha256Hex(zipFile)
-                if (EXPECTED_SHA256.isNotBlank() && !hash.equals(EXPECTED_SHA256, ignoreCase = true)) {
+                if (expectedSha256.isNotBlank() && !hash.equals(expectedSha256, ignoreCase = true)) {
                     return Result.failure(IllegalArgumentException("El SHA-256 del paquete no coincide con el esperado."))
                 }
                 Result.success(PackageInfo(zipFile.name, libraryName, hash, size))
