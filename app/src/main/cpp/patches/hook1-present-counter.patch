@@ -1,0 +1,57 @@
+diff --git a/renderer/src/vulkan/screen_renderer.cpp b/renderer/src/vulkan/screen_renderer.cpp
+index 9e210c37..6423bf11 100644
+--- a/renderer/src/vulkan/screen_renderer.cpp
++++ b/renderer/src/vulkan/screen_renderer.cpp
+@@ -22,6 +22,8 @@
+ #include "vkutil/vkutil.h"
+ 
+ #include <cstdint>
++#include <atomic>
++#include <chrono>
+ #include <exception>
+ 
+ #ifdef _WIN32
+@@ -52,6 +54,27 @@ Java_org_vita3k_emulator_EmuSurface_setSurfaceStatus(JNIEnv *, jobject, jboolean
+ }
+ #endif
+ 
++// Ronda 0.2.66, gancho nº 1 de instrumentación Fase P (INST-P0-3 / R-P1-1):
++// contador de frames PRESENTADOS por el swapchain + timestamp del último.
++// presentKHR es el único punto donde un frame emulado se convierte en
++// frame visible; el FPS del núcleo (EmuEnvState::fps) solo cuenta frames
++// emulados. El puente del launcher lee estos dos valores por JNI
++// (runtime_bridge.cpp: nativeGetPresentedFrameCount /
++// nativeGetLastPresentTimeNs) y calcula presents/s. Reloj monotónico:
++// solo importan los deltas, no la época. No se usa get_emuenv(): los
++// contadores pertenecen al swapchain, no al EmuEnvState, y tocar su
++// layout por un contador sería más invasivo que este par de accesores.
++static std::atomic<uint64_t> presented_frame_count{ 0 };
++static std::atomic<uint64_t> last_present_time_ns{ 0 };
++
++extern "C" uint64_t vita3k_presented_frame_count() {
++    return presented_frame_count.load(std::memory_order_relaxed);
++}
++
++extern "C" uint64_t vita3k_last_present_time_ns() {
++    return last_present_time_ns.load(std::memory_order_relaxed);
++}
++
+ namespace renderer::vulkan {
+ 
+ namespace {
+@@ -561,6 +584,15 @@ void ScreenRenderer::swap_window() {
+         state.general_queue.submit(submit_info, fences[swapchain_image_idx]);
+         result = state.general_queue.presentKHR(&present_info);
+     }
++    if (result == vk::Result::eSuccess || result == vk::Result::eSuboptimalKHR) {
++        // Gancho nº 1 (0.2.66): un present real ocurrió (también con
++        // eSuboptimalKHR: la imagen se presentó y el swapchain se
++        // reconstruirá después). Con cualquier error no se cuenta.
++        presented_frame_count.fetch_add(1, std::memory_order_relaxed);
++        last_present_time_ns.store(
++            static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()),
++            std::memory_order_relaxed);
++    }
+     if (result == vk::Result::eSuboptimalKHR) {
+         need_rebuild = !surface_matches_window_size();
+     } else if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eErrorSurfaceLostKHR) {
