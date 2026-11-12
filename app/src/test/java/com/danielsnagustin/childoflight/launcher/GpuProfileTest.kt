@@ -60,10 +60,29 @@ class GpuProfileTest {
     }
 
     @Test
-    fun g99QualityPresetIs2xWithFsr() {
+    fun genericQualityPresetIs2xBilinear() {
+        // Ronda 0.2.65 (RG-P2-16): el 2x genérico para GPU sin perfil
+        // propio (Xclipse, PowerVR, OTHER, UNKNOWN). Mismos valores
+        // que G99 Calidad (2x, Bilinear, Double Buffer, sin HUD,
+        // Sistema) con etiqueta neutra: no se ofrece "G99 — Calidad"
+        // a quien no tiene un G99 (G-P2-6).
+        val s = presetSettings(GpuProfileId.GENERIC_QUALITY)
+        assertEquals(2f, s.resolutionMultiplier, 0.001f)
+        assertEquals("BILINEAR", s.screenFilter.name)
+        assertEquals("DOUBLE_BUFFER", s.memoryMapping.name)
+        assertEquals("SYSTEM", s.gpuDriver.name)
+        assertFalse(s.showFpsOverlay)
+        assertEquals(s, presetSettings(GpuProfileId.G99_QUALITY).copy(activeProfile = GpuProfileId.GENERIC_QUALITY))
+    }
+
+    @Test
+    fun g99QualityPresetIs2xWithBilinear() {
+        // Ronda 0.2.65 (R-P1-8): 2x con Bilinear, sin FSR: a 2x el FSR
+        // no ahorra un píxel (2 pasadas compute sobre la imagen ya
+        // renderizada) y puede caer en silencio a Bilinear.
         val s = presetSettings(GpuProfileId.G99_QUALITY)
         assertEquals(2f, s.resolutionMultiplier, 0.001f)
-        assertEquals("FSR", s.screenFilter.name)
+        assertEquals("BILINEAR", s.screenFilter.name)
     }
 
     @Test
@@ -73,9 +92,10 @@ class GpuProfileTest {
         assertEquals(1f, perf.resolutionMultiplier, 0.001f)
         assertEquals(1f, balanced.resolutionMultiplier, 0.001f)
         assertEquals("DOUBLE_BUFFER", perf.memoryMapping.name)
-        // Mali Rendimiento redefine su diferencia real: sin caché de
-        // texturas (libera RAM); Equilibrado la conserva.
-        assertEquals(false, perf.textureCache)
+        // Ronda 0.2.65 (R-P1-5): Mali Rendimiento ya NO se diferencia
+        // por la caché de texturas (inerte en Vulkan): ambos presets
+        // la llevan ON, igual que G99 Recomendado.
+        assertEquals(true, perf.textureCache)
         assertEquals(true, balanced.textureCache)
     }
 
@@ -230,8 +250,10 @@ class GpuProfileTest {
     fun profilesForListsSafePresetsPerGpu() {
         assertTrue(profilesFor(null).isEmpty())
         val adreno = GpuInfo(vendor = GpuVendor.ADRENO, renderer = "Adreno 730", vulkanSupported = true)
+        // Ronda 0.2.65 (G-P2-6): en Adreno SOLO presets Adreno.
+        // G99_RECOMMENDED se colaba antes (etiqueta de otro GPU).
         assertEquals(
-            listOf(GpuProfileId.ADRENO_PERFORMANCE, GpuProfileId.ADRENO_QUALITY_TURNIP, GpuProfileId.G99_RECOMMENDED),
+            listOf(GpuProfileId.ADRENO_PERFORMANCE, GpuProfileId.ADRENO_QUALITY_TURNIP),
             profilesFor(adreno),
         )
         assertEquals(
@@ -240,7 +262,7 @@ class GpuProfileTest {
         )
         val mali = GpuInfo(vendor = GpuVendor.MALI, renderer = "Mali-G710", vulkanSupported = true)
         assertEquals(listOf(GpuProfileId.MALI_PERFORMANCE, GpuProfileId.MALI_BALANCED), profilesFor(mali))
-        val safe = listOf(GpuProfileId.MALI_PERFORMANCE, GpuProfileId.MALI_BALANCED)
+        val safe = listOf(GpuProfileId.MALI_PERFORMANCE, GpuProfileId.MALI_BALANCED, GpuProfileId.GENERIC_QUALITY)
         assertEquals(safe, profilesFor(GpuInfo(vendor = GpuVendor.POWERVR, renderer = "PowerVR Rogue GE8320")))
         assertEquals(safe, profilesFor(GpuInfo(vendor = GpuVendor.XCLIPSE, renderer = "Samsung Xclipse 940")))
         assertEquals(safe, profilesFor(GpuInfo(vendor = GpuVendor.OTHER, renderer = "Apple A17")))
@@ -294,9 +316,10 @@ class GpuProfileTest {
         assertTrue(applied.showFpsOverlay)
         assertTrue(applied.hashlessTextureCache)
         assertTrue(applied.showCompileShaders)
-        // Los valores del preset sí se aplican: 2x con FSR.
+        // Los valores del preset sí se aplican: 2x con Bilinear
+        // (ronda 0.2.65, R-P1-8: ya no 2x con FSR).
         assertEquals(2f, applied.resolutionMultiplier, 0.001f)
-        assertEquals("FSR", applied.screenFilter.name)
+        assertEquals("BILINEAR", applied.screenFilter.name)
         assertEquals(GpuProfileId.G99_QUALITY, applied.activeProfile)
     }
 
@@ -304,45 +327,95 @@ class GpuProfileTest {
     fun preserveManualCacheChoicesWithNoCurrentKeepsPreset() {
         val applied = preserveManualCacheChoices(presetSettings(GpuProfileId.MALI_PERFORMANCE), null)
         assertEquals(presetSettings(GpuProfileId.MALI_PERFORMANCE), applied)
-        assertFalse(applied.textureCache)
+        // Ronda 0.2.65 (R-P1-5): Mali Rendimiento lleva la caché de
+        // texturas ON, igual que el resto de presets.
+        assertTrue(applied.textureCache)
     }
 
     @Test
-    fun lowRamFirstBootDoesNotPreserveFactoryCacheDefault() {
-        // Primer arranque en 4 GB: el current son los defaults de
-        // fábrica (caché ON) y la variante conservadora la apaga;
-        // conservarla la volvería a ON y rompería la cadena R4-P0-9.
+    fun lowRamFirstBootOnG99RecommendedIsIdenticalToPreset() {
+        // Ronda 0.2.65 (R-P1-5): la variante conservadora ya no toca
+        // textureCache (inerte en Vulkan) y era su ÚNICO cambio sobre
+        // G99 Recomendado: el primer arranque en 4 GB sobre ese preset
+        // es idéntico al preset. No hay divergencia que registrar (la
+        // UI ya no muestra "perfil conservador" por la caché) y el
+        // ajuste manual de la caché no se pierde por el camino lowRam.
         val firstBoot = applyLowRamDefaults(presetSettings(GpuProfileId.G99_RECOMMENDED))
+        assertEquals(presetSettings(GpuProfileId.G99_RECOMMENDED), firstBoot)
+        assertTrue(firstBoot.textureCache)
+        assertFalse(isLowRamConservativeVariant(firstBoot))
+        assertFalse(divergesFromPreset(firstBoot))
         val applied = preserveManualCacheChoices(firstBoot, LauncherSettings(), lowRam = true)
-        assertFalse(applied.textureCache)
-        assertTrue(isLowRamConservativeVariant(applied))
+        assertTrue(applied.textureCache)
+        assertFalse(divergesFromPreset(applied))
+    }
+
+    @Test
+    fun lowRamFirstBootOn2xPresetDropsTo1xAndDiverges() {
+        // Sobre un preset 2x la variante conservadora SÍ existe: baja
+        // a 1x con Bilinear y queda registrada como divergencia
+        // conservadora (la UI lo muestra como "perfil conservador").
+        val firstBoot = applyLowRamDefaults(presetSettings(GpuProfileId.G99_QUALITY))
+        assertEquals(1f, firstBoot.resolutionMultiplier, 0.001f)
+        assertEquals("BILINEAR", firstBoot.screenFilter.name)
+        assertTrue(firstBoot.textureCache)
+        assertTrue(isLowRamConservativeVariant(firstBoot))
+        assertTrue(divergesFromPreset(firstBoot))
+        val applied = preserveManualCacheChoices(firstBoot, LauncherSettings(), lowRam = true)
+        assertEquals(firstBoot, applied)
         assertTrue(divergesFromPreset(applied))
     }
 
     @Test
-    fun g99RecommendedAndMaliPerformanceDifferOnlyInTextureCache() {
-        // Verificado campo a campo: la única diferencia real entre
-        // ambos presets es textureCache (true frente a false).
-        val g99 = presetSettings(GpuProfileId.G99_RECOMMENDED)
-        val mali = presetSettings(GpuProfileId.MALI_PERFORMANCE)
-        assertEquals(g99.copy(textureCache = false), mali.copy(activeProfile = GpuProfileId.G99_RECOMMENDED))
-        assertTrue(g99.textureCache)
-        assertFalse(mali.textureCache)
+    fun driverOnlyChangeDoesNotCountAsDivergence() {
+        // Ronda 0.2.65 (G-P2-9): el driver es ortogonal al preset
+        // gráfico (tiene su propia sección y su propio estado). El
+        // Turnip incluido del primer arranque se instala encima del
+        // preset Rendimiento sin que la UI marque "Perfil modificado".
+        val adrenoWithTurnip = presetSettings(GpuProfileId.ADRENO_PERFORMANCE).copy(
+            gpuDriver = com.danielsnagustin.childoflight.launcher.model.GpuDriver.TURNIP,
+        )
+        assertFalse(divergesFromPreset(adrenoWithTurnip))
+        val g99WithTurnip = presetSettings(GpuProfileId.G99_RECOMMENDED).copy(
+            gpuDriver = com.danielsnagustin.childoflight.launcher.model.GpuDriver.TURNIP,
+        )
+        assertFalse(divergesFromPreset(g99WithTurnip))
+        // Un cambio gráfico SÍ sigue marcando divergencia.
+        assertTrue(divergesFromPreset(presetSettings(GpuProfileId.G99_RECOMMENDED).copy(resolutionMultiplier = 2f)))
     }
 
     @Test
-    fun maliPerformanceOverG99StateKeepsTextureCacheAndDiverges() {
+    fun g99RecommendedAndMaliPerformanceAreIdenticalExceptProfile() {
+        // Ronda 0.2.65 (R-P1-5): la caché de texturas era la ÚNICA
+        // diferencia entre ambos presets y ahora los dos la llevan
+        // ON: son el mismo preset en efecto (misma resolución, mismo
+        // filtro, mismo mapeo, mismas cachés). Mali Rendimiento sigue
+        // existiendo como entrada propia para Mali genérico (etiqueta
+        // y defaultProfileFor), pero ya no miente con una diferencia
+        // que no existe en el teléfono.
+        val g99 = presetSettings(GpuProfileId.G99_RECOMMENDED)
+        val mali = presetSettings(GpuProfileId.MALI_PERFORMANCE)
+        assertEquals(g99, mali.copy(activeProfile = GpuProfileId.G99_RECOMMENDED))
+        assertTrue(g99.textureCache)
+        assertTrue(mali.textureCache)
+    }
+
+    @Test
+    fun maliPerformanceOverG99StateKeepsTextureCacheAndMatchesPreset() {
         // Aplicar Mali Rendimiento con la caché manual ON conservada
-        // deja textureCache ON: el resultado coincide con G99 salvo
-        // la etiqueta, y ESO se ve como "Perfil modificado" (el aviso
-        // explícito obligatorio de R4-P1-13).
+        // deja textureCache ON. Ronda 0.2.65 (R-P1-5): los presets
+        // convergieron (Mali Rendimiento ya lleva la caché ON), así
+        // que el resultado COINCIDE con el preset y ya NO se ve como
+        // "Perfil modificado": el aviso explícito de R4-P1-13 ya no
+        // salta en este camino (sigue saltando cuando el manual sí
+        // difiere del preset, ver manualCacheToggleUnderQuality).
         val applied = preserveManualCacheChoices(
             presetSettings(GpuProfileId.MALI_PERFORMANCE),
             presetSettings(GpuProfileId.G99_RECOMMENDED),
         )
         assertTrue(applied.textureCache)
         assertEquals(GpuProfileId.MALI_PERFORMANCE, applied.activeProfile)
-        assertTrue(divergesFromPreset(applied))
+        assertFalse(divergesFromPreset(applied))
         assertFalse(isLowRamConservativeVariant(applied))
     }
 
@@ -359,16 +432,18 @@ class GpuProfileTest {
     }
 
     @Test
-    fun manualCacheToggleUnderRecommendedMatchesLowRamVariant() {
-        // Apagar la caché a mano bajo G99 Recomendado es
-        // indistinguible del primer arranque lowRam (en ese preset
-        // la caché es lo único que cambia la variante): el indicador
-        // muestra "Perfil conservador (poca RAM)". Ambigüedad ya
-        // documentada en R4-P0-9, no introducida aquí.
+    fun manualCacheToggleUnderRecommendedDivergesButIsNotLowRamVariant() {
+        // Apagar la caché a mano bajo G99 Recomendado diverge del
+        // preset, pero ya NO es la variante lowRam: ronda 0.2.65
+        // (R-P1-5) sacó textureCache de los campos de la variante
+        // (inerte en Vulkan) y la variante ya no toca la caché. La
+        // ambigüedad documentada en R4-P0-9 ("indistinguible del
+        // primer arranque lowRam") ya no existe: apagar la caché es
+        // ahora una divergencia manual normal, no conservadora.
         val manual = presetSettings(GpuProfileId.G99_RECOMMENDED).copy(textureCache = false)
         val applied = preserveManualCacheChoices(presetSettings(GpuProfileId.G99_RECOMMENDED), manual)
         assertFalse(applied.textureCache)
         assertTrue(divergesFromPreset(applied))
-        assertTrue(isLowRamConservativeVariant(applied))
+        assertFalse(isLowRamConservativeVariant(applied))
     }
 }
