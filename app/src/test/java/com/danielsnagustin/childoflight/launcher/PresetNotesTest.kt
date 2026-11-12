@@ -75,11 +75,15 @@ class PresetNotesTest {
         assertTrue(!note.contains("FSR"))
     }
 
+    // Ronda 0.2.66 (G11-01): el mapeo por defecto pasó a Page Table
+    // en Mali/G99, así que ADRENO_PERFORMANCE ya NO difiere de
+    // Recomendado en el mapeo: es idéntico en efecto (la única
+    // diferencia es la etiqueta, como Mali Rendimiento).
     @Test
-    fun adrenoPerformanceDiffersOnlyInPageTable() {
+    fun adrenoPerformanceIsIdenticalToRecommended() {
         val note = presetCompatibilityNote(GpuProfileId.ADRENO_PERFORMANCE)
-        assertTrue(note.contains("única diferencia"))
-        assertTrue(note.contains("Page Table"))
+        assertTrue(note.contains("igual que Recomendado"))
+        assertTrue(note.contains("Sin Turnip"))
     }
 
     @Test
@@ -94,14 +98,15 @@ class PresetNotesTest {
     // Ronda 0.2.64: VSync ON ya no cuenta (en Vulkan es inerte).
     // Ronda 0.2.65 (RG-P2-6): el HUD de FPS activado es la 6ª
     // diferencia del preset Turnip (antes eran 5).
+    // Ronda 0.2.66 (G11-01): Page Table ya NO es una diferencia
+    // (Recomendado también es Page Table): vuelven a ser 5.
     @Test
-    fun turnipQualityListsAllSixDifferences() {
+    fun turnipQualityListsAllFiveDifferences() {
         val note = presetCompatibilityNote(GpuProfileId.ADRENO_QUALITY_TURNIP)
-        assertTrue(note.contains("6 ajustes"))
+        assertTrue(note.contains("5 ajustes"))
         assertTrue(note.contains("2x"))
         assertTrue(note.contains("FXAA"))
         assertTrue(note.contains("4x"))
-        assertTrue(note.contains("Page Table"))
         assertTrue(note.contains("Turnip"))
         assertTrue(note.contains("HUD"))
         assertTrue(!note.contains("VSync ON"))
