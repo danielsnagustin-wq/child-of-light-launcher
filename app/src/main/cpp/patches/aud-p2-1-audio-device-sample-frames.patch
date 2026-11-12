@@ -66,3 +66,32 @@ index 7e4683b0..a074ec45 100644
      code(int, "sys-button", static_cast<int>(SCE_SYSTEM_PARAM_ENTER_BUTTON_CROSS), sys_button)          \
      code(int, "sys-lang", static_cast<int>(SCE_SYSTEM_PARAM_LANG_ENGLISH_US), sys_lang)                 \
      code(int, "sys-date-format", (int)SCE_SYSTEM_PARAM_DATE_FORMAT_MMDDYYYY, sys_date_format)           \
+diff --git a/config/include/config/state.h b/config/include/config/state.h
+--- a/config/include/config/state.h
++++ b/config/include/config/state.h
+@@ -78,6 +78,8 @@ struct CurrentConfig {
+         std::string audio_backend = "SDL";
+         int audio_volume = 100;
+         bool ngs_enable = true;
++        int audio_device_sample_frames = 512;
++        bool exp_audio_sdl = false;
+         bool pstv_mode = false;
+         std::string backend_renderer = "Vulkan";
+         int gpu_idx = 0;
+diff --git a/config/src/settings.cpp b/config/src/settings.cpp
+--- a/config/src/settings.cpp
++++ b/config/src/settings.cpp
+@@ -57,4 +57,6 @@ void copy_global_to_current(Config::CurrentConfig &current, const Config &cfg) {
+     current.audio_backend = cfg.audio_backend;
+     current.audio_volume = cfg.audio_volume;
+     current.ngs_enable = cfg.ngs_enable;
++    current.audio_device_sample_frames = cfg.audio_device_sample_frames;
++    current.exp_audio_sdl = cfg.exp_audio_sdl;
+     current.pstv_mode = cfg.pstv_mode;
+@@ -103,4 +103,6 @@ void copy_current_to_global(Config &cfg, const Config::CurrentConfig &current) {
+     cfg.audio_backend = current.audio_backend;
+     cfg.audio_volume = current.audio_volume;
+     cfg.ngs_enable = current.ngs_enable;
++    cfg.audio_device_sample_frames = current.audio_device_sample_frames;
++    cfg.exp_audio_sdl = current.exp_audio_sdl;
+     cfg.pstv_mode = current.pstv_mode;
