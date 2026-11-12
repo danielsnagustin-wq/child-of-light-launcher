@@ -1,0 +1,299 @@
+diff --git a/vita3k/mem/src/mem.cpp b/vita3k/mem/src/mem.cpp
+index da9de68d3..adbf8e1a2 100644
+--- a/vita3k/mem/src/mem.cpp
++++ b/vita3k/mem/src/mem.cpp
+@@ -231,6 +231,21 @@ bool debug_safe_write_guest(MemState &state, Address addr, const void *src, uint
+ #endif
+ }
+ 
++static void zero_shared_host_pages(MemState &state, Address addr, uint32_t size) {
++    if (state.host_page_size <= STANDARD_PAGE_SIZE)
++        return;
++    const uint32_t guests_per_host = state.host_page_size / STANDARD_PAGE_SIZE;
++    const uint64_t end = static_cast<uint64_t>(addr) + size;
++    for (uint64_t host_page = align_down(addr, state.host_page_size); host_page < end; host_page += state.host_page_size) {
++        const uint64_t first = std::max<uint64_t>(host_page, addr);
++        const uint64_t last = std::min<uint64_t>(host_page + state.host_page_size, end);
++        const uint32_t first_guest = static_cast<uint32_t>(host_page / STANDARD_PAGE_SIZE);
++        const uint32_t used = guests_per_host - state.allocator.free_slot_count(first_guest, first_guest + guests_per_host);
++        if (used > (last - first) / STANDARD_PAGE_SIZE)
++            std::memset(&state.memory[first], 0, last - first);
++    }
++}
++
+ static Address alloc_inner(MemState &state, uint32_t start_page, uint32_t page_count, const char *name, const bool force) {
+     int page_num;
+     if (force) {
+@@ -260,7 +275,7 @@ static Address alloc_inner(MemState &state, uint32_t start_page, uint32_t page_c
+     const int ret = mprotect(commit_ptr, commit_size, PROT_READ | PROT_WRITE);
+     LOG_CRITICAL_IF(ret == -1, "mprotect failed: {}", get_error_msg());
+ #endif
+-    std::memset(&state.memory[addr], 0, size);
++    zero_shared_host_pages(state, addr, size);
+ 
+     AllocMemPage &page = state.alloc_table[page_num];
+     assert(!page.allocated);
+diff --git a/vita3k/renderer/include/renderer/texture_cache.h b/vita3k/renderer/include/renderer/texture_cache.h
+index 5e292c601..b2b7e09eb 100644
+--- a/vita3k/renderer/include/renderer/texture_cache.h
++++ b/vita3k/renderer/include/renderer/texture_cache.h
+@@ -53,6 +53,7 @@ typedef std::array<uint32_t, 4> TextureGxmDataRepr;
+ struct TextureCacheInfo {
+     // scene in which this texture's contents were last hashed
+     uint64_t last_hash_scene = 0;
++    uint64_t last_use_frame = 0;
+     uint64_t hash = 0;
+     SceGxmTexture texture;
+     int index = 0;
+@@ -119,6 +120,7 @@ public:
+     bool use_protect = false;
+     // Scene the renderer is currently replaying
+     uint64_t current_scene = 0;
++    uint64_t current_frame = 0;
+     YUVConversionCache yuv_conversion_cache;
+     // use a separate sampler cache
+     bool use_sampler_cache = false;
+diff --git a/vita3k/renderer/include/renderer/vulkan/types.h b/vita3k/renderer/include/renderer/vulkan/types.h
+index 7fe19fe8d..315a3295d 100644
+--- a/vita3k/renderer/include/renderer/vulkan/types.h
++++ b/vita3k/renderer/include/renderer/vulkan/types.h
+@@ -63,16 +63,19 @@ struct VKTextureCache : public TextureCache {
+     VKState &state;
+ 
+     uint64_t release_all_cached_textures();
++    uint64_t release_idle_textures();
+ 
+     vk::DeviceSize memory_budget = 0;
+     // the budget the memory pressure check grows back to
+     vk::DeviceSize default_budget = 0;
+     vk::DeviceSize cached_bytes = 0;
++    vk::DeviceSize budget_floor = 0;
+     std::chrono::steady_clock::time_point next_memory_check{};
+     void release_image(TextureCacheEntry &entry);
+     void create_image(const vk::ImageCreateInfo &image_info);
++    void evict_entry(TextureCacheInfo &info, TextureCacheEntry &entry);
+     // evicts the least recently used images until the cached bytes plus incoming fit the budget, returns how many and their bytes
+-    std::pair<uint32_t, vk::DeviceSize> evict_to_budget(vk::DeviceSize incoming);
++    std::pair<uint32_t, vk::DeviceSize> evict_to_budget(vk::DeviceSize incoming, uint64_t min_age);
+     // evict down to three quarters of what is cached lower the budget to it and free what earlier frames released
+     void recover_texture_memory();
+     // once a second shrink the budget when the system's available memory is under an eighth of its RAM
+diff --git a/vita3k/renderer/src/texture/cache.cpp b/vita3k/renderer/src/texture/cache.cpp
+index f5c976133..53bbf1a79 100644
+--- a/vita3k/renderer/src/texture/cache.cpp
++++ b/vita3k/renderer/src/texture/cache.cpp
+@@ -1052,6 +1052,7 @@ void TextureCache::cache_and_bind_texture(const SceGxmTexture &gxm_texture, MemS
+     importing_texture = false;
+ 
+     // set the texture as the mru
++    info->last_use_frame = current_frame;
+     texture_queue.set_as_mru(info);
+ 
+     // retrieve the appropriate sampler if needed
+diff --git a/vita3k/renderer/src/vulkan/context.cpp b/vita3k/renderer/src/vulkan/context.cpp
+index fc6772d49..3a121ca1a 100644
+--- a/vita3k/renderer/src/vulkan/context.cpp
++++ b/vita3k/renderer/src/vulkan/context.cpp
+@@ -1075,6 +1075,7 @@ void new_frame(VKContext &context) {
+     context.last_frag_texture_count = ~0;
+ 
+     frame.frame_timestamp = context.frame_timestamp;
++    context.state.texture_cache.current_frame++;
+ }
+ 
+ void signal_sync_object(VKState &state, SceGxmSyncObject *sync_object, uint32_t timestamp) {
+diff --git a/vita3k/renderer/src/vulkan/renderer.cpp b/vita3k/renderer/src/vulkan/renderer.cpp
+index 1f54a93dd..e4a15ce3a 100644
+--- a/vita3k/renderer/src/vulkan/renderer.cpp
++++ b/vita3k/renderer/src/vulkan/renderer.cpp
+@@ -1027,6 +1027,9 @@ bool VKState::create(std::unique_ptr<renderer::State> &state, const Config &conf
+         if (supported_mapping_methods_mask > 1)
+             allocator_info.flags |= vma::AllocatorCreateFlagBits::eBufferDeviceAddress;
+ 
++        if (mem_diag::low_memory_device())
++            allocator_info.preferredLargeHeapBlockSize = MiB(64);
++
+         allocator = vma::createAllocator(allocator_info);
+         vkutil::init(allocator);
+     }
+@@ -1540,8 +1543,14 @@ void VKState::swap_window() {
+     // Android asked us to give memory back!
+     const int trim_level = memory_trim_level.exchange(-1, std::memory_order_relaxed);
+     if (trim_level >= 0) {
+-        device.waitIdle();
+-        const uint64_t freed = texture_cache.release_all_cached_textures();
++        constexpr int trim_ui_hidden = 20;
++        uint64_t freed = 0;
++        if (trim_level >= trim_ui_hidden) {
++            device.waitIdle();
++            freed = texture_cache.release_all_cached_textures();
++        } else {
++            freed = texture_cache.release_idle_textures();
++        }
+         LOG_WARN("[ANDROID MEMORY] trim level {}: released {} MiB of cached textures", trim_level, freed / (1024 * 1024));
+         dormant_trim_requested = true;
+         mem_diag::log_memory_snapshot("post-trim");
+diff --git a/vita3k/renderer/src/vulkan/texture.cpp b/vita3k/renderer/src/vulkan/texture.cpp
+index 37e428b1e..2f4c50086 100644
+--- a/vita3k/renderer/src/vulkan/texture.cpp
++++ b/vita3k/renderer/src/vulkan/texture.cpp
+@@ -63,6 +63,9 @@ static bool is_depth_stencil_compatible_format(SceGxmTextureBaseFormat format, b
+     }
+ }
+ 
++static constexpr uint64_t evict_min_age = MAX_FRAMES_RENDERING + 1;
++static constexpr uint64_t evict_min_age_after_idle = 2;
++
+ VKTextureCache::VKTextureCache(VKState &state)
+     : state(state) {}
+ 
+@@ -106,7 +109,7 @@ void VKTextureCache::create_image(const vk::ImageCreateInfo &image_info) {
+     // so make room by evicting the least recently used images
+     if (cached_bytes + current_texture->memory_needed > memory_budget) {
+         LOG_INFO_ONCE("Texture cache reached its {} MiB budget, evicting the least recently used textures", memory_budget / MiB(1));
+-        evict_to_budget(current_texture->memory_needed);
++        evict_to_budget(current_texture->memory_needed, evict_min_age);
+     }
+ 
+     vkutil::Image &image = current_texture->texture;
+@@ -128,7 +131,20 @@ void VKTextureCache::create_image(const vk::ImageCreateInfo &image_info) {
+     cached_bytes += allocation_info.size;
+ }
+ 
+-std::pair<uint32_t, vk::DeviceSize> VKTextureCache::evict_to_budget(const vk::DeviceSize incoming) {
++void VKTextureCache::evict_entry(TextureCacheInfo &info, TextureCacheEntry &entry) {
++    forget_content(info);
++    erase_key(info);
++    info.texture_size = 0;
++    info.dirty = false;
++    info.use_hash = false;
++    info.last_hash_scene = 0;
++    entry.texture.destroy();
++    cached_bytes -= entry.image_bytes;
++    entry.image_bytes = 0;
++    entry.memory_needed = 0;
++}
++
++std::pair<uint32_t, vk::DeviceSize> VKTextureCache::evict_to_budget(const vk::DeviceSize incoming, const uint64_t min_age) {
+     uint32_t evicted = 0;
+     vk::DeviceSize freed = 0;
+     for (auto *item = texture_queue.head->prev; cached_bytes + incoming > memory_budget && item != texture_queue.head; item = item->prev) {
+@@ -136,28 +152,39 @@ std::pair<uint32_t, vk::DeviceSize> VKTextureCache::evict_to_budget(const vk::De
+         TextureCacheEntry &entry = textures[info.index];
+         if (&entry == current_texture || !entry.texture.image)
+             continue;
++        if (current_frame - info.last_use_frame < min_age)
++            break;
+ 
+-        forget_content(info);
+-        erase_key(info);
+-        info.texture_size = 0;
+-        info.dirty = false;
+-        info.use_hash = false;
+-        info.last_hash_scene = 0;
+         freed += entry.image_bytes;
+-        release_image(entry);
+-        entry.memory_needed = 0;
++        evict_entry(info, entry);
+         evicted++;
+     }
+     return { evicted, freed };
+ }
+ 
++uint64_t VKTextureCache::release_idle_textures() {
++    uint64_t freed = 0;
++    for (auto *item = texture_queue.head->prev; item != texture_queue.head; item = item->prev) {
++        TextureCacheInfo &info = item->content;
++        TextureCacheEntry &entry = textures[info.index];
++        if (&entry == current_texture || !entry.texture.image)
++            continue;
++        if (current_frame - info.last_use_frame < evict_min_age)
++            break;
++
++        freed += entry.image_bytes;
++        evict_entry(info, entry);
++    }
++    return freed;
++}
++
+ void VKTextureCache::recover_texture_memory() {
+-    memory_budget = std::max<vk::DeviceSize>(MiB(256), cached_bytes * 3 / 4);
+-    evict_to_budget(current_texture->memory_needed);
++    memory_budget = std::max<vk::DeviceSize>(budget_floor, cached_bytes * 3 / 4);
+     state.device.waitIdle();
+     for (int i = 0; i < MAX_FRAMES_RENDERING; i++)
+         if (i != state.current_frame_idx)
+             state.frames[i].destroy_queue.destroy_objects();
++    evict_to_budget(current_texture->memory_needed, evict_min_age_after_idle);
+     LOG_WARN("Texture budget lowered to {} MiB ({} MiB cached)", memory_budget / MiB(1), cached_bytes / MiB(1));
+ }
+ 
+@@ -174,10 +201,11 @@ void VKTextureCache::relieve_memory_pressure() {
+     const vk::DeviceSize low = std::clamp<vk::DeviceSize>(total_kib * 1024 / 8, MiB(384), MiB(1536));
+     if (available < low) {
+         const vk::DeviceSize previous = memory_budget;
+-        memory_budget = std::max<vk::DeviceSize>(MiB(256), std::min(memory_budget, cached_bytes) * 3 / 4);
+-        const auto [evicted, freed] = evict_to_budget(0);
+-        LOG_WARN("[TEXMEM] system memory available {} MiB, below {} MiB: texture budget {} -> {} MiB, evicted {} textures ({} MiB), {} MiB cached",
+-            available / MiB(1), low / MiB(1), previous / MiB(1), memory_budget / MiB(1), evicted, freed / MiB(1), cached_bytes / MiB(1));
++        memory_budget = std::max<vk::DeviceSize>(budget_floor, std::min(memory_budget, cached_bytes) * 3 / 4);
++        const auto [evicted, freed] = evict_to_budget(0, evict_min_age);
++        if (memory_budget != previous)
++            LOG_WARN("[TEXMEM] system memory available {} MiB, below {} MiB: texture budget {} -> {} MiB, evicted {} textures ({} MiB), {} MiB cached",
++                available / MiB(1), low / MiB(1), previous / MiB(1), memory_budget / MiB(1), evicted, freed / MiB(1), cached_bytes / MiB(1));
+     } else if (memory_budget < default_budget && available > low + MiB(768)) {
+         memory_budget = std::min(default_budget, memory_budget + MiB(64));
+         LOG_INFO("[TEXMEM] system memory available {} MiB: texture budget back up to {} MiB", available / MiB(1), memory_budget / MiB(1));
+@@ -455,9 +483,11 @@ bool VKTextureCache::init(const bool hashless_texture_cache, const fs::path &tex
+     vk::DeviceSize heap_size = 0;
+     for (uint32_t i = 0; i < state.physical_device_memory.memoryHeapCount; i++)
+         heap_size = std::max(heap_size, state.physical_device_memory.memoryHeaps[i].size);
+-    memory_budget = std::clamp<vk::DeviceSize>(heap_size / 4, MiB(256), GiB(2));
++    const bool low_memory = mem_diag::low_memory_device();
++    budget_floor = low_memory ? MiB(128) : MiB(256);
++    memory_budget = std::clamp<vk::DeviceSize>(heap_size / (low_memory ? 16 : 4), budget_floor, GiB(2));
+     default_budget = memory_budget;
+-    LOG_INFO("Texture cache budget: {} MiB (largest memory heap {} MiB)", memory_budget / MiB(1), heap_size / MiB(1));
++    LOG_INFO("Texture cache budget: {} MiB (largest memory heap {} MiB{})", memory_budget / MiB(1), heap_size / MiB(1), low_memory ? ", low-memory device" : "");
+ 
+     return true;
+ }
+diff --git a/vita3k/util/include/util/mem_snapshot.h b/vita3k/util/include/util/mem_snapshot.h
+index aa16437c2..d5b5603e5 100644
+--- a/vita3k/util/include/util/mem_snapshot.h
++++ b/vita3k/util/include/util/mem_snapshot.h
+@@ -23,5 +23,6 @@ namespace mem_diag {
+ 
+ void log_memory_snapshot(const char *tag);
+ bool read_available_memory(uint64_t &available_kib, uint64_t &total_kib);
++bool low_memory_device();
+ 
+ } // namespace mem_diag
+diff --git a/vita3k/util/src/mem_snapshot.cpp b/vita3k/util/src/mem_snapshot.cpp
+index 406c3fe00..cbe793bf0 100644
+--- a/vita3k/util/src/mem_snapshot.cpp
++++ b/vita3k/util/src/mem_snapshot.cpp
+@@ -138,6 +138,12 @@ bool read_available_memory(uint64_t &available_kib, uint64_t &total_kib) {
+     return available_kib != UINT64_MAX && total_kib != UINT64_MAX;
+ }
+ 
++bool low_memory_device() {
++    uint64_t available_kib = 0;
++    uint64_t total_kib = 0;
++    return read_available_memory(available_kib, total_kib) && total_kib < 6ull * 1024 * 1024;
++}
++
+ } // namespace mem_diag
+ 
+ #else // !__linux__
+@@ -151,6 +157,10 @@ bool read_available_memory(uint64_t &, uint64_t &) {
+     return false;
+ }
+ 
++bool low_memory_device() {
++    return false;
++}
++
+ } // namespace mem_diag
+ 
+ #endif
