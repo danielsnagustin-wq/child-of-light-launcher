@@ -92,12 +92,25 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
         fun onProgress(percent: Int, status: String)
     }
 
-    private val callback = Vita3kCoreBridge.EmbeddedInstallCallback { percent, status ->
-        progressListener?.onProgress(percent, status)
-    }
-
-    @Volatile
-    private var progressListener: ProgressListener? = null
+    /**
+     * 0.2.64: el callback nativo se crea POR LLAMADA, capturando el
+     * [ProgressListener] de ESA instalación como parámetro local.
+     * Antes había UN solo callback de instancia que leía un campo
+     * compartido `progressListener` (con @Volatile): dos
+     * instalaciones concurrentes (p. ej. .pkg del juego + DLC en
+     * paralelo desde Vita3KLauncher) se pisaban el listener — el
+     * progreso de una llegaba al listener de la otra — y el finally
+     * de la primera lo ponía a null mientras la segunda seguía
+     * corriendo. No había llamador concurrente hoy (latente), pero
+     * el campo compartido era la única pieza que lo impedía: con el
+     * callback por llamada, cada instalación lleva su listener en su
+     * propio cierre y dos instalaciones concurrentes ya no se
+     * interfieren. Sin campo, sin @Volatile, sin finally que limpiar.
+     */
+    private fun installCallback(onProgress: ProgressListener): Vita3kCoreBridge.EmbeddedInstallCallback =
+        Vita3kCoreBridge.EmbeddedInstallCallback { percent, status ->
+            onProgress.onProgress(percent, status)
+        }
 
     /**
      * Sesión del núcleo lista para instalar (2026-11-07): las funciones
@@ -188,7 +201,9 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
             return Result.failure(IllegalStateException("El núcleo embebido no se pudo iniciar: no se puede instalar ${pkgFile.name}."))
         }
         return withContext(Dispatchers.IO) {
-            progressListener = onProgress
+            // 0.2.64: callback propio de ESTA llamada (ver installCallback):
+            // el progreso va a onProgress sin pasar por ningún campo compartido.
+            val callback = installCallback(onProgress)
             try {
                 // (P1-12) 1. Validar el work.bin ANTES de instalar, contra
                 // el Content ID de ESTE .pkg: un work.bin de otro juego
@@ -281,8 +296,6 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
                 Result.success(Unit)
             } catch (e: Exception) {
                 Result.failure(e)
-            } finally {
-                progressListener = null
             }
         }
     }
@@ -335,7 +348,7 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
             return Result.failure(IllegalStateException("El núcleo embebido no se pudo iniciar: no se puede instalar ${archiveFile.name}."))
         }
         return withContext(Dispatchers.IO) {
-            progressListener = onProgress
+            val callback = installCallback(onProgress)
             try {
                 val ok = Vita3kCoreBridge.installArchive(archiveFile.absolutePath, callback, forceReinstall)
                 if (!ok) {
@@ -345,8 +358,6 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
                 }
             } catch (e: Exception) {
                 Result.failure(e)
-            } finally {
-                progressListener = null
             }
         }
     }
@@ -367,7 +378,7 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
             return Result.failure(IllegalStateException("El núcleo embebido no se pudo iniciar: no se puede instalar el firmware."))
         }
         return withContext(Dispatchers.IO) {
-            progressListener = onProgress
+            val callback = installCallback(onProgress)
             try {
                 val version = Vita3kCoreBridge.installFirmware(pupFile.absolutePath, callback)
                 if (version.isEmpty()) {
@@ -392,8 +403,6 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
                 }
             } catch (e: Exception) {
                 Result.failure(e)
-            } finally {
-                progressListener = null
             }
         }
     }
