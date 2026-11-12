@@ -2,10 +2,12 @@ package com.danielsnagustin.childoflight.launcher
 
 import com.danielsnagustin.childoflight.launcher.data.GpuDetector
 import com.danielsnagustin.childoflight.launcher.model.GpuBackend
+import com.danielsnagustin.childoflight.launcher.model.GpuDriver
 import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
+import com.danielsnagustin.childoflight.launcher.model.apply60FpsMode
 import com.danielsnagustin.childoflight.launcher.model.applyLowRamDefaults
 import com.danielsnagustin.childoflight.launcher.model.applySafeMode
 import com.danielsnagustin.childoflight.launcher.model.defaultProfileFor
@@ -13,6 +15,7 @@ import com.danielsnagustin.childoflight.launcher.model.divergesFromPreset
 import com.danielsnagustin.childoflight.launcher.model.isLowRamConservativeVariant
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
 import com.danielsnagustin.childoflight.launcher.model.preserveManualCacheChoices
+import com.danielsnagustin.childoflight.launcher.model.profilesFor
 import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 import com.danielsnagustin.childoflight.launcher.model.shouldAutoRevertTo1x
 import org.junit.Assert.assertEquals
@@ -94,6 +97,79 @@ class GpuProfileTest {
         assertFalse(shouldAutoRevertTo1x(null, GpuProfileId.G99_QUALITY, true))
     }
 
+    // Ronda 0.2.64 (P1-3 Adreno + H-05): el auto-revert es por
+    // resolución EFECTIVA, no por id de perfil: cualquier 2x
+    // (Adreno Calidad/Turnip, o un 2x puesto a mano) revierte por
+    // debajo de 28 fps; un 1x nunca revierte.
+    @Test
+    fun autoRevertGeneralizedToAny2xProfile() {
+        assertTrue(shouldAutoRevertTo1x(27f, GpuProfileId.ADRENO_QUALITY_TURNIP, true))
+        assertFalse(shouldAutoRevertTo1x(28f, GpuProfileId.ADRENO_QUALITY_TURNIP, true))
+        assertFalse(shouldAutoRevertTo1x(20f, GpuProfileId.MALI_BALANCED, true))
+        assertFalse(shouldAutoRevertTo1x(20f, GpuProfileId.ADRENO_PERFORMANCE, true))
+        // Sobrecarga por resolución efectiva (2x manual sobre un perfil 1x).
+        assertTrue(shouldAutoRevertTo1x(27f, 2f, true))
+        assertFalse(shouldAutoRevertTo1x(27f, 1.5f, true))
+        assertFalse(shouldAutoRevertTo1x(27f, 1f, true))
+        assertFalse(shouldAutoRevertTo1x(27f, 2f, false))
+        assertFalse(shouldAutoRevertTo1x(null, 2f, true))
+    }
+
+    // Ronda 0.2.64 (P1-4 Adreno): el modo seguro neutraliza Turnip
+    // (driver del sistema) pero conserva el estado instalado para
+    // poder reactivarlo al salir.
+    @Test
+    fun safeModeNeutralizesTurnipButKeepsInstalledState() {
+        val withTurnip = LauncherSettings(
+            gpuDriver = GpuDriver.TURNIP,
+            turnipInstalled = true,
+            turnipVersion = "Turnip_v26.0.0_R8_Gmem",
+            customDriverName = "Turnip_v26.0.0_R8_Gmem",
+        )
+        val safe = applySafeMode(withTurnip)
+        assertEquals(GpuDriver.SYSTEM, safe.gpuDriver)
+        assertTrue(safe.turnipInstalled)
+        assertEquals("Turnip_v26.0.0_R8_Gmem", safe.customDriverName)
+        assertEquals("Turnip_v26.0.0_R8_Gmem", safe.turnipVersion)
+    }
+
+    // Ronda 0.2.64 (V-Sync): el modo 60 FPS YA NO fuerza vSync = true
+    // (en Vulkan es inerte; su único mecanismo real es fps-hack).
+    // Tampoco lo lleva el preset Adreno Calidad/Turnip.
+    @Test
+    fun sixtyFpsModeAndTurnipPresetDoNotForceVSync() {
+        assertFalse(apply60FpsMode(LauncherSettings(vSync = false)).vSync)
+        assertTrue(apply60FpsMode(LauncherSettings(vSync = false)).fpsHack)
+        assertFalse(presetSettings(GpuProfileId.ADRENO_QUALITY_TURNIP).vSync)
+    }
+
+    // Ronda 0.2.64 (H-07): isMaliG57 anclado a "MALI-G57": un "G57"
+    // suelto en otro renderer ya no casa.
+    @Test
+    fun isMaliG57AnchoredToMaliPrefix() {
+        assertTrue(GpuInfo(vendor = GpuVendor.MALI, renderer = "Mali-G57 MC2").isMaliG57)
+        assertTrue(GpuInfo(vendor = GpuVendor.MALI, renderer = "Mali G57 MP2").isMaliG57)
+        assertFalse(GpuInfo(vendor = GpuVendor.OTHER, renderer = "Foo G57").isMaliG57)
+        assertFalse(GpuInfo(vendor = GpuVendor.OTHER, renderer = "G57").isMaliG57)
+    }
+
+    // Ronda 0.2.64 (H-03): PowerVR por gama (DXT/CXTP = gama alta).
+    @Test
+    fun isPowerVrDxtDetectsHighEndPowerVr() {
+        assertTrue(GpuInfo(vendor = GpuVendor.POWERVR, renderer = "PowerVR DXT-48-1536").isPowerVrDxt)
+        assertTrue(GpuInfo(vendor = GpuVendor.POWERVR, renderer = "Imagination CXTP-48-1536").isPowerVrDxt)
+        assertFalse(GpuInfo(vendor = GpuVendor.POWERVR, renderer = "PowerVR Rogue GE8320").isPowerVrDxt)
+        assertFalse(GpuInfo(vendor = GpuVendor.MALI, renderer = "Mali-G57 MC2").isPowerVrDxt)
+    }
+
+    // Ronda 0.2.64 (P2-4 Mali): pasos intermedios de resolución que
+    // el núcleo acepta (resolution-multiplier es float sin límite).
+    @Test
+    fun resolutionLabelHasIntermediateSteps() {
+        assertEquals("1.25x (1200x680)", LauncherSettings(resolutionMultiplier = 1.25f).resolutionLabel)
+        assertEquals("1.5x (1440x816)", LauncherSettings(resolutionMultiplier = 1.5f).resolutionLabel)
+    }
+
     @Test
     fun safeModeForcesSafeValues() {
         val s = applySafeMode(LauncherSettings(resolutionMultiplier = 4f, highAccuracy = true))
@@ -125,10 +201,50 @@ class GpuProfileTest {
         val unknown = GpuInfo(vendor = GpuVendor.UNKNOWN, renderer = "No detectado", vulkanSupported = false)
         assertEquals(GpuProfileId.MALI_PERFORMANCE, defaultProfileFor(unknown))
         assertEquals(GpuVendor.UNKNOWN, GpuDetector.classify("", ""))
-        // Xclipse (Exynos/AMD) y resto: OTHER -> Mali seguro.
-        val other = GpuInfo(vendor = GpuVendor.OTHER, renderer = "Xclipse 920", vulkanSupported = true)
+        // Resto (Apple, emuladores): OTHER -> Mali seguro.
+        val other = GpuInfo(vendor = GpuVendor.OTHER, renderer = "Apple A17", vulkanSupported = true)
         assertEquals(GpuProfileId.MALI_PERFORMANCE, defaultProfileFor(other))
-        assertEquals(GpuVendor.OTHER, GpuDetector.classify("Xclipse 920", "Samsung"))
+        assertEquals(GpuVendor.OTHER, GpuDetector.classify("Apple A17", "Apple"))
+    }
+
+    // Ronda 0.2.64 (H-02): Xclipse (Samsung/AMD RDNA) tiene vendor
+    // propio: se clasifica por renderer "Xclipse" o por SoC Exynos,
+    // y su perfil por defecto es el Mali seguro (provisional, sin
+    // datos de teléfono todavía). Un Exynos con Mali sigue siendo
+    // Mali (la rama Mali va primero).
+    @Test
+    fun xclipseIsClassifiedAndGetsMaliSafeProfile() {
+        assertEquals(GpuVendor.XCLIPSE, GpuDetector.classify("Samsung Xclipse 920", "Samsung"))
+        assertEquals(GpuVendor.XCLIPSE, GpuDetector.classify("Samsung Xclipse 940", "Samsung"))
+        assertEquals(GpuVendor.XCLIPSE, GpuDetector.classify("Vulkan Device", "Samsung", "Exynos 2400"))
+        assertEquals(GpuVendor.MALI, GpuDetector.classify("Mali-G78", "ARM", "Exynos 2100"))
+        val gpu = GpuInfo(vendor = GpuVendor.XCLIPSE, renderer = "Samsung Xclipse 940", socModel = "Exynos 2400", vulkanSupported = true)
+        assertEquals(GpuProfileId.MALI_PERFORMANCE, defaultProfileFor(gpu))
+        assertEquals("Xclipse (Samsung Xclipse 940)", gpu.shortLabel)
+    }
+
+    // Ronda 0.2.64 (H-01): profilesFor — la lista de presets por GPU.
+    // Sin GPU no se ofrece nada; fuera de Adreno nunca se ofrece el
+    // preset Turnip; la rama genérica solo ofrece los dos seguros.
+    @Test
+    fun profilesForListsSafePresetsPerGpu() {
+        assertTrue(profilesFor(null).isEmpty())
+        val adreno = GpuInfo(vendor = GpuVendor.ADRENO, renderer = "Adreno 730", vulkanSupported = true)
+        assertEquals(
+            listOf(GpuProfileId.ADRENO_PERFORMANCE, GpuProfileId.ADRENO_QUALITY_TURNIP, GpuProfileId.G99_RECOMMENDED),
+            profilesFor(adreno),
+        )
+        assertEquals(
+            listOf(GpuProfileId.G99_RECOMMENDED, GpuProfileId.G99_QUALITY, GpuProfileId.MALI_BALANCED),
+            profilesFor(g99Gpu()),
+        )
+        val mali = GpuInfo(vendor = GpuVendor.MALI, renderer = "Mali-G710", vulkanSupported = true)
+        assertEquals(listOf(GpuProfileId.MALI_PERFORMANCE, GpuProfileId.MALI_BALANCED), profilesFor(mali))
+        val safe = listOf(GpuProfileId.MALI_PERFORMANCE, GpuProfileId.MALI_BALANCED)
+        assertEquals(safe, profilesFor(GpuInfo(vendor = GpuVendor.POWERVR, renderer = "PowerVR Rogue GE8320")))
+        assertEquals(safe, profilesFor(GpuInfo(vendor = GpuVendor.XCLIPSE, renderer = "Samsung Xclipse 940")))
+        assertEquals(safe, profilesFor(GpuInfo(vendor = GpuVendor.OTHER, renderer = "Apple A17")))
+        assertEquals(safe, profilesFor(GpuInfo(vendor = GpuVendor.UNKNOWN, renderer = "No detectado")))
     }
 
     @Test
