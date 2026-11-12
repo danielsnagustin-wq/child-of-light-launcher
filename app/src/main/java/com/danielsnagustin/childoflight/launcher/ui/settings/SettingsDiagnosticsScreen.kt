@@ -141,6 +141,13 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 SectionTitle("Prueba y diagnóstico")
                 SecondaryButton("GPU y diagnóstico (prueba de 30 s)", onClick = { onNavigate(Screen.GPU) })
                 NoteText("GPU detectada, núcleo, prueba de 30 s con registro de FPS, log reciente y reporte de bug: todo en GPU y diagnóstico.")
+                // Ronda 0.2.66 (Fase L, INST-P0-2/INST-P0-3): perfil
+                // de frames. Mide la cadencia de la pantalla, el
+                // tiempo del overlay y el FPS emulado mientras se
+                // juega (1 línea por segundo en el log). NO mide
+                // frames presentados: eso necesita el núcleo (Fase P).
+                SettingSwitch("Perfil de frames (diagnóstico de lag)", "Mide cadencia de pantalla, tiempo del overlay y FPS emulado mientras juegas. No mide frames presentados.", s.frameProfile) { vm.saveSettings(s.copy(frameProfile = it)) }
+                NoteText("Cómo usarlo: actívalo, juega 1 minuto en la zona donde se nota lento (no en el título) y al salir exporta el reporte de bug: trae la sección «Perfil de frames». Para medir el suelo de ruido del propio instrumento, deja el juego en pausa un minuto con el perfil activado.")
             }
             item {
                 SectionTitle("Corrección de errores")
