@@ -66,7 +66,16 @@ diff --git a/renderer/src/vulkan/texture.cpp b/renderer/src/vulkan/texture.cpp
 index ae3fa2d4..21d22324 100644
 --- a/renderer/src/vulkan/texture.cpp
 +++ b/renderer/src/vulkan/texture.cpp
-@@ -127,7 +127,15 @@ void sync_texture(VKContext &context, MemState &mem, std::size_t index, SceGxmTe
+@@ -21,7 +21,8 @@
+ #include <vulkan/vulkan_format_traits.hpp>
+ 
++#include <config/state.h>
+ #include <gxm/functions.h>
+ #include <gxm/types.h>
+ #include <renderer/functions.h>
+ #include <util/align.h>
+ #include <vkutil/vkutil.h>
+@@ -128,7 +128,15 @@ void sync_texture(VKContext &context, MemState &mem, std::size_t index, SceGxmTe
          // get the sampler now
          context.state.texture_cache.cache_and_bind_sampler(texture, is_depth_surface);
      } else {
