@@ -84,6 +84,15 @@ class EmuSurface(context: Context) : SDLSurface(context) {
     /** Overlay táctil buscado en la jerarquía de la ventana; cacheado mientras siga conectado. */
     private var overlayCache: GamepadOverlayView? = null
 
+    /**
+     * Ronda 0.2.65 (O-P2-4): último DOWN libre no duplicado, para
+     * descartar el segundo envío del mismo toque (menos de 100 ms,
+     * casi misma posición). -1 = aún no hubo ningún DOWN libre.
+     */
+    private var lastFreeDownEventTimeMillis: Long = -1L
+    private var lastFreeDownX: Float = TouchStats.NO_POSITION
+    private var lastFreeDownY: Float = TouchStats.NO_POSITION
+
     override fun surfaceCreated(holder: SurfaceHolder) {
         runCatching { setSurfaceStatus(true) }
             .onFailure {
@@ -93,16 +102,28 @@ class EmuSurface(context: Context) : SDLSurface(context) {
                 // reporte distingue "superficie sin avisar al núcleo"
                 // de otros negros. LauncherLog es un object público y
                 // se importa aquí igual que GamepadOverlayView, sin
-                // vía compartida nueva. Solo el set(true): el set(false)
-                // de surfaceDestroyed sigue solo con Log.w.
+                // vía compartida nueva. Ronda 0.2.65 (S-P2-5): el
+                // set(false) de surfaceDestroyed también queda en
+                // launcher.log (ver abajo).
                 LauncherLog.append(context, "surface", "setSurfaceStatus(true) falló: $it; el núcleo no presentará frames (superficie sin avisar al núcleo)")
             }
         super.surfaceCreated(holder)
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
+        // Ronda 0.2.65 (S-P2-5): el set(false) también queda en
+        // launcher.log, no solo en logcat: un reporte de bug tras un
+        // negro por superficie perdida muestra cuándo se apagó el
+        // flag. Una vez por destrucción de superficie, no es camino
+        // caliente: el append síncrono no cuesta nada aquí.
         runCatching { setSurfaceStatus(false) }
-            .onFailure { Log.w("EmuSurface", "setSurfaceStatus(false) falló: $it") }
+            .onSuccess {
+                LauncherLog.append(context, "surface", "setSurfaceStatus(false): superficie destruida; el núcleo dejará de presentar frames hasta la próxima superficie")
+            }
+            .onFailure {
+                Log.w("EmuSurface", "setSurfaceStatus(false) falló: $it")
+                LauncherLog.append(context, "surface", "setSurfaceStatus(false) falló: $it; el flag de superficie puede quedar encendido en el núcleo")
+            }
         super.surfaceDestroyed(holder)
     }
 
@@ -137,6 +158,27 @@ class EmuSurface(context: Context) : SDLSurface(context) {
                 }
             }
         }
+        // Ronda 0.2.65 (O-P2-4): el toque libre (DOWN) llega dos veces
+        // al juego por dos caminos (el overlay lo declina y la
+        // superficie lo vuelve a ofrecer). Si este DOWN es casi
+        // idéntico al anterior (mismo puntero, menos de 100 ms, casi
+        // misma posición), se descarta sin entregarlo a SDL ni
+        // contarlo. No se aplica a los reenvíos sintéticos (segundo
+        // dedo, zona de Igniculus): esos ya se cuentan en su origen y
+        // dos dedos pueden tocar el mismo punto a la vez.
+        // Contrapartida: un doble toque rapidísimo (menos de 100 ms)
+        // en el mismo punto pierde el segundo toque.
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && overlay?.forwardingSyntheticTouch != true) {
+            val downX = if (event.pointerCount > 0) event.getX(0) else TouchStats.NO_POSITION
+            val downY = if (event.pointerCount > 0) event.getY(0) else TouchStats.NO_POSITION
+            if (shouldDedupeFreeDown(event.eventTime, downX, downY, lastFreeDownEventTimeMillis, lastFreeDownX, lastFreeDownY)) {
+                Log.i("EmuSurface", "toque libre DOWN duplicado en ($downX, $downY) descartado (menos de 100 ms del anterior)")
+                return true
+            }
+            lastFreeDownEventTimeMillis = event.eventTime
+            lastFreeDownX = downX
+            lastFreeDownY = downY
+        }
         // 0.2.63 (D): el toque que llega aquí es táctil libre del
         // juego (el overlay ya lo declinó): se registra en TouchStats
         // para el reporte de bug. Los reenvíos sintéticos (segundo
@@ -155,7 +197,27 @@ class EmuSurface(context: Context) : SDLSurface(context) {
                         Log.w("EmuSurface", "toque libre DOWN en ($x, $y) PERDIDO (SDL no lo consumió)")
                     }
                 }
+                // Ronda 0.2.65 (M-P2-5): el 2.º dedo también cuenta:
+                // POINTER_DOWN/UP son toques libres nuevos, no MOVEs
+                // del primero. La posición es la del puntero que
+                // baja/sube (actionIndex), no la del puntero 0.
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    val pointerIndex = event.actionIndex
+                    val px = if (pointerIndex < event.pointerCount) event.getX(pointerIndex) else TouchStats.NO_POSITION
+                    val py = if (pointerIndex < event.pointerCount) event.getY(pointerIndex) else TouchStats.NO_POSITION
+                    if (TouchStats.recordFreeDown(delivered, px, py)) {
+                        Log.i("EmuSurface", "toque libre POINTER_DOWN en ($px, $py) entregado a SDL")
+                    } else if (!delivered) {
+                        Log.w("EmuSurface", "toque libre POINTER_DOWN en ($px, $py) PERDIDO (SDL no lo consumió)")
+                    }
+                }
                 MotionEvent.ACTION_UP -> TouchStats.recordFreeUp(delivered, x, y)
+                MotionEvent.ACTION_POINTER_UP -> {
+                    val pointerIndex = event.actionIndex
+                    val px = if (pointerIndex < event.pointerCount) event.getX(pointerIndex) else TouchStats.NO_POSITION
+                    val py = if (pointerIndex < event.pointerCount) event.getY(pointerIndex) else TouchStats.NO_POSITION
+                    TouchStats.recordFreeUp(delivered, px, py)
+                }
                 MotionEvent.ACTION_MOVE -> TouchStats.recordFreeMove(x, y)
             }
         }
@@ -208,3 +270,33 @@ internal fun shouldOfferDownToOverlayFirst(
  * JVM (FreeTouchRegressionTest).
  */
 internal fun shouldRecordFreeTouch(forwardingSyntheticTouch: Boolean): Boolean = !forwardingSyntheticTouch
+
+/**
+ * Ronda 0.2.65 (O-P2-4): ventana y radio del dedupe de DOWN libre.
+ * Menos de 100 ms y a menos de 20 px del DOWN anterior del mismo
+ * puntero = el mismo toque enviado dos veces. Valores ajustables:
+ * un doble toque legítimo más rápido que la ventana se pierde.
+ */
+private const val FREE_DOWN_DEDUPE_WINDOW_MS = 100L
+private const val FREE_DOWN_DEDUPE_RADIUS_PX = 20f
+
+/**
+ * Ronda 0.2.65 (O-P2-4): decisión pura del dedupe de DOWN libre
+ * (sin Views, probada en JVM en Ronda065SurfaceWatchdogTest). Sin
+ * DOWN anterior no hay duplicado; fuera de la ventana o lejos del
+ * punto anterior, es un toque nuevo.
+ */
+internal fun shouldDedupeFreeDown(
+    eventTimeMillis: Long,
+    x: Float,
+    y: Float,
+    lastEventTimeMillis: Long,
+    lastX: Float,
+    lastY: Float,
+): Boolean {
+    if (lastEventTimeMillis < 0 || lastX == TouchStats.NO_POSITION || lastY == TouchStats.NO_POSITION) return false
+    if (eventTimeMillis - lastEventTimeMillis >= FREE_DOWN_DEDUPE_WINDOW_MS) return false
+    val dx = x - lastX
+    val dy = y - lastY
+    return dx * dx + dy * dy < FREE_DOWN_DEDUPE_RADIUS_PX * FREE_DOWN_DEDUPE_RADIUS_PX
+}
