@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.sizeFractionForReferenceDp
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
@@ -73,6 +74,17 @@ enum class IgniculusMode(val label: String) { DIRECT_TOUCH("Toque directo"), JOY
 /**
  * Un control táctil del layout de Child of Light.
  * x/y son fracciones de la pantalla (0..1), size en dp, opacity 0..1.
+ * 0.2.64 (A-7): `sizeFraction` es el tamaño como FRACCIÓN de la
+ * altura del rect del juego (0..1): en el teléfono de referencia
+ * (1080x2340, densidad 2.80, juego 1080 px de alto) un stick de
+ * 174 dp es 0.4511 del alto. Con fracción, el tamaño escala con la
+ * pantalla en vez de quedarse en dp fijos calibrados para un solo
+ * teléfono. null = modo legado (sizeDp x densidad), que es lo que
+ * guardan los perfiles ya existentes y los controles que crea o
+ * redimensiona el usuario en el editor (el slider de tamaño pone
+ * sizeFraction a null: un tamaño editado a mano es dp, no fracción).
+ * Los perfiles de fábrica sí llevan fracción (ver
+ * TouchOverlayMapping.sizeFractionForReferenceDp).
  * - stick: stick izquierdo para Aurora (stickMode: analógico / D-Pad / ambos).
  * - button: botón asignable a cualquier botón de Vita (vitaButton).
  * - igniculus: zona táctil para la luciérnaga (modo toque directo o joystick, sensibilidad).
@@ -95,6 +107,14 @@ data class TouchControl(
     val igniculusMode: IgniculusMode = IgniculusMode.DIRECT_TOUCH,
     /** Sensibilidad de la zona Igniculus: 0.5 (lenta) .. 2.0 (rápida). */
     val sensitivity: Float = 1.0f,
+    /**
+     * 0.2.64 (A-7): tamaño como fracción de la altura del rect del
+     * juego (0..1). null = modo legado en dp ([sizeDp] x densidad).
+     * Campo 15 del formato de guardado (encodeControl): los perfiles
+     * viejos de 14 campos se leen con null (sin migrar: su tamaño en
+     * dp no cambia en ningún teléfono).
+     */
+    val sizeFraction: Float? = null,
 )
 
 data class ControlProfile(
@@ -208,12 +228,18 @@ data class ControlProfile(
  * default es btn_circle junto a la pausa, no el btn_b del rombo.
  */
 fun defaultTouchLayout(): List<TouchControl> = listOf(
-    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 174, 0.70f),
-    TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.914f, 0.576f, 86, 0.80f),
-    TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 1.012f, 0.752f, 87, 0.80f),
-    TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 52, 0.70f),
-    TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 41, 0.70f),
-    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 104, 0.25f, colorHex = "#7FB3D5"),
+    // 0.2.64 (A-7): cada control lleva ADEMÁS su tamaño como
+    // fracción del alto del juego (sizeFractionForReferenceDp):
+    // en el teléfono de referencia es exactamente el mismo tamaño
+    // en px que el dp de antes (stick 174 dp -> 487 px); en otra
+    // pantalla escala con el juego. sizeDp se conserva como
+    // referencia en dp (la muestra el slider del editor).
+    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 174, 0.70f, sizeFraction = sizeFractionForReferenceDp(174)),
+    TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.914f, 0.576f, 86, 0.80f, sizeFraction = sizeFractionForReferenceDp(86)),
+    TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 1.012f, 0.752f, 87, 0.80f, sizeFraction = sizeFractionForReferenceDp(87)),
+    TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 52, 0.70f, sizeFraction = sizeFractionForReferenceDp(52)),
+    TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 41, 0.70f, sizeFraction = sizeFractionForReferenceDp(41)),
+    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 104, 0.25f, colorHex = "#7FB3D5", sizeFraction = sizeFractionForReferenceDp(104)),
 )
 
 fun oneHandLayout(): List<TouchControl> = listOf(
@@ -229,12 +255,12 @@ fun oneHandLayout(): List<TouchControl> = listOf(
     // en 0 px y la espada-salto se solaparía ~7 px. Su geometría
     // compacta ya estaba bien a 82 dp (R7-P1-04: "En Una mano no
     // pasa").
-    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.70f, 174, 0.75f),
-    TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.83f, 0.63f, 77, 0.80f),
-    TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 0.91f, 0.79f, 77, 0.80f),
-    TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 52, 0.70f),
-    TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 41, 0.70f),
-    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.78f, 0.80f, 104, 0.25f, colorHex = "#7FB3D5"),
+    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.70f, 174, 0.75f, sizeFraction = sizeFractionForReferenceDp(174)),
+    TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.83f, 0.63f, 77, 0.80f, sizeFraction = sizeFractionForReferenceDp(77)),
+    TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 0.91f, 0.79f, 77, 0.80f, sizeFraction = sizeFractionForReferenceDp(77)),
+    TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 52, 0.70f, sizeFraction = sizeFractionForReferenceDp(52)),
+    TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 41, 0.70f, sizeFraction = sizeFractionForReferenceDp(41)),
+    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.78f, 0.80f, 104, 0.25f, colorHex = "#7FB3D5", sizeFraction = sizeFractionForReferenceDp(104)),
 )
 
 fun externalGamepadLayout(): List<TouchControl> = listOf(
@@ -244,12 +270,12 @@ fun externalGamepadLayout(): List<TouchControl> = listOf(
     // salto espejan el default nuevo (0.914/1.012, 92 dp), aunque
     // sigan ocultos: si el usuario los vuelve a mostrar, quedan
     // donde los deja el default.
-    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 174, 0.70f, visible = false),
-    TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.914f, 0.576f, 86, 0.80f, visible = false),
-    TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 1.012f, 0.752f, 87, 0.80f, visible = false),
-    TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 52, 0.70f),
-    TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 41, 0.70f, visible = false),
-    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 104, 0.25f, colorHex = "#7FB3D5"),
+    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 174, 0.70f, visible = false, sizeFraction = sizeFractionForReferenceDp(174)),
+    TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.914f, 0.576f, 86, 0.80f, visible = false, sizeFraction = sizeFractionForReferenceDp(86)),
+    TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 1.012f, 0.752f, 87, 0.80f, visible = false, sizeFraction = sizeFractionForReferenceDp(87)),
+    TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 52, 0.70f, sizeFraction = sizeFractionForReferenceDp(52)),
+    TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 41, 0.70f, visible = false, sizeFraction = sizeFractionForReferenceDp(41)),
+    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 104, 0.25f, colorHex = "#7FB3D5", sizeFraction = sizeFractionForReferenceDp(104)),
 )
 
 fun builtInProfiles(): List<ControlProfile> = listOf(
@@ -262,7 +288,8 @@ fun builtInProfiles(): List<ControlProfile> = listOf(
  * Perfiles de control guardados en DataStore.
  * Formato: perfiles separados por "\n###\n"; cada perfil es
  * "id|nombre|isBuiltIn\n<controles>"; controles separados por ";"
- * y con 14 campos separados por "|". Los nombres se sanejan
+ * y con 15 campos separados por "|" (0.2.64, A-7: el 15º es
+ * sizeFraction, vacío = null). Los nombres se sanejan
  * (sin |, ;, # ni saltos de línea) al guardar.
  * Compatible hacia atrás: el formato antiguo de 7 campos por control
  * se lee con valores por defecto para los campos nuevos.
@@ -1258,6 +1285,12 @@ class TouchLayoutRepository(private val context: Context) {
             c.xFraction.toString(), c.yFraction.toString(), c.sizeDp.toString(),
             c.opacity.toString(), sanitizeField(c.colorHex), c.shape.name, c.visible.toString(),
             c.stickMode.name, c.igniculusMode.name, c.sensitivity.toString(),
+            // 0.2.64 (A-7): campo 15, la fracción de tamaño; vacío =
+            // null (modo dp). Los decodificadores viejos ignoran los
+            // campos de más, así que un perfil nuevo no se corrompe
+            // al leerlo una versión anterior (pierde la fracción y
+            // usa sizeDp, que sigue guardado).
+            c.sizeFraction?.toString() ?: "",
         ).joinToString("|")
 
         /**
@@ -1337,6 +1370,10 @@ class TouchLayoutRepository(private val context: Context) {
                         stickMode = runCatching { StickMode.valueOf(p[11]) }.getOrNull() ?: StickMode.ANALOG,
                         igniculusMode = runCatching { IgniculusMode.valueOf(p[12]) }.getOrNull() ?: IgniculusMode.DIRECT_TOUCH,
                         sensitivity = finiteFloat(p[13], 1.0f),
+                        // 0.2.64 (A-7): campo 15 opcional; los perfiles
+                        // de 14 campos (o con el campo vacío) quedan
+                        // en null = modo dp.
+                        sizeFraction = p.getOrNull(14)?.toFloatOrNull()?.takeIf { it.isFinite() && it > 0f },
                     )
                 } else if (p.size >= 8) {
                     // M28: formato intermedio (8-13 campos): los campos
@@ -1389,6 +1426,9 @@ class TouchLayoutRepository(private val context: Context) {
                 opacity = parsed.opacity.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0.8f,
                 colorHex = normalizePaletteColor(parsed.colorHex),
                 sensitivity = parsed.sensitivity.takeIf { it.isFinite() }?.coerceIn(0.5f, 2.0f) ?: 1.0f,
+                // 0.2.64 (A-7): la fracción fuera de rango no puede
+                // hacer gigante ni invisible el botón.
+                sizeFraction = parsed.sizeFraction?.takeIf { it.isFinite() }?.coerceIn(0.01f, 1f),
             )
         }
 
