@@ -95,10 +95,10 @@ object Vita3kConfigGenerator {
         sb.appendLine("# config.yml generado por Child of Light Launcher")
         sb.appendLine("# Perfil activo: ${s.activeProfile.label}")
         if (settings.safeMode) {
-            sb.appendLine("# MODO SEGURO activo: 1x, SDL, High Accuracy OFF.")
+            sb.appendLine("# MODO SEGURO activo: 1x, SDL, High Accuracy OFF, driver del sistema (Turnip neutralizado).")
         }
         if (s.fpsHack) {
-            sb.appendLine("# Modo 60 FPS activo: fps-hack + paquete rápido (1x, VSync ON, Double Buffer, cachés ON). Se revierte apagando el interruptor en Ajustes.")
+            sb.appendLine("# Modo 60 FPS activo: fps-hack + paquete rápido (1x, Double Buffer, cachés ON). El único mecanismo real del modo es fps-hack (VSync no se fuerza: en Vulkan es inerte). Se revierte apagando el interruptor en Ajustes.")
         }
         sb.appendLine("# Fuente de claves: config.h del núcleo (pin 3e43bc80, 2026-11-07).")
         sb.appendLine("# No se inventan claves: solo se emiten las verificadas en config.h.")
@@ -123,7 +123,19 @@ object Vita3kConfigGenerator {
         // por defecto; en OpenGL sí tiene efecto (el usuario puede
         // activarlo en Ajustes).
         sb.appendLine("v-sync: ${s.vSync}")
-        sb.appendLine("anisotropic-filtering: ${s.anisotropicFiltering}")
+        // Ronda 0.2.64 (P2-2 Mali): anisotrópico limitado al máximo
+        // del dispositivo (GpuInfo.maxAnisotropy, leído por GLES en
+        // la detección): el núcleo NO lo limita (set_anisotropic_
+        // filtering solo asigna, renderer.cpp:1651-1653) y el valor va
+        // crudo a VkSamplerCreateInfo.maxAnisotropy (texture.cpp:588):
+        // por encima del límite del dispositivo es uso inválido de
+        // Vulkan. Sin máximo conocido no se limita nada (la UI ya
+        // ofrece como mucho 16x).
+        val aniso = gpu?.maxAnisotropy?.let { minOf(s.anisotropicFiltering, it) } ?: s.anisotropicFiltering
+        if (aniso != s.anisotropicFiltering) {
+            sb.appendLine("# Anisotrópico limitado al máximo del dispositivo (${gpu?.maxAnisotropy}x): el ajuste pedía ${s.anisotropicFiltering}x.")
+        }
+        sb.appendLine("anisotropic-filtering: $aniso")
         sb.appendLine("async-pipeline-compilation: ${s.asyncPipelineCompilation}")
         sb.appendLine("high-accuracy: ${s.highAccuracy}")
         // disable-surface-sync es el inverso de surfaceSyncEnabled.
