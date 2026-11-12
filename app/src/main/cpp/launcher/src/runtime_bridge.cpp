@@ -70,9 +70,9 @@ static bool prepare_frontend_runtime() {
     SDL_SetMainReady();
 
     // R5-A3-4: la versión es un literal manual: subirla con cada
-    // release (0.2.63). Mejora futura: generarla desde
+    // release (0.2.65). Mejora futura: generarla desde
     // BuildConfig.VERSION_NAME pasándola por JNI a prepareFrontend.
-    SDL_SetAppMetadata("Child of Light Launcher", "0.2.63",
+    SDL_SetAppMetadata("Child of Light Launcher", "0.2.65",
                        "com.danielsnagustin.childoflight.launcher");
 
     if (SDL_WasInit(SDL_INIT_CAMERA) & SDL_INIT_CAMERA)
@@ -223,6 +223,15 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeLoadG
 #endif
 }
 
+// Ronda 0.2.65 (R-P1-1): este FPS cuenta frames EMULADOS, no
+// presentados en pantalla. emuenv->fps se calcula de frame_count,
+// que se incrementa en sceDisplaySetFrameBuf cuando el juego entrega
+// un framebuffer al emulador, ANTES del render Vulkan: con pantalla
+// negra por superficie perdida, fps es mayor que 0 igualmente. T2 y
+// la prueba de 30 s del launcher usan este valor y NO prueban que el
+// juego se vea (el launcher lo dice así en sus registros). La señal
+// correcta (frames presentados por el swapchain) necesita un contador
+// nuevo en el pin expuesto por JNI; no se inventa aquí.
 extern "C" JNIEXPORT jfloat JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetFps(
     JNIEnv * /* env */, jobject /* thiz */) {
