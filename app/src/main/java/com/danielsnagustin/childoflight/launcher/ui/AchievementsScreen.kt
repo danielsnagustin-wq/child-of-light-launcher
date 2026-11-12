@@ -283,7 +283,20 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             // R9-P2-03: ColAccent fijo ilegible en tema
                             // claro (~1.7:1 sobre surfaceVariant); en
                             // claro azul lavanda #6578B8. Texto intacto.
-                            Text("⚠ Puede no desbloquearse sin la función online de Vita (enviar Oculi a un amigo).", style = MaterialTheme.typography.bodySmall, color = if (isDarkUi(uiPrefs)) ColAccent else ColLavenderBlue)
+                            // 0.2.64: el texto decía "sin la función
+                            // online de Vita (enviar Oculi a un amigo)"
+                            // como si esa función existiera en Vita y
+                            // bastara con conectarse: es engañoso. En
+                            // la lista Vita de 20 ningún trofeo tiene
+                            // onlineRequired (Achievements.kt): enviar
+                            // Oculi a un amigo solo existía en Xbox One
+                            // / PC, con los servidores cerrados, y ese
+                            // trofeo no está en Vita. La rama queda
+                            // como aviso defensivo por si la lista
+                            // cambia, con el texto exacto: si alguna
+                            // vez un trofeo lo necesita, NO se puede
+                            // desbloquear en Vita.
+                            Text("⚠ Necesita la función online de Vita (enviar Oculi a un amigo), que no existe en esta versión: el trofeo online solo estaba en Xbox One / PC, con los servidores cerrados. Puede no desbloquearse nunca.", style = MaterialTheme.typography.bodySmall, color = if (isDarkUi(uiPrefs)) ColAccent else ColLavenderBlue)
                         }
                         item.unlockedAtMillis?.let { at ->
                             val date = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(at))
@@ -311,7 +324,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             text = {
                 Column {
                     Text(item.displayDescription)
-                    if (item.trophy.onlineRequired) Text("Puede no desbloquearse sin la función online de Vita.")
+                    if (item.trophy.onlineRequired) Text("Necesita la función online de Vita, que no existe en esta versión: puede no desbloquearse nunca.")
                     if (item.unlocked) Text("Ya desbloqueado.")
                 }
             },
