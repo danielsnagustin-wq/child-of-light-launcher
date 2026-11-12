@@ -49,21 +49,29 @@ fun SettingsPerformanceScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
             }
             item {
                 SectionTitle("Cachés")
-                // R4-P2-10: la descripción anterior decía "ON
-                // recomendado" sin decir que en teléfonos con 4 GB o
-                // menos el primer arranque lo deja OFF (perfil
-                // conservador, applyLowRamDefaults): el interruptor
-                // parecía contradecir su propio estado inicial. Ahora
-                // dice que en poca RAM arranca OFF y que se puede
-                // volver a poner ON aquí.
-                SettingSwitch("Caché de texturas", "texture-cache en config.yml. ON recomendado cuando hay RAM de sobra: sin ella las texturas se recargan al cambiar de escena. En teléfonos con 4 GB o menos arranca OFF en el primer arranque (perfil conservador, para liberar RAM); puedes volver a ponerlo ON aquí.", s.textureCache) { vm.saveSettings(s.copy(textureCache = it)) }
+                // Ronda 0.2.65 (R-P1-5): la descripción anterior decía
+                // que en teléfonos con 4 GB o menos el primer arranque
+                // lo deja OFF (perfil conservador). Eso ya no es verdad:
+                // todos los presets llevan texture-cache ON desde 0.2.65
+                // (en Vulkan el núcleo lo ignora y siempre cachea, así
+                // que el interruptor solo tiene efecto con OpenGL).
+                SettingSwitch("Caché de texturas", "texture-cache en config.yml. ON recomendado cuando hay RAM de sobra: sin ella las texturas se recargan al cambiar de escena. En Vulkan el núcleo lo ignora (siempre cachea las texturas), así que este interruptor solo tiene efecto con OpenGL.", s.textureCache) { vm.saveSettings(s.copy(textureCache = it)) }
                 // R2-P2-08: sin "ON siempre": el interruptor lo puede
                 // apagar el usuario (los presets lo ponen ON por
                 // defecto, pero nada lo fuerza).
-                SettingSwitch("Caché de shaders", "shader-cache en config.yml: el stutter de la primera partida se va cuando la caché se llena.", s.shaderCache) { vm.saveSettings(s.copy(shaderCache = it)) }
+                // Ronda 0.2.65 (R-P1-6): en Vulkan, shader-cache solo
+                // controla el precompilado de shaders conocidos al
+                // arrancar: OFF no ahorra disco ni RAM y quita el
+                // precompilado que evita tirones en escenas nuevas. El
+                // interruptor se etiqueta por lo que hace de verdad.
+                SettingSwitch("Precompilar shaders conocidos al arrancar", "shader-cache en config.yml. En Vulkan solo controla el precompilado al arrancar: el stutter de la primera partida se va cuando la caché se llena. OFF no ahorra disco ni RAM. ON recomendado.", s.shaderCache) { vm.saveSettings(s.copy(shaderCache = it)) }
                 OutlinedButton(onClick = { vm.clearShaderCache() }, modifier = Modifier.fillMaxWidth()) { Text("Limpiar caché de shaders") }
                 NoteText("Limpia la caché solo si hay glitches. El stutter de la primera partida es normal hasta que la caché se vuelva a llenar.")
-                SettingSwitch("Caché de texturas sin hash (experimental)", "Solo texturas grandes: el núcleo vigila su memoria en vez de recalcular el hash en cada frame. Puede dar más FPS en escenas con muchas texturas. Si alguna textura se ve incorrecta, apágalo. OFF por defecto; mide con la prueba de 30 s.", s.hashlessTextureCache) { vm.saveSettings(s.copy(hashlessTextureCache = it)) }
+                // Ronda 0.2.65 (R-P1-7): en Vulkan, hashless siempre
+                // está ON en el núcleo (el interruptor no lo apaga):
+                // la promesa de medirlo con la prueba de 30 s ya no
+                // existe; la prueba A/B no puede distinguir nada.
+                SettingSwitch("Caché de texturas sin hash (experimental)", "Solo texturas grandes: el núcleo vigila su memoria en vez de recalcular el hash en cada frame. Puede dar más FPS en escenas con muchas texturas. Si alguna textura se ve incorrecta, apágalo. OFF por defecto. En Vulkan el núcleo lo tiene siempre activado, así que este interruptor no cambia nada con ese backend.", s.hashlessTextureCache) { vm.saveSettings(s.copy(hashlessTextureCache = it)) }
             }
             item {
                 SectionTitle("Overlay de FPS")
