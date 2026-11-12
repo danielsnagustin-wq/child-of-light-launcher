@@ -4,7 +4,7 @@ Launcher de **un solo juego** para Android: Child of Light (PS Vita).
 Tocas el icono, el launcher importa tu copia legal, guarda los ajustes
 y lanza el juego con el núcleo embebido. Sin biblioteca de emulador, sin lista de juegos.
 
-> **Versión:** 0.2.64 · **App ID:** `com.danielsnagustin.childoflight.launcher`
+> **Versión:** 0.2.64
 > **minSdk 28 · targetSdk 35 · compileSdk 35** · Kotlin + Jetpack Compose
 > **Procesador objetivo:** MediaTek Helio G99 (Mali-G57 MC2)
 
@@ -53,7 +53,7 @@ y lanza el juego con el núcleo embebido. Sin biblioteca de emulador, sin lista 
 - **El primer uso solo pide juego + DLCs, nada más.** El firmware
   nunca es un paso visible inicial: el launcher lo resuelve por dentro
   (usa el que ya tengas guardado) y solo existe como
-  opción avanzada en Ajustes → Diagnóstico. Si falta de verdad, lo
+  opción avanzada en Importar, junto al juego y los DLCs. Si falta de verdad, lo
   dice en una frase, sin pedirte que lo busques por internet.
 - **No sincroniza logros con PSN / PlayStation Network ni Steam.**
   Los 20 logros son locales del launcher.
@@ -187,7 +187,7 @@ JUGAR, insignia GPU y tarjeta de logros.
 El foco es el **Helio G99 / Mali-G57 MC2**: el usuario
 confirmó que Child of Light **va muy bien** en ese procesador. No es un
 "ojalá funcione". Por eso el preset por defecto es G99 Recomendado
-(1x, Frame Skip 0): se optimiza para mantener esa fluidez estable,
+(1x): se optimiza para mantener esa fluidez estable,
 no para recortar de más por miedo a Mali en general.
 
 La GPU se detecta al primer arranque (renderer GLES vía EGL + SoC +
@@ -198,19 +198,16 @@ la GPU detectada.
 |---|---|---|---|---|---|
 | Backend | Vulkan | Vulkan | Vulkan (fallback OpenGL si hay glitches) | Vulkan | Vulkan + Turnip |
 | Resolución interna | 1x (960x544) | 2x (1920x1088) | 1x SIEMPRE | 1x | 2x (1920x1088) |
-| Filtro | Bilinear | FSR | Bilinear | Bilinear | FXAA |
+| Filtro | Bilinear | Bilinear | Bilinear | Bilinear | FXAA |
 | Anisotrópico | 1x | 1x | 1x | 1x | 4x |
-| V-Sync | OFF | OFF | OFF | OFF | ON |
+| V-Sync | OFF | OFF | OFF | OFF | OFF |
 | Async Pipeline | ON | ON | ON | ON | ON |
 | Surface Sync | Disabled | Disabled | Disabled | Disabled | Disabled |
-| Memory Mapping | Double Buffer | Double Buffer | Double Buffer FORZADO | Page Table | Page Table |
-| Accurate Thread Scheduling | ON | ON | ON | ON | ON |
+| Memory Mapping | Double Buffer | Double Buffer | Double Buffer | Page Table | Page Table |
 | JIT (cpu-opt) | ON | ON | ON | ON | ON |
-| Frame limiter | 30 FPS | 30 FPS | 30 FPS | 30 FPS | 60 FPS |
-| Frame Skip | 0 | 0 | 1 | 0 | 0 |
 | Driver | Sistema | Sistema | Sistema | Sistema | Turnip |
 
-**Regla de la prueba de 30 s (solo G99 Calidad):** si el FPS medio
+**Regla de la prueba de 30 s (cualquier perfil 2x):** si el FPS medio
 baja de 28, el launcher vuelve a 1x automáticamente (si el ajuste
 está activado) y lo registra en el historial de pruebas.
 
@@ -244,18 +241,17 @@ ajustes + device info en un `.txt`).
   · caché de texturas y de shaders.
 - **CPU:** optimización JIT (cpu-opt) · FPS Hack 30→60 · retraso de
   carga de archivos.
-- **Audio:** backend SDL/Cubeb · buffer 256/512/1024/2048 · volumen
-  0–100% · NGS ON/OFF · botón **Corregir audio** (SDL + buffer 1024
-  + NGS ON + limpiar caché de shaders + relanzar el juego).
-- **Rendimiento:** límite de FPS 30/60/sin límite · Frame Skip 0/1/2 ·
+- **Audio:** backend SDL/Cubeb · volumen
+  0–100% · NGS ON/OFF · botón **Corregir audio** (SDL + NGS ON
+  + ajuste de caché de shaders ON; no borra la caché guardada).
+- **Rendimiento:** límite de FPS 30/60/sin límite ·
   overlay de FPS · volver a 1x si <28 fps · modo rendimiento
   (pantalla encendida).
 - **Driver GPU:** Sistema / Turnip (solo Adreno) + instalar Turnip +
   limpiar caché de shaders.
-- **Corrección de errores:** Accurate Thread Scheduling · caché de
+- **Corrección de errores:** caché de
   shaders · cerrar apps en segundo plano antes de jugar ·
-  **Modo seguro** (fuerza 1x, SDL, buffer 2048, Thread Scheduling ON,
-  High Accuracy OFF).
+  **Modo seguro** (fuerza 1x, SDL, High Accuracy OFF).
 - **Presets:** G99 Recomendado, G99 Calidad (2x), Mali Rendimiento,
   Mali Equilibrado, Adreno Rendimiento, Adreno Calidad/Turnip,
   Genérico. Botón "Ver config.yml generado" y "Restablecer".
@@ -322,11 +318,9 @@ configuradas las mitigaciones conocidas:
 - **Audio:** backend por defecto **SDL** (en Vita3K-Android v7 se
   puso SDL como default porque arregla ruido; cambiar a SDL puede
   arreglar issues restantes), alternativa **Cubeb** (Vita3K+ v1.3:
-  cubeb y SDL ya no deberían crepitar/cortar). Buffer configurable
-  (subirlo un paso si hay crackles), volumen, NGS ON, botón
-  **Corregir audio** (SDL + buffer 1024 + limpiar caché + relanzar).
-- **Rendimiento/bugs:** Accurate Thread Scheduling ON (default nuevo,
-  evita freezes/cuelgues), shader cache ON siempre (el stutter de la
+  cubeb y SDL ya no deberían crepitar/cortar). Volumen, NGS ON, botón
+  **Corregir audio** (SDL + NGS ON + ajuste de caché de shaders ON; no borra la caché guardada).
+- **Rendimiento/bugs:** shader cache ON siempre (el stutter de la
   primera partida se va cuando se llena la caché), Async Pipeline ON,
   1x en G99, cerrar apps en segundo plano, desactivar optimización
   de batería.
@@ -492,8 +486,10 @@ Verificado contra el código público de Vita3K (master 3e43bc80,
 
 ## Pendiente (no en este APK)
 
-1. **Medición automática de FPS** en la prueba de 30 s (hoy el FPS
-   se registra manualmente desde el overlay) y detección automática
+1. **Medición automática de FPS** en la prueba de 30 s: ya existe en
+   la vía embebida (el núcleo muestrea el FPS mientras juegas y al
+   volver se registra solo); queda el registro manual como respaldo
+   cuando se juega en la app externa. Y detección automática
    de desbloqueo de logros durante la partida (hoy se sincroniza al
    volver del juego con el TROPHY.TRP real, o al importar progreso).
 2. Traducción completa ES/EN de las notas técnicas de ajustes.
