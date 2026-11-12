@@ -7,6 +7,7 @@ import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
+import com.danielsnagustin.childoflight.launcher.model.MemoryMapping
 import com.danielsnagustin.childoflight.launcher.model.apply60FpsMode
 import com.danielsnagustin.childoflight.launcher.model.applyLowRamDefaults
 import com.danielsnagustin.childoflight.launcher.model.applySafeMode
@@ -53,7 +54,8 @@ class GpuProfileTest {
         assertEquals(false, s.vSync)
         assertEquals(true, s.asyncPipelineCompilation)
         assertEquals(false, s.surfaceSyncEnabled)
-        assertEquals("DOUBLE_BUFFER", s.memoryMapping.name)
+        // Ronda 0.2.66 (G11-01): Page Table por defecto en Mali/G99.
+        assertEquals("PAGE_TABLE", s.memoryMapping.name)
         assertEquals(true, s.cpuOpt)
         assertEquals("SDL", s.audioBackend.name)
         assertEquals(true, s.ngsEnable)
@@ -63,13 +65,14 @@ class GpuProfileTest {
     fun genericQualityPresetIs2xBilinear() {
         // Ronda 0.2.65 (RG-P2-16): el 2x genérico para GPU sin perfil
         // propio (Xclipse, PowerVR, OTHER, UNKNOWN). Mismos valores
-        // que G99 Calidad (2x, Bilinear, Double Buffer, sin HUD,
+        // que G99 Calidad (2x, Bilinear, Page Table, sin HUD,
         // Sistema) con etiqueta neutra: no se ofrece "G99 — Calidad"
         // a quien no tiene un G99 (G-P2-6).
         val s = presetSettings(GpuProfileId.GENERIC_QUALITY)
         assertEquals(2f, s.resolutionMultiplier, 0.001f)
         assertEquals("BILINEAR", s.screenFilter.name)
-        assertEquals("DOUBLE_BUFFER", s.memoryMapping.name)
+        // Ronda 0.2.66 (G11-01): Page Table por defecto (antes Double Buffer).
+        assertEquals("PAGE_TABLE", s.memoryMapping.name)
         assertEquals("SYSTEM", s.gpuDriver.name)
         assertFalse(s.showFpsOverlay)
         assertEquals(s, presetSettings(GpuProfileId.G99_QUALITY).copy(activeProfile = GpuProfileId.GENERIC_QUALITY))
@@ -91,7 +94,9 @@ class GpuProfileTest {
         val balanced = presetSettings(GpuProfileId.MALI_BALANCED)
         assertEquals(1f, perf.resolutionMultiplier, 0.001f)
         assertEquals(1f, balanced.resolutionMultiplier, 0.001f)
-        assertEquals("DOUBLE_BUFFER", perf.memoryMapping.name)
+        // Ronda 0.2.66 (G11-01): Page Table por defecto en Mali.
+        assertEquals("PAGE_TABLE", perf.memoryMapping.name)
+        assertEquals("PAGE_TABLE", balanced.memoryMapping.name)
         // Ronda 0.2.65 (R-P1-5): Mali Rendimiento ya NO se diferencia
         // por la caché de texturas (inerte en Vulkan): ambos presets
         // la llevan ON, igual que G99 Recomendado.
@@ -212,8 +217,13 @@ class GpuProfileTest {
         assertEquals(GpuProfileId.MALI_PERFORMANCE, defaultProfileFor(gpu))
         val s = presetSettings(GpuProfileId.MALI_PERFORMANCE)
         assertEquals(1f, s.resolutionMultiplier, 0.001f)
-        assertEquals("DOUBLE_BUFFER", s.memoryMapping.name)
-        assertEquals(false, s.textureCache)
+        // Ronda 0.2.66 (G11-01): Page Table por defecto en Mali.
+        assertEquals("PAGE_TABLE", s.memoryMapping.name)
+        // Ronda 0.2.66: esta aserción estaba obsoleta en 0.2.65
+        // (R-P1-5 ya puso textureCache = true en MALI_PERFORMANCE y
+        // el test seguía esperando false; nunca se ejecutó porque el
+        // run #441 murió en compilación antes de los tests).
+        assertEquals(true, s.textureCache)
     }
 
     @Test
@@ -333,16 +343,19 @@ class GpuProfileTest {
     }
 
     @Test
-    fun lowRamFirstBootOnG99RecommendedIsIdenticalToPreset() {
-        // Ronda 0.2.65 (R-P1-5): la variante conservadora ya no toca
-        // textureCache (inerte en Vulkan) y era su ÚNICO cambio sobre
-        // G99 Recomendado: el primer arranque en 4 GB sobre ese preset
-        // es idéntico al preset. No hay divergencia que registrar (la
-        // UI ya no muestra "perfil conservador" por la caché) y el
-        // ajuste manual de la caché no se pierde por el camino lowRam.
+    fun lowRamFirstBootOnG99RecommendedIsIdentity() {
+        // Ronda 0.2.66 (G11-01, decisión del coordinador): la
+        // variante lowRam fuerza Page Table (antes Double Buffer),
+        // así que el primer arranque en 4 GB sobre G99 Recomendado
+        // ES idéntico al preset: no hay divergencia conservadora que
+        // registrar (la UI no muestra "perfil conservador" sin motivo).
+        // La caché sigue intacta.
         val firstBoot = applyLowRamDefaults(presetSettings(GpuProfileId.G99_RECOMMENDED))
-        assertEquals(presetSettings(GpuProfileId.G99_RECOMMENDED), firstBoot)
         assertTrue(firstBoot.textureCache)
+        assertEquals(
+            presetSettings(GpuProfileId.G99_RECOMMENDED),
+            firstBoot,
+        )
         assertFalse(isLowRamConservativeVariant(firstBoot))
         assertFalse(divergesFromPreset(firstBoot))
         val applied = preserveManualCacheChoices(firstBoot, LauncherSettings(), lowRam = true)
