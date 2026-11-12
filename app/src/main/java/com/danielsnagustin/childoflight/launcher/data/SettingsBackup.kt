@@ -77,6 +77,7 @@ fun encodeSettingsBackup(settings: LauncherSettings, ui: UiPreferences): String 
     bool("shaderCache", settings.shaderCache)
     bool("cpuOpt", settings.cpuOpt)
     bool("fpsHack", settings.fpsHack)
+    bool("turboMode", settings.turboMode)
     num("fileLoadingDelay", settings.fileLoadingDelay)
     num("audioVolume", settings.audioVolume)
     str("audioBackend", settings.audioBackend.name)
@@ -150,6 +151,7 @@ fun decodeSettingsBackup(
         shaderCache = boolValue(map["shaderCache"], current.shaderCache),
         cpuOpt = boolValue(map["cpuOpt"], current.cpuOpt),
         fpsHack = boolValue(map["fpsHack"], current.fpsHack),
+        turboMode = boolValue(map["turboMode"], current.turboMode),
         fileLoadingDelay = SettingsRepository.clampFileLoadingDelay(intValue(map["fileLoadingDelay"], current.fileLoadingDelay)),
         audioVolume = intValue(map["audioVolume"], current.audioVolume).coerceIn(0, 100),
         audioBackend = enumValue(map["audioBackend"], AudioBackend.entries.toTypedArray(), current.audioBackend),
