@@ -37,7 +37,7 @@ por revisión de código + búsqueda web de fuentes oficiales
   aviso de que Turnip solo funciona en Adreno.
 - `LauncherViewModel.installTurnip()`: en Adreno activa Turnip y
   pone `customDriverName` = nombre del zip sin `.zip`; en Mali
-  guarda el zip pero NO lo activa (sigue el driver del sistema).
+  borra el zip y no persiste nada de Turnip (sigue el driver del sistema).
 - `Vita3kConfigGenerator` emite `custom-driver-name: "<nombre>"`
   en config.yml solo si hay Turnip instalado; si no, `""`.
 - `clearShaderCache()` borra `vita3k/shader_cache` y
@@ -181,12 +181,13 @@ La variante incluida elegida es la estándar Gmem de la R8.
   no se traslada aquí. No se inventa un driver Mali.)
 - **Qué hace el launcher en su lugar para Mali**: driver Vulkan del
   sistema (el del fabricante, el único disponible) + ajustes
-  seguros: Vulkan 1x (960x544), Double Buffer (forzado en los
-  presets Mali; Mali suele hacer fallback a Double Buffer aunque
-  se elija otro), Bilinear (FSR solo en Equilibrado/Calidad),
+  seguros: Vulkan 1x (960x544), Double Buffer (valor de los
+  presets Mali; el núcleo honra Page Table/Native Buffer cuando su
+  bit está en la máscara, no hay fallback forzado a Double Buffer),
+  Bilinear (FSR queda como opción manual en Ajustes → GPU, ya no es
+  el filtro de ningún preset desde 0.2.65),
   V-Sync OFF, async pipeline ON, high accuracy OFF, Surface Sync
-  Disabled, Frame Skip 0 en G99 Recomendado (1 en Mali
-  Rendimiento genérico), SDL + NGS, y OpenGL como fallback manual
+  Disabled, SDL + NGS, y OpenGL como fallback manual
   si hay glitches. El preset por defecto en el teléfono objetivo
   es G99 Recomendado porque el usuario confirmó que el juego va
   muy bien así; no se prometen 60 fps en Mali.
@@ -197,9 +198,14 @@ La variante incluida elegida es la estándar Gmem de la R8.
 
 ## Pendiente (para el coordinador / pasos posteriores)
 
-1. Verificar en el árbol fijado (pin `3e43bc80`, solo CI) o en
+1. ~~Verificar en el árbol fijado (pin `3e43bc80`, solo CI) o en
    teléfono Adreno: si el núcleo embebido carga drivers por
-   `custom-driver-name` y qué valor exacto espera.
+   `custom-driver-name` y qué valor exacto espera.~~ **VERIFICADO en
+   0.2.64** (pin `native_drivers.cpp` + `android_driver.cpp`): el
+   núcleo embebido sí carga drivers por `custom-driver-name` (el
+   stem del zip). La confirmación de que el driver cargó de verdad
+   sigue siendo solo en teléfono (log del núcleo / diagnóstico GPU,
+   vía `getCustomDriverSupportInfo` desde 0.2.65).
 2. Elegir la release Turnip vigente, descargar el zip, calcular
    SHA-256, rellenar `EXPECTED_SHA256`, poner el zip en
    `app/src/main/assets/drivers/turnip/` y confirmar su layout
