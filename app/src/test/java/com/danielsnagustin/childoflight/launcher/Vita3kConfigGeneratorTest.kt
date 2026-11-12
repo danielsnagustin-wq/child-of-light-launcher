@@ -54,6 +54,12 @@ class Vita3kConfigGeneratorTest {
     fun fpsHackForces60FpsPackage() {
         // Base adversa: 2x, FSR, sin VSync, page-table, cachés OFF (como el
         // perfil de gama baja): el modo 60 debe imponer su paquete completo.
+        // Ronda 0.2.64: VSync YA NO forma parte del paquete (antes el modo
+        // forzaba vSync = true): en Vulkan es inerte (pending_vsync solo
+        // lo consume el renderer OpenGL) y el único mecanismo real del
+        // modo es fps-hack; el valor guardado de VSync se respeta
+        // (LauncherSettings.apply60FpsMode). Con la base adversa
+        // (vSync = false) el YAML debe emitir "v-sync: false".
         val yaml = Vita3kConfigGenerator.generate(
             LauncherSettings(
                 resolutionMultiplier = 2f,
@@ -66,7 +72,9 @@ class Vita3kConfigGeneratorTest {
             ), "/data/vita3k",
         )
         assertTrue(yaml.contains("fps-hack: true"))
-        assertTrue(yaml.contains("v-sync: true"))
+        // 0.2.64: el modo respeta el VSync guardado, no lo fuerza.
+        assertTrue(yaml.contains("v-sync: false"))
+        assertFalse(yaml.contains("v-sync: true"))
         assertTrue(yaml.contains("resolution-multiplier: 1.0"))
         assertTrue(yaml.contains("screen-filter: \"Bilinear\""))
         assertTrue(yaml.contains("memory-mapping: \"double-buffer\""))
@@ -77,6 +85,14 @@ class Vita3kConfigGeneratorTest {
         assertTrue(yaml.contains("disable-surface-sync: true"))
         assertTrue(yaml.contains("cpu-opt: true"))
         assertTrue(yaml.contains("ngs-enable: true"))
+        // 0.2.64: el valor guardado se respeta en ambos sentidos — con
+        // VSync guardado ON el modo NO lo apaga (tampoco lo fuerza: solo
+        // lo deja pasar).
+        val yamlVsyncOn = Vita3kConfigGenerator.generate(
+            LauncherSettings(vSync = true, fpsHack = true), "/data/vita3k",
+        )
+        assertTrue(yamlVsyncOn.contains("v-sync: true"))
+        assertFalse(yamlVsyncOn.contains("v-sync: false"))
     }
 
     @Test
