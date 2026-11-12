@@ -1,10 +1,10 @@
-# Child of Light Launcher — Etapa 1
+# Child of Light Launcher
 
 Launcher de **un solo juego** para Android: Child of Light (PS Vita).
 Tocas el icono, el launcher importa tu copia legal, guarda los ajustes
-y lanza el juego. Sin biblioteca de emulador, sin lista de juegos.
+y lanza el juego con el núcleo embebido. Sin biblioteca de emulador, sin lista de juegos.
 
-> **Versión:** 0.1.0 (Etapa 1) · **App ID:** `com.danielsnagustin.childoflight.launcher`
+> **Versión:** 0.2.64 · **App ID:** `com.danielsnagustin.childoflight.launcher`
 > **minSdk 28 · targetSdk 35 · compileSdk 35** · Kotlin + Jetpack Compose
 > **Procesador objetivo:** MediaTek Helio G99 (Mali-G57 MC2)
 
@@ -37,7 +37,7 @@ y lanza el juego. Sin biblioteca de emulador, sin lista de juegos.
 - Tiene **todos los ajustes** de rendimiento, calidad y escalado
   (GPU, CPU, audio, driver, overlay), guardados en DataStore, y
   genera el `config.yml` de Vita3K a partir de ellos.
-- Controles táctiles personalizables por completo, 27 logros locales,
+- Controles táctiles personalizables por completo, 20 logros locales,
   diagnóstico de GPU, prueba de 30 segundos y reporte de bugs.
 
 ## Qué NO es
@@ -47,20 +47,18 @@ y lanza el juego. Sin biblioteca de emulador, sin lista de juegos.
   código de Ubisoft no existe port nativo posible.
 - **No incluye el juego, ni firmware, ni claves, ni ROMs.** El APK
   sale vacío: hay que importar la copia del usuario.
-- **No es Vita3K.** En Etapa 1 el núcleo Vita3K **no está embebido**:
-  JUGAR escribe `config.yml` y abre Vita3K oficial si está instalado
-  (`org.vita3k.emulator`). No se finge que el juego corre sin núcleo.
-  El esqueleto JNI de Etapa 2 ya existe (ver abajo), pero sin `.so`
-  no se activa.
+- **El núcleo está embebido.** JUGAR abre el juego directamente,
+  sin instalar ni abrir nada aparte. El APK sale vacío: hay que
+  importar la copia del usuario (juego + DLCs + firmware).
 - **El primer uso solo pide juego + DLCs, nada más.** El firmware
   nunca es un paso visible inicial: el launcher lo resuelve por dentro
-  (usa el que ya tengas guardado o el de Vita3K) y solo existe como
+  (usa el que ya tengas guardado) y solo existe como
   opción avanzada en Ajustes → Diagnóstico. Si falta de verdad, lo
   dice en una frase, sin pedirte que lo busques por internet.
 - **No sincroniza logros con PSN / PlayStation Network ni Steam.**
-  Los 27 logros son locales del launcher.
-- **No hay platino.** El juego no tiene platino en PS4 (20 trofeos)
-  ni en Vita (27 trofeos).
+  Los 20 logros son locales del launcher.
+- **No hay platino.** El juego tiene 20 trofeos (19 bronce y 1 plata,
+  Coronación), sin platino.
 
 ---
 
@@ -111,18 +109,16 @@ JUGAR, insignia GPU y tarjeta de logros.
    - Se instala en `ux0/app/<TITLE_ID>/` (la carpeta DEBE llamarse
      como el Title ID, como exige Vita3K).
    - Si el juego trae su `TROPHY.TRP`, se anota; si no, se usa la
-     lista bundled de 27 trofeos.
+     lista bundled de 20 trofeos.
    - `.pkg`: se lee el header (Content ID → Title ID y región) y se
      guarda en `ux0/pkg/<TITLE_ID>.pkg` con su `work.bin` (licencia
      zRIF de 512 B, buscada junto al `.pkg` o pedida después). El
-     launcher no puede instalar un `.pkg` por sí mismo: se instala en
-     Vita3K con **«Instalar en Vita3K»** (copia `.pkg` + `work.bin` a
-     `Descargas/ChildOfLight/` y abre Vita3K con la guía).
+     núcleo embebido lo instala con su `work.bin`.
 3. **Importar DLC:** elige el `.zip`/`.vpk` del DLC. Debe traer la
    ruta `<TITLE_ID>/addcont/<DLC_ID>/...` dentro del zip. Se instala
    en `ux0/addcont/<TITLE_ID>/<DLC_ID>/`. También se acepta el `.pkg`
-   del DLC (se guarda en `ux0/pkg/dlc/` y se instala en Vita3K igual
-   que el del juego).
+   del DLC (se guarda en `ux0/pkg/dlc/` y lo instala el núcleo
+   embebido igual que el del juego).
    - **O carpeta de DLC:** Configuración → Importar carpeta de DLC →
      elige la carpeta del juego que contiene `addcont/` dentro.
 4. **Importar update:** elige el `.zip`/`.vpk` con la carpeta
@@ -130,9 +126,8 @@ JUGAR, insignia GPU y tarjeta de logros.
    También se acepta el `.pkg` del update (`ux0/pkg/patch/`).
 5. **Archivos `.pkg`:** se validan por el header (Content ID), nunca
    por el nombre del archivo. Se guardan en `ux0/pkg/` con su
-   `work.bin` y se instalan en Vita3K con «Instalar en Vita3K». En la
-   Home se muestran como «Instalado como .pkg»: los saves y las
-   sesiones de ese juego viven dentro de Vita3K, no en el launcher.
+   `work.bin` y los instala el núcleo embebido. En la
+   Home se muestran como «Instalado como .pkg».
 6. **Importar carpeta del juego:** Configuración → Importar carpeta
    del juego → elige la carpeta `PCSE00480` o `PCSB00598` que contiene
    `eboot.bin` dentro (o cualquier carpeta con `eboot.bin` +
@@ -152,11 +147,7 @@ JUGAR, insignia GPU y tarjeta de logros.
 
 - El launcher **resuelve el firmware por dentro**: si ya tienes
   `PSVUPDAT.PUP` guardado o un `vs0/` extraído en el launcher, lo usa;
-  si Vita3K externo ya tiene firmware instalado, usa el suyo al
-  arrancar (el launcher no puede ver el almacenamiento privado de
-  otra app, así que no lo comprueba: solo avisa con una frase si
-  falta el local y lanza igual).
-- Si falta de verdad, el launcher lo explica **en una sola frase**,
+  si falta de verdad, lo explica **en una sola frase**,
   sin pedirte que lo busques por internet.
 - Importar firmware solo existe como **opción avanzada oculta** en
   Ajustes → Avanzado — Firmware (y su estado se ve en GPU y
@@ -292,33 +283,34 @@ emiten como reales.
 
 ---
 
-## Logros (27 trofeos de Vita)
+## Logros (20 trofeos de Vita)
 
-La versión Vita tiene **27 trofeos** (la PS4 tiene 20; no confundir).
-No hay platino en ninguna. Lista bundled exacta (GameFAQs Vita):
+La versión Vita tiene **20 trofeos** (19 bronce y 1 plata, Coronación).
+No hay platino. La lista anterior de 27 mezclaba los trofeos de Vita
+con logros extra de Xbox One / PC. Lista bundled exacta (en español,
+verificada en TrueTrophies / EliteGuías / AllGamersIn):
 
-1. Starcatcher (secreto) · 2. Over the Moon (secreto) · 3. Sunrise
-(secreto) · 4. Coronation (secreto, Silver) · 5. Comedy · 6. The Girl
-and the Firefly · 7. Capilli Catch · 8. Sweet Sister · 9. Bolmus Bond ·
-10. Kategida Kindred · 11. Piscean Promise · 12. Tragedy ·
-13. Tenth Birthday · 14. Perfectionist · 15. Master Oculist ·
-16. Scene Stealer · 17. Showstopper · 18. Through the Looking Glass ·
-19. Winged Fury · 20. Explorer · 21. Perfect Sonnet · 22. Grassroots ·
-23. General of Light · 24. Guardians of Lemuria · 25. Aurora Borealis ·
-26. When Pigs Fly · 27. Golden Apple.
+1. Atrapaestrellas (secreto) · 2. En la luna (secreto) · 3. Amanecer
+(secreto) · 4. Coronación (secreto, Plata) · 5. Comedia · 6. Captura de
+un Capilli · 7. Hermana querida · 8. Unión de un Bolmus · 9. La familia
+Kategida · 10. Promesa de los piscis · 11. Tragedia · 12. Décimo
+cumpleaños · 13. Perfeccionista · 14. Experto oculista · 15. Robando
+protagonismo · 16. Aguafiestas · 17. Furia alada · 18. Explorador ·
+19. Soneto perfecto · 20. Raíces.
 
-- Pantalla **Logros**: los 27 con progreso %, bloqueado/desbloqueado,
+- Pantalla **Logros**: los 20 con progreso %, bloqueado/desbloqueado,
   fecha de desbloqueo. Los secretos se ocultan ("Trofeo secreto / ???")
   hasta desbloquearlos. Icono placeholder generado (vector propio,
   sin imágenes con copyright).
-- **Through the Looking Glass** avisa que puede no desbloquearse sin
-  la función online de Vita (enviar Oculi a un amigo).
+- Ningún trofeo Vita necesita online: la función de enviar Oculi a un
+  amigo ("A través del cristal") solo existía en Xbox One / PC, con
+  los servidores cerrados, y ese trofeo no está en la lista Vita.
 - Al desbloquear uno: **popup + sonido** de notificación del sistema.
-- Fuente de verdad: los datos de trofeos de Vita3K en
+- Fuente de verdad: los datos de trofeos del núcleo en
   `ux0/user/00/trophy/` se leen como referencia (¿existe la carpeta?,
-  ¿qué archivos hay?, ¿vino `TROPHY.TRP` con el juego?). El formato
-  TRP **no se decodifica en Etapa 1** y así se dice en la UI; el
-  progreso que se muestra es el **local del launcher** (DataStore).
+  ¿qué archivos hay?, ¿vino `TROPHY.TRP` con el juego?). El progreso
+  que se muestra es el **local del launcher** (DataStore) y al volver
+  del juego se sincroniza con el TROPHY.TRP real del núcleo.
 - Exportar/importar progreso de logros junto con los saves
   (pantalla Guardados).
 
@@ -375,8 +367,8 @@ importar/exportar; todo en DataStore). Predefinidos:
 
 Tema claro/oscuro/sistema, **color de acento**, **fondo de la
 portada**, **tamaño de texto**, **idioma español/inglés** (traduce
-portada, navegación y títulos de sección; las notas técnicas de
-Vita3K permanecen en español en Etapa 1), mostrar/ocultar FPS y
+portada, navegación y títulos de sección; las notas técnicas
+permanecen en español), mostrar/ocultar FPS y
 logros en la portada, y **orden de secciones** (subir/bajar).
 Botón **Restablecer toda la personalización**.
 
@@ -466,13 +458,14 @@ el Gradle instalado por `gradle/actions/setup-gradle`.
 
 ---
 
-## Etapa 2 (fundación lista en local, núcleo aún no embebido)
+## Núcleo embebido
 
 Documento completo: [`docs/etapa2/ETAPA2-PLAN.md`](docs/etapa2/ETAPA2-PLAN.md).
-Estado de la fundación: [`docs/etapa2/ETAPA2-ESTADO.md`](docs/etapa2/ETAPA2-ESTADO.md).
+Estado: [`docs/etapa2/ETAPA2-ESTADO.md`](docs/etapa2/ETAPA2-ESTADO.md).
 
 Meta: una sola app — poner el juego y jugar, sin instalar ni abrir
-Vita3K aparte ni pasos manuales.
+nada aparte ni pasos manuales. **Hecho:** el núcleo (`libVita3K.so`)
+va embebido en el APK nativo y JUGAR abre el juego directamente.
 
 Verificado contra el código público de Vita3K (master 3e43bc80,
 2026-11-07) y contra EmuCoreV (el fork con núcleo embebido en Android):
@@ -483,57 +476,34 @@ Verificado contra el código público de Vita3K (master 3e43bc80,
   a `org.vita3k.emulator.NativeLib`, así que hace falta una capa
   adaptadora propia (modelo EmuCoreV: árbol Vita3K + puente JNI en
   nuestro paquete).
-- **La fundación ya está construida (solo en local, sin push):**
-  SDL3 Java vendorizado (`org/libsdl/app/`, commit fa2c02b),
+- SDL3 Java vendorizado (`org/libsdl/app/`, commit fa2c02b),
   `core/EmbeddedGameActivity.kt` (SDLActivity con `{"-r", titleId}`),
   `core/EmbeddedCoreLayout.kt` (migración `ux0` → `vita/ux0`),
-  `core/EmbeddedGameLauncher.kt` (decisión embebido/externo),
-  `core/EmbeddedPkgInstaller.kt` (instalar `.pkg` + `work.bin` con
-  el propio núcleo: `installPkg` + `convertRifToZrif`),
-  `core/Vita3kCoreBridge.kt` ampliado (instalación + sesión + pausa),
-  `app/src/main/cpp/launcher/` (adaptador JNI que reenvía a las
-  funciones de upstream), CMake condicional (sin árbol, Etapa 1
-  intacta) y `build.gradle.kts` condicional (NDK 29 + arm64-v8a solo
-  si el árbol existe).
-- **El núcleo NO está embebido todavía** (no hay `.so`): sin árbol
-  Vita3K, todo lo anterior es código que no se ejecuta
-  (`Vita3kCoreBridge.available` es false y JUGAR sigue abriendo
-  Vita3K externo). El árbol lo clona CI en cada build (commit
-  fijado); el repo no usa submódulos (el push por API no los maneja).
-- Siguiente paso: activar el workflow borrador
-  (`docs/etapa2/workflow-android-native.yml`, por navegador) y leer
-  el log de la primera build nativa. Todo el detalle (archivos,
-  riesgos, qué falta) está en `ETAPA2-ESTADO.md`.
+  `core/EmbeddedGameLauncher.kt`, `core/EmbeddedPkgInstaller.kt`
+  (instalar `.pkg` + `work.bin` con el propio núcleo: `installPkg` +
+  `convertRifToZrif`), `core/Vita3kCoreBridge.kt` (instalación +
+  sesión + pausa), `app/src/main/cpp/launcher/` (adaptador JNI que
+  reenvía a las funciones de upstream), CMake condicional (sin árbol,
+  el build es el pequeño sin núcleo) y `build.gradle.kts` condicional
+  (NDK 29 + arm64-v8a solo si el árbol existe).
+- El árbol Vita3K lo clona CI en cada build (commit fijado); el repo
+  no usa submódulos. Todo el detalle (archivos, riesgos, qué falta)
+  está en `ETAPA2-ESTADO.md`.
 
-## Plan Etapa 2 (resto, pendiente, no en este APK)
+## Pendiente (no en este APK)
 
-1. **Embeber el núcleo Vita3K (.so):** ver sección Etapa 2 y
-   `docs/etapa2/ETAPA2-PLAN.md`. Sin esto, JUGAR abre Vita3K
-   externo si está instalado.
-2. **Deep-link verificado** para arrancar un Title ID concreto en
-   Vita3K externo (hoy se lanza el Intent MAIN sin extras: no hay
-   deep-link documentado verificado).
-3. **Extracción real del firmware** `.PUP` a `vs0/` (hoy solo se
-   guarda el PUP + marcador; la extracción la hace Vita3K).
-4. **Medición automática de FPS** en la prueba de 30 s (hoy el FPS
+1. **Medición automática de FPS** en la prueba de 30 s (hoy el FPS
    se registra manualmente desde el overlay) y detección automática
-   de desbloqueo de logros durante la partida (hoy se marca desde
-   la pantalla de Logros o al importar progreso).
-5. **Decodificar `TROPHY.TRP`** para validar/sincronizar el progreso
-   de trofeos con Vita3K (hoy solo se lee su existencia).
-6. **Parser de `.pkg`** para instalar paquetes sin depender del
-   nombre del archivo. **HECHO en Etapa 1** (`PkgHeaderParser`,
-   Content ID del header → Title ID; `work.bin` validado por
-   contenido). Con el núcleo embebido, además, el propio núcleo
-   instala el `.pkg` (`EmbeddedPkgInstaller`).
-7. Traducción completa ES/EN de las notas técnicas de ajustes.
-8. Arrastrar con dos dedos / gestos en el editor táctil (hoy: un
+   de desbloqueo de logros durante la partida (hoy se sincroniza al
+   volver del juego con el TROPHY.TRP real, o al importar progreso).
+2. Traducción completa ES/EN de las notas técnicas de ajustes.
+3. Arrastrar con dos dedos / gestos en el editor táctil (hoy: un
    dedo, tamaño por slider).
 
 ## Licencia y legal
 
 - El launcher es código propio (Kotlin/Compose). Vita3K es GPLv2;
-  al embeber su núcleo en Etapa 2 habrá que cumplir la GPLv2
+  al embeber su núcleo habrá que cumplir la GPLv2
   (publicar el código del núcleo y sus modificaciones).
 - Child of Light © Ubisoft. UbiArt es tecnología cerrada de Ubisoft.
   Este launcher no incluye ni distribuye el juego, sus assets, el
