@@ -154,6 +154,22 @@ Java_org_vita3k_emulator_NativeLib_getInstalledCustomDrivers(JNIEnv *env, jclass
 JNIEXPORT jboolean JNICALL
 Java_org_vita3k_emulator_NativeLib_removeCustomDriver(JNIEnv *env, jclass clazz, jstring driver_name);
 
+// --- native_config.cpp ---
+// Máscara de métodos de mapeo de memoria soportados por el driver
+// (ronda 0.2.64, P1-3 Mali; native_config.cpp:804 del pin 3e43bc80).
+// [custom_driver_name] es el nombre del driver Turnip instalado ("" =
+// driver del sistema). Devuelve la máscara de bits de MappingMethod
+// (renderer/include/renderer/state.h:51): Disabled=1<<0,
+// DoubleBuffer=1<<1, ExernalHost=1<<2, PageTable=1<<3,
+// NativeBuffer=1<<4. Con el driver del sistema y sin sesión, enumera
+// los dispositivos Vulkan y devuelve la máscara del primero; si no
+// hay ninguno, devuelve 1<<0 (solo Disabled). Si el método pedido no
+// está en la máscara, el núcleo vuelve a Double Buffer en silencio
+// (vulkan/renderer.cpp:1019-1022): por eso el launcher muestra el
+// método efectivo, no solo el pedido (ver MemoryMapping en el modelo).
+JNIEXPORT jint JNICALL
+Java_org_vita3k_emulator_NativeLib_getSupportedMemoryMappingMask(JNIEnv *env, jclass clazz, jstring custom_driver_name);
+
 // --- input_overlay.cpp (overlay táctil: mando virtual SDL) ---
 // Verificado contra Vita3K pin 3e43bc80 (vita3k/android/jni/
 // input_overlay.cpp): el overlay de upstream es un joystick virtual
