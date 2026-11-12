@@ -1,7 +1,9 @@
 package com.danielsnagustin.childoflight.launcher.core
 
+import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.hardware.input.InputManager
 import android.os.Build
 import android.os.Bundle
@@ -15,6 +17,8 @@ import android.view.WindowInsetsController
 import android.view.WindowManager
 import org.libsdl.app.SDLSurface
 import org.vita3k.emulator.EmuSurface
+import android.widget.Button
+import android.widget.RelativeLayout
 import android.widget.Toast
 import com.danielsnagustin.childoflight.launcher.data.GameActivityState
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
@@ -22,6 +26,7 @@ import com.danielsnagustin.childoflight.launcher.data.TrophySyncPending
 import com.danielsnagustin.childoflight.launcher.data.SettingsRepository
 import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
 import com.danielsnagustin.childoflight.launcher.launcher.Vita3KLauncher
+import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.model.averageBenchmarkFps
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -132,13 +137,27 @@ class EmbeddedGameActivity : SDLActivity() {
         const val REQUEST_PAUSE_MENU = 2001
 
         /**
-         * Margen tras confirmar el juego en curso antes de empezar a
-         * muestrear FPS (R2-P2-29): la pantalla de título y la carga
-         * inicial renderizan a FPS real pero no son juego; sin este
-         * margen, 30 s en el título darían "60 fps medios" aunque el
-         * juego vaya a 25.
+         * Ronda 0.2.65 (P0-3): watchdog de pantalla negra. Tiempo máximo
+         * sin señal de arranque (ni on_launch ni FPS entregado mayor
+         * que 0) desde el primer onResume antes de avisar al usuario
+         * y cerrar la Activity. 180 s, no menos: la precompilación de
+         * shaders de la primera carga puede tardar unos 2 minutos en
+         * este teléfono, y un tiempo corto mataría arranques legítimos.
+         * Valor ajustable: si en el teléfono los arranques normales
+         * superan los 3 minutos, subirlo; si el arranque normal nunca
+         * pasa de 1 minuto, se puede bajar. Sin verificar en teléfono.
          */
-        const val BENCHMARK_START_MARGIN_MS = 5_000L
+        private const val BLACK_SCREEN_WATCHDOG_TIMEOUT_MS = 180_000L
+
+        /**
+         * Ronda 0.2.65 (S-P2-2): el sondeo del primer frame (T2) va
+         * cada 200 ms durante los primeros 10 s tras on_launch (antes
+         * 1 s siempre: sobrestimaba T2 hasta 2 s). Pasados los 10 s
+         * vuelve a 1 s: un juego que tarda más de 10 s en entregar su
+         * primer frame ya es anómalo y no necesita precisión de 200 ms.
+         */
+        private const val FIRST_FRAME_POLL_FAST_WINDOW_MS = 10_000L
+        private const val FIRST_FRAME_POLL_FAST_DELAY_MS = 200L
 
         /**
          * R4-P0-3: intentos de re-crear el mando virtual en on_launch
@@ -147,12 +166,14 @@ class EmbeddedGameActivity : SDLActivity() {
         private const val OVERLAY_REBIND_MAX_ATTEMPTS = 3
         private const val OVERLAY_REBIND_RETRY_DELAY_MS = 500L
         /**
-         * R4-P0-4: intentos de quitar la pausa de fondo, con 500 ms
+         * R4-P0-4: intentos de quitar la pausa de fondo, con 200 ms
          * entre intentos (el núcleo descarta el clear si la fase aún
-         * no es Running).
+         * no es Running). Ronda 0.2.65 (S-P2-7): antes 500 ms, con
+         * 1,5 s de botones sordos al volver en el peor caso; ahora
+         * 0,6 s. El reintento es solo una lectura JNI barata.
          */
         private const val PAUSE_CLEAR_MAX_ATTEMPTS = 3
-        private const val PAUSE_CLEAR_RETRY_DELAY_MS = 500L
+        private const val PAUSE_CLEAR_RETRY_DELAY_MS = 200L
 
         fun createLaunchIntent(context: Context, titleId: String, gameTitle: String, benchmark: Boolean = false, launchStartedAtMillis: Long = 0L): Intent {
             return Intent(context, EmbeddedGameActivity::class.java).apply {
@@ -177,7 +198,7 @@ class EmbeddedGameActivity : SDLActivity() {
      * medir (lanzamiento directo o proceso frío sin extra).
      */
     private var launchStartedAtMillis: Long = 0L
-    /** T2 ya registrado una vez en este lanzamiento (primer frame presentado). */
+    /** T2 ya registrado una vez en este lanzamiento (primer frame entregado por el juego, no presentado en pantalla: ver R-P1-1). */
     private var firstFrameLogged: Boolean = false
     /**
      * Momento (uptimeMillis) en que el núcleo confirmó el juego en
@@ -193,6 +214,50 @@ class EmbeddedGameActivity : SDLActivity() {
      * reiniciaría el muestreo y guardaría una segunda prueba).
      */
     private var benchmarkSaved: Boolean = false
+
+    /**
+     * Ronda 0.2.65 (R-P1-18): la prueba de 30 s solo muestrea cuando
+     * el usuario confirma que ya está jugando (botón "Ya estoy
+     * jugando"): sin auto-arranque tras on_launch. true = el usuario
+     * ya pulsó el botón en este lanzamiento (el muestreo se reanuda
+     * solo tras cada pausa).
+     */
+    private var benchmarkStartedByUser: Boolean = false
+    /** Botón "Ya estoy jugando" de la prueba de 30 s; null = aún no mostrado. */
+    private var benchmarkPromptButton: Button? = null
+
+    /**
+     * Ronda 0.2.65 (P0-3): watchdog de pantalla negra. Arranca una
+     * sola vez por Activity (primer onResume) y dispara si a los
+     * 180 s no hubo on_launch ni FPS entregado mayor que 0.
+     */
+    private var watchdogStarted: Boolean = false
+
+    /**
+     * Ronda 0.2.65 (R-P1-3): true cuando el init del núcleo completó
+     * en onCreate (en frío) o cuando la sesión ya existía (camino
+     * normal). Guarda de onResume: sin sesión, el hilo SDL moriría
+     * con SDL_main -1 en silencio.
+     */
+    private var coreInitReady: Boolean = false
+
+    /**
+     * Ronda 0.2.65 (S-P2-3): última rotación de pantalla leída
+     * (constantes Surface.ROTATION_*, 0-3). -1 = aún no leída. El
+     * núcleo solo la lee en on_init: si cambia a mitad de partida,
+     * el motion sigue con la rotación vieja hasta reiniciar.
+     */
+    private var lastKnownDisplayRotation: Int = -1
+
+    /**
+     * Ronda 0.2.65 (S-P2-4): ámbito IO propio para el trabajo de
+     * parada al salir (destroySession). NO se cancela en onDestroy:
+     * es el ámbito que hace ese trabajo después de super.onDestroy().
+     * Vive solo lo que vive esta Activity: su único hijo es corto
+     * (la destrucción de la sesión; la captura de trofeos sigue
+     * síncrona en onDestroy, ver ahí por qué).
+     */
+    private val destroyScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // --- Overlay táctil (GamepadOverlayView + mando virtual SDL) ---
     private var overlayView: GamepadOverlayView? = null
@@ -216,6 +281,21 @@ class EmbeddedGameActivity : SDLActivity() {
 
     private fun refreshOverlay() {
         overlayScope.launch { refreshOverlayState() }
+    }
+
+    /**
+     * Ronda 0.2.65 (S-P2-8): onResume con UNA sola lectura de
+     * ajustes: el overlay y la bandera de pantalla comparten el
+     * mismo settingsFlow.first(). Antes refreshOverlay() y
+     * applyPerformanceScreenFlag() leían settingsFlow por separado
+     * en cada reanudación.
+     */
+    private fun refreshOverlayAndScreenFlag() {
+        overlayScope.launch {
+            val settings = runCatching { SettingsRepository(this@EmbeddedGameActivity).settingsFlow.first() }.getOrNull()
+            refreshOverlayState(settings)
+            applyPerformanceScreenFlag(settings)
+        }
     }
 
     /** SDL carga solo libVita3K.so; SDL3 va estático dentro (libSDL3.a), sin DT_NEEDED. */
@@ -250,8 +330,12 @@ class EmbeddedGameActivity : SDLActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // prepareFrontend (SDL_SetMainReady + metadatos + cámara) ANTES
-        // de que SDLActivity toque nada nativo. Best-effort: si falla,
-        // init() lo detectará y se cerrará con mensaje.
+        // de que SDLActivity toque nada nativo. Best-effort y NO fatal
+        // (ronda 0.2.65, J-P2-5): si falla, nativeInit sigue sin la
+        // cámara (runtime_bridge.cpp: "se sigue sin ella"); solo la
+        // cámara puede fallar ahí y el juego no la necesita. El
+        // comentario anterior decía que init() lo detectaría y se
+        // cerraría con mensaje: falso.
         runCatching { Vita3kCoreBridge.prepareFrontend() }
         super.onCreate(savedInstanceState)
 
@@ -295,7 +379,21 @@ class EmbeddedGameActivity : SDLActivity() {
         // onResume corre; si arranca sin sesión, SDLMain.run() termina
         // la Activity con finish(). No hay punto seguro para un init
         // asíncrono sin tocar el ciclo de superficie de SDLActivity.
+        // Ronda 0.2.65 (R-P1-3): verificado el orden que hace seguro
+        // este init síncrono en frío: SDL.initialize() (en
+        // super.onCreate) pone mIsResumedCalled en false, y
+        // handleNativeState solo arranca el hilo SDL en RESUMED con
+        // mIsResumedCalled en true, que solo pone resumeNativeThread()
+        // desde onResume; onResume corre siempre DESPUÉS de que
+        // onCreate (con este init) retorne. surfaceChanged puede
+        // llegar antes, pero sin mIsResumedCalled no arranca nada.
+        // Mover el init a IO exigiría retrasar super.onResume() hasta
+        // tener init (o el hilo arrancaría sin emuenv y moriría con
+        // -1): reestructuración del ciclo SDL sin teléfono para
+        // verificarla; queda DIFERIDA. Guarda mínima: coreInitReady
+        // + la comprobación de onResume después de super.onResume().
         if (!Vita3kCoreBridge.isInitialized()) {
+            val coldInitStartedAtMillis = SystemClock.elapsedRealtime()
             val rc = Vita3kCoreBridge.init(storageRoot.absolutePath)
             if (rc != Vita3kCoreBridge.OK) {
                 val failureMessage = Vita3KLauncher.initFailureMessage(rc, Vita3kCoreBridge.lastLoadError)
@@ -304,7 +402,13 @@ class EmbeddedGameActivity : SDLActivity() {
                 finish()
                 return
             }
+            coreInitReady = true
+            // Ronda 0.2.65 (R-P1-3): medir el coste del init en frío
+            // en el hilo UI antes de moverlo a IO (cientos de ms a
+            // segundos en un Helio G99, según la auditoría).
+            LauncherLog.append(this, "launch", "Init en frío en el hilo UI: ${SystemClock.elapsedRealtime() - coldInitStartedAtMillis}ms")
         } else {
+            coreInitReady = true
             LauncherLog.append(this, "launch", "Sesión del núcleo ya inicializada (init previo en JUGAR); se omite el init en onCreate")
         }
         // P3: deja constancia de que la Activity SDL se creó y el hilo
@@ -323,16 +427,26 @@ class EmbeddedGameActivity : SDLActivity() {
      * menú de pausa es otra Activity, así que al volver de él onResume
      * y onWindowFocusChanged vuelven a ocultarlas sin tocar su
      * comportamiento. Best-effort y sin núcleo es no-op.
+     *
+     * Ronda 0.2.65 (S-P2-6): si no se pueden ocultar, queda en el
+     * log en vez de tragarse en silencio: sin esto, las barras
+     * recortan la superficie y el reporte de bug no dice por qué.
+     * En API menor que 30 no hay controlador de insets y no se
+     * registra nada (comportamiento esperado, no un fallo).
      */
     private fun hideSystemBars() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val controller = runCatching { window.insetsController }.getOrNull()
+        if (controller == null) {
+            LauncherLog.append(this, "ui", "hideSystemBars: sin controlador de insets (API 30+); las barras del sistema pueden recortar la superficie")
+            return
+        }
         runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                window.insetsController?.let {
-                    it.hide(WindowInsets.Type.systemBars())
-                    it.systemBarsBehavior =
-                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                }
-            }
+            controller.hide(WindowInsets.Type.systemBars())
+            controller.systemBarsBehavior =
+                WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }.onFailure { e ->
+            LauncherLog.append(this, "ui", "hideSystemBars falló: ${e.javaClass.simpleName}: ${e.message}; las barras del sistema pueden recortar la superficie")
         }
     }
 
@@ -386,8 +500,17 @@ class EmbeddedGameActivity : SDLActivity() {
      * el overlay queda oculto (no se inventa un layout).
      */
     private suspend fun refreshOverlayState() {
-        val view = overlayView ?: return
         val settings = runCatching { SettingsRepository(this).settingsFlow.first() }.getOrNull()
+        refreshOverlayState(settings)
+    }
+
+    /**
+     * Ronda 0.2.65 (S-P2-8): variante con los ajustes ya leídos
+     * (onResume los comparte con la bandera de pantalla). Los demás
+     * llamadores usan la variante sin argumentos, que lee aquí.
+     */
+    private suspend fun refreshOverlayState(settings: LauncherSettings?) {
+        val view = overlayView ?: return
         val touchRepo = TouchLayoutRepository(this)
         val controls = runCatching { touchRepo.layoutFlow.first() }.getOrNull() ?: emptyList()
         val activeProfileId = runCatching { touchRepo.activeProfileIdFlow.first() }.getOrNull()
@@ -450,17 +573,24 @@ class EmbeddedGameActivity : SDLActivity() {
     }
 
     /**
-     * R5-A1-11: los append de fallo de setTouchState (maybeAttach y
-     * rebind en on_launch) corrían en Main: LauncherLog.append hace
-     * E/S de fichero síncrona. Se encolan en Dispatchers.IO con el
-     * overlayScope que ya existe en esta Activity. Es solo registro
-     * (best-effort): si la Activity se destruye antes de escribir,
-     * la línea se puede perder al cancelarse el scope; no afecta
-     * al juego.
+     * Ronda 0.2.65 (S-P2-1): LauncherLog.append hace E/S síncrona de
+     * fichero. Los append del camino caliente van por aquí a
+     * Dispatchers.IO: el hook on_launch (setCurrentGameId, hilo SDL),
+     * los reintentos de quitar la pausa y de re-crear el mando, los
+     * attach y la recuperación del mando a mitad de partida. Es el
+     * patrón que R5-A1-11 ya estableció para el setTouchState. NO es
+     * un buffer en memoria con flush en lote: setCurrentGameId se
+     * llama UNA vez por lanzamiento (hook on_launch,
+     * main_android.cpp:94-99), no por frame, así que un buffer solo
+     * añadiría el riesgo de perder el registro si el proceso muere
+     * justo cuando más falta (diagnóstico de negro); el envío a IO
+     * quita la E/S del hilo SDL y del hilo UI sin retener nada. Los
+     * append de onDestroy siguen síncronos a propósito: overlayScope
+     * se cancela ahí y el registro de salida no debe perderse.
      */
-    private fun appendOverlayLogAsync(message: String) {
+    private fun appendLogAsync(tag: String, message: String) {
         overlayScope.launch(Dispatchers.IO) {
-            LauncherLog.append(this@EmbeddedGameActivity, "overlay", message)
+            LauncherLog.append(this@EmbeddedGameActivity, tag, message)
         }
     }
 
@@ -489,23 +619,23 @@ class EmbeddedGameActivity : SDLActivity() {
         // saltaba en silencio y el reporte no distinguía "no se
         // intentó" de "se intentó y falló".
         if (!overlayShouldShow) {
-            LauncherLog.append(this, "overlay", "attach omitido: overlay oculto por ajustes")
+            appendLogAsync("overlay", "attach omitido: overlay oculto por ajustes")
             return
         }
         if (overlayAttached) {
-            LauncherLog.append(this, "overlay", "attach omitido: mando virtual ya activo; el rebind solo ocurre al arrancar el juego (on_launch)")
+            appendLogAsync("overlay", "attach omitido: mando virtual ya activo; el rebind solo ocurre al arrancar el juego (on_launch)")
             return
         }
         if (!Vita3kCoreBridge.isAppRunning()) {
-            LauncherLog.append(this, "overlay", "attach omitido: sin partida en curso; se reintentará al arrancar el juego")
+            appendLogAsync("overlay", "attach omitido: sin partida en curso; se reintentará al arrancar el juego")
             return
         }
         if (!Vita3kCoreBridge.overlayAttach()) {
-            LauncherLog.append(this, "overlay", "attach del mando virtual falló (sin núcleo o sin SDL)")
+            appendLogAsync("overlay", "attach del mando virtual falló (sin núcleo o sin SDL)")
             return
         }
         if (!Vita3kCoreBridge.overlayIsAttached()) {
-            LauncherLog.append(this, "overlay", "attach llamado pero el mando virtual no existe en SDL; se reintentará al arrancar el juego")
+            appendLogAsync("overlay", "attach llamado pero el mando virtual no existe en SDL; se reintentará al arrancar el juego")
             return
         }
         overlayAttached = true
@@ -518,9 +648,9 @@ class EmbeddedGameActivity : SDLActivity() {
         // setTouchState de upstream es void, sin readback).
         // R5-A1-11: el append va fuera de Main (Dispatchers.IO).
         if (!Vita3kCoreBridge.overlaySetTouchState(false)) {
-            appendOverlayLogAsync("táctil frontal no confirmado (sin readback del núcleo)")
+            appendLogAsync("overlay", "táctil frontal no confirmado (sin readback del núcleo)")
         }
-        LauncherLog.append(this, "overlay", "mando virtual del overlay activo")
+        appendLogAsync("overlay", "mando virtual del overlay activo")
     }
 
     private fun detachOverlayController() {
@@ -565,7 +695,7 @@ class EmbeddedGameActivity : SDLActivity() {
     private suspend fun rebindOverlayControllerOnLaunch() {
         if (!Vita3kCoreBridge.available) return
         if (!overlayShouldShow) {
-            LauncherLog.append(this, "overlay", "on_launch: overlay oculto por ajustes; no se re-crea el mando virtual")
+            appendLogAsync("overlay", "on_launch: overlay oculto por ajustes; no se re-crea el mando virtual")
             return
         }
         // Soltar lo pulsado ANTES de soltar el mando (releaseAllInputs
@@ -592,18 +722,18 @@ class EmbeddedGameActivity : SDLActivity() {
                 // R5-A1-18: texto suavizado (sin readback del núcleo)
                 // y R5-A1-11: el append va fuera de Main (Dispatchers.IO).
                 if (!Vita3kCoreBridge.overlaySetTouchState(false)) {
-                    appendOverlayLogAsync("on_launch: táctil frontal no confirmado (sin readback del núcleo)")
+                    appendLogAsync("overlay", "on_launch: táctil frontal no confirmado (sin readback del núcleo)")
                 }
-                LauncherLog.append(this, "overlay", "on_launch: mando virtual re-creado (intento $attempt/$OVERLAY_REBIND_MAX_ATTEMPTS, gamepads SDL=$gamepadCount)")
+                appendLogAsync("overlay", "on_launch: mando virtual re-creado (intento $attempt/$OVERLAY_REBIND_MAX_ATTEMPTS, gamepads SDL=$gamepadCount)")
                 attached = true
                 break
             }
             val retryNote = if (attempt < OVERLAY_REBIND_MAX_ATTEMPTS) "; reintentando en 500 ms" else ""
-            LauncherLog.append(this, "overlay", "on_launch: rebind intento $attempt/$OVERLAY_REBIND_MAX_ATTEMPTS falló (attach=$attachOk, existeEnSdl=$existsInSdl, gamepads SDL=$gamepadCount)$retryNote")
+            appendLogAsync("overlay", "on_launch: rebind intento $attempt/$OVERLAY_REBIND_MAX_ATTEMPTS falló (attach=$attachOk, existeEnSdl=$existsInSdl, gamepads SDL=$gamepadCount)$retryNote")
             if (attempt < OVERLAY_REBIND_MAX_ATTEMPTS) delay(OVERLAY_REBIND_RETRY_DELAY_MS)
         }
         if (!attached) {
-            LauncherLog.append(this, "overlay", "on_launch: no se pudo re-crear el mando virtual tras $OVERLAY_REBIND_MAX_ATTEMPTS intentos; los botones táctiles no llegarán al juego")
+            appendLogAsync("overlay", "on_launch: no se pudo re-crear el mando virtual tras $OVERLAY_REBIND_MAX_ATTEMPTS intentos; los botones táctiles no llegarán al juego")
         }
     }
 
@@ -682,7 +812,7 @@ class EmbeddedGameActivity : SDLActivity() {
     /** Marca el mando como perdido y reintenta el attach. Devuelve true si el mando vuelve a existir. */
     private fun recoverOverlayController(): Boolean {
         overlayAttached = false
-        LauncherLog.append(this, "overlay", "mando virtual perdido a mitad de partida: reintentando el attach")
+        appendLogAsync("overlay", "mando virtual perdido a mitad de partida: reintentando el attach")
         maybeAttachOverlayController()
         if (overlayAttached) return true
         val now = SystemClock.uptimeMillis()
@@ -707,6 +837,21 @@ class EmbeddedGameActivity : SDLActivity() {
     // núcleo es no-op (el puente devuelve false).
     override fun onResume() {
         super.onResume()
+        // Ronda 0.2.65 (R-P1-3): guarda mínima del init en frío. Sin
+        // sesión, el hilo SDL que arranca super.onResume() moriría
+        // con SDL_main -1 y la Activity se cerraría en silencio (ver
+        // el comentario de onCreate). La comprobación va DESPUÉS de
+        // super.onResume() porque el framework exige llamarlo (si no,
+        // SuperNotCalledException) y es super.onResume() quien arranca
+        // el hilo SDL: la guarda es red de diagnóstico (mensaje +
+        // registro), no prevención. En el camino normal nunca dispara:
+        // onCreate ya dejó coreInitReady en true.
+        if (!coreInitReady && !Vita3kCoreBridge.isInitialized()) {
+            appendLogAsync("launch", "onResume sin sesión del núcleo (init en frío no completado): se cierra sin arrancar el juego")
+            Toast.makeText(this, "No se pudo preparar el motor del juego.", Toast.LENGTH_LONG).show()
+            finish()
+            return
+        }
         // R4-P1-3: re-ocultar las barras del sistema al volver a primer
         // plano (del menú de pausa, de Inicio/Recientes o de un swipe
         // que las mostró): en onCreate solo no basta.
@@ -732,9 +877,99 @@ class EmbeddedGameActivity : SDLActivity() {
         // existe, se reintenta el attach ahora. La pausa de fondo se
         // quita antes (clearBackgroundPause sigue primero).
         verifyOverlayAttachmentOnResume()
-        refreshOverlay()
-        applyPerformanceScreenFlag()
-        maybeStartBenchmarkSampling()
+        // Ronda 0.2.65 (S-P2-8): overlay + bandera de pantalla con
+        // UNA sola lectura de ajustes (antes dos: refreshOverlay y
+        // applyPerformanceScreenFlag leían settingsFlow por separado).
+        refreshOverlayAndScreenFlag()
+        // Ronda 0.2.65 (S-P2-3): re-leer la rotación de motion.
+        checkDisplayRotation("onResume")
+        // Ronda 0.2.65 (P0-3): watchdog de pantalla negra.
+        maybeStartBlackScreenWatchdog()
+        // Ronda 0.2.65 (R-P1-18): la prueba de 30 s ya no
+        // auto-arranca 5 s después de on_launch. Si el usuario ya
+        // confirmó que está jugando, se reanuda el muestreo; si no,
+        // solo se muestra el botón "Ya estoy jugando".
+        if (benchmarkStartedByUser) {
+            startBenchmarkSamplingJob()
+        } else {
+            maybeShowBenchmarkPrompt()
+        }
+    }
+
+    /**
+     * Ronda 0.2.65 (S-P2-3): al girar la pantalla a mitad de partida
+     * se re-lee la rotación (el núcleo solo la lee en on_init, así
+     * que el giro no se aplica al motion hasta reiniciar el juego;
+     * ver checkDisplayRotation). super hace lo suyo (locale, modo
+     * noche) antes de la lectura.
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        checkDisplayRotation("onConfigurationChanged")
+    }
+
+    /**
+     * Ronda 0.2.65 (S-P2-3): re-lee la rotación de la pantalla y la
+     * compara con la última leída. El núcleo la lee SOLO en on_init
+     * (pin main_android.cpp:92): no hay setter JNI para empujarle la
+     * rotación nueva, así que esto es detección + registro, no
+     * corrección: si cambió, el motion apunta mal hasta reiniciar el
+     * juego, y el reporte de bug lo muestra. El arreglo completo
+     * (exponer set_display_rotation por JNI) necesita cambio en el
+     * pin. La primera lectura solo se guarda, sin registrar nada.
+     */
+    private fun checkDisplayRotation(tag: String) {
+        val current = runCatching { getNativeDisplayRotation() }.getOrNull() ?: return
+        val previous = lastKnownDisplayRotation
+        lastKnownDisplayRotation = current
+        if (previous == -1 || previous == current) return
+        LauncherLog.append(this, "motion", "[$tag] rotación de pantalla cambió de $previous a $current: el motion del núcleo se leyó solo en on_init y sigue con la rotación vieja hasta reiniciar el juego (sin setter JNI en el pin)")
+    }
+
+    /**
+     * Ronda 0.2.65 (P0-3): watchdog de pantalla negra. Arranca una
+     * sola vez por Activity (primer onResume, cuando el hilo SDL ya
+     * puede arrancar) y espera BLACK_SCREEN_WATCHDOG_TIMEOUT_MS
+     * (180 s). Si entonces no hay on_launch ni FPS entregado mayor
+     * que 0, el arranque está atascado (init atascado, SDL_main que
+     * no arranca sin cerrar la Activity, o renderer que nunca
+     * entrega): avisa con Toast + diálogo y cierra la Activity, con
+     * registro. Si el juego arrancó (on_launch o FPS mayor que 0),
+     * no hace nada. No detecta "juego en curso con imagen negra"
+     * (R-P1-1: el FPS del núcleo cuenta frames entregados, no
+     * presentados). Se cancela con overlayScope en onDestroy.
+     */
+    private fun maybeStartBlackScreenWatchdog() {
+        if (watchdogStarted) return
+        watchdogStarted = true
+        overlayScope.launch {
+            delay(BLACK_SCREEN_WATCHDOG_TIMEOUT_MS)
+            if (!isActive || isFinishing) return@launch
+            val fps = runCatching { Vita3kCoreBridge.getFps() }.getOrDefault(-1f)
+            if (!shouldFireBlackScreenWatchdog(gameRunningSinceMillis, firstFrameLogged, fps)) return@launch
+            appendLogAsync("launch", "Watchdog de pantalla negra: sin on_launch ni FPS entregado mayor que 0 tras ${BLACK_SCREEN_WATCHDOG_TIMEOUT_MS / 1000} s desde el primer onResume; el arranque está atascado y se cierra la Activity")
+            Toast.makeText(this@EmbeddedGameActivity, "El juego no ha arrancado: sin imagen tras 3 minutos.", Toast.LENGTH_LONG).show()
+            showBlackScreenDialogAndFinish()
+        }
+    }
+
+    /**
+     * Ronda 0.2.65 (P0-3): diálogo del watchdog. No cancelable: sin
+     * arranque no hay partida a la que volver; "Salir" cierra la
+     * Activity y el usuario puede reintentarlo desde el inicio. Si el
+     * diálogo no se puede mostrar, se cierra directamente.
+     */
+    private fun showBlackScreenDialogAndFinish() {
+        runCatching {
+            AlertDialog.Builder(this)
+                .setTitle("El juego no ha arrancado")
+                .setMessage("Pasaron 3 minutos sin que el juego confirmara el arranque ni entregara imágenes. Puede que el arranque se haya quedado atascado (por ejemplo, en la precompilación de shaders). Puedes intentarlo de nuevo desde el inicio.")
+                .setPositiveButton("Salir") { _, _ -> finish() }
+                .setCancelable(false)
+                .show()
+        }.onFailure {
+            finish()
+        }
     }
 
     /**
@@ -746,7 +981,7 @@ class EmbeddedGameActivity : SDLActivity() {
     private fun verifyOverlayAttachmentOnResume() {
         if (!overlayAttached) return
         if (Vita3kCoreBridge.overlayIsAttached()) return
-        LauncherLog.append(this, "overlay", "onResume: el mando virtual ya no existe en SDL tras volver a primer plano; reintentando el attach")
+        appendLogAsync("overlay", "onResume: el mando virtual ya no existe en SDL tras volver a primer plano; reintentando el attach")
         overlayAttached = false
         maybeAttachOverlayController()
     }
@@ -805,9 +1040,10 @@ class EmbeddedGameActivity : SDLActivity() {
      * (isAppPaused()==false). Si no hay nada que quitar, silencio:
      * onResume corre a cada vuelta a primer plano y no se ensucia el
      * log. Si el clear se rechaza (fase distinta de Running), se
-     * reintenta hasta 3 veces con 500 ms; si el juego sigue pausado
-     * por OTRO motivo (usuario/menú), se registra y no se toca ese
-     * motivo: no pertenece a este camino.
+     * reintenta hasta 3 veces con 200 ms (ronda 0.2.65, S-P2-7: antes
+     * 500 ms, 1,5 s de botones sordos en el peor caso; ahora 0,6 s);
+     * si el juego sigue pausado por OTRO motivo (usuario/menú), se
+     * registra y no se toca ese motivo: no pertenece a este camino.
      */
     private suspend fun clearBackgroundPauseNow(tag: String) {
         if (!Vita3kCoreBridge.available) return
@@ -822,19 +1058,29 @@ class EmbeddedGameActivity : SDLActivity() {
             val stillPaused = Vita3kCoreBridge.isAppPaused()
             when (decidePauseClearAttempt(setOk, stillPaused, attempt, PAUSE_CLEAR_MAX_ATTEMPTS)) {
                 PauseClearOutcome.CLEARED -> {
-                    LauncherLog.append(this, "pause", "[$tag] pausa de fondo quitada (intento $attempt/$PAUSE_CLEAR_MAX_ATTEMPTS)")
+                    appendLogAsync("pause", "[$tag] pausa de fondo quitada (intento $attempt/$PAUSE_CLEAR_MAX_ATTEMPTS)")
                     return
                 }
                 PauseClearOutcome.STILL_PAUSED_OTHER_REASON -> {
-                    LauncherLog.append(this, "pause", "[$tag] pausa de fondo quitada, pero el juego sigue pausado por otro motivo (usuario/menú); no se toca ese motivo")
+                    appendLogAsync("pause", "[$tag] pausa de fondo quitada, pero el juego sigue pausado por otro motivo (usuario/menú); no se toca ese motivo")
                     return
                 }
                 PauseClearOutcome.CLEAR_REJECTED_RETRY -> {
-                    LauncherLog.append(this, "pause", "[$tag] el núcleo rechazó quitar la pausa de fondo (intento $attempt/$PAUSE_CLEAR_MAX_ATTEMPTS, fase distinta de Running); reintentando en 500 ms")
+                    // Ronda 0.2.65 (S-P2-7): mientras el clear se
+                    // rechaza, el juego está pausado y sordo a los
+                    // botones. Avisar al volver a primer plano (solo
+                    // en onResume, solo el primer intento): sin esto
+                    // el usuario ve "no responde" hasta 0,6 s sin
+                    // saber por qué. En on_launch no se avisa: el
+                    // juego está arrancando, no reanudando.
+                    if (attempt == 1 && tag == "onResume") {
+                        Toast.makeText(this, "Reanudando el juego.", Toast.LENGTH_SHORT).show()
+                    }
+                    appendLogAsync("pause", "[$tag] el núcleo rechazó quitar la pausa de fondo (intento $attempt/$PAUSE_CLEAR_MAX_ATTEMPTS, fase distinta de Running); reintentando en ${PAUSE_CLEAR_RETRY_DELAY_MS}ms")
                     delay(PAUSE_CLEAR_RETRY_DELAY_MS)
                 }
                 PauseClearOutcome.CLEAR_REJECTED_FAILED -> {
-                    LauncherLog.append(this, "pause", "[$tag] no se pudo quitar la pausa de fondo tras $PAUSE_CLEAR_MAX_ATTEMPTS intentos (fase distinta de Running); el juego puede quedar sordo a los botones hasta el próximo arranque")
+                    appendLogAsync("pause", "[$tag] no se pudo quitar la pausa de fondo tras $PAUSE_CLEAR_MAX_ATTEMPTS intentos (fase distinta de Running); el juego puede quedar sordo a los botones hasta el próximo arranque")
                 }
             }
         }
@@ -842,8 +1088,9 @@ class EmbeddedGameActivity : SDLActivity() {
 
     /**
      * Prueba de 30 s (auditoría de funcionalidad 2026-11-08): si el
-     * lanzamiento vino con benchmark=true, muestrea el FPS real del
-     * núcleo (Vita3kCoreBridge.getFps(), que lee EmuEnvState::fps)
+     * lanzamiento vino con benchmark=true, muestrea el FPS entregado
+     * por el juego (Vita3kCoreBridge.getFps(), que lee
+     * EmuEnvState::fps: frames EMULADOS, no presentados en pantalla)
      * cada segundo mientras el juego está en primer plano, hasta 30
      * muestras válidas (~30 s de juego real). Al salir (onPause) guarda
      * la media en DataStore; el launcher la consume
@@ -852,57 +1099,115 @@ class EmbeddedGameActivity : SDLActivity() {
      * manual. El muestreo no toca el juego: es una lectura JNI por
      * segundo, sin escribir nada en el núcleo.
      *
-     * R2-P2-29: NO se muestrea hasta que el núcleo confirme el juego
-     * en curso (setCurrentGameId, hook on_launch) + 5 s de margen
-     * (título/carga inicial). Antes, el muestreo arrancaba en cada
-     * onResume y la pantalla de título contaba como juego. Si el
-     * núcleo nunca confirma el arranque, no se guarda nada (fallo
-     * seguro: mejor sin prueba que con una media de menús).
+     * Ronda 0.2.65 (R-P1-18): el muestreo SOLO arranca cuando el
+     * usuario confirma que ya está jugando (botón "Ya estoy
+     * jugando"). El auto-arranque 5 s después de on_launch medía la
+     * pantalla de título, no el juego: entre on_launch y el gameplay
+     * hay que pulsar Start, navegar el menú y esperar la carga
+     * (15-40 s), así que las 30 muestras caían casi enteras en
+     * título/menús/carga. Sin confirmación no se muestrea nada
+     * (fallo seguro: mejor sin prueba que con una media de menús).
+     * Si el núcleo nunca confirma el arranque, no se muestra ni el
+     * botón. La nota de GpuDiagnosticsScreen la actualiza el agente
+     * 6 para que coincida.
      */
-    private fun maybeStartBenchmarkSampling() {
+    private fun maybeShowBenchmarkPrompt() {
+        if (!benchmarkMode || benchmarkSaved || benchmarkStartedByUser) return
+        if (!Vita3kCoreBridge.available) return
+        // Juego aún no confirmado por el núcleo: no mostrar el botón;
+        // cuando llegue setCurrentGameId se reintentará desde ahí.
+        if (gameRunningSinceMillis == 0L) return
+        if (benchmarkPromptButton != null) return
+        val button = Button(this).apply {
+            text = "Ya estoy jugando: medir 30 s"
+            setOnClickListener { startBenchmarkSamplingByUser() }
+        }
+        val params = RelativeLayout.LayoutParams(
+            RelativeLayout.LayoutParams.WRAP_CONTENT,
+            RelativeLayout.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            addRule(RelativeLayout.ALIGN_PARENT_BOTTOM)
+            addRule(RelativeLayout.CENTER_HORIZONTAL)
+            bottomMargin = (32 * resources.displayMetrics.density).toInt()
+        }
+        addContentView(button, params)
+        benchmarkPromptButton = button
+    }
+
+    /**
+     * Ronda 0.2.65 (R-P1-18): el usuario confirmó que ya está
+     * jugando. Esconde el botón y arranca el muestreo de 30 s sin
+     * margen: el usuario ya está en partida, no en el título. Si el
+     * usuario pausa a mitad, el muestreo se reanuda solo al volver
+     * (onResume llama a startBenchmarkSamplingJob sin volver a
+     * preguntar).
+     */
+    private fun startBenchmarkSamplingByUser() {
+        if (benchmarkStartedByUser) return
+        benchmarkStartedByUser = true
+        benchmarkPromptButton?.visibility = View.GONE
+        Toast.makeText(this, "Midiendo FPS durante 30 s de juego.", Toast.LENGTH_SHORT).show()
+        appendLogAsync("benchmark", "Prueba de 30 s iniciada por el usuario (ya está jugando); se muestrea el FPS entregado por el juego, no el presentado en pantalla")
+        startBenchmarkSamplingJob()
+    }
+
+    /**
+     * Arranca (o reanuda tras una pausa) el bucle de muestreo de la
+     * prueba de 30 s: 1 muestra por segundo hasta 30 muestras
+     * válidas. Sin margen inicial: quien llama ya confirmó que hay
+     * partida en curso. Al completar las 30 muestras avisa con un
+     * Toast; el guardado sigue en stopBenchmarkSamplingAndSave (al
+     * salir, solo con las 30 muestras).
+     */
+    private fun startBenchmarkSamplingJob() {
         if (!benchmarkMode || benchmarkSaved || !Vita3kCoreBridge.available) return
         if (benchmarkJob?.isActive == true) return
         // Prueba completa: 30 muestras válidas. Sin el tope, el muestreo
         // medía toda la sesión en vez de 30 s.
         if (benchmarkSamples.size >= BENCHMARK_MAX_SAMPLES) return
-        // Juego aún no confirmado por el núcleo: no muestrear; cuando
-        // llegue setCurrentGameId se reintentará desde ahí.
-        if (gameRunningSinceMillis == 0L) return
         benchmarkJob = overlayScope.launch {
-            // Margen tras el arranque (título/carga): solo se descuenta
-            // una vez; al reanudar tras una pausa ya pasó hace rato.
-            val elapsed = SystemClock.uptimeMillis() - gameRunningSinceMillis
-            val waitMs = BENCHMARK_START_MARGIN_MS - elapsed
-            if (waitMs > 0) delay(waitMs)
             while (isActive && benchmarkSamples.size < BENCHMARK_MAX_SAMPLES) {
                 val fps = runCatching { Vita3kCoreBridge.getFps() }.getOrDefault(-1f)
                 if (fps > 0f) benchmarkSamples += fps
                 delay(1000)
             }
+            if (benchmarkSamples.size >= BENCHMARK_MAX_SAMPLES) {
+                Toast.makeText(this@EmbeddedGameActivity, "Prueba de 30 s completa.", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
     /**
-     * Ronda 0.2.64 (H-4, T2): primer frame presentado tras on_launch.
-     * Sondea getFps() 1 vez por segundo hasta el primer FPS > 0 y
-     * registra "Primer frame presentado tras on_launch (T2 ≈ X ms
-     * desde JUGAR)" una sola vez. La pantalla de título también
-     * presenta frames: T2 marca el primer frame presentado, NO el
-     * gameplay interactivo. Corre en overlayScope (se cancela en
-     * onDestroy); sin t0 no registra nada.
+     * Ronda 0.2.64 (H-4, T2) + 0.2.65 (R-P1-1, S-P2-2): primer frame
+     * entregado por el juego tras on_launch. Sondea getFps() hasta el
+     * primer FPS > 0 y registra "Primer frame entregado por el juego
+     * tras on_launch (T2 ≈ X ms desde JUGAR)" una sola vez. La
+     * etiqueta es honesta a propósito: getFps() lee
+     * EmuEnvState::fps, que cuenta frames que el juego ENTREGA al
+     * emulador (sceDisplaySetFrameBuf), ANTES del render Vulkan; con
+     * pantalla negra por superficie perdida, fps es mayor que 0
+     * igualmente. T2 NO prueba que el juego se vea: la señal
+     * correcta (frames presentados) necesita un contador nuevo en el
+     * pin. La pantalla de título también entrega frames: T2 marca
+     * el primer frame entregado, NO el gameplay interactivo. El
+     * sondeo va cada 200 ms los primeros 10 s (antes 1 s siempre:
+     * sobrestimaba T2 hasta 2 s) y luego 1 s. Corre en overlayScope
+     * (se cancela en onDestroy); sin t0 no registra nada.
      */
     private fun maybeStartFirstFramePoll() {
         if (launchStartedAtMillis <= 0 || firstFrameLogged) return
+        val pollStartedAtMillis = SystemClock.elapsedRealtime()
         overlayScope.launch {
             while (isActive && !firstFrameLogged) {
                 val fps = runCatching { Vita3kCoreBridge.getFps() }.getOrDefault(-1f)
                 if (fps > 0f) {
                     firstFrameLogged = true
                     val t2 = SystemClock.elapsedRealtime() - launchStartedAtMillis
-                    LauncherLog.append(this@EmbeddedGameActivity, "launch", "Primer frame presentado tras on_launch (T2 ≈ ${t2}ms desde JUGAR)")
+                    appendLogAsync("launch", "Primer frame entregado por el juego tras on_launch (T2 ≈ ${t2}ms desde JUGAR; frames entregados, NO presentados en pantalla: no prueba que el juego se vea)")
                     return@launch
                 }
-                delay(1000)
+                val elapsed = SystemClock.elapsedRealtime() - pollStartedAtMillis
+                delay(if (elapsed < FIRST_FRAME_POLL_FAST_WINDOW_MS) FIRST_FRAME_POLL_FAST_DELAY_MS else 1_000L)
             }
         }
     }
@@ -932,15 +1237,16 @@ class EmbeddedGameActivity : SDLActivity() {
      * abrir el juego la bandera se perdía y la pantalla podía
      * apagarse en mitad de la partida. Se aplica aquí en cada
      * onResume (y se quita si el ajuste está OFF).
+     *
+     * Ronda 0.2.65 (S-P2-8): recibe los ajustes ya leídos; onResume
+     * comparte la lectura con refreshOverlayState en vez de leer
+     * settingsFlow dos veces.
      */
-    private fun applyPerformanceScreenFlag() {
-        overlayScope.launch {
-            val settings = runCatching { SettingsRepository(this@EmbeddedGameActivity).settingsFlow.first() }.getOrNull()
-            if (settings?.performanceMode == true) {
-                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            } else {
-                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            }
+    private fun applyPerformanceScreenFlag(settings: LauncherSettings?) {
+        if (settings?.performanceMode == true) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
 
@@ -975,31 +1281,34 @@ class EmbeddedGameActivity : SDLActivity() {
         // no aparece en el log, el núcleo nunca llegó a arrancar el
         // juego (atascado en init/carga); si aparece y la pantalla
         // sigue negra, el juego arrancó pero el render no presenta.
-        LauncherLog.append(this, "launch", "Núcleo confirmó juego en curso: ${gameId.orEmpty()} (on_launch)")
+        appendLogAsync("launch", "Núcleo confirmó juego en curso: ${gameId.orEmpty()} (on_launch)")
         // Ronda 0.2.64 (H-4, T1): JUGAR → título. El t0 viene del
         // extra del intent (elapsedRealtime, mismo reloj que play()
         // y el lanzador): si no hay t0, no se registra nada.
         if (launchStartedAtMillis > 0) {
             val t1 = SystemClock.elapsedRealtime() - launchStartedAtMillis
-            LauncherLog.append(this, "launch", "T1 (JUGAR → título): ${t1}ms")
+            appendLogAsync("launch", "T1 (JUGAR → título): ${t1}ms")
         }
         runOnUiThread {
             currentTitleId = gameId.orEmpty()
             // R2-P2-29: el núcleo confirma aquí que el juego está en
             // curso (hook on_launch): fijar el momento una sola vez y
-            // arrancar el muestreo del benchmark si toca (con su
-            // margen de 5 s). Antes de esto, maybeStartBenchmarkSampling
-            // no muestrea nada (menús/cargas no cuentan).
+            // mostrar el botón de la prueba de 30 s si toca (ronda
+            // 0.2.65, R-P1-18: el muestreo solo arranca cuando el
+            // usuario confirma que ya está jugando; antes de esto no
+            // se muestrea nada, menús/cargas no cuentan).
             if (gameId?.isNotEmpty() == true && gameRunningSinceMillis == 0L) {
                 gameRunningSinceMillis = SystemClock.uptimeMillis()
-                maybeStartBenchmarkSampling()
-                // Ronda 0.2.64 (H-4, T2): primer frame presentado. Se
-                // sondea getFps() 1 vez por segundo hasta el primer
-                // FPS > 0 (la pantalla de título también presenta
-                // frames: T2 marca el primer frame presentado, NO el
-                // gameplay interactivo — que el usuario pulse Start
-                // queda fuera de la vista del launcher). Una sola vez
-                // por lanzamiento; overlayScope se cancela en onDestroy.
+                maybeShowBenchmarkPrompt()
+                // Ronda 0.2.64 (H-4, T2) + 0.2.65 (R-P1-1): primer
+                // frame ENTREGADO por el juego. Se sondea getFps()
+                // cada 200 ms los primeros 10 s (luego 1 s) hasta el
+                // primer FPS > 0. getFps() lee frames emulados
+                // (sceDisplaySetFrameBuf), NO presentados en pantalla:
+                // T2 marca el primer frame entregado, NO el gameplay
+                // interactivo ni la prueba de que el juego se vea.
+                // Una sola vez por lanzamiento; overlayScope se
+                // cancela en onDestroy.
                 maybeStartFirstFramePoll()
             }
             // El juego arrancó: SDL está arriba y la sesión activa, así
@@ -1149,8 +1458,21 @@ class EmbeddedGameActivity : SDLActivity() {
         if (isFinishing) {
             // Ronda 0.2.57: capturar los trofeos ANTES de destruir la
             // sesión (ver captureTrophiesBeforeSessionDestroy).
+            // Ronda 0.2.65 (S-P2-4): la captura sigue SÍNCRONA a
+            // propósito: MainActivity.onResume consume
+            // TrophySyncPending.take() al volver, y si la captura
+            // fuera a IO podría llegar después y los trofeos de esta
+            // partida no se sincronizarían en esta vuelta. Lo que se
+            // mueve a IO es la destrucción de la sesión (el teardown
+            // de Vulkan, la parte lenta): destroyScope corre DESPUÉS
+            // de super.onDestroy() (el hilo SDL ya terminó) y DESPUÉS
+            // de la captura, en la misma secuencia. Riesgo residual:
+            // un JUGAR inmediato podría ver la sesión vieja aún viva;
+            // tryLaunchEmbedded ya destruye la sesión obsoleta antes
+            // de init (destroyStaleSessionIfIdle) y tolera que siga
+            // activa (SESSION_ACTIVE).
             captureTrophiesBeforeSessionDestroy()
-            destroyNativeSessionAfterSdlShutdown()
+            destroyScope.launch { destroyNativeSessionAfterSdlShutdown() }
         }
     }
 
@@ -1166,9 +1488,12 @@ class EmbeddedGameActivity : SDLActivity() {
      * siempre vacío: por eso la captura va AQUÍ, después de
      * super.onDestroy() (el hilo SDL ya terminó y la partida ya no
      * está en curso: nunca se lee durante la partida) y ANTES de
-     * destroySession. Síncrona en el hilo principal por necesidad:
-     * destroySession corre justo después en este mismo hilo y la
-     * invalidaría; la lectura es un solo TRP pequeño (20 trofeos).
+     * destroySession. Síncrona en el hilo principal por necesidad
+     * (ronda 0.2.65, S-P2-4): MainActivity.onResume consume
+     * TrophySyncPending al volver, así que la captura debe aterrizar
+     * antes de salir de onDestroy; y destroySession (ahora en IO,
+     * justo después) la invalidaría. La lectura es un solo TRP
+     * pequeño (20 trofeos).
      * Solo se guarda si hay colecciones; un fallo (sin núcleo, puente
      * roto, sesión ya destruida) solo deja el progreso local como
      * estaba y queda en el log: nunca tumba el cierre del juego.
@@ -1187,11 +1512,15 @@ class EmbeddedGameActivity : SDLActivity() {
     }
 
     /**
-     * P1-1 (lado Activity): destroySession() en el hilo principal
-     * (onDestroy corre en UI, por contrato JNI) y solo sin partida en
-     * curso (el hilo SDL ya terminó tras super.onDestroy()). Si
-     * devuelve SESSION_ACTIVE (-4), no se forzó nada: se registra y
-     * hace falta matar el proceso para que los ajustes entren.
+     * P1-1 (lado Activity) + ronda 0.2.65 (S-P2-4): destroySession()
+     * corre en destroyScope (Dispatchers.IO), DESPUÉS de
+     * super.onDestroy() (el hilo SDL ya terminó tras su join de 1 s)
+     * y DESPUÉS de la captura de trofeos, en la misma secuencia. El
+     * "contrato solo Main" no lo explica el pin (R-P1-11): el
+     * teardown de Vulkan no necesita el hilo UI, solo que el hilo
+     * SDL ya no corra. Solo sin partida en curso. Si devuelve
+     * SESSION_ACTIVE (-4), no se forzó nada: se registra y hace falta
+     * matar el proceso para que los ajustes entren.
      */
     private fun destroyNativeSessionAfterSdlShutdown() {
         if (!Vita3kCoreBridge.available) return
@@ -1207,4 +1536,25 @@ class EmbeddedGameActivity : SDLActivity() {
                 LauncherLog.append(this, "launch", "destroySession al salir devolvió $rc")
         }
     }
+}
+
+/**
+ * Ronda 0.2.65 (P0-3): decisión pura del watchdog de pantalla negra.
+ * Dispara solo si NO hay ninguna señal de arranque: ni on_launch
+ * (gameRunningSinceMillis en 0) ni primer frame entregado
+ * (firstFrameLogged en false) ni FPS entregado mayor que 0 en este
+ * instante. Si el juego confirmó on_launch, no dispara aunque el FPS
+ * sea 0: el juego está en curso (por ejemplo, cargando) y matarlo
+ * sería peor que esperar. Tampoco distingue "juego en curso con
+ * imagen negra": eso necesita el contador de frames presentados del
+ * pin (R-P1-1). Probada en JVM (Ronda065SurfaceWatchdogTest).
+ */
+internal fun shouldFireBlackScreenWatchdog(
+    gameRunningSinceMillis: Long,
+    firstFrameLogged: Boolean,
+    fps: Float,
+): Boolean {
+    if (gameRunningSinceMillis != 0L) return false
+    if (firstFrameLogged) return false
+    return fps <= 0f
 }
