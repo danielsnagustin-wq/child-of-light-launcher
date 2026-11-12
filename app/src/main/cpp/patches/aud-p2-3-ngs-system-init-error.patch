@@ -1,0 +1,27 @@
+diff --git a/modules/SceNgsUser/SceNgs.cpp b/modules/SceNgsUser/SceNgs.cpp
+index 45b58c5a..836496db 100644
+--- a/modules/SceNgsUser/SceNgs.cpp
++++ b/modules/SceNgsUser/SceNgs.cpp
+@@ -403,8 +403,21 @@ EXPORT(int, sceNgsSystemGetRequiredMemorySize, SceNgsSystemInitParams *params, u
+ EXPORT(SceUInt32, sceNgsSystemInit, Ptr<void> memspace, const uint32_t memspace_size, SceNgsSystemInitParams *params,
+     Ptr<ngs::System> *system) {
+     TRACY_FUNC(sceNgsSystemInit, memspace, memspace_size, params, system);
++    // Ronda 0.2.66 (AUD-P2-3): con ngs-enable=false esto devolvía OK
++    // (0) SIN asignar *system: el juego recibía un handle sin
++    // inicializar y lo usaba después (sceNgsSystemUpdate y compañía
++    // devuelven OK temprano cuando está desactivado, pero cualquier
++    // acceso directo al sistema colgaba o leía basura). Ahora devuelve
++    // el error NGS genérico: es el contrato documentado del módulo (el
++    // juego debe comprobar el retorno) y es el camino fail-fast. Se
++    // elige el error en vez de "inicializar un sistema vacío válido"
++    // porque un sistema vacío mentiría igual: las voces no sonarían y
++    // el juego creería que el audio NGS funciona. Riesgo residual: un
++    // juego que ignore el error e intente usar el handle seguirá
++    // fallando, pero ahora el fallo es visible en el log como error
++    // NGS en vez de un OK mentiroso.
+     if (!emuenv.cfg.current_config.ngs_enable) {
+-        return 0;
++        return RET_ERROR(SCE_NGS_ERROR);
+     }
+ 
+     if (!ngs::init_system(emuenv.ngs, emuenv.mem, params, memspace, memspace_size)) {
