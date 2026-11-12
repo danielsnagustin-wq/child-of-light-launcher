@@ -1,0 +1,79 @@
+diff --git a/kernel/include/kernel/relocation.h b/kernel/include/kernel/relocation.h
+index 3b982b3c8..92295bf7e 100644
+--- a/kernel/include/kernel/relocation.h
++++ b/kernel/include/kernel/relocation.h
+@@ -20,6 +20,7 @@
+ #include <mem/util.h>
+ 
+ #include <map>
++#include <vector>
+ 
+ struct MemState;
+ 
+@@ -33,6 +34,7 @@ using SegmentInfosForReloc = std::map<uint16_t, SegmentInfoForReloc>;
+ /**
+  * \param is_var_import True when alternate format 1 should be used (it's used for var import relocations)
+  * \param explicit_symval Used only if is_var_import is true, specifies the value to be written to the relocation target
++ * \param patched Used only if is_var_import is true (receives the guest address of each rewritten word)
+  * \return True on success, false on error
+  */
+-bool relocate(const void *entries, uint32_t size, const SegmentInfosForReloc &segments, const MemState &mem, bool is_var_import = false, uint32_t explicit_symval = 0);
++bool relocate(const void *entries, uint32_t size, const SegmentInfosForReloc &segments, const MemState &mem, bool is_var_import = false, uint32_t explicit_symval = 0, std::vector<Address> *patched = nullptr);
+diff --git a/kernel/src/load_self.cpp b/kernel/src/load_self.cpp
+index 16997793b..1550341a6 100644
+--- a/kernel/src/load_self.cpp
++++ b/kernel/src/load_self.cpp
+@@ -394,18 +394,13 @@ static bool load_var_exports(const uint32_t *nids, const Ptr<uint32_t> *entries,
+                 }
+             }
+ 
+-            // Note: We make the assumption that variables are not imported into executable code (wouldn't make a lot of sense)
+-            // If this is not the case, uncomment the following
+-            /* if (!seg.empty()) {
+-                for (const auto &[key, value] : seg) {
+-                    kernel.invalidate_jit_cache(value.addr, value.size);
+-                }
+-            }*/
+-
+             if (!seg.empty()) {
+-                if (!relocate(var_binding_info.entries, var_binding_info.size, seg, mem, true, entry.address())) {
++                std::vector<Address> patched;
++                if (!relocate(var_binding_info.entries, var_binding_info.size, seg, mem, true, entry.address(), &patched)) {
+                     LOG_ERROR("Failed to relocate late binding info");
+                 }
++                for (const Address word : patched)
++                    kernel.invalidate_jit_cache(word, sizeof(uint32_t));
+             }
+         }
+         if (old_entry_address)
+diff --git a/kernel/src/relocation.cpp b/kernel/src/relocation.cpp
+index 70fa47500..a615d651a 100644
+--- a/kernel/src/relocation.cpp
++++ b/kernel/src/relocation.cpp
+@@ -300,7 +300,7 @@ static bool relocate_entry(void *data, uint32_t code, uint32_t symval, uint32_t
+     return true; // ignore unhandled relocations
+ }
+ 
+-bool relocate(const void *entries, uint32_t size, const SegmentInfosForReloc &segments, const MemState &mem, bool is_var_import, uint32_t explicit_symval) {
++bool relocate(const void *entries, uint32_t size, const SegmentInfosForReloc &segments, const MemState &mem, bool is_var_import, uint32_t explicit_symval, std::vector<Address> *patched) {
+     const void *const end = static_cast<const uint8_t *>(entries) + size;
+     const Entry *entry = static_cast<const Entry *>(entries);
+ 
+@@ -425,6 +425,8 @@ bool relocate(const void *entries, uint32_t size, const SegmentInfosForReloc &se
+                 if (!relocate_entry(Ptr<uint32_t>(p).get(mem), format1_entry->code, s, a, p)) {
+                     return false;
+                 }
++                if (patched)
++                    patched->push_back(p);
+ 
+                 g_addr = patch_seg_start;
+                 g_offset = offset;
+@@ -486,6 +488,8 @@ bool relocate(const void *entries, uint32_t size, const SegmentInfosForReloc &se
+                 if (!relocate_entry(Ptr<uint32_t>(p).get(mem), format1_entry->code, s, a, p)) {
+                     return false;
+                 }
++                if (patched)
++                    patched->push_back(p);
+ 
+                 g_addr = patch_seg_start;
+                 g_offset = offset;
