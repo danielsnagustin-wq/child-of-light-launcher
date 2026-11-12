@@ -26,11 +26,10 @@ import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.model.CardSize
 import com.danielsnagustin.childoflight.launcher.model.CardTransparency
 import com.danielsnagustin.childoflight.launcher.model.GameLanguage
-import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
-import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.divergesFromPreset
 import com.danielsnagustin.childoflight.launcher.model.isLowRamConservativeVariant
 import com.danielsnagustin.childoflight.launcher.model.presetSettings
+import com.danielsnagustin.childoflight.launcher.model.profilesFor
 import com.danielsnagustin.childoflight.launcher.ui.ColLavenderBlue
 import com.danielsnagustin.childoflight.launcher.ui.ColTurquoise
 import com.danielsnagustin.childoflight.launcher.ui.EnumChips
@@ -187,15 +186,14 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                 if (gpu == null) {
                     Text("Detectando GPU…", style = MaterialTheme.typography.bodyMedium, color = cardTextColor(dark))
                 } else {
-                val allProfiles = if (gpu?.vendor == GpuVendor.ADRENO) {
-                    listOf(GpuProfileId.ADRENO_PERFORMANCE, GpuProfileId.ADRENO_QUALITY_TURNIP, GpuProfileId.G99_RECOMMENDED)
-                } else if (gpu?.isUserVerifiedDevice == true || gpu?.isHelioG99 == true || gpu?.isMaliG57 == true) {
-                    listOf(GpuProfileId.G99_RECOMMENDED, GpuProfileId.G99_QUALITY, GpuProfileId.MALI_BALANCED)
-                } else if (gpu?.vendor == GpuVendor.MALI) {
-                    listOf(GpuProfileId.MALI_PERFORMANCE, GpuProfileId.MALI_BALANCED)
-                } else {
-                    GpuProfileId.entries.toList()
-                }
+                // Ronda 0.2.64 (H-01): la lista vive en profilesFor
+                // (LauncherSettings): la rama genérica (PowerVR /
+                // Xclipse / OTHER / UNKNOWN) solo ofrece los dos
+                // presets seguros, no los 6 (el guard de applyPreset
+                // solo corregía el driver y el resto del preset
+                // Adreno — 2x, FXAA, anisotrópico 4x, Page Table —
+                // quedaba aplicado en una GPU donde nunca se validó).
+                val allProfiles = profilesFor(gpu)
                 // Los presets ocultos con "Limpiar no usados" no se listan (salvo el activo).
                 val profiles = allProfiles.filter {
                     it == s.activeProfile || it !in (uiPrefs?.hiddenPresets ?: emptySet())
@@ -217,7 +215,7 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                     NoteText(presetCompatibilityNote(profile))
                 }
                 NoteText("Aplicar un preset conserva tus cambios manuales de cachés y overlay (caché de texturas, caché de shaders, overlay de FPS con su detalle y posición, caché sin hash y avisos de shaders): si alguno difiere del preset, arriba verás \"Perfil modificado\".")
-                NoteText("G99 Calidad (2x): prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado.")
+                NoteText("G99 Calidad y Adreno Calidad/Turnip (2x): prueba 30 s desde GPU y diagnóstico. Si baja de 28 fps, vuelve a 1x automáticamente si el ajuste está activado. También cubre un 2x puesto a mano sobre cualquier perfil.")
                 }
             }
             item {
