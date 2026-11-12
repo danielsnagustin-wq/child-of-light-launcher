@@ -11,33 +11,32 @@ flujo cambia (la instalación automática es no-op).
 Turnip_v26.0.0_R8_Gmem.zip
 ```
 
-- Fuente: release **v26.0.0 Revisión 8** de
+- Fuente: release **v26.0.0 Revisión 8** (tag v26.0.0-rc08) de
   `K11MCH1/AdrenoToolsDrivers` en GitHub (publicada 2026-01-08,
   Mesa 26.0.0-devel, commit base `e9a83d530cce`, Vulkan 1.4.335).
-- Tamaño aproximado: ~2 MB (2,14 MB la v24.3.0 R5; verificar el
-  tamaño real al descargar).
+- Tamaño: 3.478.156 bytes. SHA-256 (verificado 2026-11-11):
+  `b60bffe2844a271cd293011de307fe06d28549bd5b93d03749b7c9f39af4114b`.
 - Licencia del código: **MIT (Mesa)**. El zip es una compilación
   comunitaria de ese código; no es un binario propietario.
-- Formato esperado (AdrenoTools): en la raíz del zip, `meta.json`
-  (nombre, versión, `libraryName`) + `libvulkan_freedreno.so`.
+- Formato VERIFICADO (2026-11-11): en la raíz del zip, `meta.json`
+  (305 bytes, libraryName `vulkan.ad07xx.so`, "Mesa Turnip driver
+  v26.0.0 - R8 GMEM", driverVersion "Vulkan 1.4.335", minApi 27) +
+  `vulkan.ad07xx.so` (17.159.433 bytes).
   **No descomprimir el zip**: se empaqueta tal cual en assets.
 
 ## Antes de poner el binario
 
 1. Re-verificar cuál es la release vigente de K11MCH1 (la R8 es de
    enero de 2026; otros constructores como MrPurple publican
-   revisiones más nuevas). Si se elige otra revisión, hay que
-   actualizar `ASSET_PATH` / `EXPECTED_FILE_NAME` en
+   revisiones más nuevas). NO se cambia de constructor sin prueba en
+   teléfono. Si se elige otra revisión, hay que actualizar
+   `ASSET_PATH` / `EXPECTED_FILE_NAME` / `EXPECTED_SHA256` en
    `BundledTurnipDriver.kt` y este README.
-2. Calcular el SHA-256 del zip exacto y rellenar
-   `EXPECTED_SHA256` en `BundledTurnipDriver.kt` (ahora vacío: sin
-   hash no hay comprobación de integridad más allá de la estructura).
-3. Confirmar el layout real del zip (meta.json frente a
-   metadata.json, subcarpeta `vulkan/`, nombre del .so). Si difiere
-   de lo que valida `BundledTurnipDriver.validatePackage`, ajustar
-   la validación — nunca relajarla a ciegas: la validación es lo
-   que impide activar un zip que no sea un driver.
-4. Comprobar el tamaño del APK: el zip suma ~2 MB al APK.
+2. El SHA-256 ya está rellenado en `BundledTurnipDriver.kt`
+   (verificado 2026-11-11 contra el asset de la release v26.0.0-rc08).
+3. Layout real del zip ya confirmado (ver arriba): la validación de
+   `BundledTurnipDriver.validatePackage` coincide con él.
+4. Comprobar el tamaño del APK: el zip suma ~3,5 MB al APK.
 
 ## Lo que NO se pone aquí
 
