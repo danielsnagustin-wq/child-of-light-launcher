@@ -1,5 +1,6 @@
 package com.danielsnagustin.childoflight.launcher
 
+import com.danielsnagustin.childoflight.launcher.ui.settings.extractCpuLogLines
 import com.danielsnagustin.childoflight.launcher.ui.settings.extractRecentErrorLines
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -69,5 +70,40 @@ class DiagnosticsSummaryTest {
     fun bracketedErrorLevelCountsAsError() {
         val errors = extractRecentErrorLines("[2026-11-08 01:00:00] [E] no se pudo abrir el archivo")
         assertEquals(1, errors.size)
+    }
+
+    // Ronda 0.2.66 (CPU-09): líneas de CPU del log del núcleo.
+
+    @Test
+    fun extractsOnlyCpuLinesInOrder() {
+        val nativeLog = "I CPU Optimisation state: Enabled\n" +
+            "I renderer: Vulkan initialised\n" +
+            "I JIT cache ready\n" +
+            "I audio: SDL backend"
+        val cpuLines = extractCpuLogLines(nativeLog)
+        assertEquals(2, cpuLines.size)
+        assertTrue(cpuLines[0].contains("CPU Optimisation"))
+        assertTrue(cpuLines[1].contains("JIT"))
+    }
+
+    @Test
+    fun emptyLogHasNoCpuLines() {
+        assertTrue(extractCpuLogLines("").isEmpty())
+        assertTrue(extractCpuLogLines("todo bien\nsin problemas").isEmpty())
+    }
+
+    @Test
+    fun cpuWordMatchesCaseInsensitively() {
+        val cpuLines = extractCpuLogLines("todo bien\nsin CPU aquí salvo esta línea")
+        assertEquals(1, cpuLines.size)
+    }
+
+    @Test
+    fun maxLinesKeepsTheMostRecentCpuLines() {
+        val manyCpu = (1..12).joinToString("\n") { "cpu line $it" }
+        val cpuLines = extractCpuLogLines(manyCpu, maxLines = 5)
+        assertEquals(5, cpuLines.size)
+        assertTrue(cpuLines.last().contains("12"))
+        assertTrue(cpuLines.first().contains("8"))
     }
 }
