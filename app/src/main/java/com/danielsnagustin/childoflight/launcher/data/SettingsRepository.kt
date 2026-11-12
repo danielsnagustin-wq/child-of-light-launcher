@@ -65,6 +65,7 @@ class SettingsRepository(private val context: Context) {
         val SHADER_CACHE = booleanPreferencesKey("shader_cache")
         val CPU_OPT = booleanPreferencesKey("cpu_opt")
         val FPS_HACK = booleanPreferencesKey("fps_hack")
+        val TURBO_MODE = booleanPreferencesKey("turbo_mode")
         val FILE_LOADING_DELAY = intPreferencesKey("file_loading_delay")
         val AUDIO_VOLUME = intPreferencesKey("audio_volume")
         val AUDIO_BACKEND = stringPreferencesKey("audio_backend")
@@ -137,6 +138,7 @@ class SettingsRepository(private val context: Context) {
             shaderCache = p[Keys.SHADER_CACHE] ?: true,
             cpuOpt = p[Keys.CPU_OPT] ?: true,
             fpsHack = p[Keys.FPS_HACK] ?: false,
+            turboMode = p[Keys.TURBO_MODE] ?: false,
             fileLoadingDelay = clampFileLoadingDelay(p[Keys.FILE_LOADING_DELAY] ?: 0),
             audioVolume = (p[Keys.AUDIO_VOLUME] ?: 100).coerceIn(0, 100),
             audioBackend = runCatching { com.danielsnagustin.childoflight.launcher.model.AudioBackend.valueOf(p[Keys.AUDIO_BACKEND] ?: "SDL") }.getOrDefault(com.danielsnagustin.childoflight.launcher.model.AudioBackend.SDL),
@@ -230,6 +232,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.SHADER_CACHE] = settings.shaderCache
             p[Keys.CPU_OPT] = settings.cpuOpt
             p[Keys.FPS_HACK] = settings.fpsHack
+            p[Keys.TURBO_MODE] = settings.turboMode
             p[Keys.FILE_LOADING_DELAY] = clampFileLoadingDelay(settings.fileLoadingDelay)
             p[Keys.AUDIO_VOLUME] = settings.audioVolume.coerceIn(0, 100)
             p[Keys.AUDIO_BACKEND] = settings.audioBackend.name
@@ -394,22 +397,31 @@ class SettingsRepository(private val context: Context) {
     }
 
     companion object {
-        // M22 + R2-S04: resolución solo 1x/2x/3x/4x (lo que ofrece la
-        // UI) y finita. Un backup editado a mano con 1.5x pasaba el
-        // clamp anterior (1..4) y llegaba al config.yml sin que la UI
-        // lo ofreciera nunca; ahora se ajusta al valor ofrecido más
-        // cercano (en empate, al menor: 1.5x -> 1x, conservador en
-        // Mali). El mismo clamp se aplica al leer DataStore, al
-        // guardar y al importar el backup (SettingsBackup lo llama).
+        // M22 + R2-S04: resolución solo con los valores que ofrece la
+        // UI, y finita. Un backup editado a mano con un valor
+        // intermedio se ajusta al valor ofrecido más cercano (en
+        // empate, al menor: 1.375x -> 1.25x, conservador en Mali).
+        // El mismo clamp se aplica al leer DataStore, al guardar y
+        // al importar el backup (SettingsBackup lo llama).
         // 0.2.63 (B/C, P1-3): 0.5x es un valor ofrecido (el núcleo
         // lo acepta: resolution-multiplier es float sin clamp en
         // settings.cpp:193 del pin): el mínimo pasa de 1f a 0.5f y
         // la lista de snap lo incluye. Un valor inválido (0f, -1f)
         // cae al ofrecido más cercano, 0.5x, como 99f cae a 4x.
+        // Ronda 0.2.65 (W-P1-1): 1.25x y 1.5x ENTRAN en el snap.
+        // Verificado en el pin: resolution-multiplier es float
+        // (config.h:152, state.h:88) sin recorte en el núcleo, y el
+        // renderer Vulkan lo multiplica tal cual (creation.cpp:80-81
+        // "960.f * res_multiplier", :168-171 "params.width *
+        // res_multiplier"): 1.25x renderiza a 1200x680 y 1.5x a
+        // 1440x816 de verdad, no se recortan a 1x. (Algunos caminos
+        // OpenGL castean el multiplicador a int, pero el teléfono
+        // usa Vulkan.) Antes el snap {0.5, 1, 2, 3, 4} los recortaba
+        // en silencio a 1x aunque la UI los ofreciera.
         fun clampResolution(value: Float): Float {
             if (!value.isFinite()) return 1f
             val clamped = value.coerceIn(0.5f, 4f)
-            return listOf(0.5f, 1f, 2f, 3f, 4f).minByOrNull { kotlin.math.abs(it - clamped) } ?: 1f
+            return listOf(0.5f, 1f, 1.25f, 1.5f, 2f, 3f, 4f).minByOrNull { kotlin.math.abs(it - clamped) } ?: 1f
         }
 
         fun clampAniso(value: Int): Int =
@@ -483,6 +495,12 @@ internal fun mergePresetWithUserChoices(
     customDriverName = current?.customDriverName ?: "",
     turnipVersion = current?.turnipVersion ?: "",
     turnipInstalled = current?.turnipInstalled ?: false,
+    // Ronda 0.2.65 (RG-P2-15): el modo turbo es una opción manual del
+    // driver, no un valor de preset (ningún preset lo enciende): al
+    // aplicar un preset se conserva, como el modo rendimiento y el
+    // auto-revert. Si no, encenderlo y cambiar de preset lo apagaría
+    // en silencio y no habría forma de que sobreviviera.
+    turboMode = current?.turboMode ?: false,
     audioVolume = current?.audioVolume ?: 100,
     audioBackend = current?.audioBackend ?: com.danielsnagustin.childoflight.launcher.model.AudioBackend.SDL,
     ngsEnable = current?.ngsEnable ?: true,
