@@ -17,6 +17,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,8 +32,11 @@ import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.data.DeviceCompat
 import com.danielsnagustin.childoflight.launcher.data.DeviceMemory
 import com.danielsnagustin.childoflight.launcher.model.BenchmarkSource
+import com.danielsnagustin.childoflight.launcher.model.GpuBackend
+import com.danielsnagustin.childoflight.launcher.model.effectiveMappingMethod
 import com.danielsnagustin.childoflight.launcher.model.effectiveSettings
 import com.danielsnagustin.childoflight.launcher.model.resolveBackend
+import com.danielsnagustin.childoflight.launcher.model.supportedMappingMethods
 import com.danielsnagustin.childoflight.launcher.ui.settings.extractRecentErrorLines
 
 /**
@@ -56,6 +60,14 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     val settings by vm.settingsFlow.collectAsState(initial = null)
     val benchmarks by vm.benchmarksFlow.collectAsState(initial = emptyList())
     val logText by vm.logText.collectAsState()
+    // Ronda 0.2.64 (P1-3 Mali): al entrar, preguntar al núcleo la
+    // máscara de mapeo soportada (solo si el núcleo está presente:
+    // esta pantalla ya carga la .so para la línea "Núcleo embebido",
+    // no hay coste extra). El resultado alimenta el resumen de la
+    // configuración activa y la nota de Ajustes → GPU.
+    LaunchedEffect(Unit) {
+        if (vm.embeddedCorePresent()) vm.refreshMappingMask()
+    }
     // R2-P1-02 (parte pantalla): el log en pantalla mostraba rutas
     // absolutas con el nombre del paquete. Mismo replace que la
     // exportación del reporte (LauncherViewModel.buildBugReportText):
@@ -132,11 +144,35 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 Text("✓ Procesador verificado por el usuario: Child of Light va muy bien en este procesador.", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 NoteText("Por eso el preset por defecto es G99 Recomendado (1x): se optimiza para mantener esa fluidez estable, no para recortar de más.")
             } else if (g.vendor.name == "MALI") {
-                NoteText("Mali: hay cosas que definitivamente no funcionan y es posible que nunca funcionen, pero el núcleo trae arreglos para Mali (vertex fix, Double Buffer mejorado) y Child of Light, al ser 2D UbiArt, es más ligero que un juego 3D: a 1x tiene más chance. No se prometen 60 fps en Mali.")
+                // Ronda 0.2.64 (P2-3 Mali): la nota anterior decía que
+                // el núcleo trae un "vertex fix" para Mali: ese arreglo
+                // solo existe en el fork Vita3K-Plus (su README), NO en
+                // el pin (3e43bc80). Lo que sí trae el núcleo son las
+                // mejoras de Double Buffer de Vita3K-Android v9/v10.
+                NoteText("Mali: hay cosas que definitivamente no funcionan y es posible que nunca funcionen, pero el núcleo trae mejoras de Double Buffer y Child of Light, al ser 2D UbiArt, es más ligero que un juego 3D: a 1x tiene más chance. No se prometen 60 fps en Mali.")
             } else if (g.vendor.name == "ADRENO") {
                 NoteText("Snapdragon/Adreno: usa Turnip para mejor compatibilidad (ver Ajustes → Driver GPU).")
+            } else if (g.vendor.name == "XCLIPSE") {
+                // Ronda 0.2.64 (H-02): Xclipse (Samsung/AMD RDNA,
+                // Exynos 2200/2400/1480/2600): sin perfil propio
+                // todavía, 1x seguro por ahora. Vulkan 1.1 (Exynos
+                // 2200) / 1.3 (2400): suficiente para el núcleo. Sin
+                // Turnip (solo Adreno). Se puede probar 2x a mano con
+                // la prueba de 30 s; si baja de 28 fps, vuelve a 1x.
+                NoteText("Xclipse (Samsung/AMD RDNA): sin perfil propio todavía; se usa el perfil Mali seguro (1x, Double Buffer). Sin Turnip. Se puede probar 2x a mano con la prueba de 30 s; si baja de 28 fps, vuelve a 1x.")
             } else if (g.vendor.name == "POWERVR") {
-                NoteText("PowerVR: no hay perfil específico para esta GPU; se usa el perfil Genérico seguro (1x, Double Buffer). Si el juego va mal, prueba el backend OpenGL o el modo seguro en Ajustes.")
+                // Ronda 0.2.64 (H-03/H-06): nota por gama, no una sola
+                // para todo PowerVR. DXT/CXTP = gama alta (Tensor
+                // G5/G6, DXT-48-1536): 1x seguro por ahora, se puede
+                // probar 2x a mano. Rogue GE8xxx = gama baja: quedarse
+                // en 1x. Y OpenGL ya NO se recomienda como primer
+                // intento: sin evidencia en PowerVR (la mejora histórica
+                // de PowerVR en el fork fue del lado Vulkan).
+                if (g.isPowerVrDxt) {
+                    NoteText("PowerVR de gama alta (DXT/CXTP, Tensor G5/G6): se usa el perfil seguro (1x, Double Buffer). Se puede probar 2x a mano con la prueba de 30 s; si baja de 28 fps, vuelve a 1x. Si el juego va mal, prueba el modo seguro en Ajustes; el backend OpenGL es un último recurso sin probar en PowerVR.")
+                } else {
+                    NoteText("PowerVR (gama baja, Rogue GE8xxx): se usa el perfil seguro (1x, Double Buffer). Quedarse en 1x: esta gama no sostiene 2x. Si el juego va mal, prueba el modo seguro en Ajustes; el backend OpenGL es un último recurso sin probar en PowerVR.")
+                }
             } else {
                 NoteText("GPU sin perfil propio (o no detectada): se usa el perfil Genérico seguro (1x, Double Buffer). Ninguna GPU se queda sin perfil.")
             }
@@ -158,11 +194,35 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         val lastFps = benchmarks.firstOrNull { it.fpsAvg != null }?.fpsAvg
         Text("Perfil activo: ${settings?.activeProfile?.label ?: "—"}")
         Text("Backend efectivo: ${settings?.let { resolveBackend(it, g) }?.label ?: "—"} · Resolución: ${settings?.resolutionLabel ?: "—"} · Filtro: ${settings?.screenFilter ?: "—"}")
-        // R5-A1-14: VSync EFECTIVO (con 60 FPS ON, apply60FpsMode lo
-        // fuerza ON aunque el guardado sea OFF): settings es delegada,
-        // así que se captura con let, no con smart cast. Igual que
+        // R5-A1-14: VSync EFECTIVO (el modo seguro y el 60 FPS lo
+        // fuerzan OFF aunque el guardado sea ON — ronda 0.2.64: el
+        // 60 FPS YA NO lo fuerza ON): settings es delegada, así que
+        // se captura con let, no con smart cast. Igual que
         // SettingsDiagnosticsScreen.
-        Text("VSync: ${if (settings?.let { effectiveSettings(it).vSync } == true) "sí" else "no"} · Modo 60 FPS: ${if (settings?.fpsHack == true) "sí" else "no"} · Modo seguro: ${if (settings?.safeMode == true) "sí" else "no"}")
+        // Ronda 0.2.64: con backend Vulkan la VSync es INERTE (solo la
+        // consume OpenGL): mostrar "— (sin efecto en Vulkan)" en vez
+        // de un "sí" que no significa nada. Y el resumen muestra los
+        // valores EFECTIVOS (frame pacing): mapeo de memoria efectivo
+        // (el núcleo vuelve a Double Buffer en silencio si el pedido
+        // no está soportado) y Surface Sync efectiva.
+        val effectiveBackend = settings?.let { resolveBackend(it, g) }
+        val vsyncText = if (effectiveBackend == GpuBackend.VULKAN) {
+            "— (sin efecto en Vulkan)"
+        } else if (settings?.let { effectiveSettings(it).vSync } == true) {
+            "sí"
+        } else {
+            "no"
+        }
+        Text("VSync: $vsyncText · Modo 60 FPS: ${if (settings?.fpsHack == true) "sí" else "no"} · Modo seguro: ${if (settings?.safeMode == true) "sí" else "no"}")
+        val mappingMask by vm.supportedMappingMask.collectAsState(initial = null)
+        val effectiveMapping = settings?.let {
+            val eff = effectiveSettings(it)
+            effectiveMappingMethod(eff.memoryMapping, mappingMask ?: 0)
+        }
+        Text("Mapeo de memoria: pedido ${settings?.memoryMapping?.label ?: "—"} · efectivo ${effectiveMapping?.label ?: "—"}${if (mappingMask != null && mappingMask != 0) " · soportados: ${supportedMappingMethods(mappingMask ?: 0).joinToString(", ") { it.label }}" else ""} · Surface Sync: ${if (settings?.let { effectiveSettings(it).surfaceSyncEnabled } == true) "sí" else "no"}")
+        if (mappingMask == null && vm.embeddedCorePresent()) {
+            Text("Mapeo de memoria soportado: preguntando al núcleo…")
+        }
         Text("Último FPS (prueba de 30 s): ${lastFps?.let { "$it fps" } ?: "sin medir"}")
         SectionTitle("Errores recientes del log")
         // Ronda 0.2.55 P1-13: el filtrado se memoriza por safeLogText
@@ -176,7 +236,7 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         NoteText("El informe exportado (Reportar bug) es solo texto: dispositivo, ajustes, estado y errores recientes. No adjunta ningún archivo privado.")
 
         SectionTitle("Prueba de 30 segundos")
-        NoteText("Lanza el juego con el preset actual. El FPS se mide automáticamente mientras juegas y al volver se registra solo. Si no hay medición (app externa), juega 30 segundos mirando el FPS del overlay y regístralo a mano. Si es G99 Calidad (2x) y baja de 28 fps, vuelve a 1x automáticamente.")
+        NoteText("Lanza el juego con el preset actual. El FPS se mide automáticamente mientras juegas y al volver se registra solo. Si no hay medición (app externa), juega 30 segundos mirando el FPS del overlay y regístralo a mano. Si el perfil es 2x (G99 Calidad o Adreno Calidad/Turnip) y baja de 28 fps, vuelve a 1x automáticamente.")
         PrimaryButton("Jugar 30 segundos", onClick = { vm.startBenchmark() }, enabled = !launching)
         if (pending != null) {
             Text("Prueba en marcha: ${pending?.profile?.label}. Al volver, el FPS se registra solo si el juego lo midió; si no, regístralo a mano.", fontWeight = FontWeight.Bold)
