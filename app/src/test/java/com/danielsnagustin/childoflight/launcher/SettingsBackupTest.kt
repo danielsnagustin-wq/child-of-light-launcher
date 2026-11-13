@@ -33,6 +33,9 @@ class SettingsBackupTest {
         // false en ambos lados, perderlos en encode/decode no se notaba.
         skipShaderPrecompile = true,
         expAudioSdl = true,
+        // Tercera pasada (N-1): la máscara también va en el fixture,
+        // por la misma razón: con default false no se notaría perderla.
+        disableMaskBit = true,
     )
     private val ui = UiPreferences(
         accent = AccentColor.TURQUOISE,
