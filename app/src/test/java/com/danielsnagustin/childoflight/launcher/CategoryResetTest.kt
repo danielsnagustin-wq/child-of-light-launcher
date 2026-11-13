@@ -167,13 +167,17 @@ class CategoryResetTest {
         // true explícito y lowRam solo existe en el primer arranque:
         // el reseteo de categoría, el preset a mano y el auto-revert
         // coinciden ahora en true.
-        val withCacheOff = changed.copy(textureCache = false, shaderCache = false, showFpsOverlay = true)
+        val withCacheOff = changed.copy(textureCache = false, shaderCache = false, showFpsOverlay = true, skipShaderPrecompile = false)
         val reset = resetCategorySettings(withCacheOff, SettingsCategory.PERFORMANCE)
         val preset = presetSettings(GpuProfileId.G99_RECOMMENDED)
         assertTrue(preset.textureCache)
         assertEquals(preset.textureCache, reset.textureCache)
         assertEquals(preset.shaderCache, reset.shaderCache)
         assertEquals(preset.showFpsOverlay, reset.showFpsOverlay)
+        // Ronda 0.2.68 (load-p1): el reset de Rendimiento también
+        // devuelve la carga rápida al valor del preset (true en G99).
+        assertTrue(preset.skipShaderPrecompile)
+        assertEquals(preset.skipShaderPrecompile, reset.skipShaderPrecompile)
         // El resto se conserva (la categoría no toca GPU ni audio).
         assertEquals(4f, reset.resolutionMultiplier, 0.001f)
         assertEquals(10, reset.audioVolume)
