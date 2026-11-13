@@ -125,6 +125,19 @@ class R5PresetPreservationTest {
     }
 
     @Test
+    fun mergePresetKeepsRawgApiKey() {
+        // Ronda 0.2.69 (RAWG): aplicar un preset NO borra la clave RAWG del usuario.
+        val current = LauncherSettings(rawgApiKey = "clave-de-prueba-123")
+        val merged = mergePresetWithUserChoices(
+            presetSettings(GpuProfileId.G99_QUALITY),
+            current,
+            GpuDriver.SYSTEM,
+        )
+        assertEquals("clave-de-prueba-123", merged.rawgApiKey)
+        assertEquals(GpuProfileId.G99_QUALITY, merged.activeProfile)
+    }
+
+    @Test
     fun mergePresetDefaultsAllowExternalVita3kToFalse() {
         // Sin ajustes guardados (o con el interruptor en OFF), el
         // preset deja el campo en false (su default): no se inventa
