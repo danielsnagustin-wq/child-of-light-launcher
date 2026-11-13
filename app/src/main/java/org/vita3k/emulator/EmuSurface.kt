@@ -94,6 +94,15 @@ class EmuSurface(context: Context) : SDLSurface(context) {
     private var lastFreeDownY: Float = TouchStats.NO_POSITION
 
     override fun surfaceCreated(holder: SurfaceHolder) {
+        // Ronda 0.2.70 (9-P2-1): el set(true) va DESPUÉS de
+        // super.surfaceCreated(): es super quien llama a
+        // SDLActivity.onNativeSurfaceCreated() y registra la
+        // superficie nueva en SDL. Antes el flag has_surface se
+        // encendía con la superficie vieja (o con el 960x544 por
+        // defecto) hasta surfaceChanged. surfaceDestroyed ya hace
+        // set(false) ANTES de super, que es el orden seguro en ese
+        // sentido (apagar antes de soltar).
+        super.surfaceCreated(holder)
         runCatching { setSurfaceStatus(true) }
             .onFailure {
                 Log.w("EmuSurface", "setSurfaceStatus(true) falló: $it")
@@ -107,7 +116,6 @@ class EmuSurface(context: Context) : SDLSurface(context) {
                 // launcher.log (ver abajo).
                 LauncherLog.append(context, "surface", "setSurfaceStatus(true) falló: $it; el núcleo no presentará frames (superficie sin avisar al núcleo)")
             }
-        super.surfaceCreated(holder)
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
