@@ -1,0 +1,21 @@
+diff --git a/renderer/src/vulkan/renderer.cpp b/renderer/src/vulkan/renderer.cpp
+index a1b2c3d..e4f5a6b 100644
+--- a/renderer/src/vulkan/renderer.cpp
++++ b/renderer/src/vulkan/renderer.cpp
+@@ -980,7 +980,16 @@ void VKState::late_init(const Config &cfg, const std::string_view game_id, MemState &mem) {
+ void VKState::late_init(const Config &cfg, const std::string_view game_id, MemState &mem) {
+     this->mem = &mem;
+ 
++    // Tercera pasada (N-1): honrar disable-mask-bit en Vulkan, espejo de
++    // OpenGL (gl/renderer.cpp:242). NO va en VKState::init(): init() no
++    // recibe Config y `config` no existe en ese scope; late_init SÍ tiene
++    // `cfg` y corre antes de crear ningún render target (los consumos de
++    // use_mask_bit — VKRenderTarget, context.cpp, pipeline_cache.cpp —
++    // son todos en juego), así que el valor llega a tiempo. Con false
++    // (default) el comportamiento es el upstream exacto.
++    features.use_mask_bit = !cfg.current_config.disable_mask_bit;
++
+     bool use_high_accuracy = cfg.current_config.high_accuracy;
+ 
+     // shader interlock is more accurate but slower
+     if (features.support_shader_interlock && use_high_accuracy) {
