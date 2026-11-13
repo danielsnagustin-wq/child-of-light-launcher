@@ -47,4 +47,22 @@ class CoreBridgeSessionTest {
         assertEquals(0, Vita3kCoreBridge.OK)
         assertEquals(-1, Vita3kCoreBridge.NOT_IMPLEMENTED)
     }
+
+    @Test
+    fun maskQueriesWithoutNativeReturnUnknownNotDisabledOnly() {
+        // Ronda 0.2.68 (P0, máscara-1 sin sesión): sin .so no hay
+        // dato de máscara. getCustomDriverSupportInfo devuelve null
+        // (desconocida) y getSupportedMemoryMappingMask devuelve 0
+        // (desconocida): NUNCA 1. El 1 es "solo Disabled" y el pin lo
+        // devuelve como valor por defecto sin sesión
+        // (native_config.cpp:597-607, get_emuenv() nulo); si llegara
+        // al launcher, effectiveMappingMethod degradaría Page Table a
+        // Double Buffer en cada primer JUGAR (eso pasó en el reporte
+        // 0.2.67 del teléfono). Con núcleo real y sin sesión, el
+        // resguardo está en el puente (getCustomDriverSupportInfo y
+        // getSupportedMemoryMappingMask no preguntan al JNI); en JVM
+        // no hay .so y available ya es false.
+        assertEquals(null, Vita3kCoreBridge.getCustomDriverSupportInfo(""))
+        assertEquals(0, Vita3kCoreBridge.getSupportedMemoryMappingMask(""))
+    }
 }
