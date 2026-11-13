@@ -64,13 +64,21 @@ sealed interface JsonValue {
  * Analiza una cadena JSON completa y devuelve la estructura de datos.
  * Lanza IllegalArgumentException si el JSON está mal formado.
  */
-fun parseJson(input: String): JsonValue {
-    var idx = 0
-    fun skipWhitespace() {
+fun parseJson(input: String): JsonValue = JsonParser(input).parse()
+
+/**
+ * Analizador JSON mínimo. Es una clase (y no funciones locales) porque
+ * parseValue y parseObject/parseArray se llaman entre sí, y las funciones
+ * locales de Kotlin no admiten recursión mutua ni referencias hacia adelante.
+ */
+private class JsonParser(private val input: String) {
+    private var idx = 0
+
+    private fun skipWhitespace() {
         while (idx < input.length && input[idx].isWhitespace()) idx++
     }
 
-    fun parseValue(): JsonValue {
+    private fun parseValue(): JsonValue {
         skipWhitespace()
         if (idx >= input.length) throw IllegalArgumentException("Unexpected end of JSON")
         return when (input[idx]) {
@@ -85,7 +93,7 @@ fun parseJson(input: String): JsonValue {
         }
     }
 
-    fun parseObject(): JsonValue.Obj {
+    private fun parseObject(): JsonValue.Obj {
         idx++ // consume '{'
         val map = mutableMapOf<String, JsonValue>()
         skipWhitespace()
@@ -112,7 +120,7 @@ fun parseJson(input: String): JsonValue {
         return JsonValue.Obj(map)
     }
 
-    fun parseArray(): JsonValue.Arr {
+    private fun parseArray(): JsonValue.Arr {
         idx++ // consume '['
         val list = mutableListOf<JsonValue>()
         skipWhitespace()
@@ -133,7 +141,7 @@ fun parseJson(input: String): JsonValue {
         return JsonValue.Arr(list)
     }
 
-    fun parseString(): JsonValue.Str {
+    private fun parseString(): JsonValue.Str {
         idx++ // consume opening quote
         val sb = StringBuilder()
         while (idx < input.length) {
@@ -165,7 +173,7 @@ fun parseJson(input: String): JsonValue {
         throw IllegalArgumentException("Unterminated string")
     }
 
-    fun parseNumber(): JsonValue.Num {
+    private fun parseNumber(): JsonValue.Num {
         val start = idx
         if (input[idx] == '-' || input[idx] == '+') idx++
         while (idx < input.length && input[idx].isDigit()) idx++
@@ -187,7 +195,7 @@ fun parseJson(input: String): JsonValue {
         return JsonValue.Num(value)
     }
 
-    fun parseBoolean(): JsonValue.Bool {
+    private fun parseBoolean(): JsonValue.Bool {
         return if (input.startsWith("true", idx)) {
             idx += 4
             JsonValue.Bool(true)
@@ -199,7 +207,7 @@ fun parseJson(input: String): JsonValue {
         }
     }
 
-    fun parseNull(): JsonValue {
+    private fun parseNull(): JsonValue {
         if (input.startsWith("null", idx)) {
             idx += 4
             return JsonValue.Null
@@ -207,10 +215,12 @@ fun parseJson(input: String): JsonValue {
         throw IllegalArgumentException("Invalid null at $idx")
     }
 
-    val result = parseValue()
-    skipWhitespace()
-    if (idx != input.length) throw IllegalArgumentException("Extra data after JSON value")
-    return result
+    fun parse(): JsonValue {
+        val result = parseValue()
+        skipWhitespace()
+        if (idx != input.length) throw IllegalArgumentException("Extra data after JSON value")
+        return result
+    }
 }
 
 /** Helper extensions to read fields from JsonValue.Obj de forma tolerante a nulos */
