@@ -23,6 +23,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import com.danielsnagustin.childoflight.launcher.model.CardSize
 import com.danielsnagustin.childoflight.launcher.model.CardTransparency
 import com.danielsnagustin.childoflight.launcher.model.GameLanguage
@@ -257,6 +259,21 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                     if (externalVita3k != null) "✓ App externa instalada ($externalVita3k)" else "✗ App externa no instalada",
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (externalVita3k != null) { if (dark) ColTurquoise else ColLavenderBlue } else cardTextColor(dark),
+                )
+            }
+            // La clave RAWG.io es opcional y nunca se registra en logs ni aparece en el reporte de bug.
+            item {
+                SectionTitle("Ficha del juego (RAWG.io)")
+                OutlinedTextField(
+                    value = s.rawgApiKey,
+                    onValueChange = { vm.saveSettings(s.copy(rawgApiKey = it)) },
+                    label = { Text("Clave de RAWG.io (opcional)") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                NoteText(
+                    "Opcional: con tu clave gratuita de RAWG.io, la tarjeta del juego en Home muestra su portada, géneros, fecha de lanzamiento y descripción. Sin clave no se hace ninguna llamada de red y la tarjeta muestra solo los datos locales. La clave nunca sale de este teléfono ni aparece en el reporte de bug."
                 )
             }
             item {
