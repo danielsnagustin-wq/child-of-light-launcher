@@ -194,18 +194,24 @@ La GPU se detecta al primer arranque (renderer GLES vía EGL + SoC +
 features de Vulkan) y se guarda. El preset por defecto cambia según
 la GPU detectada.
 
-| | G99 / Mali-G57 — Recomendado | G99 — Calidad (probar 2x) | Mali genérico — Rendimiento | Snapdragon / Adreno — Rendimiento | Snapdragon / Adreno — Calidad / Turnip |
-|---|---|---|---|---|---|
-| Backend | Vulkan | Vulkan | Vulkan (fallback OpenGL si hay glitches) | Vulkan | Vulkan + Turnip |
-| Resolución interna | 1x (960x544) | 2x (1920x1088) | 1x SIEMPRE | 1x | 2x (1920x1088) |
-| Filtro | Bilinear | Bilinear | Bilinear | Bilinear | FXAA |
-| Anisotrópico | 1x | 1x | 1x | 1x | 4x |
-| V-Sync | OFF | OFF | OFF | OFF | OFF |
-| Async Pipeline | ON | ON | ON | ON | ON |
-| Surface Sync | Disabled | Disabled | Disabled | Disabled | Disabled |
-| Memory Mapping | Double Buffer | Double Buffer | Double Buffer | Page Table | Page Table |
-| JIT (cpu-opt) | ON | ON | ON | ON | ON |
-| Driver | Sistema | Sistema | Sistema | Sistema | Turnip |
+| | G99 / Mali-G57 — Recomendado | G99 — Calidad (probar 2x) | Mali genérico — Rendimiento | Mali genérico — Equilibrado | Genérico (otras GPU) | Snapdragon / Adreno — Rendimiento | Snapdragon / Adreno — Calidad / Turnip |
+|---|---|---|---|---|---|---|---|
+| Backend | Vulkan | Vulkan | Vulkan (fallback OpenGL si hay glitches) | Vulkan | Vulkan | Vulkan | Vulkan + Turnip |
+| Resolución interna | 1x (960x544) | 2x (1920x1088) | 1x SIEMPRE | 1x (960x544) | 2x (1920x1088) | 1x | 2x (1920x1088) |
+| Filtro | Bilinear | Bilinear | Bilinear | Bilinear | Bilinear | Bilinear | FXAA |
+| Anisotrópico | 1x | 1x | 1x | 1x | 1x | 1x | 4x |
+| V-Sync | OFF | OFF | OFF | OFF | OFF | OFF | OFF |
+| Async Pipeline | ON | ON | ON | ON | ON | ON | ON |
+| Surface Sync | Disabled | Disabled | Disabled | Disabled | Disabled | Disabled | Disabled |
+| Memory Mapping | Page Table | Page Table | Page Table | Page Table | Page Table | Page Table | Page Table |
+| JIT (cpu-opt) | ON | ON | ON | ON | ON | ON | ON |
+| Driver | Sistema | Sistema | Sistema | Sistema | Sistema | Sistema | Turnip |
+
+Memory Mapping es Page Table en los 7 presets (`presetSettings()` en
+`model/LauncherSettings.kt`). La red de seguridad G11-02 puede
+resolver a Double Buffer si Page Table no está en la máscara del
+driver; en el G99 ambas están siempre en la máscara, así que el valor
+efectivo en el teléfono objetivo es Page Table.
 
 **Regla de la prueba de 30 s (cualquier perfil 2x):** si el FPS medio
 baja de 28, el launcher vuelve a 1x automáticamente (si el ajuste
@@ -256,26 +262,44 @@ ajustes + device info en un `.txt`).
   Mali Equilibrado, Adreno Rendimiento, Adreno Calidad/Turnip,
   Genérico. Botón "Ver config.yml generado" y "Restablecer".
 
-### config.yml: qué es real y qué es TODO
+### config.yml: las 33 claves reales
 
 El generador (`Vita3kConfigGenerator`) solo emite claves verificadas
 en `vita3k/config/include/config/config.h` de Vita3K (master,
-2026-11-07): `backend-renderer`, `resolution-multiplier` (float),
-`screen-filter`, `v-sync`, `anisotropic-filtering`,
-`async-pipeline-compilation`, `high-accuracy`,
-`disable-surface-sync` (inverso de Surface Sync),
-`memory-mapping` (solo `"double-buffer"` verificado como default),
-`texture-cache`, `shader-cache`, `audio-backend`, `audio-volume`,
-`ngs-enable`, `cpu-opt`, `fps-hack`, `file-loading-delay`,
-`performance-overlay`, `custom-driver-name`, `pref-path`.
+2026-11-07) o definidas por un parche propio del repo (las 3 claves
+de parche: `exp-audio-sdl`, `skip-shader-precompile`,
+`audio-device-sample-frames`). Son **33**, en el orden en que se
+emiten:
+
+- **GPU:** `backend-renderer`, `resolution-multiplier` (float),
+  `screen-filter`, `v-sync`, `anisotropic-filtering`,
+  `async-pipeline-compilation`, `high-accuracy`,
+  `validation-layer` (siempre `false`), `disable-surface-sync`
+  (inverso de Surface Sync), `memory-mapping` (los 5 valores
+  verificados: `"double-buffer"`, `"external-host"`,
+  `"page-table"`, `"native-buffer"` solo Android, `"off"` =
+  Disabled), `texture-cache`, `shader-cache`,
+  `skip-shader-precompile` (clave propia, parche load-p1),
+  `disable-mask-bit` (clave del pin, parche aud3 la honra en Vulkan; OFF por defecto),
+  `custom-driver-name`, `hashless-texture-cache`.
+- **CPU:** `cpu-opt`, `fps-hack`, `turbo-mode`,
+  `file-loading-delay`.
+- **Audio:** `audio-backend` (verificado: `"SDL"` o `"Cubeb"`),
+  `exp-audio-sdl` (clave propia, parche r1), `audio-volume`,
+  `ngs-enable`, `audio-device-sample-frames` (siempre `512`).
+- **Overlay:** `performance-overlay`,
+  `performance-overlay-detail`, `performance-overlay-position`,
+  `show-compile-shaders`.
+- **Sesión:** `show-welcome` (siempre `false`), `psn-signed-in`
+  (`1`/`0`), `sys-lang`, `pref-path`.
 
 Los ajustes **sin** clave verificada (`frame limiter`,
-`frame skipping`, `accurate thread scheduling`, `audio buffer size`,
-strings de memory-mapping distintos de `double-buffer`, string
-exacto de Cubeb) se escriben en el YAML como comentario
-`TODO-VERIFY`, nunca como clave inventada. Los tests
-(`Vita3kConfigGeneratorTest`) comprueban que esas claves no se
-emiten como reales.
+`frame skipping`, `accurate thread scheduling`, `audio buffer size`)
+no existen en el modelo de ajustes: no se emiten en absoluto en el
+YAML, ni como claves ni como comentarios. Los tests
+(`Vita3kConfigGeneratorTest`) comprueban que el YAML generado no
+contiene `TODO-VERIFY` y que las 33 claves emitidas son las que el
+validador conoce.
 
 ---
 
