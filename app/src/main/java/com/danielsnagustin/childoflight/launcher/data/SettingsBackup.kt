@@ -103,6 +103,8 @@ fun encodeSettingsBackup(settings: LauncherSettings, ui: UiPreferences): String 
     bool("allowExternalVita3k", settings.allowExternalVita3k)
     bool("psnSignedIn", settings.psnSignedIn)
     str("gameLanguage", settings.gameLanguage.name)
+    // ronda 0.2.69, la llave de RAWG.io también va en el backup; la versión NO sube (sigue 1), los backups viejos sin la clave decodifican con el valor actual.
+    str("rawgApiKey", settings.rawgApiKey)
     bool("hideTouchWhenGamepadConnected", settings.hideTouchWhenGamepadConnected)
     bool("showTouchOverlayInGame", settings.showTouchOverlayInGame)
     num("touchOverlayOpacity", settings.touchOverlayOpacity)
@@ -180,6 +182,7 @@ fun decodeSettingsBackup(
         allowExternalVita3k = boolValue(map["allowExternalVita3k"], current.allowExternalVita3k),
         psnSignedIn = boolValue(map["psnSignedIn"], current.psnSignedIn),
         gameLanguage = enumValue(map["gameLanguage"], GameLanguage.entries.toTypedArray(), current.gameLanguage),
+        rawgApiKey = map["rawgApiKey"] ?: current.rawgApiKey,
         hideTouchWhenGamepadConnected = boolValue(map["hideTouchWhenGamepadConnected"], current.hideTouchWhenGamepadConnected),
         showTouchOverlayInGame = boolValue(map["showTouchOverlayInGame"], current.showTouchOverlayInGame),
         touchOverlayOpacity = SettingsRepository.clampOverlayOpacity(floatValue(map["touchOverlayOpacity"], current.touchOverlayOpacity)),
