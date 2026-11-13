@@ -1,5 +1,6 @@
 package com.danielsnagustin.childoflight.launcher.core
 
+import com.danielsnagustin.childoflight.launcher.data.ControlShape
 import com.danielsnagustin.childoflight.launcher.data.TouchControl
 import com.danielsnagustin.childoflight.launcher.data.VitaButton
 import kotlin.math.min
@@ -188,6 +189,25 @@ object TouchOverlayMapping {
         } else {
             control.sizeDp * density
         }
+
+    /**
+     * 0.2.68 (neón): ANCHO de un control en píxeles para un rect de
+     * juego de [gameHeightPx] px de alto y densidad [density]. Solo
+     * las píldoras (forma PILL con widthFraction) son más anchas
+     * que altas: su ancho es widthFraction x alto del juego. Todo
+     * lo demás es cuadrado (ancho = tamaño). Una PILL sin
+     * widthFraction (p. ej. creada por el editor antes de fijar el
+     * ancho) también es cuadrada.
+     */
+    fun controlWidthPx(control: TouchControl, gameHeightPx: Float, density: Float): Float =
+        if (control.shape == ControlShape.PILL && control.widthFraction != null) {
+            control.widthFraction * gameHeightPx
+        } else {
+            controlSizePx(control, gameHeightPx, density)
+        }
+
+    /** Aspecto por defecto de una píldora nueva en el editor (ancho / alto). */
+    const val PILL_ASPECT_DEFAULT = 2.1f
 
     /**
      * R4-P0-2: glifo PlayStation del botón, o null si no es un botón
@@ -427,59 +447,39 @@ object TouchOverlayMapping {
      * [controlRect], con el rect ya calculado: útil para tests y
      * para no recalcular el rect por control.
      *
-     * 0.2.58 (R7-P1-05): SOLO el stick (kind "stick") puede pisar
-     * la barra negra lateral izquierda como en el mockup: su borde
-     * izquierdo puede quedar fuera del rect del juego, hasta
-     * gameLeft - mitad (su CENTRO sigue dentro del rect, nunca a
-     * la izquierda de gameLeft) y nunca fuera de la vista (tope
-     * en x 0). En el teléfono el stick guardado en 0.05 queda con
-     * el centro en 228 px y el borde en 65 px, 99 px dentro de la
-     * barra. 0.2.58 (R7, decisión del coordinador): TAMBIÉN el
-     * salto puede pisar la barra negra derecha, simétrico al
-     * stick: su borde derecho puede quedar fuera del rect, con el
-     * centro hasta 1.012 del juego (su maxRight puede superar
-     * gameRight) y nunca fuera de la vista (tope en el borde
-     * derecho: el rect del juego está centrado, así que el borde
-     * derecho de la vista es gameLeft + gameRight). En el teléfono
-     * el salto guardado en 1.012 queda con el centro en 1450,6 px
-     * y el borde en 1531 px, 96 px dentro de la barra y 69 px
-     * dentro de la vista. Se identifica POR ID (btn_jump), NO por
-     * kind "button": la espada comparte kind y NO se relaja. Los
-     * demás controles siguen con el control ENTERO dentro del
-     * rect: la espada en 0.914 queda entera dentro sin recorte.
+     * 0.2.68 (neón): el clamp ya NO es "el control entero dentro
+     * del rect del juego": es "el control entero dentro de la
+     * VISTA". El rect del juego está centrado, así que el borde
+     * derecho de la vista es gameLeft + gameRight y el izquierdo
+     * es 0. Las píldoras L/R y el ○ del rombo neón tienen su
+     * centro FUERA del rect (sobre la barra negra, como en la
+     * imagen) y con el clamp viejo se desplazarían hasta 172 px.
+     * La relajación vieja por id/kind (stick a la izquierda,
+     * btn_jump a la derecha, 0.2.58 R7) queda SUBSUMIDA por la
+     * regla general: el stick en 0.035 y el salto en 1.012
+     * dibujan exactamente igual que antes (sus centros ya
+     * estaban dentro de la vista). Un control con su fracción
+     * dentro del rect dibuja EXACTAMENTE igual que antes: solo
+     * cambia lo que antes se recortaba al borde del rect.
+     * Las píldoras usan su ancho (controlWidthPx) en X y su alto
+     * en Y; el resto sigue cuadrado.
      */
     fun controlRectInGameRect(control: TouchControl, gameRect: GameRect, density: Float): ControlRect {
         // 0.2.64 (A-7): el tamaño sale de controlSizePx (fracción
         // del alto del juego si el control la trae, dp x densidad
-        // si no). El resto de la matemática no cambia.
+        // si no). 0.2.68: el ancho sale de controlWidthPx (las
+        // píldoras son más anchas que altas).
         val sizePx = controlSizePx(control, gameRect.height(), density)
-        val half = sizePx / 2f
-        // 0.2.58 (R7-P1-05): solo el stick pisa la barra negra
-        // izquierda: su borde izquierdo puede bajar hasta gameLeft
-        // - half (centro en gameLeft) y nunca fuera de la vista
-        // (tope en 0). 0.2.58 (R7, decisión del coordinador):
-        // TAMBIÉN el salto pisa la barra negra derecha, simétrico
-        // al stick: su borde derecho puede subir hasta el borde de
-        // la vista (gameLeft + gameRight, el rect está centrado) y
-        // su centro hasta 1.012 del juego. Solo por id btn_jump,
-        // no por kind "button": la espada comparte kind y NO se
-        // relaja. Los demás controles siguen con el control ENTERO
-        // dentro del rect.
-        val minLeft = if (control.kind == "stick") {
-            (gameRect.left - half).coerceAtLeast(0f)
-        } else {
-            gameRect.left
-        }
-        val maxLeft = if (control.id == "btn_jump") {
-            (gameRect.left + gameRect.right - sizePx).coerceAtLeast(gameRect.left)
-        } else {
-            (gameRect.right - sizePx).coerceAtLeast(gameRect.left)
-        }
-        val left = (gameRect.left + control.xFraction * gameRect.width() - half)
+        val widthPx = controlWidthPx(control, gameRect.height(), density)
+        val halfW = widthPx / 2f
+        val halfH = sizePx / 2f
+        val minLeft = 0f
+        val maxLeft = (gameRect.left + gameRect.right - widthPx).coerceAtLeast(0f)
+        val left = (gameRect.left + control.xFraction * gameRect.width() - halfW)
             .coerceIn(minLeft, maxLeft)
-        val top = (gameRect.top + control.yFraction * gameRect.height() - half)
+        val top = (gameRect.top + control.yFraction * gameRect.height() - halfH)
             .coerceIn(gameRect.top, (gameRect.bottom - sizePx).coerceAtLeast(gameRect.top))
-        return ControlRect(left, top, left + sizePx, top + sizePx)
+        return ControlRect(left, top, left + widthPx, top + sizePx)
     }
 
     /** Controles que aparecen en el juego: solo los visibles. Un botón borrado no está en la lista; uno oculto tampoco. */
@@ -508,13 +508,17 @@ object TouchOverlayMapping {
     /**
      * 0.2.64 (A-2): layout de la vista de alas de la pausa
      * (PauseWingsView). La vista es más ancha y más alta que el
-     * botón: en el mockup 51025 las alas se extienden ~4,4 veces el
+     * botón: en el mockup 51025 las alas se extendían ~4,4 veces el
      * diámetro del botón a los lados y ~1,5 veces en vertical (las
      * hojas barren hacia arriba y hacia abajo). Centrada en el
      * botón: los márgenes salen del layout del botón de pausa.
+     * 0.2.68 (neón): medido en la imagen 52710_13_ua6f.png, las
+     * alas son 4.63 x de ancho y 1.09 x de alto del botón (0.277W
+     * / 0.060W y 0.141H / 0.129H); la vista lleva 4.7 x 1.07, un
+     * poco de margen para los destellos de las puntas.
      */
-    const val PAUSE_WINGS_WIDTH_FACTOR = 4.4f
-    const val PAUSE_WINGS_HEIGHT_FACTOR = 1.5f
+    const val PAUSE_WINGS_WIDTH_FACTOR = 4.7f
+    const val PAUSE_WINGS_HEIGHT_FACTOR = 1.07f
 
     data class PauseWingsLayout(val widthPx: Int, val heightPx: Int, val leftMargin: Int, val topMargin: Int)
 
@@ -529,16 +533,48 @@ object TouchOverlayMapping {
         )
     }
 
-    data class OverlayChildLayout(val sizePx: Int, val leftMargin: Int, val topMargin: Int)
+    /**
+     * 0.2.68 (neón): [sizePx] es el ALTO del hijo (el tamaño del
+     * control, controlSizePx) y [widthPx] su ancho (controlWidthPx:
+     * igual que el alto en los controles cuadrados, mayor en las
+     * píldoras). Antes solo había sizePx porque todos los controles
+     * eran cuadrados. El valor por defecto (ancho = alto) mantiene
+     * compilando las construcciones viejas de tests.
+     */
+    data class OverlayChildLayout(val sizePx: Int, val widthPx: Int = sizePx, val leftMargin: Int, val topMargin: Int)
 
     fun childLayout(control: TouchControl, viewWidthPx: Float, viewHeightPx: Float, density: Float): OverlayChildLayout {
         val rect = controlRect(control, viewWidthPx, viewHeightPx, density)
         return OverlayChildLayout(
-            sizePx = rect.width().toInt().coerceAtLeast(1),
+            sizePx = rect.height().toInt().coerceAtLeast(1),
+            widthPx = rect.width().toInt().coerceAtLeast(1),
             leftMargin = rect.left.toInt(),
             topMargin = rect.top.toInt(),
         )
     }
+
+    /**
+     * 0.2.68 (neón): barra negra lateral como fracción del ancho
+     * del juego para una vista de aspecto [aspect] (ancho / alto).
+     * El juego es 960x544: con 2340x1080 (2.167) la barra es
+     * 0.114 del ancho del juego; con 960:544 exacto no hay barra
+     * (0). Lo usa el editor para los topes del slider X y del
+     * arrastre: el centro de un control puede pisar la barra, pero
+     * el control entero sigue dentro de la vista. Puro Kotlin,
+     * testeable.
+     */
+    fun barFractionForAspect(aspect: Float): Float =
+        (((aspect * GAME_ASPECT_HEIGHT / GAME_ASPECT_WIDTH) - 1f) / 2f).coerceAtLeast(0f)
+
+    /**
+     * 0.2.68 (neón): el botón de pausa de un layout: el PRIMER
+     * botón con VitaButton.START. Las alas florales se atan a él
+     * (GamepadOverlayView) y el icono II es suyo; una píldora
+     * START posterior (btn_start_pill) dibuja su etiqueta, no el
+     * icono. null si el perfil no trae START. Puro Kotlin.
+     */
+    fun pauseControlFor(controls: List<TouchControl>): TouchControl? =
+        controls.firstOrNull { it.kind == "button" && it.vitaButton == VitaButton.START }
 }
 
 /**
