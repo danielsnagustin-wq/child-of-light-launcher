@@ -14,6 +14,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.danielsnagustin.childoflight.launcher.model.GpuDriver
+import com.danielsnagustin.childoflight.launcher.model.ScreenFilter
+import com.danielsnagustin.childoflight.launcher.ui.settingsForExport
 
 /**
  * R2-P1-08 + R2-P1-09: al apagar el Modo seguro (o deshacer "Corregir
@@ -173,6 +176,7 @@ class SafeModeSnapshotRestoreTest {
             audioBackend = AudioBackend.CUBEB,
             ngsEnable = false,
             shaderCache = false,
+            expAudioSdl = true,
             resolutionMultiplier = 1f,
             fpsHack = false,
             turnipInstalled = true,
@@ -188,10 +192,12 @@ class SafeModeSnapshotRestoreTest {
         )
         val restored = restoreAudioFixSnapshot(snapshot, current)
 
-        // Solo vuelven los 3 campos de audio.
+        // Solo vuelven los 4 campos de audio.
         assertEquals(AudioBackend.CUBEB, restored.audioBackend)
         assertFalse(restored.ngsEnable)
         assertFalse(restored.shaderCache)
+        // Ronda 0.2.70 (5-P2-3): el experimento también vuelve a su valor anterior.
+        assertTrue(restored.expAudioSdl)
         // Los 5 campos y los cambios intermedios sobreviven.
         assertTrue(restored.turnipInstalled)
         assertEquals("turnip-25.1.zip", restored.turnipVersion)
@@ -200,4 +206,138 @@ class SafeModeSnapshotRestoreTest {
         assertEquals(3f, restored.resolutionMultiplier, 0.001f)
         assertTrue(restored.fpsHack)
     }
+
+    @Test
+    fun safeModeRestoreRestoresCpuOptWhenUntouched() {
+        // Ronda 0.2.70 (P1-3): el modo seguro fuerza cpuOpt=true; al salir,
+        // si el usuario no lo toco durante el modo seguro, vuelve el valor anterior.
+        val before = LauncherSettings(cpuOpt = false)
+        val snapshot = snapshotViaFile(before)
+        val current = applySafeMode(before)
+        assertTrue(current.cpuOpt)
+        val restored = restoreSafeModeSnapshot(snapshot, current)
+        assertFalse(restored.cpuOpt)
+    }
+
+    @Test
+    fun restoreCoversEveryFieldApplySafeModeForces() {
+        // Ronda 0.2.70 (P1-3, invariante): restoreSafeModeSnapshot debe
+        // cubrir todos los campos que applySafeMode sobrescribe. La base
+        // pone cada campo forzado en un valor distinto del forzado; si el
+        // restore olvida uno, el resultado conserva el forzado y este
+        // assertEquals completo lo caza.
+        val before = LauncherSettings(
+            resolutionMultiplier = 2f,
+            screenFilter = ScreenFilter.FXAA,
+            anisotropicFiltering = 4,
+            vSync = true,
+            asyncPipelineCompilation = false,
+            highAccuracy = true,
+            surfaceSyncEnabled = true,
+            audioBackend = AudioBackend.CUBEB,
+            ngsEnable = false,
+            expAudioSdl = true,
+            shaderCache = false,
+            cpuOpt = false,
+            fpsHack = true,
+            hashlessTextureCache = true,
+            memoryMapping = MemoryMapping.PAGE_TABLE,
+            fileLoadingDelay = 30,
+            gpuDriver = GpuDriver.TURNIP,
+        )
+        val snapshot = snapshotViaFile(before)
+        val current = applySafeMode(before)
+        val restored = restoreSafeModeSnapshot(snapshot, current)
+        assertEquals(before.copy(safeMode = false), restored)
+    }
+
+    @Test
+    fun exportWithSafeModeOnExportsPreSafeModeValues() {
+        // Ronda 0.2.70 (P1-2, OBLIGATORIO): exportar con el modo seguro ON
+        // exporta los valores previos al modo seguro, no los forzados.
+        val before = LauncherSettings(
+            resolutionMultiplier = 2f,
+            audioBackend = AudioBackend.CUBEB,
+            memoryMapping = MemoryMapping.PAGE_TABLE,
+            fpsHack = true,
+        )
+        val snapshot = snapshotViaFile(before)
+        val current = applySafeMode(before)
+        val exported = settingsForExport(current, snapshot, null)
+        val json = encodeSettingsBackup(exported, UiPreferences())
+        val decoded = decodeSettingsBackup(json, LauncherSettings(), UiPreferences()).getOrThrow().first
+        assertFalse(decoded.safeMode)
+        assertEquals(2f, decoded.resolutionMultiplier, 0.001f)
+        assertEquals(AudioBackend.CUBEB, decoded.audioBackend)
+        assertEquals(MemoryMapping.PAGE_TABLE, decoded.memoryMapping)
+        assertTrue(decoded.fpsHack)
+    }
+
+    @Test
+    fun exportWithAudioFixPendingExportsPreFixAudioValues() {
+        // Ronda 0.2.70 (P1-2, segunda instancia): exportar mientras
+        // 'Corregir audio' esta aplicado (antes de 'Deshacer') exporta
+        // los valores previos al arreglo, no los transitorios.
+        val before = LauncherSettings(audioBackend = AudioBackend.CUBEB, ngsEnable = false, shaderCache = false)
+        val snapshot = snapshotViaFile(before)
+        val current = audioFixTarget(before)
+        val exported = settingsForExport(current, null, snapshot)
+        assertEquals(AudioBackend.CUBEB, exported.audioBackend)
+        assertFalse(exported.ngsEnable)
+        assertFalse(exported.shaderCache)
+        assertFalse(exported.safeMode)
+    }
+
+    @Test
+    fun exportWithAudioFixPendingExportsPreFixExpAudioSdl() {
+        // Fusión 0.2.70 (segunda pasada, P1-2 × 5-P2-3): audioFixTarget
+        // también apaga expAudioSdl (área 5); exportar con "Corregir
+        // audio" pendiente debe exportar el valor previo (ON), no el
+        // false forzado. Sin el 4º campo en settingsForExport, este
+        // test fallaba (exportaba false).
+        val before = LauncherSettings(expAudioSdl = true)
+        val snapshot = snapshotViaFile(before)
+        val current = audioFixTarget(before)
+        assertFalse(current.expAudioSdl)
+        val exported = settingsForExport(current, null, snapshot)
+        assertTrue(exported.expAudioSdl)
+        assertFalse(exported.safeMode)
+    }
+
+    @Test
+    fun exportWithSafeModeAndAudioFixKeepsPreSafeModeValues() {
+        // Ronda 0.2.70 (P1-2, caso combinado): 'Corregir audio' aplicado
+        // DURANTE el modo seguro: su snapshot trae los valores forzados;
+        // la base (snapshot del modo seguro) ya guarda los reales y no
+        // se reintroducen los forzados.
+        val before = LauncherSettings(audioBackend = AudioBackend.CUBEB, ngsEnable = false, shaderCache = false, resolutionMultiplier = 2f)
+        val safeSnapshot = snapshotViaFile(before)
+        val forced = applySafeMode(before)
+        val audioSnapshot = snapshotViaFile(forced)
+        val exported = settingsForExport(forced, safeSnapshot, audioSnapshot)
+        assertEquals(AudioBackend.CUBEB, exported.audioBackend)
+        assertFalse(exported.ngsEnable)
+        assertFalse(exported.shaderCache)
+        assertEquals(2f, exported.resolutionMultiplier, 0.001f)
+        assertFalse(exported.safeMode)
+    }
+
+    @Test
+    fun exportWithAudioFixBeforeSafeModeRestoresPreFixAudio() {
+        // Ronda 0.2.70 (P1-2, caso combinado inverso): 'Corregir audio'
+        // aplicado ANTES del modo seguro: el snapshot de audio trae los
+        // valores previos al arreglo y sí se restauran sobre la base.
+        val before = LauncherSettings(audioBackend = AudioBackend.CUBEB, ngsEnable = false, shaderCache = false, resolutionMultiplier = 2f)
+        val audioSnapshot = snapshotViaFile(before)
+        val fixedAudio = audioFixTarget(before)
+        val safeSnapshot = snapshotViaFile(fixedAudio)
+        val current = applySafeMode(fixedAudio)
+        val exported = settingsForExport(current, safeSnapshot, audioSnapshot)
+        assertEquals(AudioBackend.CUBEB, exported.audioBackend)
+        assertFalse(exported.ngsEnable)
+        assertFalse(exported.shaderCache)
+        assertEquals(2f, exported.resolutionMultiplier, 0.001f)
+        assertFalse(exported.safeMode)
+    }
+
 }
