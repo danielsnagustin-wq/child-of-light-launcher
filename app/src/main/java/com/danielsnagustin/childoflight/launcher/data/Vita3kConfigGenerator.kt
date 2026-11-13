@@ -46,6 +46,11 @@ import java.nio.charset.StandardCharsets
  *   skip-shader-precompile (bool, ronda 0.2.68, load-p1: salta el
  *   precompilado de shaders conocidos al arrancar; true solo en los
  *   presets Mali/G99, false en Adreno/genérico por valor upstream),
+ *   disable-mask-bit (bool, tercera pasada N-1, parche
+ *   aud3-mask-bit-disable: desactiva la emulación exacta de máscara
+ *   en Vulkan; OFF por defecto = comportamiento upstream exacto;
+ *   la clave YA existe en config.h:139 del pin, el parche solo la
+ *   honra en VKState::late_init, espejo de gl/renderer.cpp:242),
  *   exp-audio-sdl (bool, OFF por defecto; ronda 0.2.66, parche
  *   experimental R1 en app/src/main/cpp/patches/r1-audio-sdl-exp.patch:
  *   la clave la DEFINE ese parche en config.h del núcleo (CONFIG_INDIVIDUAL),
@@ -106,6 +111,9 @@ import java.nio.charset.StandardCharsets
  *   (Ajustes → General → Motor, ON por defecto): es inicio de sesión
  *   EMULADO (sin cuenta real ni red), lo que el usuario llama "señal
  *   PSN emulada"; sin él, los DLC instalados no se activan),
+ *   sys-lang (int, idioma del juego; tercera pasada C-10: faltaba
+ *   en esta lista aunque generate() ya lo emitía y el validador ya
+ *   lo conocía),
  *   custom-driver-name (string: nombre del driver instalado = stem
  *   del zip, sin .zip; el driver debe estar instalado en el núcleo
  *   con installCustomDriver, ver driver_bridge.cpp),
@@ -255,6 +263,15 @@ object Vita3kConfigGenerator {
         // manifiesto ya grande. Los shaders se compilan bajo demanda
         // con la compilación asíncrona (3 hilos). false = upstream.
         sb.appendLine("skip-shader-precompile: ${s.skipShaderPrecompile}")
+        // Tercera pasada (N-1): disable-mask-bit, clave YA existente
+        // en el pin (config.h:139, leída en settings.cpp:74) que solo
+        // OpenGL honraba (gl/renderer.cpp:242). El parche
+        // aud3-mask-bit-disable.patch la honra en Vulkan
+        // (VKState::late_init). Con true el núcleo no crea la imagen
+        // de máscara por render target ni compila síncronos los
+        // pipelines maskupdate; false = upstream exacto. Sin el parche
+        // aplicado, el núcleo ignora la clave en silencio.
+        sb.appendLine("disable-mask-bit: ${s.disableMaskBit}")
         // --- Driver ---
         // Turnip SOLO si el driver activo es TURNIP: antes bastaba con
         // tenerlo instalado + nombre guardado, así que un usuario que
@@ -436,7 +453,7 @@ object Vita3kConfigGenerator {
 
     /**
      * T-P2-4: valida un config.yml YA GENERADO, línea a línea:
-     * claves conocidas (solo las 32 que emite generate()), tipos
+     * claves conocidas (solo las 33 que emite generate()), tipos
      * (bool/int/float/string entrecomillada) y rangos sensatos, sin
      * duplicados. Es la segunda red tras sanitizedSettings(): si
      * esto falla, hay un bug en el generador, no en los ajustes.
@@ -467,6 +484,9 @@ object Vita3kConfigGenerator {
             // Ronda 0.2.68 (load-p1): skip-shader-precompile (ver el
             // comentario de la REGLA DE ORO arriba).
             "skip-shader-precompile",
+            // Tercera pasada (N-1): disable-mask-bit (ver el comentario
+            // de la REGLA DE ORO arriba).
+            "disable-mask-bit",
         )
         val intRanges = mapOf(
             "anisotropic-filtering" to 1..16,
@@ -485,7 +505,7 @@ object Vita3kConfigGenerator {
             "screen-filter" to setOf("Bilinear", "Nearest", "Bicubic", "FXAA", "FSR"),
             "memory-mapping" to setOf("double-buffer", "external-host", "page-table", "native-buffer", "off"),
             // Ronda 0.2.66 (AUD-P0-1): generate() emite audio-backend
-            // siempre (:230-236) y el validador no lo conocía: caía en
+            // siempre (:313-314) y el validador no lo conocía: caía en
             // "clave desconocida" y writeConfig regeneraba con
             // defaults en CADA lanzamiento (ningún ajuste llegaba al
             // núcleo). Nunca más: cada clave que emite generate()
