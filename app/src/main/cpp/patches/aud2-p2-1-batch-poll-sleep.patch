@@ -1,0 +1,33 @@
+diff --git a/renderer/src/batch.cpp b/renderer/src/batch.cpp
+index 87e5a8e..87dfd2e 100644
+--- a/renderer/src/batch.cpp
++++ b/renderer/src/batch.cpp
+@@ -30,6 +30,7 @@
+ #include <overlay/shader_precompile_progress.h>
+ #include <util/log.h>
+ 
++#include <chrono>
+ #include <memory>
+ #include <thread>
+ 
+@@ -169,6 +170,20 @@ void process_batches(renderer::State &state, const FeatureState &features, MemSt
+                     // display a frame even though the game is not diplaying anything
+                     return;
+ 
++                // Ronda 0.2.70 (aud2 2-P2-1): dormir 1 ms cuando no hay
++                // batch listo ni espera pendiente, en vez de volver a
++                // sondear de inmediato (top(3) + wishlist de 500 us por
++                // iteracion, ~285 despertares/s robando CPU al hilo JIT
++                // en los 2 nucleos grandes). El tope de 500 ms por pasada
++                // y las salidas por should_display / render_abort /
++                // async_flip se revisan igual en la siguiente iteracion,
++                // como mucho 1 ms mas tarde: latencia despreciable frente
++                // a los ~3 ms que top() ya espera. No es condition
++                // variable: la cola no expone una espera con predicado y
++                // tocar su sincronizacion es mas riesgo que este sleep.
++                // Medicion con simpleperf pendiente en telefono.
++                std::this_thread::sleep_for(std::chrono::milliseconds(1));
++
+                 // this mean the command is still not ready, check if we can display it again
+                 continue;
+             }
