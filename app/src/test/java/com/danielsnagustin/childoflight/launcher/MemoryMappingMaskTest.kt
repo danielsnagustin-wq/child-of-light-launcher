@@ -72,6 +72,16 @@ class MemoryMappingMaskTest {
     fun disabledOnlyMaskFallsBackToDoubleBufferForAnythingElse() {
         // El núcleo sin dispositivos Vulkan devuelve 1<<0 (solo
         // Disabled): cualquier método pedido cae a Double Buffer.
+        // OJO (ronda 0.2.68, P0): la máscara 1 SOLO es una máscara
+        // real de dispositivo CON una sesión viva (el pin la devuelve
+        // también como valor por defecto SIN sesión, native_config.cpp:
+        // 597-607, get_emuenv() nulo — ese 1 NO dice nada del driver).
+        // El puente no debe dejar que ese 1 sin sesión llegue aquí:
+        // getCustomDriverSupportInfo / getSupportedMemoryMappingMask
+        // devuelven null / 0 (desconocida) sin sesión, y con máscara
+        // desconocida se emite el método pedido (ver
+        // unknownMaskSupportsEverything). Esta prueba cubre solo la
+        // función pura con una máscara 1 REAL.
         val mask = 1
         assertTrue(MemoryMapping.OFF.isSupportedByMask(mask))
         assertEquals(MemoryMapping.DOUBLE_BUFFER, effectiveMappingMethod(MemoryMapping.PAGE_TABLE, mask))
