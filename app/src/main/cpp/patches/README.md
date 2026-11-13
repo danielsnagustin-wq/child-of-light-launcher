@@ -1,13 +1,13 @@
-# Parches del núcleo (ronda 0.2.66)
+# Parches del núcleo (ronda 0.2.70)
 
 El workflow `build-native` clona el núcleo en el pin fijado (`VITA3K_PIN`,
 `3e43bc80`) y aplica los parches de ESTE directorio con `git apply`
-en el orden de la lista EXPLÍCITA del paso `Apply core patches (0.2.66)`
+en el orden de la lista EXPLÍCITA del paso `Apply core patches (0.2.70)`
 (no alfabético: el orden importa, ver el comentario de ese paso). Sin
 ese paso, estos parches no se aplican y las claves `exp-*` que emite
 el launcher se ignoran en silencio (el núcleo no las conoce y
 `config.cpp` descarta las claves desconocidas: el juego sigue con el
-comportamiento actual, sin romperse). Los 16 parches del top-level
+comportamiento actual, sin romperse). Los 23 parches del top-level
 son los de esa lista; `experimental/` nunca se aplica.
 
 Reglas (ronda 11 / verificación Vita3K+ 2026-11-11):
@@ -24,12 +24,34 @@ Reglas (ronda 11 / verificación Vita3K+ 2026-11-11):
 
 ## Parches activos (top-level)
 
+La tabla sigue el orden EXACTO del workflow (1º–22º); el número de
+posición es el que manda para los `git apply --check`.
+
 | Archivo | Origen | Interruptor | Estado |
 |---|---|---|---|
-| `r1-audio-sdl-exp.patch` | Vita3K+ `ff1515a` + `69757af` (audio SDL/Cubeb) + hunk de audio de `570cd24` | `exp-audio-sdl` (OFF) | Adaptado y rebasado sobre los 14 parches F2: `git apply --check` limpio DESPUÉS de ellos (no contra el pin solo: choca con aud-p2-1/aud-p2-5 en los mismos hunks). Iba ÚLTIMO en 0.2.66; desde 0.2.68 va antes de `load-p1-skip-shader-precompile.patch`. |
-| `load-p1-skip-shader-precompile.patch` | Propio (ronda 0.2.68, carga): clave nueva `skip-shader-precompile` + puerta en `prepare_game_launch_overlay` (app.cpp:281) | `skip-shader-precompile` (OFF por defecto; ON en los presets Mali/G99) | Rebasado sobre los 15 parches: `git apply --check` limpio DESPUÉS de ellos (sus hunks en config.h, state.h y settings.cpp van junto a los de aud-p2-1/r1). Va ÚLTIMO en la lista del workflow. |
-| `aud2-p1-12-cubeb-timeout.patch` | Propio (ronda 0.2.70, P1-12): espera acotada en Cubeb `audio_output` (2x duración del búfer + descarte del búfer entrante) y `CUBEB_STATE_ERROR` marca el puerto parado | Ninguno (siempre activo, camino Cubeb) | `git apply --check` limpio DESPUÉS de los 16 parches del workflow (tras `load-p1`). Sin claves nuevas. |
-| `aud2-p2-6-steady-clock.patch` | Propio (ronda 0.2.70, 5-P2-6): pacing OFF con `steady_clock` en vez de `system_clock` | Ninguno (siempre activo) | `git apply --check` limpio DESPUÉS de los 16 parches del workflow (tras `load-p1`, tras `aud2-p1-12`). Sin claves nuevas. |
+| `p3-jit-invalidate-on-module-reload.patch` | Vita3K+ `839735d6` (ronda 0.2.66): invalidación de la caché JIT al recargar un módulo | Ninguno (siempre activo) | 1º de 23 en el workflow. |
+| `p5-eye-plane-mali-guard.patch` | Vita3K+ `d8aa6f2b` (ronda 0.2.66, fix #513): guarda del eye-plane en Mali (el recompilador nunca emite `gl_ClipDistance` en este pin) | Ninguno (siempre activo) | 2º de 23 en el workflow. |
+| `hook1-present-counter.patch` | Propio (ronda 0.2.66, gancho nº 1 de instrumentación Fase P): contador de frames PRESENTADOS por el swapchain + timestamp del último (`presentKHR`) | Ninguno (instrumentación; la lee el puente JNI `nativeGetPresentedFrameCount` / `nativeGetLastPresentTimeNs`) | 3º de 23 en el workflow. |
+| `g11-06-vsync-present-mode.patch` | Propio (ronda 0.2.66, G11-06): `v-sync` elige el present mode (ON = Fifo, OFF = Mailbox) | Ninguno (lee `v-sync` de la config) | 4º de 23 en el workflow. |
+| `g11-03-deferred-unmap.patch` | Propio (ronda 0.2.66, G11-03): unmap diferido, sin `device.waitIdle()` en cada unmap | Ninguno (siempre activo) | 5º de 23 en el workflow. |
+| `g11-09-pipeline-cache-save-on-exit.patch` | Propio (ronda 0.2.66, G11-09): la caché de pipelines se guarda al salir, no una vez por frame | Ninguno (siempre activo) | 6º de 23 en el workflow. |
+| `c-01-texture-cache-vulkan.patch` | Propio (ronda 0.2.66, C-01): `texture-cache` con efecto real en Vulkan (OFF = re-subir cada textura, sin consultar la caché) | Ninguno (lee `texture-cache`) | 7º de 23 en el workflow. |
+| `c-02-shader-cache-vulkan.patch` | Propio (ronda 0.2.66, C-02): `shader-cache` separa lectura y escritura de la caché en disco | Ninguno (lee `shader-cache`) | 8º de 23 en el workflow. |
+| `aud-p2-1-audio-device-sample-frames.patch` | Propio (ronda 0.2.66, AUD-P2-1): clave nueva `audio-device-sample-frames` (default 512), copiada a `AudioState` antes de crear el adaptador | Ninguno (siempre activo; valor fijo 512) | 9º de 23 en el workflow. |
+| `cpu-05-remove-cpu-pool-size.patch` | Propio (ronda 0.2.66, CPU-05): elimina `cpu-pool-size` de `config.h` | Ninguno (siempre activo) | 10º de 23 en el workflow. |
+| `aud-p2-5-sdl-audio-drop.patch` | Propio (ronda 0.2.66, AUD-P2-5): búfer de descarte en SDL: descarta el audio acumulado al quedarse seco | Ninguno (siempre activo) | 11º de 23 en el workflow. |
+| `aud-p2-3-ngs-system-init-error.patch` | Propio (ronda 0.2.66, AUD-P2-3): con `ngs-enable=false`, `sceNgsSystemInit` devuelve error en vez de OK sin sistema inicializado | Ninguno (siempre activo) | 12º de 23 en el workflow. |
+| `aud-p2-6-audio-ms-log.patch` | Propio (ronda 0.2.66, AUD-P2-6): log periódico de ms de audio (contadores + `steady_clock`) | Ninguno (solo log) | 13º de 23 en el workflow. |
+| `g11-05-shader-manifest-per-mask.patch` | Propio (ronda 0.2.66, G11-05): el manifiesto de shaders se versiona por máscara de features | Ninguno (siempre activo) | 14º de 23 en el workflow. |
+| `r1-audio-sdl-exp.patch` | Vita3K+ `ff1515a` + `69757af` (audio SDL/Cubeb) + hunk de audio de `570cd24` | `exp-audio-sdl` (OFF) | Adaptado y rebasado sobre los 14 parches anteriores: `git apply --check` limpio DESPUÉS de ellos (no contra el pin solo: choca con aud-p2-1/aud-p2-5 en los mismos hunks). Iba ÚLTIMO en 0.2.66; desde 0.2.68 va antes de `load-p1-skip-shader-precompile.patch`. 15º de 23 en el workflow. |
+| `aud2-p1-13-present-counter.patch` | Propio (ronda 0.2.70, contadores de presentación): cuenta frames presentados con fallback (superficie de presentación no RGBA8) frente a frames totales, con ratio en el log | Ninguno (contadores + log) | 16º de 23 en el workflow; `git apply --check` limpio DESPUÉS de los 15 parches anteriores. |
+| `aud2-p2-1-batch-poll-sleep.patch` | Propio (ronda 0.2.70): sleep de 1 ms en el bucle de batches cuando no hay batch listo ni espera pendiente | Ninguno (siempre activo) | 17º de 23 en el workflow; `git apply --check` limpio DESPUÉS de los 16 parches anteriores. |
+| `aud2-p2-3-staging-counter.patch` | Propio (ronda 0.2.70): contador + log cuando los 16 staging buffers se agotan dentro de una escena (submit parcial + espera a GPU a mitad de escena) | Ninguno (contadores + log) | 18º de 23 en el workflow; `git apply --check` limpio DESPUÉS de los 17 parches anteriores. |
+| `load-p1-skip-shader-precompile.patch` | Propio (ronda 0.2.68, carga): clave nueva `skip-shader-precompile` + puerta en `prepare_game_launch_overlay` (app.cpp:281) | `skip-shader-precompile` (OFF por defecto; ON en los presets Mali/G99) | Rebasado sobre los 18 parches anteriores: `git apply --check` limpio DESPUÉS de ellos (sus hunks en config.h, state.h y settings.cpp van junto a los de aud-p2-1/r1). Va 19º de 23 en la lista del workflow (NO último: tras él van `aud2-p1-12-cubeb-timeout`, `aud2-p2-6-steady-clock`, `aud2-render-surface-format` y `aud3-mask-bit-disable`). |
+| `aud2-p1-12-cubeb-timeout.patch` | Propio (ronda 0.2.70, P1-12): espera acotada en Cubeb `audio_output` (2x duración del búfer + descarte del búfer entrante) y `CUBEB_STATE_ERROR` marca el puerto parado | Ninguno (siempre activo, camino Cubeb) | `git apply --check` limpio DESPUÉS de los 19 parches del workflow (tras `load-p1`). 20º de 23. Sin claves nuevas. |
+| `aud2-p2-6-steady-clock.patch` | Propio (ronda 0.2.70, 5-P2-6): pacing OFF con `steady_clock` en vez de `system_clock` | Ninguno (siempre activo) | `git apply --check` limpio DESPUÉS de los 19 parches del workflow (tras `load-p1`, tras `aud2-p1-12`). 21º de 23. Sin claves nuevas. |
+| `aud2-render-surface-format.patch` | Propio (ronda 0.2.70, 9-P2-4/9-P2-3): fallo explícito si no hay formatos de superficie (sin swapchain posible) y formato sRGB como fallback | Ninguno (siempre activo) | `git apply --check` limpio DESPUÉS de los 19 parches del workflow (tras `load-p1`). 22º de 23 (ya no último: tras él va `aud3-mask-bit-disable.patch`). Sin claves nuevas. |
+| `aud3-mask-bit-disable.patch` | Propio (tercera pasada, N-1): honra `disable-mask-bit` en Vulkan (`VKState::late_init`, espejo de OpenGL `gl/renderer.cpp:242`) | `disable-mask-bit` (OFF por defecto; interruptor por juego) | 23º de 23, ÚLTIMO. `git apply --check` limpio DESPUÉS de los 22 parches del workflow. Sin claves nuevas en el pin (la clave ya existe en `config.h:139`). |
 
 ### r1-audio-sdl-exp.patch — Audio SDL experimental (R1)
 
