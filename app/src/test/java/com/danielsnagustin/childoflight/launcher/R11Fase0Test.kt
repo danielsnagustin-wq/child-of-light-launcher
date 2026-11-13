@@ -192,18 +192,21 @@ class R11Fase0Test {
     }
 
     @Test
-    fun emittedKeySetIsExactlyThe31KnownKeys() {
+    fun emittedKeySetIsExactlyThe32KnownKeys() {
         // Ronda 0.2.66 (integración, hallazgo Codex paso 1): el set
         // era de 29 y generate() ya emite 31: faltaban
         // audio-device-sample-frames (Fase 2, AUD-P2-1) y
         // exp-audio-sdl (interruptores, R1). Si una fase futura
         // añade otra clave, ESTE test es el que debe crecer con
         // ella (regla de oro AUD-P0-1).
+        // Ronda 0.2.68 (load-p1): 32ª clave, skip-shader-precompile
+        // (carga rápida; el preset G99_RECOMMENDED la lleva en true).
         val expected = setOf(
             "backend-renderer", "resolution-multiplier", "screen-filter",
             "v-sync", "anisotropic-filtering", "async-pipeline-compilation",
             "high-accuracy", "validation-layer", "disable-surface-sync",
             "memory-mapping", "texture-cache", "shader-cache",
+            "skip-shader-precompile",
             "custom-driver-name", "cpu-opt", "fps-hack", "turbo-mode",
             "file-loading-delay", "audio-backend", "audio-volume",
             "audio-device-sample-frames", "exp-audio-sdl",
@@ -212,7 +215,7 @@ class R11Fase0Test {
             "show-compile-shaders", "show-welcome", "psn-signed-in",
             "sys-lang", "pref-path",
         )
-        assertEquals(31, expected.size)
+        assertEquals(32, expected.size)
         val yaml = Vita3kConfigGenerator.generate(
             presetSettings(GpuProfileId.G99_RECOMMENDED),
             "/data/vita3k",
