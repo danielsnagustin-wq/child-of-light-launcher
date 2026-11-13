@@ -544,6 +544,12 @@ data class LauncherSettings(
      */
     val gameLanguage: GameLanguage = GameLanguage.SPANISH,
     /**
+     * es solo del launcher, clave opcional de RAWG.io para enriquecer la ficha del juego;
+     * NO se emite en config.yml; NUNCA se escribe en logs ni aparece en el reporte de bug;
+     * vacía significa que no se hace ninguna llamada a RAWG.
+     */
+    val rawgApiKey: String = "",
+    /**
      * .pkg entregado a Vita3K: el launcher copió el .pkg + work.bin a
      * Descargas/ChildOfLight/ y abrió Vita3K con la guía. Se resetea
      * al importar un .pkg nuevo o borrar los datos del juego.
