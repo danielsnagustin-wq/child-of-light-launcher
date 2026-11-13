@@ -10,9 +10,9 @@ por revisión de código + búsqueda web de fuentes oficiales
 
 | GPU | Driver que usa el launcher hoy | ¿Driver personalizado empaquetable? | Fuente oficial + versión + licencia |
 |---|---|---|---|
-| Mali (incl. Mali-G57 MC2 del teléfono objetivo) | Driver Vulkan del sistema + presets 1x, Double Buffer, sin FXAA (G99 Recomendado / Mali Rendimiento / Mali Equilibrado) | **NO. No existe** un driver Mali empaquetable para Android en este núcleo | — (Panfrost es de Linux, ver abajo) |
+| Mali (incl. Mali-G57 MC2 del teléfono objetivo) | Driver Vulkan del sistema + presets 1x, Page Table, sin FXAA (G99 Recomendado / Mali Rendimiento / Mali Equilibrado) | **NO. No existe** un driver Mali empaquetable para Android en este núcleo | — (Panfrost es de Linux, ver abajo) |
 | Adreno / Snapdragon | Driver del sistema por defecto; Turnip opcional si el usuario instala un .zip a mano (perfil Adreno Calidad / Turnip) | **SÍ, preparado sin binario**: zip en `assets/drivers/turnip/`, auto-instalación al detectar Adreno, selección por modelo, fallback al sistema | K11MCH1/AdrenoToolsDrivers, **Turnip v26.0.0 Revisión 8** (2026-01-08, Mesa 26.0.0-devel, base `e9a83d530cce`, Vulkan 1.4.335, 3.478.156 bytes, SHA-256 verificado 2026-11-11), licencia **MIT (Mesa)** |
-| Otras (PowerVR, Xclipse, desconocida) | Driver del sistema, preset genérico 1x | NO (Turnip es solo Adreno; no hay equivalente) | — |
+| Otras (PowerVR, Xclipse, desconocida) | Driver del sistema, preset Mali Rendimiento (1x) por defecto; Genérico 2x como opción | NO (Turnip es solo Adreno; no hay equivalente) | — |
 
 ## TAREA 1 — Adreno / Turnip
 
@@ -127,10 +127,7 @@ por revisión de código + búsqueda web de fuentes oficiales
   sin auto-instalación), `validatePackage(zip)` (zip válido +
   meta.json + al menos un .so + libraryName presente en el zip +
   SHA-256 si está relleno), `sha256Hex`.
-- `data/TurnipDriverRepository.kt`: `bundledAssetPresent()`,
-  `installBundledAsset()` (copia assets → temporal → valida →
-  confirma con rename atómico; si falta el zip o falla la
-  validación no toca el driver instalado), `commitTempFile()`
+- `data/TurnipDriverRepository.kt`: `installBundledAsset()` (copia assets → temporal → valida → confirma con rename atómico; si falta el zip o falla la validación no toca el driver instalado), `commitTempFile()`
   extraído de `installDriverZip()` (mismo comportamiento que
   antes) y `BundledInstall`.
 - `ui/LauncherViewModel.kt`: `ensureBundledTurnipDriver()` (solo
