@@ -67,7 +67,7 @@ enum class VitaButton(val label: String) {
     NONE("Sin asignar"),
 }
 
-enum class ControlShape { CIRCLE, SQUARE }
+enum class ControlShape { CIRCLE, SQUARE, PILL }
 enum class StickMode(val label: String) { ANALOG("Stick analógico"), DPAD("D-Pad"), BOTH("Ambos") }
 enum class IgniculusMode(val label: String) { DIRECT_TOUCH("Toque directo"), JOYSTICK("Joystick") }
 
@@ -115,6 +115,16 @@ data class TouchControl(
      * dp no cambia en ningún teléfono).
      */
     val sizeFraction: Float? = null,
+    /**
+     * 0.2.68 (neón): ancho como fracción de la altura del rect del
+     * juego (0..1), SOLO para forma PILL (píldoras L/R/START, más
+     * anchas que altas). null = cuadrado (ancho = tamaño, como
+     * antes). Campo 16 del formato de guardado (encodeControl).
+     * Se ignora si la forma no es PILL (un botón circular con
+     * ancho distinto dibujaría un círculo del ancho, fuera de su
+     * rect): controlWidthPx solo lo aplica con PILL.
+     */
+    val widthFraction: Float? = null,
 )
 
 data class ControlProfile(
@@ -125,157 +135,151 @@ data class ControlProfile(
 )
 
 /**
- * Layout limpio 0.2.54 (6 controles, sin rombo): lo que el juego
- * original de Vita usa de verdad. Conversión desde la captura de
- * referencia 1847x851 (rect del juego x 172.5-1674.5, y 0-851):
- * fracJuego = (fracVentana * anchoVentana - 172.5) / 1502 en x,
- * igual en y. Medición 0.2.57 de la misma captura (componentes
- * conexos por brillo, no a ojo): el stick mide 434 px de adorno a
- * adorno, pero su círculo de cristal es de unos 385 px (45% de la
- * altura); la espada y el salto son círculos de unos 190 px (22%);
- * el orbe de Igniculus, unos 200 px (23,5%); la pausa, unos 115 px
- * (13,5%). La 0.2.54 tomó el adorno a adorno (434 px) como diámetro
- * y lo convirtió con densidad 2.07, así que en el teléfono el stick
- * salía con el círculo a 210 dp MÁS los adornos encima, y el orbe
- * a 131 dp: los dos gigantes que reporta el usuario. En 0.2.57 el
- * tamaño en dp ES el círculo de cristal (los adornos van aparte) y
- * se convierte con la densidad lógica del teléfono. 0.2.63 (A-1):
- * esa densidad estaba mal: el teléfono NO es 720x1600 con factor
- * 1.75 (eso es el Galaxy A07); el SM-A175F es 1080x2340, ~385 ppi,
- * factor 2.80 medido en 4 controles independientes (stick 457 px en
- * captura → 522,3 px / 186 dp = 2,807). Con 2.80: stick 174 dp
- * (488 px en 1080 de alto, 45%), orbe dibujado 87 dp (zona 104 dp,
- * 0.84 x zona), pausa 52 dp, espada 86 dp y salto 87 dp. Las
- * posiciones no cambian: ya eran las del mockup.
- * Medición 0.2.58 de la misma captura (ajuste de círculo sobre el
- * anillo brillante, no a ojo ni por caja): stick centro juego
- * (0.049, 0.671), anillo 374 px; espada centro juego (0.915, 0.593),
- * anillo 177 px; salto centro juego (1.012, 0.767), anillo 182 px;
- * orbe centro juego (0.821, 0.810), anillo 203 px. En el teléfono
- * eso es espada/salto ~86-88 dp; se suben a 92 dp (R7-P2-04: a 82 dp
- * quedaban ~24 px de diámetro por debajo del diseño). La espada y
- * el salto se mueven a su x del mockup (0.914 y 1.012 guardado) y
- * el stick pisa la barra negra (R7-P1-05). Ver los huecos
- * verificados en cada control, abajo: el salto llega a su x del
- * mockup en el dibujado porque el clamp se relaja también para
- * él (R7, decisión del coordinador): su centro queda en 1.012,
- * 1 px del centro medido en el mockup.
- * - btn_start (START, pausa): (0.50, 0.07), 52 dp, 0.70. Igual que antes.
- * - btn_circle (CIRCLE = volver/cancelar en menús y batalla):
- *   junto a la pausa, a su derecha: pausa de 52 dp (0.0764 de
- *   ancho de juego, mitad 0.0382) + hueco de 16 dp (0.0235) +
- *   mitad del círculo de 41 dp (0.0301) = centro en x 0.59, y
- *   0.07, 41 dp, 0.70. Glifo ○ (drawGlyphCircle), mismo cristal
- *   y misma gota al presionar que los demás botones.
- * - stick izquierdo (mover a Aurora): centro en ventana (0.134,
- *   0.675) -> juego (0.05, 0.675), 174 dp de diámetro, 0.70.
- *   0.2.58 (R7-P1-05): el stick SÍ pisa la barra negra lateral
- *   (pillarbox) como en el mockup: controlRectInGameRect relaja el
- *   clamp para el stick (kind "stick") y para el salto (id
- *   btn_jump, R7, decisión del coordinador), así que su borde
- *   izquierdo queda fuera del rect del juego (centro en 312 px en
- *   el teléfono, 2 px del centro del mockup) y su centro sigue
- *   dentro del rect. Los demás controles siguen con el control
- *   ENTERO dentro del rect. La vista previa del editor no tiene
- *   barra negra que pisar (recorta cada control a su propio rect),
- *   así que ahí el stick se sigue viendo pegado a su borde
- *   izquierdo y el salto colgando de su borde derecho: editor y
- *   juego ya no coinciden en el stick ni en el salto.
- * - btn_sword "Espada" (SQUARE = interactuar: hablar, cofres,
- *   puertas): centro en juego (0.914, 0.576), 86 dp, 0.80. Icono
- *   espada por id de control. 0.2.58 (R7-P1-04/R7-P2-04): la x 0.864
- *   de 0.2.54 era una medida vieja (el centro del anillo está en
- *   0.915 del mockup) y 82 dp quedaban ~24 px de diámetro por
- *   debajo del diseño. La y 0.576 se conserva aunque el anillo
- *   mida 0.593 (12 px de diferencia, fuera de este lote).
- * - btn_jump "Salto" (CROSS = saltar/confirmar): centro en juego
- *   (1.012, 0.752), 87 dp, 0.80. Icono flecha arriba por id de
- *   control. 0.2.58 (R7-P1-04/R7-P2-04): guardado en 1.012, fuera
- *   del rect del juego como en el mockup (su centro medido está a
- *   1,0116 del juego: flecha en (916, 773)/1000 de la captura
- *   1847x851). 0.2.58 (R7, decisión del coordinador): el clamp de
- *   controlRectInGameRect se relaja TAMBIÉN para el salto (solo
- *   por id btn_jump, no por kind: la espada comparte kind y no se
- *   relaja), así que se dibuja en 1.012 (centro en 2146 px en
- *   el teléfono, 1 px del centro del mockup) con el borde
- *   derecho 145 px dentro de la barra negra y 72 px dentro de la
- *   vista. La y 0.752 se conserva aunque el anillo mida 0.767
- *   (11 px de diferencia, fuera de este lote).
- * - igniculus (táctil directo, brillo al mantener): centro en
- *   ventana (0.760, 0.808) -> juego (0.82, 0.808). Zona táctil de
- *   104 dp y orbe dibujado a 0.42 x ancho (2 x 0.42 x 104 = 87 dp
- *   de diámetro, como en la captura): la zona de 220 dp no cabía a
- *   y 0.808 sin que el recorte la subiera, así que se achica la
- *   zona y crece el ratio de dibujo, no al revés.
- * Huecos verificados en el teléfono (2340x1080, densidad 2.80, rect
- * del juego 1906x1080, izquierda 217) con los valores de arriba
- * y el salto ya en 1.012 (centros dibujados: espada 1959/622;
- * salto 2146/812; orbe 1780/873; radios 120/122/122):
- * espada-salto dibujado hueco +24 px (era solape ~31 px con el
- * clamp: el salto se mueve 145 px a la derecha hasta su x del
- * mockup); salto-orbe dibujado hueco +127 px (era solape ~11 px:
- * el hueco del mockup, ~81 px, SÍ se recupera); espada-orbe
- * dibujado hueco +65 px (eran ~20 px). Las cajas táctiles
- * salto-orbe ya no se solapan: hueco de 98 px en X (el solape en
- * Y, 207 px, no solapa nada sin solape en X). El grupo derecho
- * del mockup cabe porque el salto sale del rect del juego como
- * en el diseño (x 1.012): el clamp se relaja para el salto como
- * para el stick (R7, decisión del coordinador).
- * El rombo (TRIANGLE arriba, CIRCLE derecha, CROSS abajo, SQUARE
- * izquierda) ya NO es el layout por defecto, pero sigue disponible
- * en el editor: VitaButton.entries lo incluye y cualquier botón de
- * cara añadido por el usuario sigue con su glifo. El Circle del
- * default es btn_circle junto a la pausa, no el btn_b del rombo.
+ * Layout neón 0.2.68 (10 controles): EXACTAMENTE la imagen de
+ * referencia 52710_13_ua6f.png (1847x851, mismo archivo que
+ * 52710_3_c4cw.png), por decisión del usuario 2026-11-12 18:21 /
+ * 18:23 / 18:26 ("Quiero estos tal cuál y no cambies nada"). Los
+ * controles viejos (espada, salto, Volver) se van; el rombo de
+ * botones de cara vuelve (△ arriba, □ izquierda, ○ derecha,
+ * ✕ abajo) con sus glifos, L/R son píldoras en las esquinas,
+ * START es píldora abajo al centro, la pausa (START, icono II +
+ * alas florales) sigue arriba al centro, el stick grande abajo
+ * a la izquierda y el orbe de Igniculus abajo a la derecha.
+ *
+ * Medidas por umbral de brillo (fracciones de la VENTANA
+ * 1847x851 = 2340x1080 del teléfono en apaisado; verificadas
+ * por Aurora con PIL contra la imagen: coinciden dentro del
+ * ruido del umbral): L centro (0.083, 0.094) 0.128x0.132; R
+ * (0.920, 0.094) 0.130x0.132; Pausa+alas (0.498, 0.071)
+ * 0.277x0.141; Stick (0.121, 0.700) Ø 0.212W, pomo 0.082W;
+ * START (0.308, 0.891) 0.160x0.099; Igniculus (0.729, 0.813)
+ * Ø 0.145W; △ (0.874, 0.376), □ (0.818, 0.496), ○ (0.930,
+ * 0.496), ✕ (0.874, 0.613), Ø 0.089W cada uno (huella con
+ * adornos; el cristal es 60 dp, ver abajo).
+ *
+ * Conversión a fracciones del JUEGO (rect 1906x1080, izquierda
+ * 217 en el teléfono 2340x1080, densidad 2.80), misma fórmula
+ * que 0.2.54: fracJuegoX = (fracVentana * 2340 - 217) / 1906,
+ * igual en y. Tamaños en dp = px / 2.80; la fracción de tamaño
+ * es del ALTO del juego (sizeFractionForReferenceDp). Las
+ * píldoras llevan ADEMÁS widthFraction (ancho como fracción
+ * del alto del juego): L 0.278, R 0.281, START 0.346.
+ *
+ * Los botones de cara son 60 dp de CRISTAL. El 0.089W medido por
+ * umbral (208 px) es la HUELLA con los adornos de diamante, no el
+ * cristal: el perfil radial PIL muestra el anillo brillante a
+ * r 57-64 px en la imagen (Ø ~128 px = 58-60 dp en el teléfono)
+ * y la diagonal entre centros es oscura (hueco, no solape). Con
+ * 74 dp de cristal los cuatro círculos se solaparían 23 px
+ * (centros a 184 px): el mismo error de la 0.2.62 con otros
+ * números. La medida 60 dp es del agente de controles (ronda
+ * 0.2.68) y se adopta por verificada. La huella con adornos
+ * queda en ~213 px ≈ 0.089W. El orbe de Igniculus se dibuja a
+ * 101 dp: la zona es 120 dp y el orbe se dibuja a 0.84 x zona
+ * (0.84 x 120 = 101). El bbox de la gota en la imagen es
+ * 268x264 px = 121.5x119.7 dp: ESO es la zona (con su marco y
+ * sus destellos), no el orbe; el cuerpo de la gota mide 190-225
+ * px en la imagen (86-102 dp) y el orbe dibujado de 101 dp cae
+ * dentro. Una zona de 144 dp dibujaría un orbe de 121 dp, tan
+ * grande como el bbox entero con marco: 19% de más. Medido con
+ * PIL en la segunda pasada (perfil radial desde (1346, 700):
+ * media 167 en r=100, 82 en r=110, 13 en r=130; cuerpo por
+ * filas 190-225 px). La medida 120/101 dp es del agente de
+ * controles (ronda 0.2.68) y se adopta por verificada (OpenCode
+ * APTO 10/10 en su árbol). El pomo del stick
+ * es 0.39 x radio (0.082 / 0.212 = 0.387). Las alas de la pausa
+ * son 4.7 x de ancho y 1.07 x de alto del botón (medido 4.63 x
+ * 1.09; la vista lleva un poco de margen para los destellos de
+ * las puntas).
+ *
+ * Huecos medidos en la imagen (no se corrigen: SON el diseño):
+ * los botones de cara NO se tocan: hueco de 14-17 px entre
+ * vecinos (centros a 184 px con Ø 168 px de cristal); el borde
+ * derecho del stick queda a 3 px de la píldora START. El centro
+ * de L (-0.012) y de ○ (1.028) cae
+ * fuera del rect del juego, sobre la barra negra: el clamp de
+ * controlRectInGameRect se generalizó a la vista entera (antes
+ * solo stick y salto podían pisarla).
+ *
+ * La pausa (btn_pause) va ANTES que la píldora START en la
+ * lista: las alas se atan al PRIMER botón START
+ * (pauseControlFor) y el icono II es de ese botón; la píldora
+ * dibuja su etiqueta "START", no el icono de pausa.
  */
 fun defaultTouchLayout(): List<TouchControl> = listOf(
     // 0.2.64 (A-7): cada control lleva ADEMÁS su tamaño como
     // fracción del alto del juego (sizeFractionForReferenceDp):
     // en el teléfono de referencia es exactamente el mismo tamaño
-    // en px que el dp de antes (stick 174 dp -> 487 px); en otra
-    // pantalla escala con el juego. sizeDp se conserva como
-    // referencia en dp (la muestra el slider del editor).
-    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 174, 0.70f, sizeFraction = sizeFractionForReferenceDp(174)),
-    TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.914f, 0.576f, 86, 0.80f, sizeFraction = sizeFractionForReferenceDp(86)),
-    TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 1.012f, 0.752f, 87, 0.80f, sizeFraction = sizeFractionForReferenceDp(87)),
-    TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 52, 0.70f, sizeFraction = sizeFractionForReferenceDp(52)),
-    TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 41, 0.70f, sizeFraction = sizeFractionForReferenceDp(41)),
-    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 104, 0.25f, colorHex = "#7FB3D5", sizeFraction = sizeFractionForReferenceDp(104)),
+    // en px que el dp de antes; en otra pantalla escala con el
+    // juego. sizeDp se conserva como referencia en dp (la muestra
+    // el slider del editor). Las píldoras llevan ADEMÁS
+    // widthFraction (ancho como fracción del alto del juego).
+    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.035f, 0.700f, 177, 0.70f, sizeFraction = sizeFractionForReferenceDp(177)),
+    TouchControl("btn_pause", "Pausa", "button", VitaButton.START, 0.498f, 0.071f, 50, 0.70f, sizeFraction = sizeFractionForReferenceDp(50)),
+    TouchControl("btn_l", "L", "button", VitaButton.L1, -0.012f, 0.094f, 51, 0.80f, shape = ControlShape.PILL, sizeFraction = sizeFractionForReferenceDp(51), widthFraction = 0.278f),
+    TouchControl("btn_r", "R", "button", VitaButton.R1, 1.016f, 0.094f, 51, 0.80f, shape = ControlShape.PILL, sizeFraction = sizeFractionForReferenceDp(51), widthFraction = 0.281f),
+    TouchControl("btn_start_pill", "START", "button", VitaButton.START, 0.264f, 0.891f, 38, 0.80f, shape = ControlShape.PILL, sizeFraction = sizeFractionForReferenceDp(38), widthFraction = 0.346f),
+    TouchControl("btn_tri", "Triángulo", "button", VitaButton.TRIANGLE, 0.959f, 0.376f, 60, 0.80f, sizeFraction = sizeFractionForReferenceDp(60)),
+    TouchControl("btn_sq", "Cuadrado", "button", VitaButton.SQUARE, 0.890f, 0.496f, 60, 0.80f, sizeFraction = sizeFractionForReferenceDp(60)),
+    TouchControl("btn_circ", "Círculo", "button", VitaButton.CIRCLE, 1.028f, 0.496f, 60, 0.80f, sizeFraction = sizeFractionForReferenceDp(60)),
+    TouchControl("btn_cross", "Cruz", "button", VitaButton.CROSS, 0.959f, 0.613f, 60, 0.80f, sizeFraction = sizeFractionForReferenceDp(60)),
+    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.781f, 0.813f, 120, 0.25f, colorHex = "#7FB3D5", sizeFraction = sizeFractionForReferenceDp(120)),
 )
 
 fun oneHandLayout(): List<TouchControl> = listOf(
-    // Una mano: los mismos 6 controles, con el grupo derecho
-    // desplazado hacia la esquina inferior derecha para el pulgar
-    // (espada y salto bajan y se acercan al borde, Igniculus baja
-    // con ellos; el stick baja un poco y queda en 0.70) y Start
-    // visible, a diferencia de la una mano vieja, que lo ocultaba
-    // junto con dos botones del rombo. Todos visibles.
-    // 0.2.58: espada y salto se quedan en 82 dp (no suben a 92 como
-    // el default): en este perfil el salto está en 0.91 y el orbe
-    // en 0.78 con hueco de ~9 px, y a 92 dp el salto-orbe quedaría
-    // en 0 px y la espada-salto se solaparía ~7 px. Su geometría
-    // compacta ya estaba bien a 82 dp (R7-P1-04: "En Una mano no
-    // pasa").
+    // Una mano, 0.2.68 segunda pasada: el MISMO set de 10 controles
+    // que el default (píldoras L/R, pausa, stick, píldora START,
+    // rombo de cara △□○✕ de 60 dp de cristal, Igniculus), con sus
+    // propias anclas de pulgar. Antes llevaba los 6 controles viejos
+    // (espada/salto/círculo junto a la pausa): al cambiar de perfil
+    // el usuario volvía a los controles que llamó "horribles".
+    // - Cuadrado y cruz se quedan EXACTAMENTE donde estaban espada
+    //   y salto ((0.83, 0.63) y (0.91, 0.79)): son los dos botones
+    //   que el pulgar aprieta de memoria; solo cambia el id (el
+    //   icono pasa de espada/flecha a su glifo) y el tamaño (77 ->
+    //   60 dp de cristal, como en la imagen).
+    // - Triángulo y círculo se derivan simétricos alrededor del
+    //   centro del rombo (0.91, 0.63): △ (0.91, 0.47), ○ (0.99,
+    //   0.63). El rombo queda más abierto que en la imagen (hueco
+    //   +62 px entre adyacentes, frente a +15 px): es la apertura
+    //   del pulgar, no un botón más grande (60 dp en los cuatro).
+    // - L/R/START entran en sus posiciones de la imagen, visibles.
+    // - Stick (0.05, 0.70) 174 dp, pausa (0.50, 0.07) 52 dp y zona
+    //   (0.78, 0.80) 104 dp no se mueven: son los valores de una
+    //   mano desde 0.2.63. Todos visibles.
+    // Huecos verificados en el teléfono 2340x1080 (script réplica
+    // 2026-11-12): cuadrado-cruz +62.4 px, triángulo-cuadrado
+    // +62.4 px, cuadrado-orbe dibujado +0.6 px (las cajas táctiles
+    // se solapan ~23 px como antes, pero los círculos dibujados no
+    // se tocan), cruz-orbe dibujado +41.7 px.
     TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.70f, 174, 0.75f, sizeFraction = sizeFractionForReferenceDp(174)),
-    TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.83f, 0.63f, 77, 0.80f, sizeFraction = sizeFractionForReferenceDp(77)),
-    TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 0.91f, 0.79f, 77, 0.80f, sizeFraction = sizeFractionForReferenceDp(77)),
     TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 52, 0.70f, sizeFraction = sizeFractionForReferenceDp(52)),
-    TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 41, 0.70f, sizeFraction = sizeFractionForReferenceDp(41)),
+    TouchControl("btn_l", "L", "button", VitaButton.L1, -0.012f, 0.094f, 51, 0.80f, shape = ControlShape.PILL, sizeFraction = sizeFractionForReferenceDp(51), widthFraction = 0.278f),
+    TouchControl("btn_r", "R", "button", VitaButton.R1, 1.016f, 0.094f, 51, 0.80f, shape = ControlShape.PILL, sizeFraction = sizeFractionForReferenceDp(51), widthFraction = 0.281f),
+    TouchControl("btn_start_pill", "START", "button", VitaButton.START, 0.264f, 0.891f, 38, 0.80f, shape = ControlShape.PILL, sizeFraction = sizeFractionForReferenceDp(38), widthFraction = 0.346f),
+    TouchControl("btn_tri", "Triángulo", "button", VitaButton.TRIANGLE, 0.91f, 0.47f, 60, 0.80f, sizeFraction = sizeFractionForReferenceDp(60)),
+    TouchControl("btn_sq", "Cuadrado", "button", VitaButton.SQUARE, 0.83f, 0.63f, 60, 0.80f, sizeFraction = sizeFractionForReferenceDp(60)),
+    TouchControl("btn_circ", "Círculo", "button", VitaButton.CIRCLE, 0.99f, 0.63f, 60, 0.80f, sizeFraction = sizeFractionForReferenceDp(60)),
+    TouchControl("btn_cross", "Cruz", "button", VitaButton.CROSS, 0.91f, 0.79f, 60, 0.80f, sizeFraction = sizeFractionForReferenceDp(60)),
     TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.78f, 0.80f, 104, 0.25f, colorHex = "#7FB3D5", sizeFraction = sizeFractionForReferenceDp(104)),
 )
 
 fun externalGamepadLayout(): List<TouchControl> = listOf(
-    // Mando externo: mismas posiciones que el default; stick,
-    // espada, salto y círculo ocultos (los pone el mando físico),
-    // Start e Igniculus visibles, como antes. 0.2.58: espada y
-    // salto espejan el default nuevo (0.914/1.012, 92 dp), aunque
-    // sigan ocultos: si el usuario los vuelve a mostrar, quedan
-    // donde los deja el default.
-    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 174, 0.70f, visible = false, sizeFraction = sizeFractionForReferenceDp(174)),
-    TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.914f, 0.576f, 86, 0.80f, visible = false, sizeFraction = sizeFractionForReferenceDp(86)),
-    TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 1.012f, 0.752f, 87, 0.80f, visible = false, sizeFraction = sizeFractionForReferenceDp(87)),
-    TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 52, 0.70f, sizeFraction = sizeFractionForReferenceDp(52)),
-    TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 41, 0.70f, visible = false, sizeFraction = sizeFractionForReferenceDp(41)),
-    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 104, 0.25f, colorHex = "#7FB3D5", sizeFraction = sizeFractionForReferenceDp(104)),
+    // Mando externo: mismas posiciones que el default neón 0.2.68;
+    // stick, L/R, píldora START y rombo ocultos (los pone el mando
+    // físico), pausa e Igniculus visibles, como antes. Los controles
+    // ocultos espejan el default nuevo: si el usuario los vuelve a
+    // mostrar, quedan donde los deja el default.
+    TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.035f, 0.700f, 177, 0.70f, visible = false, sizeFraction = sizeFractionForReferenceDp(177)),
+    TouchControl("btn_pause", "Pausa", "button", VitaButton.START, 0.498f, 0.071f, 50, 0.70f, sizeFraction = sizeFractionForReferenceDp(50)),
+    TouchControl("btn_l", "L", "button", VitaButton.L1, -0.012f, 0.094f, 51, 0.80f, shape = ControlShape.PILL, visible = false, sizeFraction = sizeFractionForReferenceDp(51), widthFraction = 0.278f),
+    TouchControl("btn_r", "R", "button", VitaButton.R1, 1.016f, 0.094f, 51, 0.80f, shape = ControlShape.PILL, visible = false, sizeFraction = sizeFractionForReferenceDp(51), widthFraction = 0.281f),
+    TouchControl("btn_start_pill", "START", "button", VitaButton.START, 0.264f, 0.891f, 38, 0.80f, shape = ControlShape.PILL, visible = false, sizeFraction = sizeFractionForReferenceDp(38), widthFraction = 0.346f),
+    TouchControl("btn_tri", "Triángulo", "button", VitaButton.TRIANGLE, 0.959f, 0.376f, 60, 0.80f, visible = false, sizeFraction = sizeFractionForReferenceDp(60)),
+    TouchControl("btn_sq", "Cuadrado", "button", VitaButton.SQUARE, 0.890f, 0.496f, 60, 0.80f, visible = false, sizeFraction = sizeFractionForReferenceDp(60)),
+    TouchControl("btn_circ", "Círculo", "button", VitaButton.CIRCLE, 1.028f, 0.496f, 60, 0.80f, visible = false, sizeFraction = sizeFractionForReferenceDp(60)),
+    TouchControl("btn_cross", "Cruz", "button", VitaButton.CROSS, 0.959f, 0.613f, 60, 0.80f, visible = false, sizeFraction = sizeFractionForReferenceDp(60)),
+    TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.781f, 0.813f, 120, 0.25f, colorHex = "#7FB3D5", sizeFraction = sizeFractionForReferenceDp(120)),
 )
 
 fun builtInProfiles(): List<ControlProfile> = listOf(
@@ -288,8 +292,9 @@ fun builtInProfiles(): List<ControlProfile> = listOf(
  * Perfiles de control guardados en DataStore.
  * Formato: perfiles separados por "\n###\n"; cada perfil es
  * "id|nombre|isBuiltIn\n<controles>"; controles separados por ";"
- * y con 15 campos separados por "|" (0.2.64, A-7: el 15º es
- * sizeFraction, vacío = null). Los nombres se sanejan
+ * y con 16 campos separados por "|" (0.2.64, A-7: el 15º es
+ * sizeFraction, vacío = null; 0.2.68: el 16º es widthFraction,
+ * vacío = null). Los nombres se sanejan
  * (sin |, ;, # ni saltos de línea) al guardar.
  * Compatible hacia atrás: el formato antiguo de 7 campos por control
  * se lee con valores por defecto para los campos nuevos.
@@ -700,6 +705,7 @@ class TouchLayoutRepository(private val context: Context) {
                     a.yFraction == b.yFraction &&
                     a.sizeDp == b.sizeDp &&
                     a.sizeFraction == b.sizeFraction &&
+                    a.widthFraction == b.widthFraction &&
                     a.label == b.label &&
                     a.opacity == b.opacity &&
                     a.shape == b.shape &&
@@ -778,6 +784,32 @@ class TouchLayoutRepository(private val context: Context) {
         }
 
         /**
+         * 0.2.68 (neón): el layout limpio de 0.2.63-0.2.67 (6
+         * controles), base de los snapshots viejos de fábrica
+         * (cleanLayoutWithoutCircle, cleanLayoutWithOldSizes,
+         * cleanLayoutWith057SwordJump, cleanLayoutWith062Sizes).
+         * ANTES estos builders partían del layout nuevo de
+         * fábrica; con el layout neón (10 controles, otros ids)
+         * devolvían snapshots de 10 controles que ningún perfil
+         * guardado tiene y los perfiles de 0.2.54-0.2.62 dejaban
+         * de migrar. La base es ahora el layout 0.2.67: para
+         * default es neonPredecessorLayout, para una mano es
+         * neonPredecessorOneHandLayout (el layout 0.2.67 de 6
+         * controles de una mano; oneHandLayout() ya es el neón
+         * de 10 desde la segunda pasada) y para externo es
+         * el mismo layout 0.2.67 con los controles de acción
+         * ocultos. Null para ids desconocidos.
+         */
+        private fun cleanLayout067(profileId: String): List<TouchControl>? = when (profileId) {
+            "default-g99" -> neonPredecessorLayout()
+            "one-hand" -> neonPredecessorOneHandLayout()
+            "external-gamepad" -> neonPredecessorLayout().map {
+                if (it.id == "stick" || it.id == "btn_sword" || it.id == "btn_jump" || it.id == "btn_circle") it.copy(visible = false) else it
+            }
+            else -> null
+        }
+
+        /**
          * 0.2.54 (círculo): el layout limpio de 5 controles, sin
          * btn_circle — la forma en la que un perfil predefinido
          * pudo quedar guardado si migró en 0.2.54 antes del
@@ -792,12 +824,7 @@ class TouchLayoutRepository(private val context: Context) {
          * layout nuevo la igualdad nunca coincidía.
          */
         private fun cleanLayoutWithoutCircle(profileId: String): List<TouchControl>? {
-            val clean = when (profileId) {
-                "default-g99" -> defaultTouchLayout()
-                "one-hand" -> oneHandLayout()
-                "external-gamepad" -> externalGamepadLayout()
-                else -> return null
-            }
+            val clean = cleanLayout067(profileId) ?: return null
             return clean.filter { it.id != "btn_circle" }.map { it.copy(sizeFraction = null) }
         }
 
@@ -830,12 +857,7 @@ class TouchLayoutRepository(private val context: Context) {
          * guardado).
          */
         private fun cleanLayoutWithOldSizes(profileId: String): List<TouchControl>? {
-            val clean = when (profileId) {
-                "default-g99" -> defaultTouchLayout()
-                "one-hand" -> oneHandLayout()
-                "external-gamepad" -> externalGamepadLayout()
-                else -> return null
-            }
+            val clean = cleanLayout067(profileId) ?: return null
             // 0.2.64 (A-7, run #384): cada copia lleva
             // sizeFraction a null: un perfil guardado antes de la
             // 0.2.64 no trae fracción (formato de 14 campos) y con
@@ -887,12 +909,7 @@ class TouchLayoutRepository(private val context: Context) {
          * ids desconocidos (nunca coincide con un perfil guardado).
          */
         private fun cleanLayoutWith057SwordJump(profileId: String): List<TouchControl>? {
-            val clean = when (profileId) {
-                "default-g99" -> defaultTouchLayout()
-                "one-hand" -> oneHandLayout()
-                "external-gamepad" -> externalGamepadLayout()
-                else -> return null
-            }
+            val clean = cleanLayout067(profileId) ?: return null
             // 0.2.64 (A-7, run #384): cada copia lleva
             // sizeFraction a null: un perfil guardado antes de la
             // 0.2.64 no trae fracción (formato de 14 campos) y con
@@ -934,12 +951,7 @@ class TouchLayoutRepository(private val context: Context) {
          * desconocidos (nunca coincide con un perfil guardado).
          */
         private fun cleanLayoutWith062Sizes(profileId: String): List<TouchControl>? {
-            val clean = when (profileId) {
-                "default-g99" -> defaultTouchLayout()
-                "one-hand" -> oneHandLayout()
-                "external-gamepad" -> externalGamepadLayout()
-                else -> return null
-            }
+            val clean = cleanLayout067(profileId) ?: return null
             // 0.2.64 (A-7, run #384): cada copia lleva
             // sizeFraction a null: un perfil guardado antes de la
             // 0.2.64 no trae fracción (formato de 14 campos) y con
@@ -1343,8 +1355,81 @@ class TouchLayoutRepository(private val context: Context) {
          * por control tiene la misma guarda: solo mueve
          * espada/salto si el perfil ya trae btn_circle.
          */
+        /**
+         * 0.2.68 (neón): migra UN perfil predefinido de su layout
+         * limpio de 0.2.63-0.2.67 (6 controles: stick, espada,
+         * salto, pausa, círculo, Igniculus) al layout neón de
+         * fábrica. Solo actúa si el perfil es predefinido
+         * ("default-g99", "external-gamepad" o "one-hand", cada
+         * uno con SU predecessor 0.2.67: el de una mano lleva
+         * otras posiciones y tamaños) Y sus controles son
+         * EXACTAMENTE el layout 0.2.67: si el usuario movió, redimensionó,
+         * remapeó o añadió aunque sea un control, el perfil es
+         * suyo y no se toca. La comparación ignora sizeFraction y
+         * widthFraction (el layout 0.2.67 existe guardado con
+         * fracción —0.2.64+— y sin ella —pre-0.2.64—), colorHex y
+         * visible (como matchesFactoryLayout, 0.2.65 M-P2-4).
+         * Idempotente: un perfil ya neón no coincide con el layout
+         * viejo y se devuelve tal cual. Puro Kotlin, sin Context:
+         * testeable.
+         */
+        fun migrateBuiltInToNeonLayout(profile: ControlProfile): ControlProfile {
+            if (!profile.isBuiltIn) return profile
+            // 0.2.68 segunda pasada: una mano también migra, con SU
+            // propio predecessor (el layout 0.2.67 de 6 controles de
+            // una mano, no el del default: otras posiciones y otros
+            // tamaños). Un perfil editado no coincide con ningún
+            // predecessor y no se toca, como en default/externo.
+            val (neon, predecessor) = when (profile.id) {
+                "default-g99" -> defaultTouchLayout() to neonPredecessorLayout()
+                "external-gamepad" -> externalGamepadLayout() to neonPredecessorLayout()
+                "one-hand" -> oneHandLayout() to neonPredecessorOneHandLayout()
+                else -> return profile
+            }
+            if (!matchesNeonPredecessor(profile.controls, predecessor)) return profile
+            return profile.copy(controls = neon)
+        }
+
+        /** El layout limpio de 0.2.67 (6 controles), guarda de la migración neón. */
+        private fun neonPredecessorLayout(): List<TouchControl> = listOf(
+            TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 174, 0.70f),
+            TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.914f, 0.576f, 86, 0.80f),
+            TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 1.012f, 0.752f, 87, 0.80f),
+            TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 52, 0.70f),
+            TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 41, 0.70f),
+            TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.82f, 0.808f, 104, 0.25f, colorHex = "#7FB3D5"),
+        )
+
+        /** El layout limpio de una mano de 0.2.67 (6 controles), guarda de la migración neón para ese perfil. */
+        private fun neonPredecessorOneHandLayout(): List<TouchControl> = listOf(
+            TouchControl("stick", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.70f, 174, 0.75f),
+            TouchControl("btn_sword", "Espada", "button", VitaButton.SQUARE, 0.83f, 0.63f, 77, 0.80f),
+            TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 0.91f, 0.79f, 77, 0.80f),
+            TouchControl("btn_start", "Start", "button", VitaButton.START, 0.50f, 0.07f, 52, 0.70f),
+            TouchControl("btn_circle", "Volver", "button", VitaButton.CIRCLE, 0.59f, 0.07f, 41, 0.70f),
+            TouchControl("igniculus", "Igniculus", "igniculus", VitaButton.NONE, 0.78f, 0.80f, 104, 0.25f, colorHex = "#7FB3D5"),
+        )
+
+        private fun matchesNeonPredecessor(controls: List<TouchControl>, snapshot: List<TouchControl>): Boolean {
+            if (snapshot.size != controls.size) return false
+            return snapshot.zip(controls).all { (a, b) ->
+                a.id == b.id &&
+                    a.kind == b.kind &&
+                    a.vitaButton == b.vitaButton &&
+                    a.xFraction == b.xFraction &&
+                    a.yFraction == b.yFraction &&
+                    a.sizeDp == b.sizeDp &&
+                    a.label == b.label &&
+                    a.opacity == b.opacity &&
+                    a.shape == b.shape &&
+                    a.stickMode == b.stickMode &&
+                    a.igniculusMode == b.igniculusMode &&
+                    a.sensitivity == b.sensitivity
+            }
+        }
+
         fun migrateBuiltInProfile(profile: ControlProfile): ControlProfile =
-            migrateBuiltInFactoryValues(migrateBuiltInFaceDiamond(migrateBuiltInToCleanLayout(profile)))
+            migrateBuiltInToNeonLayout(migrateBuiltInFactoryValues(migrateBuiltInFaceDiamond(migrateBuiltInToCleanLayout(profile))))
 
         /** R4-P0-1: migra todos los perfiles predefinidos de la lista. */
         fun migrateBuiltInProfiles(profiles: List<ControlProfile>): List<ControlProfile> =
@@ -1376,6 +1461,10 @@ class TouchLayoutRepository(private val context: Context) {
             // al leerlo una versión anterior (pierde la fracción y
             // usa sizeDp, que sigue guardado).
             c.sizeFraction?.toString() ?: "",
+            // 0.2.68 (neón): campo 16, la fracción de ancho (solo
+            // PILL); vacío = null (cuadrado). Un decodificador
+            // viejo lo ignora y dibuja la píldora cuadrada.
+            c.widthFraction?.toString() ?: "",
         ).joinToString("|")
 
         /**
@@ -1398,17 +1487,29 @@ class TouchLayoutRepository(private val context: Context) {
          * perdería el arreglo del mockup. El mismo tope que
          * decodeControl (JUMP_MAX_X_FRACTION): el dibujado sigue
          * capado al borde de la vista (controlRectInGameRect).
+         *
+         * 0.2.68 (neón): [minFraction] relaja el tope izquierdo, en
+         * espejo: la píldora L tiene su centro de fábrica en -0.012
+         * (sobre la barra negra izquierda) y sin este tope el primer
+         * arrastre o el slider X la devolverían a +half y perderían
+         * el diseño. El editor pasa los dos topes desde la barra
+         * (barFractionForAspect): centro entre half - barra y
+         * 1 + barra - half, es decir, el control entero dentro de
+         * la VISTA, no solo del rect del juego.
          */
-        fun clampCenterFraction(fraction: Float, halfSizeFraction: Float, maxFraction: Float? = null): Float {
-            val lo = halfSizeFraction.coerceAtMost(0.5f)
+        fun clampCenterFraction(fraction: Float, halfSizeFraction: Float, maxFraction: Float? = null, minFraction: Float? = null): Float {
+            val lo = (minFraction ?: halfSizeFraction).coerceAtMost(0.5f)
             val hi = (maxFraction ?: (1f - halfSizeFraction)).coerceAtLeast(0.5f)
             return fraction.coerceIn(lo, hi)
         }
 
         /**
          * 0.2.58 (R7): tope de x guardada para el salto (btn_jump).
-         * Su centro de fábrica es 1.012 (mockup); decodeControl y el
+         * Su centro de fábrica era 1.012 (mockup); decodeControl y el
          * editor comparten este tope para no deshacer la migración.
+         * 0.2.68 (neón): el mismo tope vale en AMBOS lados: el
+         * mínimo de decodeControl es 1 - 1.1 = -0.1 (la píldora L
+         * vive en -0.012) y el máximo 1.1 (○ en 1.028, R en 1.016).
          */
         const val JUMP_MAX_X_FRACTION = 1.1f
 
@@ -1459,6 +1560,10 @@ class TouchLayoutRepository(private val context: Context) {
                         // de 14 campos (o con el campo vacío) quedan
                         // en null = modo dp.
                         sizeFraction = p.getOrNull(14)?.toFloatOrNull()?.takeIf { it.isFinite() && it > 0f },
+                        // 0.2.68 (neón): campo 16 opcional, la
+                        // fracción de ancho (solo PILL); vacío o
+                        // ausente = null = cuadrado.
+                        widthFraction = p.getOrNull(15)?.toFloatOrNull()?.takeIf { it.isFinite() && it > 0f },
                     )
                 } else if (p.size >= 8) {
                     // M28: formato intermedio (8-13 campos): los campos
@@ -1496,16 +1601,22 @@ class TouchLayoutRepository(private val context: Context) {
             // puede sacar el botón de la pantalla ni romper el layout.
             // R5-A1-7: el color también se normaliza a la paleta de
             // la identidad (verde/rojo viejos -> turquesa/lavanda).
-            // 0.2.58 (R7): SOLO btn_jump admite x > 1, hasta
-            // JUMP_MAX_X_FRACTION: su centro de fábrica es 1.012
+            // 0.2.58 (R7): SOLO btn_jump admitía x > 1, hasta
+            // JUMP_MAX_X_FRACTION: su centro de fábrica era 1.012
             // (mockup, fuera del rect del juego, sobre la barra negra
             // derecha) y con el tope en 1 la migración a 1.012 se
-            // desharía al releer el perfil guardado. El dibujado sigue
+            // desharía al releer el perfil guardado.
+            // 0.2.68 (neón): el tope ya no es solo para btn_jump: la
+            // píldora L (-0.012) vive sobre la barra izquierda y ○
+            // (1.028) y R (1.016) sobre la derecha; CUALQUIER control
+            // admite hasta 0.1 fuera del rect en ambos lados
+            // (1 - 1.1 = -0.1), o el layout neón se corrompería al
+            // releerlo (L a 0.0, ○ y R a 1.0). El dibujado sigue
             // capado al borde de la vista (controlRectInGameRect), así
             // que un 1.1 guardado a mano tampoco se sale de la pantalla.
             return parsed.copy(
                 xFraction = parsed.xFraction.takeIf { it.isFinite() }
-                    ?.coerceIn(0f, if (parsed.id == "btn_jump") JUMP_MAX_X_FRACTION else 1f) ?: 0.5f,
+                    ?.coerceIn(1f - JUMP_MAX_X_FRACTION, JUMP_MAX_X_FRACTION) ?: 0.5f,
                 yFraction = parsed.yFraction.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0.5f,
                 sizeDp = parsed.sizeDp.coerceIn(16, 400),
                 opacity = parsed.opacity.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0.8f,
