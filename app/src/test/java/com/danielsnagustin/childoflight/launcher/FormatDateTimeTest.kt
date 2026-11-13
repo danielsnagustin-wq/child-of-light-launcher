@@ -30,7 +30,7 @@ class FormatDateTimeTest {
     }
 
     @Test
-    fun `formato dd-MM-yyyy HH-mm`() {
+    fun `formato dd/MM/yyyy HH:mm`() {
         val text = formatDateTime(1_763_000_000_000L)
         assertTrue(text, text.matches(Regex("\\d{2}/\\d{2}/\\d{4} \\d{2}:\\d{2}")))
     }
