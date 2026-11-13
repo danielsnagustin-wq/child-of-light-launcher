@@ -350,25 +350,6 @@ class SettingsRepository(private val context: Context) {
         save(resetDefaultsWithCurrent(base, current))
     }
 
-/**
- * Ronda 0.2.70 (11-P2-4): "Restablecer ajustes" YA NO devuelve el
- * idioma a español, la sesión PSN (simulada) a ON ni "Permitir app
- * externa" a OFF sin avisar: son elecciones del usuario, no valores
- * de preset, y aplicar un preset ya las conserva expresamente
- * (mergePresetWithUserChoices: el idioma "NO es campo de preset").
- * El reseteo total las conservaba solo para Turnip y la entrega del
- * .pkg; ahora también estas tres. Pura, testeable en JVM
- * (ResetToDefaultsTest).
- */
-internal fun resetDefaultsWithCurrent(base: LauncherSettings, current: LauncherSettings?): LauncherSettings =
-    base.copy(
-        pkgDeliveredToVita3k = current?.pkgDeliveredToVita3k ?: false,
-        pkgInstalledInVita3k = current?.pkgInstalledInVita3k ?: false,
-        gameLanguage = current?.gameLanguage ?: GameLanguage.SPANISH,
-        psnSignedIn = current?.psnSignedIn ?: true,
-        allowExternalVita3k = current?.allowExternalVita3k ?: false,
-    )
-
     suspend fun saveGpuInfo(gpu: GpuInfo): Boolean {
         return safeEdit("info GPU") { p ->
             p[Keys.GPU_DETECTED] = true
@@ -506,6 +487,28 @@ internal fun resetDefaultsWithCurrent(base: LauncherSettings, current: LauncherS
         }
     }
 }
+
+/**
+ * Ronda 0.2.70 (11-P2-4): "Restablecer ajustes" YA NO devuelve el
+ * idioma a español, la sesión PSN (simulada) a ON ni "Permitir app
+ * externa" a OFF sin avisar: son elecciones del usuario, no valores
+ * de preset, y aplicar un preset ya las conserva expresamente
+ * (mergePresetWithUserChoices: el idioma "NO es campo de preset").
+ * El reseteo total las conservaba solo para Turnip y la entrega del
+ * .pkg; ahora también estas tres. Pura, testeable en JVM
+ * (ResetToDefaultsTest).
+ * Fix del run #640: función top-level, FUERA de SettingsRepository,
+ * para que el test pueda importarla (antes era miembro de la clase
+ * y el import no resolvía). No usa nada de la clase.
+ */
+internal fun resetDefaultsWithCurrent(base: LauncherSettings, current: LauncherSettings?): LauncherSettings =
+    base.copy(
+        pkgDeliveredToVita3k = current?.pkgDeliveredToVita3k ?: false,
+        pkgInstalledInVita3k = current?.pkgInstalledInVita3k ?: false,
+        gameLanguage = current?.gameLanguage ?: GameLanguage.SPANISH,
+        psnSignedIn = current?.psnSignedIn ?: true,
+        allowExternalVita3k = current?.allowExternalVita3k ?: false,
+    )
 
 /**
  * R6-P1-08: fusión pura del preset con los gustos del usuario.
