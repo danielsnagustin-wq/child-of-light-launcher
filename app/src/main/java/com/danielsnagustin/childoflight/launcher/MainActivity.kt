@@ -43,7 +43,6 @@ import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.filterNotNull
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -63,6 +62,7 @@ import com.danielsnagustin.childoflight.launcher.ui.HomeScreen
 import com.danielsnagustin.childoflight.launcher.ui.ImportScreen
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.LocalUiPreferences
+import com.danielsnagustin.childoflight.launcher.ui.rememberedUserAccent
 import com.danielsnagustin.childoflight.launcher.ui.SavesScreen
 import com.danielsnagustin.childoflight.launcher.ui.Screen
 import com.danielsnagustin.childoflight.launcher.ui.SettingsScreen
@@ -152,7 +152,20 @@ class MainActivity : ComponentActivity() {
             // Ronda 0.2.57: sincronizar los trofeos ganados en la
             // partida (las colecciones ya se capturaron en
             // EmbeddedGameActivity.onDestroy antes de destroySession).
-            vm.syncTrophiesFromGame()
+            vm.syncTrophiesFromGame(fromGame = true)
+            // Ronda 0.2.70, P1-5 (b): el onResume corre ANTES que el
+            // onDestroy del juego, así que el take() de arriba llega
+            // casi siempre vacío; el aviso de TrophySyncPending ya
+            // dispara la sync al aterrizar la captura, y este
+            // re-chequeo diferido es el respaldo por si ese aviso
+            // se perdiera. Idempotente (un take() vacío no hace
+            // nada) y solo si no se reentró al juego entretanto.
+            lifecycleScope.launch {
+                kotlinx.coroutines.delay(1000)
+                if (!GameActivityState.gameActivityAlive) {
+                    vm.syncTrophiesFromGame(fromGame = true)
+                }
+            }
             // Ronda 0.2.65 (R-P1-4): al volver del juego, instalar los
             // addons que JUGAR dejó pendientes (update/DLCs en .pkg
             // guardados): ya no se instalan antes de arrancar para no
@@ -206,18 +219,20 @@ private fun LauncherContent(vm: LauncherViewModel) {
         ThemeMode.DARK -> true
         ThemeMode.SYSTEM, null -> isSystemInDarkTheme()
     }
-    val accent = try {
-        Color(android.graphics.Color.parseColor(uiPrefs?.accent?.hex ?: "#8CCBEB"))
-    } catch (_: Exception) {
-        Color(0xFF8CCBEB)
-    }
+    // Ronda 0.2.70 Area 6 (6-P2-6): acento, tipografia y esquema se
+    // memorizan por sus entradas: antes cada emision de UiPreferences
+    // (incluido homeIntroSeen a los 900 ms de la primera apertura)
+    // re-parseaba el hex, reconstruia los 15 estilos y el esquema, y
+    // recomponia todo el arbol bajo MaterialTheme. rememberedUserAccent
+    // ya existe en ColTheme (remember por hex) y da el mismo color.
+    val accent = rememberedUserAccent(uiPrefs)
     val scale = uiPrefs?.textSize?.scale ?: 1.0f
     // R4-P2-10: el tamaño de texto escala TODOS los estilos, no solo
     // 6: antes labelSmall/labelMedium y los display* quedaban a tamaño
     // fijo (Material3 por defecto) y el ajuste no los tocaba. Los
     // tamaños base son los defaults de Material3 (display 57/45/36,
     // headline 32/28/24, title 22/16/14, body 16/14/12, label 14/12/11).
-    val typography = Typography(
+    val typography = remember(scale) { Typography(
         displayLarge = TextStyle(fontSize = (57 * scale).sp),
         displayMedium = TextStyle(fontSize = (45 * scale).sp),
         displaySmall = TextStyle(fontSize = (36 * scale).sp),
@@ -233,11 +248,13 @@ private fun LauncherContent(vm: LauncherViewModel) {
         labelLarge = TextStyle(fontSize = (14 * scale).sp),
         labelMedium = TextStyle(fontSize = (12 * scale).sp),
         labelSmall = TextStyle(fontSize = (11 * scale).sp),
-    )
-    val colorScheme = if (dark) {
-        darkColorScheme(primary = accent, secondary = accent)
-    } else {
-        lightColorScheme(primary = accent, secondary = accent)
+    ) }
+    val colorScheme = remember(dark, accent) {
+        if (dark) {
+            darkColorScheme(primary = accent, secondary = accent)
+        } else {
+            lightColorScheme(primary = accent, secondary = accent)
+        }
     }
     MaterialTheme(colorScheme = colorScheme, typography = typography) {
         // Ronda 0.2.55 P1-4: UN solo colector de uiFlow en toda la app:
