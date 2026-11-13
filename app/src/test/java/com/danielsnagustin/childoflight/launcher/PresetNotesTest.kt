@@ -15,11 +15,15 @@ class PresetNotesTest {
     @Test
     fun genericQualityNoteSays2xForGpuWithoutOwnProfile() {
         // Ronda 0.2.65 (RG-P2-16): la nota del 2x genérico dice para
-        // quién es y que solo difiere en la resolución 2x.
+        // quién es y que difiere en la resolución 2x.
+        // Ronda 0.2.70 (4-P2-1): desde la 0.2.68 también difiere en la
+        // carga rápida, que queda apagada (valor upstream); la nota ya
+        // no dice "única diferencia".
         val note = presetCompatibilityNote(GpuProfileId.GENERIC_QUALITY)
         assertTrue(note.contains("2x"))
         assertTrue(note.contains("sin perfil propio"))
-        assertTrue(note.contains("única diferencia"))
+        assertTrue(note.contains("carga rápida"))
+        assertTrue(!note.contains("única diferencia"))
         assertTrue(note.contains("28 fps"))
     }
 
@@ -100,15 +104,18 @@ class PresetNotesTest {
     // diferencia del preset Turnip (antes eran 5).
     // Ronda 0.2.66 (G11-01): Page Table ya NO es una diferencia
     // (Recomendado también es Page Table): vuelven a ser 5.
+    // Ronda 0.2.70 (4-P2-1): la carga rápida apagada es la 6ª
+    // diferencia (solo los presets Mali/G99 la encienden, 0.2.68).
     @Test
-    fun turnipQualityListsAllFiveDifferences() {
+    fun turnipQualityListsAllSixDifferences() {
         val note = presetCompatibilityNote(GpuProfileId.ADRENO_QUALITY_TURNIP)
-        assertTrue(note.contains("5 ajustes"))
+        assertTrue(note.contains("6 ajustes"))
         assertTrue(note.contains("2x"))
         assertTrue(note.contains("FXAA"))
         assertTrue(note.contains("4x"))
         assertTrue(note.contains("Turnip"))
         assertTrue(note.contains("HUD"))
+        assertTrue(note.contains("carga rápida"))
         assertTrue(!note.contains("VSync ON"))
     }
 }
