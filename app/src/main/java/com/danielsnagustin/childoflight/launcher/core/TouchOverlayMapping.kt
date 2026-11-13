@@ -567,14 +567,25 @@ object TouchOverlayMapping {
         (((aspect * GAME_ASPECT_HEIGHT / GAME_ASPECT_WIDTH) - 1f) / 2f).coerceAtLeast(0f)
 
     /**
-     * 0.2.68 (neón): el botón de pausa de un layout: el PRIMER
-     * botón con VitaButton.START. Las alas florales se atan a él
-     * (GamepadOverlayView) y el icono II es suyo; una píldora
-     * START posterior (btn_start_pill) dibuja su etiqueta, no el
-     * icono. null si el perfil no trae START. Puro Kotlin.
+     * 0.2.68 (neón): el botón de pausa de un layout: el control
+     * con id de pausa de fábrica ("btn_pause" en default y
+     * externo, "btn_start" en una mano y en el layout 0.2.67).
+     * Las alas florales se atan a él (GamepadOverlayView) y el
+     * icono II es suyo; una píldora START posterior
+     * (btn_start_pill) dibuja su etiqueta, no el icono.
+     * 0.2.70 (ronda 0.2.70, área 3, P2-1): antes era el PRIMER
+     * botón con VitaButton.START, así que si el usuario ocultaba
+     * o borraba la pausa, las alas saltaban a la píldora START
+     * (abajo, solapando la zona del stick). Ahora, sin id de
+     * pausa visible, no hay alas (null). La lista que recibe ya
+     * es solo de controles visibles (GamepadOverlayView pasa
+     * `ordered`), así que aquí basta con el id. Puro Kotlin.
      */
     fun pauseControlFor(controls: List<TouchControl>): TouchControl? =
-        controls.firstOrNull { it.kind == "button" && it.vitaButton == VitaButton.START }
+        controls.firstOrNull {
+            it.kind == "button" && it.vitaButton == VitaButton.START &&
+                (it.id == "btn_pause" || it.id == "btn_start")
+        }
 }
 
 /**
