@@ -75,7 +75,16 @@ class GpuProfileTest {
         assertEquals("PAGE_TABLE", s.memoryMapping.name)
         assertEquals("SYSTEM", s.gpuDriver.name)
         assertFalse(s.showFpsOverlay)
-        assertEquals(s, presetSettings(GpuProfileId.G99_QUALITY).copy(activeProfile = GpuProfileId.GENERIC_QUALITY))
+        // Ronda 0.2.68 (load-p1): ya NO son idénticos: G99_QUALITY
+        // lleva skipShaderPrecompile = true (carga rápida en Mali/G99)
+        // y el genérico lo deja en false (upstream: GPU sin perfil
+        // propio, sin medición de carga que justifique saltar el
+        // precompilado). La igualdad vale salvo esa diferencia.
+        assertEquals(
+            s.copy(skipShaderPrecompile = true),
+            presetSettings(GpuProfileId.G99_QUALITY).copy(activeProfile = GpuProfileId.GENERIC_QUALITY),
+        )
+        assertFalse(s.skipShaderPrecompile)
     }
 
     @Test
@@ -395,6 +404,14 @@ class GpuProfileTest {
         assertFalse(divergesFromPreset(g99WithTurnip))
         // Un cambio gráfico SÍ sigue marcando divergencia.
         assertTrue(divergesFromPreset(presetSettings(GpuProfileId.G99_RECOMMENDED).copy(resolutionMultiplier = 2f)))
+    }
+
+    @Test
+    fun skipShaderPrecompileOnlyChangeCountsAsDivergence() {
+        // Ronda 0.2.68 (load-p1): la carga rápida ES campo de preset
+        // (los presets Mali/G99 la llevan en true): apagarla solo a
+        // ella marca "perfil modificado".
+        assertTrue(divergesFromPreset(presetSettings(GpuProfileId.G99_RECOMMENDED).copy(skipShaderPrecompile = false)))
     }
 
     @Test
