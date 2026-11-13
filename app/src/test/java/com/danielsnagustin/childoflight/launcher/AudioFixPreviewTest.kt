@@ -5,6 +5,7 @@ import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
 import com.danielsnagustin.childoflight.launcher.ui.settings.audioFixChanges
 import com.danielsnagustin.childoflight.launcher.ui.settings.audioFixTarget
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -18,6 +19,7 @@ class AudioFixPreviewTest {
         audioBackend = AudioBackend.CUBEB,
         ngsEnable = false,
         shaderCache = false,
+        expAudioSdl = true,
     )
 
     @Test
@@ -26,6 +28,8 @@ class AudioFixPreviewTest {
         assertEquals(AudioBackend.SDL, target.audioBackend)
         assertTrue(target.ngsEnable)
         assertTrue(target.shaderCache)
+        // Ronda 0.2.70 (5-P2-3): "Corregir audio" también apaga el experimento.
+        assertFalse(target.expAudioSdl)
     }
 
     @Test
@@ -43,9 +47,9 @@ class AudioFixPreviewTest {
     }
 
     @Test
-    fun previewListsThreeChangesWithBeforeAndAfter() {
+    fun previewListsFourChangesWithBeforeAndAfter() {
         val changes = audioFixChanges(brokenAudio)
-        assertEquals(3, changes.size)
+        assertEquals(4, changes.size)
         val byLabel = changes.associateBy { it.label }
         assertEquals("Cubeb (alternativa)", byLabel.getValue("Backend de audio").before)
         assertEquals("SDL (recomendado)", byLabel.getValue("Backend de audio").after)
@@ -53,6 +57,8 @@ class AudioFixPreviewTest {
         assertEquals("ON", byLabel.getValue("NGS (audio del sistema Vita)").after)
         assertEquals("OFF", byLabel.getValue("Caché de shaders").before)
         assertEquals("ON", byLabel.getValue("Caché de shaders").after)
+        assertEquals("ON", byLabel.getValue("Audio experimental (SDL y Cubeb)").before)
+        assertEquals("OFF", byLabel.getValue("Audio experimental (SDL y Cubeb)").after)
     }
 
     @Test
@@ -61,6 +67,7 @@ class AudioFixPreviewTest {
             audioBackend = AudioBackend.SDL,
             ngsEnable = true,
             shaderCache = true,
+            expAudioSdl = false,
         )
         val changes = audioFixChanges(alreadyFixed)
         assertTrue(changes.all { it.before == it.after })
