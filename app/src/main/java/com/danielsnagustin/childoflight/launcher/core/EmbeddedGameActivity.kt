@@ -37,11 +37,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import org.libsdl.app.SDLActivity
 
 /**
@@ -153,6 +155,70 @@ class EmbeddedGameActivity : SDLActivity() {
          * pasa de 1 minuto, se puede bajar. Sin verificar en teléfono.
          */
         private const val BLACK_SCREEN_WATCHDOG_TIMEOUT_MS = 180_000L
+
+        /**
+         * Ronda 0.2.70 (Área 10, 10-P2-1): rebanada del sondeo del
+         * watchdog de pantalla negra (1 s): solo el tiempo con la
+         * Activity reanudada descuenta del plazo de 180 s.
+         */
+        private const val BLACK_SCREEN_WATCHDOG_SLICE_MS = 1_000L
+
+        /**
+         * Ronda 0.2.70 (Área 10, P1-9): plazo del temporizador de
+         * vigilancia del init en frío (30 s): si el init síncrono en
+         * el hilo UI no vuelve en este tiempo, se registra y se cierra
+         * con mensaje. 30 s, no 5 s (ANR): el init normal tarda de
+         * cientos de ms a segundos en este teléfono y no debe dar
+         * falsos positivos; el temporizador solo cubre el colgado
+         * real. El init sigue en el hilo UI (moverlo es una
+         * reestructuración diferida): este temporizador corre en un
+         * hilo propio porque una corrutina Main no avanzaría con el
+         * hilo UI bloqueado.
+         */
+        private const val COLD_INIT_WATCHDOG_TIMEOUT_MS = 30_000L
+
+        /**
+         * Ronda 0.2.70 (Área 10, P1-10): sondeo acotado tras cada
+         * onResume para la reentrada rápida: si el hilo SDL viejo
+         * muere después del onResume, se relanza SDL_main. 30 s de
+         * tope, sondeo cada 500 ms; el sondeo sale en cuanto hay
+         * partida en curso o el hilo está vivo y arrancó el juego.
+         */
+        private const val SDL_RELAUNCH_POLL_TIMEOUT_MS = 30_000L
+        private const val SDL_RELAUNCH_POLL_INTERVAL_MS = 500L
+
+        /**
+         * Ronda 0.2.70 (Área 10, P1-11 / 10-P2-4): tope del teardown
+         * de la sesión en onDestroy: destroySession() con el renderer
+         * Vulkan puede tardar; pasado este tiempo se registra y se
+         * cancela el ámbito (la llamada JNI bloqueante en curso no se
+         * puede interrumpir, pero no retiene la Activity más allá de
+         * su fin).
+         */
+        private const val DESTROY_SESSION_TIMEOUT_MS = 30_000L
+
+        /**
+         * Ronda 0.2.70 (9-P1-7): watchdog de SEGUNDA ETAPA. Tiempo
+         * máximo tras on_launch sin NINGÚN frame presentado (contador
+         * presentKHR del gancho nº 1) antes de avisar y cerrar. 180 s
+         * como el de arranque: la precompilación de shaders de la
+         * primera carga puede tardar unos 2 minutos, y un tiempo
+         * corto mataría partidas legítimas que aún están cargando.
+         * No toca el watchdog de arranque: este solo cubre lo que
+         * se cuelga DESPUÉS de on_launch.
+         */
+        private const val SECOND_STAGE_WATCHDOG_TIMEOUT_MS = 180_000L
+
+        /**
+         * Ronda 0.2.70 (9-P1-7): aviso de "emula pero no presenta".
+         * Segundos seguidos con presents/s < 1 y FPS emulado >= 1
+         * antes de avisar una sola vez por lanzamiento (solo con
+         * frame_profile ON, en el sondeo a 4 Hz).
+         */
+        private const val NO_PRESENT_WARN_AFTER_MS = 10_000L
+
+        /** Ronda 0.2.70 (9-P1-7): periodo del sondeo a 4 Hz del perfil de frames. */
+        private const val FRAME_PROFILE_POLL_TICK_MS = 250L
 
         /**
          * Ronda 0.2.65 (S-P2-2): el sondeo del primer frame (T2) va
@@ -279,12 +345,49 @@ class EmbeddedGameActivity : SDLActivity() {
     private var watchdogStarted: Boolean = false
 
     /**
+     * Ronda 0.2.70 (Área 10, P1-10): sondeo acotado del hilo SDL tras
+     * onResume (reentrada rápida); null = sin sondeo en curso. Se
+     * cancela en cada onResume antes de arrancar uno nuevo y con
+     * overlayScope en onDestroy.
+     */
+    private var sdlRelaunchPollJob: Job? = null
+
+    /**
+     * Ronda 0.2.70 (9-P1-7): watchdog de SEGUNDA ETAPA. Arranca una
+     * sola vez por Activity, en on_launch (ver setCurrentGameId), y
+     * dispara si a los 180 s no hubo NINGÚN frame presentado. Job
+     * propio, separado del watchdog de arranque: no lo toca ni lo
+     * reestructura (el área 10 edita ese bloque en esta misma ronda).
+     */
+    private var secondStageWatchdogStarted: Boolean = false
+
+    /**
+     * Ronda 0.2.70 (9-P1-7): aviso de "emula pero no presenta" ya
+     * mostrado en este lanzamiento (una sola vez por lanzamiento).
+     * Racha actual (ms) con presents/s < 1 y FPS emulado >= 1 en el
+     * sondeo a 4 Hz del perfil de frames.
+     */
+    private var noPresentWarned: Boolean = false
+    private var noPresentStreakMs: Long = 0L
+
+    /**
      * Ronda 0.2.65 (R-P1-3): true cuando el init del núcleo completó
      * en onCreate (en frío) o cuando la sesión ya existía (camino
      * normal). Guarda de onResume: sin sesión, el hilo SDL moriría
      * con SDL_main -1 en silencio.
      */
     private var coreInitReady: Boolean = false
+
+    /**
+     * Ronda 0.2.70 (Área 10, P1-9): true cuando el init en frío de
+     * onCreate volvió (con éxito o con fallo). @Volatile porque la
+     * lee el temporizador de vigilancia desde su propio hilo. No
+     * confundir con coreInitReady (sesión lista): un init que falla
+     * también "volvió" y el watchdog no debe disparar por él (el
+     * fallo ya cierra con mensaje en onCreate).
+     */
+    @Volatile
+    private var coldInitDone: Boolean = false
 
     /**
      * Ronda 0.2.65 (S-P2-3): última rotación de pantalla leída
@@ -303,6 +406,14 @@ class EmbeddedGameActivity : SDLActivity() {
      * síncrona en onDestroy, ver ahí por qué).
      */
     private val destroyScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Ronda 0.2.70 (Área 10, 10-P2-4): trabajo de destrucción de la
+     * sesión lanzado en onDestroy; null = aún no lanzado. Al terminar
+     * cancela destroyScope (antes el ámbito no se cancelaba nunca y
+     * retenía la Activity si el teardown nativo se colgaba).
+     */
+    private var destroyJob: Job? = null
 
     // --- Overlay táctil (GamepadOverlayView + mando virtual SDL) ---
     private var overlayView: GamepadOverlayView? = null
@@ -438,8 +549,14 @@ class EmbeddedGameActivity : SDLActivity() {
         // verificarla; queda DIFERIDA. Guarda mínima: coreInitReady
         // + la comprobación de onResume después de super.onResume().
         if (!Vita3kCoreBridge.isInitialized()) {
+            // Ronda 0.2.70 (Área 10, P1-9): el watchdog del init en
+            // frío arranca ANTES del init síncrono en el hilo UI (el
+            // watchdog de pantalla negra solo existe desde onResume y
+            // no cubre este tramo).
+            startColdInitWatchdog()
             val coldInitStartedAtMillis = SystemClock.elapsedRealtime()
             val rc = Vita3kCoreBridge.init(storageRoot.absolutePath)
+            coldInitDone = true
             if (rc != Vita3kCoreBridge.OK) {
                 val failureMessage = Vita3KLauncher.initFailureMessage(rc, Vita3kCoreBridge.lastLoadError)
                 Vita3KLauncher.noteEmbeddedLaunchFailed(failureMessage)
@@ -640,6 +757,18 @@ class EmbeddedGameActivity : SDLActivity() {
     }
 
     /**
+     * Ronda 0.2.70 (2-P2-6): variante perezosa de appendLogAsync: el
+     * mensaje se calcula DENTRO del launch en Dispatchers.IO, no en el
+     * hilo que llama. Para FrameProfileStats.summaryLine(), que ordena
+     * hasta 3.600 muestras: ese ordenamiento ya no corre en Main.
+     */
+    private fun appendLogAsync(tag: String, message: () -> String) {
+        overlayScope.launch(Dispatchers.IO) {
+            LauncherLog.append(this@EmbeddedGameActivity, tag, message())
+        }
+    }
+
+    /**
      * Crea el mando virtual SDL del overlay, solo con la partida en
      * curso. attach es idempotente en upstream; si SDL aún no está
      * listo, no crea nada y overlayIsAttached() lo dice: se reintenta
@@ -801,6 +930,10 @@ class EmbeddedGameActivity : SDLActivity() {
      * una línea de depuración con throttle (como mucho una por botón
      * y segundo). El fracaso nunca se throttlea: la línea "perdido"
      * sale siempre.
+     *
+     * Ronda 0.2.70 (2-P2-4): los 6 appends de este camino y de
+     * forwardOverlayAxis van por appendLogAsync: ya no hay E/S
+     * síncrona de fichero en el hilo UI al pulsar botones o mover ejes.
      */
     private fun forwardOverlayButton(sdlButton: Int, pressed: Boolean) {
         // R6-P1-14: refcount por botón SDL. Sin él, soltar un control
@@ -816,7 +949,7 @@ class EmbeddedGameActivity : SDLActivity() {
         if (!shouldSend) return
         if (Vita3kCoreBridge.overlaySetButton(sdlButton, pressed)) {
             if (OverlayInputStats.recordButton(sdlButton, pressed, delivered = true)) {
-                LauncherLog.append(this, "overlay", "botón SDL $sdlButton pressed=$pressed")
+                appendLogAsync("overlay", "botón SDL $sdlButton pressed=$pressed")
             }
             return
         }
@@ -826,18 +959,18 @@ class EmbeddedGameActivity : SDLActivity() {
         }
         if (Vita3kCoreBridge.overlaySetButton(sdlButton, pressed)) {
             if (OverlayInputStats.recordButton(sdlButton, pressed, delivered = true)) {
-                LauncherLog.append(this, "overlay", "botón SDL $sdlButton pressed=$pressed (tras reintentar el attach)")
+                appendLogAsync("overlay", "botón SDL $sdlButton pressed=$pressed (tras reintentar el attach)")
             }
             return
         }
         OverlayInputStats.recordButton(sdlButton, pressed, delivered = false)
-        LauncherLog.append(this, "overlay", "botón $sdlButton perdido tras reintentar el attach")
+        appendLogAsync("overlay", "botón $sdlButton perdido tras reintentar el attach")
     }
 
     private fun forwardOverlayAxis(sdlAxis: Int, value: Short) {
         if (Vita3kCoreBridge.overlaySetAxis(sdlAxis, value)) {
             if (OverlayInputStats.recordAxis(sdlAxis, value, delivered = true)) {
-                LauncherLog.append(this, "overlay", "eje SDL $sdlAxis valor=$value")
+                appendLogAsync("overlay", "eje SDL $sdlAxis valor=$value")
             }
             return
         }
@@ -847,12 +980,12 @@ class EmbeddedGameActivity : SDLActivity() {
         }
         if (Vita3kCoreBridge.overlaySetAxis(sdlAxis, value)) {
             if (OverlayInputStats.recordAxis(sdlAxis, value, delivered = true)) {
-                LauncherLog.append(this, "overlay", "eje SDL $sdlAxis valor=$value (tras reintentar el attach)")
+                appendLogAsync("overlay", "eje SDL $sdlAxis valor=$value (tras reintentar el attach)")
             }
             return
         }
         OverlayInputStats.recordAxis(sdlAxis, value, delivered = false)
-        LauncherLog.append(this, "overlay", "eje $sdlAxis perdido tras reintentar el attach")
+        appendLogAsync("overlay", "eje $sdlAxis perdido tras reintentar el attach")
     }
 
     /** Marca el mando como perdido y reintenta el attach. Devuelve true si el mando vuelve a existir. */
@@ -931,6 +1064,9 @@ class EmbeddedGameActivity : SDLActivity() {
         checkDisplayRotation("onResume")
         // Ronda 0.2.65 (P0-3): watchdog de pantalla negra.
         maybeStartBlackScreenWatchdog()
+        // Ronda 0.2.70 (Área 10, P1-10): sondeo acotado por si el hilo
+        // SDL viejo muere después de este onResume (reentrada rápida).
+        maybePollDeadSDLThreadForRelaunch()
         // Ronda 0.2.66 (Fase L): perfil de frames (solo si el
         // ajuste frame_profile está ON).
         maybeStartFrameProfiling()
@@ -992,11 +1128,64 @@ class EmbeddedGameActivity : SDLActivity() {
         if (watchdogStarted) return
         watchdogStarted = true
         overlayScope.launch {
-            delay(BLACK_SCREEN_WATCHDOG_TIMEOUT_MS)
+            // Ronda 0.2.70 (Área 10, 10-P2-1): el plazo solo corre con
+            // la Activity en primer plano: irse a segundo plano (Inicio
+            // / Recientes) durante una carga lenta ya no consume el
+            // plazo ni mata una carga legítima. Se sondea en rebanadas
+            // de 1 s; solo se descuenta el tiempo con isResumed. No se
+            // reestructura el watchdog: mismo launch, mismo timeout.
+            var remainingMs = BLACK_SCREEN_WATCHDOG_TIMEOUT_MS
+            while (remainingMs > 0L) {
+                val sliceStartMillis = SystemClock.uptimeMillis()
+                delay(minOf(remainingMs, BLACK_SCREEN_WATCHDOG_SLICE_MS))
+                if (!isActive || isFinishing) return@launch
+                remainingMs = nextWatchdogRemainingMs(
+                    remainingMs,
+                    SystemClock.uptimeMillis() - sliceStartMillis,
+                    isResumed,
+                )
+            }
+            // La Activity pudo irse a segundo plano justo al agotarse
+            // el plazo: no disparar el diálogo sobre una Activity
+            // parada; esperar a que vuelva (el plazo ya está agotado).
+            while (!isResumed) {
+                if (!isActive || isFinishing) return@launch
+                delay(BLACK_SCREEN_WATCHDOG_SLICE_MS)
+            }
             if (!isActive || isFinishing) return@launch
             val fps = runCatching { Vita3kCoreBridge.getFps() }.getOrDefault(-1f)
             if (!shouldFireBlackScreenWatchdog(gameRunningSinceMillis, firstFrameLogged, fps)) return@launch
             appendLogAsync("launch", "Watchdog de pantalla negra: sin on_launch ni FPS entregado mayor que 0 tras ${BLACK_SCREEN_WATCHDOG_TIMEOUT_MS / 1000} s desde el primer onResume; el arranque está atascado y se cierra la Activity")
+            Toast.makeText(this@EmbeddedGameActivity, "El juego no ha arrancado: sin imagen tras 3 minutos.", Toast.LENGTH_LONG).show()
+            showBlackScreenDialogAndFinish()
+        }
+    }
+
+    /**
+     * Ronda 0.2.70 (9-P1-7): watchdog de SEGUNDA ETAPA. Arranca una
+     * sola vez por Activity, en on_launch, y espera
+     * SECOND_STAGE_WATCHDOG_TIMEOUT_MS (180 s). Si entonces el juego
+     * confirmó on_launch pero el contador presentKHR del gancho nº 1
+     * sigue a cero (ningún frame presentado: carga del módulo,
+     * renderer o precompilado colgados, o negro con fps > 0), mismo
+     * diálogo de "no arrancó" y cierre que el watchdog de arranque.
+     * Si ya se presentó al menos un frame, no hace nada: la partida
+     * muestra imagen. Si el contador es -1 (sin núcleo o sin parche),
+     * tampoco dispara: es "desconocido", no "sin presents", y matar
+     * el juego por un contador ausente sería un falso positivo.
+     * Job propio en overlayScope (se cancela en onDestroy); no toca
+     * el bloque del watchdog de arranque.
+     */
+    private fun maybeStartSecondStageWatchdog() {
+        if (secondStageWatchdogStarted) return
+        secondStageWatchdogStarted = true
+        overlayScope.launch {
+            delay(SECOND_STAGE_WATCHDOG_TIMEOUT_MS)
+            if (!isActive || isFinishing || isDestroyed) return@launch
+            val presentedCount = runCatching { Vita3kCoreBridge.getPresentedFrameCount() }.getOrDefault(-1L)
+            val lastPresentTimeNs = runCatching { Vita3kCoreBridge.getLastPresentTimeNs() }.getOrDefault(-1L)
+            if (!shouldFireSecondStageWatchdog(gameRunningSinceMillis, presentedCount, lastPresentTimeNs)) return@launch
+            appendLogAsync("launch", "Watchdog de segunda etapa: on_launch confirmado pero ningún frame presentado tras ${SECOND_STAGE_WATCHDOG_TIMEOUT_MS / 1000} s; el juego emula sin imagen y se cierra la Activity")
             Toast.makeText(this@EmbeddedGameActivity, "El juego no ha arrancado: sin imagen tras 3 minutos.", Toast.LENGTH_LONG).show()
             showBlackScreenDialogAndFinish()
         }
@@ -1012,12 +1201,76 @@ class EmbeddedGameActivity : SDLActivity() {
         runCatching {
             AlertDialog.Builder(this)
                 .setTitle("El juego no ha arrancado")
-                .setMessage("Pasaron 3 minutos sin que el juego confirmara el arranque ni entregara imágenes. Puede que el arranque se haya quedado atascado (por ejemplo, en la precompilación de shaders). Puedes intentarlo de nuevo desde el inicio.")
+                .setMessage("Pasaron 3 minutos sin que el juego confirmara el arranque ni entregara imágenes. Puede que el arranque se haya quedado atascado (por ejemplo, cargando el juego o en la precompilación de shaders (si la tienes activada)). Puedes intentarlo de nuevo desde el inicio.")
                 .setPositiveButton("Salir") { _, _ -> finish() }
                 .setCancelable(false)
                 .show()
         }.onFailure {
             finish()
+        }
+    }
+
+    /**
+     * Ronda 0.2.70 (Área 10, P1-9): temporizador de vigilancia del
+     * init en frío. Corre en un hilo propio (demonio, 30 s): una
+     * corrutina Main no avanzaría mientras el init síncrono bloquea
+     * el hilo UI, así que no serviría de vigilancia. Si el init no
+     * volvió en el plazo, registra el colgado y pide el cierre con
+     * mensaje en el hilo principal. El post al hilo principal solo
+     * se ejecuta cuando el hilo UI se libera, así que re-comprueba
+     * coldInitDone ahí: un init lento pero sano no se cierra por
+     * llegar tarde (el registro del hilo vigilante puede quedar como
+     * falso positivo de segundos en ese caso).
+     */
+    private fun startColdInitWatchdog() {
+        val startedAtMillis = SystemClock.elapsedRealtime()
+        Thread(
+            {
+                val slept = runCatching { Thread.sleep(COLD_INIT_WATCHDOG_TIMEOUT_MS) }.isSuccess
+                if (!slept) return@Thread
+                if (!shouldFireColdInitWatchdog(coldInitDone, SystemClock.elapsedRealtime() - startedAtMillis, COLD_INIT_WATCHDOG_TIMEOUT_MS)) return@Thread
+                LauncherLog.append(applicationContext, "launch", "Init en frío sin volver tras ${COLD_INIT_WATCHDOG_TIMEOUT_MS / 1000} s en el hilo UI: el init del núcleo parece colgado; se cierra la Activity")
+                runOnUiThread {
+                    if (coldInitDone || !isAliveForUiWork(isFinishing, isDestroyed)) return@runOnUiThread
+                    Toast.makeText(this, "El motor no respondió al arrancar (init colgado).", Toast.LENGTH_LONG).show()
+                    finish()
+                }
+            },
+            "cold-init-watchdog",
+        ).apply { isDaemon = true; start() }
+    }
+
+    /**
+     * Ronda 0.2.70 (Área 10, P1-10): sondeo acotado tras onResume
+     * para la reentrada rápida. Si el hilo SDL viejo sigue vivo, el
+     * onResume llamó nativeResume() sobre ese hilo moribundo y,
+     * cuando muera, nadie volverá a arrancar SDL_main (negro hasta
+     * girar o ir a segundo plano y volver). El sondeo detecta esa
+     * muerte y relanza SDL_main con restartSDLMainIfThreadDead().
+     * Sale en cuanto hay partida en curso, la Activity deja de estar
+     * reanudada o se agota el tope de 30 s; un sondeo anterior se
+     * cancela al arrancar uno nuevo.
+     */
+    private fun maybePollDeadSDLThreadForRelaunch() {
+        sdlRelaunchPollJob?.cancel()
+        sdlRelaunchPollJob = overlayScope.launch {
+            val deadlineMillis = SystemClock.uptimeMillis() + SDL_RELAUNCH_POLL_TIMEOUT_MS
+            while (isActive) {
+                if (isFinishing || isDestroyed) return@launch
+                // Irse a segundo plano se reintenta en el próximo onResume.
+                if (!isResumed) return@launch
+                // Partida en curso: nada que relanzar; el sondeo termina.
+                val appRunning = Vita3kCoreBridge.isAppRunning()
+                val gameConfirmed = gameRunningSinceMillis != 0L
+                if (appRunning || gameConfirmed) return@launch
+                if (shouldRelaunchDeadSDLThread(SDLActivity.isSDLThreadAlive(), appRunning, gameConfirmed)) {
+                    appendLogAsync("launch", "Hilo SDL viejo murió tras el onResume (reentrada rápida): se relanza SDL_main")
+                    SDLActivity.restartSDLMainIfThreadDead()
+                    return@launch
+                }
+                if (SystemClock.uptimeMillis() >= deadlineMillis) return@launch
+                delay(SDL_RELAUNCH_POLL_INTERVAL_MS)
+            }
         }
     }
 
@@ -1164,6 +1417,10 @@ class EmbeddedGameActivity : SDLActivity() {
      * 6 para que coincida.
      */
     private fun maybeShowBenchmarkPrompt() {
+        // Ronda 0.2.70 (Área 10, P1-8): segunda guarda de la misma
+        // familia: addContentView sobre una Activity destruida tira
+        // BadTokenException (puede llamarse también desde onResume).
+        if (!isAliveForUiWork(isFinishing, isDestroyed)) return
         if (!benchmarkMode || benchmarkSaved || benchmarkStartedByUser) return
         if (!Vita3kCoreBridge.available) return
         // Juego aún no confirmado por el núcleo: no mostrar el botón;
@@ -1277,11 +1534,29 @@ class EmbeddedGameActivity : SDLActivity() {
                     val presentedCount = runCatching { Vita3kCoreBridge.getPresentedFrameCount() }.getOrDefault(-1L)
                     val presentedTimeNs = runCatching { Vita3kCoreBridge.getLastPresentTimeNs() }.getOrDefault(-1L)
                     FrameProfileStats.recordPresented(presentedCount, presentedTimeNs)
+                    // Ronda 0.2.70 (9-P1-7): "emula pero no presenta"
+                    // en caliente (solo con frame_profile ON, que es
+                    // cuando corre este sondeo). La racha usa la
+                    // ÚLTIMA muestra de presents/s, no la media de
+                    // 60 s del snapshot: con la media, un juego que
+                    // presentó bien y se queda en negro a mitad de
+                    // partida tardaría hasta un minuto en bajar de 1/s
+                    // y el aviso llegaría tarde. Una sola vez por
+                    // lanzamiento; la pausa no reinicia la racha (el
+                    // sondeo se para en onPause y la racha solo crece
+                    // con ticks activos).
+                    val snap = FrameProfileStats.snapshot()
+                    noPresentStreakMs = updateNoPresentStreakMs(noPresentStreakMs, snap.presentedPerSecond.last, snap.emulatedFps.last, FRAME_PROFILE_POLL_TICK_MS)
+                    if (shouldWarnNoPresent(noPresentStreakMs, noPresentWarned, NO_PRESENT_WARN_AFTER_MS)) {
+                        noPresentWarned = true
+                        appendLogAsync("frameprof", "El juego emula a ${"%.1f".format(snap.emulatedFps.last)} fps pero presenta ~0/s desde hace ${NO_PRESENT_WARN_AFTER_MS / 1000} s: nada llega al panel")
+                        Toast.makeText(this@EmbeddedGameActivity, "El juego corre pero no presenta imagen", Toast.LENGTH_LONG).show()
+                    }
                     ticks++
                     if (ticks % 4 == 0 && FrameProfileStats.shouldLogSummary(System.currentTimeMillis())) {
-                        appendLogAsync("frameprof", FrameProfileStats.summaryLine())
+                        appendLogAsync("frameprof") { FrameProfileStats.summaryLine() }
                     }
-                    delay(250)
+                    delay(FRAME_PROFILE_POLL_TICK_MS)
                 }
             }
             appendLogAsync("frameprof", "Perfil de frames activado (Fase L + gancho 1): cadencia de vsync + overlay Views + FPS emulado y presents/s a 4 Hz")
@@ -1417,6 +1692,11 @@ class EmbeddedGameActivity : SDLActivity() {
             appendLogAsync("launch", "T1 (JUGAR → título): ${t1}ms")
         }
         runOnUiThread {
+            // Ronda 0.2.70 (Área 10, P1-8): el hilo SDL puede disparar
+            // on_launch DESPUÉS de onDestroy (join de 1 s en
+            // SDLActivity.onDestroy): sin esta guarda, el addContentView
+            // de maybeShowBenchmarkPrompt tira BadTokenException.
+            if (!isAliveForUiWork(isFinishing, isDestroyed)) return@runOnUiThread
             currentTitleId = gameId.orEmpty()
             // R2-P2-29: el núcleo confirma aquí que el juego está en
             // curso (hook on_launch): fijar el momento una sola vez y
@@ -1437,6 +1717,9 @@ class EmbeddedGameActivity : SDLActivity() {
                 // Una sola vez por lanzamiento; overlayScope se
                 // cancela en onDestroy.
                 maybeStartFirstFramePoll()
+                // Ronda 0.2.70 (9-P1-7): el plazo de la segunda etapa
+                // se cuenta desde on_launch, no desde onResume.
+                maybeStartSecondStageWatchdog()
             }
             // El juego arrancó: SDL está arriba y la sesión activa, así
             // que es el momento de crear el mando virtual del overlay
@@ -1537,7 +1820,14 @@ class EmbeddedGameActivity : SDLActivity() {
      * cierra el juego directamente.
      */
     fun openPauseMenuFromController() {
-        runOnUiThread { openPauseMenu() }
+        // Ronda 0.2.70 (Área 10, 10-P2-2): misma familia que P1-8: el
+        // botón guía llega desde el hilo SDL y puede llegar durante el
+        // teardown; sin guarda, openPauseMenu() abre el menú sobre una
+        // Activity destruida.
+        runOnUiThread {
+            if (!isAliveForUiWork(isFinishing, isDestroyed)) return@runOnUiThread
+            openPauseMenu()
+        }
     }
 
     /**
@@ -1603,7 +1893,28 @@ class EmbeddedGameActivity : SDLActivity() {
             // de init (destroyStaleSessionIfIdle) y tolera que siga
             // activa (SESSION_ACTIVE).
             captureTrophiesBeforeSessionDestroy()
-            destroyScope.launch { destroyNativeSessionAfterSdlShutdown() }
+            // Ronda 0.2.70 (Área 10, P1-11 / 10-P2-4): la destrucción
+            // corre serializada con el destroy+init del próximo JUGAR
+            // (Mutex de Vita3kCoreBridge) y con el token de generación
+            // de la sesión que había al salir: si un JUGAR nuevo ya
+            // creó otra sesión, esta destrucción obsoleta es no-op.
+            // Con tope de 30 s (también para la espera del Mutex) y
+            // cancelación del ámbito al terminar (antes destroyScope
+            // no se cancelaba nunca).
+            val sessionGeneration = Vita3kCoreBridge.currentSessionGeneration()
+            destroyJob = destroyScope.launch {
+                try {
+                    withTimeout(DESTROY_SESSION_TIMEOUT_MS) {
+                        Vita3kCoreBridge.withSessionLock {
+                            destroyNativeSessionAfterSdlShutdown(sessionGeneration)
+                        }
+                    }
+                } catch (_: TimeoutCancellationException) {
+                    LauncherLog.append(this@EmbeddedGameActivity, "launch", "destroySession sin volver en ${DESTROY_SESSION_TIMEOUT_MS / 1000} s al salir del juego; se abandona el teardown (la sesión puede seguir viva hasta matar el proceso)")
+                } finally {
+                    destroyScope.cancel()
+                }
+            }
         }
     }
 
@@ -1636,6 +1947,11 @@ class EmbeddedGameActivity : SDLActivity() {
             if (collections.isNotEmpty()) {
                 TrophySyncPending.store(collections)
                 LauncherLog.append(this, "trophies", "Trofeos capturados al salir del juego: ${collections.size} colecciones pendientes de sincronizar")
+            } else {
+                // 7-P2-1: el caso vacío también queda en el log: sin
+                // él, "0 trofeos ganados", "puente roto" y "la captura
+                // aún no corrió" son indistinguibles en el registro.
+                LauncherLog.append(this, "trophies", "Trofeos al salir del juego: 0 colecciones (sin trofeos del núcleo, sesión ya destruida o puente sin datos)")
             }
         }.onFailure { e ->
             LauncherLog.append(this, "trophies", "No se pudieron leer los trofeos al salir del juego: ${e.javaClass.simpleName}: ${e.message}")
@@ -1653,20 +1969,28 @@ class EmbeddedGameActivity : SDLActivity() {
      * SESSION_ACTIVE (-4), no se forzó nada: se registra y hace falta
      * matar el proceso para que los ajustes entren.
      */
-    private fun destroyNativeSessionAfterSdlShutdown() {
+    private fun destroyNativeSessionAfterSdlShutdown(sessionGeneration: Int) {
         if (!Vita3kCoreBridge.available) return
-        val rc = runCatching { Vita3kCoreBridge.destroySession() }.getOrDefault(Vita3kCoreBridge.NOT_IMPLEMENTED)
+        // Ronda 0.2.70 (Área 10, P1-11): destroySessionIfGeneration
+        // descarta la destrucción si la generación ya no es la de la
+        // sesión que había al salir (un JUGAR nuevo creó otra): sin
+        // esto, este job podía destruir la sesión NUEVA.
+        val rc = runCatching { Vita3kCoreBridge.destroySessionIfGeneration(sessionGeneration) }.getOrDefault(Vita3kCoreBridge.NOT_IMPLEMENTED)
         when (rc) {
             Vita3kCoreBridge.OK ->
                 LauncherLog.append(this, "launch", "Sesión del núcleo destruida al salir del juego; el próximo JUGAR re-lee config.yml")
             -2 ->
                 LauncherLog.append(this, "launch", "Sin sesión que destruir al salir del juego")
+            Vita3kCoreBridge.SESSION_STALE ->
+                LauncherLog.append(this, "launch", "Destrucción de sesión obsoleta descartada al salir: la sesión ya es de una generación posterior (un JUGAR nuevo creó otra); no se destruyó nada")
             Vita3kCoreBridge.SESSION_ACTIVE -> {
                 LauncherLog.append(this, "launch", "destroySession devolvió SESSION_ACTIVE (-4) al salir: la partida seguía activa; no se destruyó nada. Si los ajustes no se aplican en el próximo JUGAR, cierra la app por completo (matar el proceso).")
                 // Ronda 0.2.66 (AUD-P2-2): aviso VISIBLE además del
                 // log. destroyScope es IO: el Toast va al hilo principal.
+                // Ronda 0.2.70 (Área 10, 10-P2-3): applicationContext,
+                // no this: esta Activity ya está destruida.
                 runOnUiThread {
-                    Toast.makeText(this, "La sesión anterior del núcleo no se pudo destruir: si los ajustes no se aplican en el próximo JUGAR, cierra la app por completo y vuelve a intentarlo.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(applicationContext, "La sesión anterior del núcleo no se pudo destruir: si los ajustes no se aplican en el próximo JUGAR, cierra la app por completo y vuelve a intentarlo.", Toast.LENGTH_LONG).show()
                 }
             }
             else ->
@@ -1694,4 +2018,101 @@ internal fun shouldFireBlackScreenWatchdog(
     if (gameRunningSinceMillis != 0L) return false
     if (firstFrameLogged) return false
     return fps <= 0f
+}
+
+/**
+ * Ronda 0.2.70 (Área 10, 10-P2-1): decisión pura del sondeo del
+ * watchdog: una rebanada solo descuenta del plazo si la Activity
+ * estaba reanudada durante ella; en segundo plano el plazo se
+ * congela. Probada en JVM (Ronda070EstabilidadTest).
+ */
+internal fun nextWatchdogRemainingMs(remainingMs: Long, elapsedMs: Long, isResumed: Boolean): Long =
+    if (isResumed) (remainingMs - elapsedMs).coerceAtLeast(0L) else remainingMs
+
+/**
+ * Ronda 0.2.70 (Área 10, P1-8 / 10-P2-2): decisión pura de guarda
+ * de vida para los callbacks que llegan desde el hilo SDL
+ * (setCurrentGameId, openPauseMenuFromController) y para
+ * maybeShowBenchmarkPrompt: con la Activity terminando o
+ * destruida, ningún addContentView ni startActivityForResult
+ * puede correr (BadTokenException). Probada en JVM
+ * (Ronda070EstabilidadTest).
+ */
+internal fun isAliveForUiWork(isFinishing: Boolean, isDestroyed: Boolean): Boolean =
+    !isFinishing && !isDestroyed
+
+/**
+ * Ronda 0.2.70 (Área 10, P1-9): decisión pura del temporizador de
+ * vigilancia del init en frío: dispara solo si el init no volvió
+ * (initDone en false) y ya pasó el plazo. Probada en JVM
+ * (Ronda070EstabilidadTest).
+ */
+internal fun shouldFireColdInitWatchdog(initDone: Boolean, elapsedMs: Long, timeoutMs: Long): Boolean =
+    !initDone && elapsedMs >= timeoutMs
+
+/**
+ * Ronda 0.2.70 (Área 10, P1-10): decisión pura del relanzamiento
+ * tras reentrada rápida: solo si el hilo SDL está muerto y NO hay
+ * partida en curso (ni confirmada por on_launch ni corriendo según
+ * el núcleo). Con partida en curso, un hilo muerto es un cierre
+ * normal, no un negro que relanzar. Probada en JVM
+ * (Ronda070EstabilidadTest).
+ */
+internal fun shouldRelaunchDeadSDLThread(
+    isThreadAlive: Boolean,
+    isAppRunning: Boolean,
+    gameConfirmed: Boolean,
+): Boolean = !isThreadAlive && !isAppRunning && !gameConfirmed
+
+/**
+ * Ronda 0.2.70 (9-P1-7): decisión pura del watchdog de SEGUNDA
+ * ETAPA. Dispara SOLO si hubo on_launch (gameRunningSinceMillis
+ * distinto de 0) y NO hay ningún present: contador a 0 y sin
+ * timestamp de present. Un contador mayor que 0 o un timestamp
+ * mayor que 0 significa que al menos un frame llegó al panel y no
+ * dispara. Un contador -1 (sin núcleo o sin parche del gancho nº 1)
+ * es "desconocido", no "sin presents": no dispara, para no matar un
+ * juego que sí presenta por un contador ausente. Probada en JVM
+ * (Ronda070RenderWatchdogTest).
+ */
+internal fun shouldFireSecondStageWatchdog(
+    gameRunningSinceMillis: Long,
+    presentedCount: Long,
+    lastPresentTimeNs: Long,
+): Boolean {
+    if (gameRunningSinceMillis == 0L) return false
+    if (presentedCount != 0L) return false
+    if (lastPresentTimeNs > 0L) return false
+    return true
+}
+
+/**
+ * Ronda 0.2.70 (9-P1-7): racha de "emula pero no presenta" en el
+ * sondeo a 4 Hz. Suma un tick (ms) solo si la última muestra de
+ * presents/s es menor que 1.0 con FPS emulado mayor o igual que 1.0;
+ * cualquier otro caso (presenta, no emula, o valores no finitos)
+ * reinicia la racha a 0. Pura, probada en JVM
+ * (Ronda070RenderWatchdogTest).
+ */
+internal fun updateNoPresentStreakMs(
+    streakMs: Long,
+    presentedPerSecondLast: Double,
+    emulatedFpsLast: Double,
+    tickMs: Long,
+): Long {
+    if (!presentedPerSecondLast.isFinite() || !emulatedFpsLast.isFinite()) return 0L
+    return if (presentedPerSecondLast < 1.0 && emulatedFpsLast >= 1.0) streakMs + tickMs else 0L
+}
+
+/**
+ * Ronda 0.2.70 (9-P1-7): aviso de "emula pero no presenta". Solo
+ * si la racha alcanzó el umbral y aún no se avisó en este
+ * lanzamiento. Pura, probada en JVM (Ronda070RenderWatchdogTest).
+ */
+internal fun shouldWarnNoPresent(
+    streakMs: Long,
+    alreadyWarned: Boolean,
+    warnAfterMs: Long,
+): Boolean {
+    return !alreadyWarned && streakMs >= warnAfterMs
 }
