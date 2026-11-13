@@ -1,0 +1,32 @@
+diff --git a/audio/src/audio.cpp b/audio/src/audio.cpp
+--- a/audio/src/audio.cpp
++++ b/audio/src/audio.cpp
+@@ -110,20 +110,25 @@
+     // Launcher 0.2.66, R1 (Vita3K+ ff1515a): el pacing de espera del 50% SOLO se salta
+     // con exp-audio-sdl ON. Con OFF, el bloque original sigue intacto (comportamiento actual).
+     if (exp_audio_sdl)
+         return;
+ 
+-    uint64_t now = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
++    // Ronda 0.2.70, aud2-p2-6 (5-P2-6): steady_clock en vez de system_clock:
++    // un salto del reloj del sistema (NTP, cambio de hora) corrompía
++    // to_wait / last_output en una llamada (espera gigante o nula).
++    // last_output solo se usa como diferencia dentro del proceso, así
++    // que el cambio de época no afecta a nada más.
++    uint64_t now = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+     uint64_t diff = now - out_port.last_output;
+     uint64_t to_wait = out_port.len_microseconds - diff;
+     if (diff < out_port.len_microseconds && to_wait > 1000) {
+         // This is what we should be waiting to be perfectly accurate
+         // However, doing so would cause the host audio buffer to often lack samples to output
+         // This is because the PS Vita and the host audio parameters do not match exactly
+         // So instead only wait 50% of the time
+         // also don't sleep for less than 0.5 ms
+         to_wait /= 2;
+         std::this_thread::sleep_for(std::chrono::microseconds(to_wait));
+-        out_port.last_output = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
++        out_port.last_output = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+     } else {
+         out_port.last_output = now;
+     }
+ }
