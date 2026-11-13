@@ -1,0 +1,43 @@
+diff --git a/renderer/src/vulkan/screen_renderer.cpp b/renderer/src/vulkan/screen_renderer.cpp
+index 0000000..0000000 100644
+--- a/renderer/src/vulkan/screen_renderer.cpp
++++ b/renderer/src/vulkan/screen_renderer.cpp
+@@ -186,6 +186,14 @@ bool ScreenRenderer::setup() {
+     bool support_d24u8 = static_cast<bool>(d24u8_support.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment);
+     bool support_d32u8 = static_cast<bool>(d32u8_support.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment);
+ 
++    // Ronda 0.2.70 (9-P2-4): sin formatos no hay swapchain posible:
++    // antes se caia en surface_formats[0] sin guarda. Fallo explicito
++    // (setup() false -> VKState::create false) en vez de acceso sin guarda.
++    if (surface_formats.empty()) {
++        LOG_ERROR("No surface formats available, cannot create swapchain");
++        return false;
++    }
++
+     for (const auto &format : surface_formats) {
+         // actually we don't care that much because we will just be copying what the game rendered
+         // Prefer RGBA8 because the FSR storage-image shader has an rgba8 format qualifier.
+@@ -205,6 +213,11 @@ bool ScreenRenderer::setup() {
+     }
+     if (!surface_format_found)
+         surface_format = surface_formats[0];
++    // Ronda 0.2.70 (9-P2-4): el fallback [0] puede no ser sRGB: con
++    // un formato no-sRGB los colores salen lavados (gamma). Se avisa
++    // en vez de tomarlo en silencio; no se cambia el comportamiento.
++    if (!surface_format_found && surface_format.colorSpace != vk::ColorSpaceKHR::eSrgbNonlinear)
++        LOG_WARN("No sRGB surface format available, using {} with color space {}: colors may look washed out", vk::to_string(surface_format.format), vk::to_string(surface_format.colorSpace));
+ 
+     if (support_d32u8) {
+         LOG_INFO_ONCE("Your device support high deep stencil quality");
+@@ -274,6 +287,11 @@ bool ScreenRenderer::setup() {
+             }
+         }
+     }
++    // Ronda 0.2.70 (9-P2-3): el formato elegido no quedaba en ningun
++    // log, asi que un reporte no podia decir si FSR cayo a Bilinear
++    // por ser BGRA8. Queda en vita3k.log (la cola del log nativo va
++    // en el reporte de bug), junto al present mode.
++    LOG_INFO("Surface format: {} ({})", vk::to_string(surface_format.format), vk::to_string(surface_format.colorSpace));
+     LOG_INFO("Present mode: {} (v-sync {})", vk::to_string(present_mode), vsync_enabled ? "on" : "off");
+ 
+     create_render_pass();
