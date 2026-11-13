@@ -59,12 +59,7 @@ object TrophyStoreReader {
                     "Se crea al jugar. El progreso que se muestra es el local del launcher.",
             )
         }
-        val npcommid = runCatching {
-            val bundled = gameBundledTrp(File(ux0, "app/$titleId"))
-                ?.takeIf { it.isFile && it.length() <= TrophyTrpReader.MAX_TRP_BYTES }
-                ?: return@runCatching null
-            TrophyTrpReader.extractNpcommid(bundled.readBytes())
-        }.getOrNull()
+        val npcommid = resolveNpComId(vitaRoot, titleId)
         val candidates = dataDir.listFiles()?.filter { it.isDirectory }.orEmpty()
         val matching = if (npcommid != null) {
             candidates.filter { it.name.equals(npcommid, ignoreCase = true) }
@@ -98,6 +93,43 @@ object TrophyStoreReader {
                 (if (usr.isFile) "; TROPUSR.DAT, ${usr.length()} bytes" else "; sin TROPUSR.DAT todavía") +
                 "). El progreso mostrado es el local del launcher.",
         )
+    }
+
+    /**
+     * Ronda 0.2.70: el <npcommid> del TROPHY.TRP empaquetado del
+     * juego (p. ej. NPWR06875_00). Null si el juego no trae TRP
+     * legible: el llamador debe tratar "desconocido" como "todos
+     * los directorios", nunca inventar un NPCOMMID. Lo usan la
+     * validación de la sync (7-P2-2) y el snapshot de sesiones
+     * (P1-6). Misma resolución que scan() usaba inline.
+     */
+    fun resolveNpComId(vitaRoot: File, titleId: String): String? {
+        val ux0 = EmbeddedCoreLayout.resolveUx0Dir(vitaRoot)
+        return runCatching {
+            val bundled = gameBundledTrp(File(ux0, "app/$titleId"))
+                ?.takeIf { it.isFile && it.length() <= TrophyTrpReader.MAX_TRP_BYTES }
+                ?: return@runCatching null
+            TrophyTrpReader.extractNpcommid(bundled.readBytes())
+        }.getOrNull()
+    }
+
+    /**
+     * Ronda 0.2.70, P1-6: los directorios vivos de trofeos del
+     * núcleo (ux0/user/00/trophy/data/<NPCOMMID>/). Con NPCOMMID
+     * resuelto, solo el suyo; sin él, todos (el launcher es de un
+     * solo juego). Lista vacía si aún no existe trophy/data/.
+     */
+    fun resolveTrophyDirs(vitaRoot: File, titleId: String): List<File> {
+        val ux0 = EmbeddedCoreLayout.resolveUx0Dir(vitaRoot)
+        val dataDir = File(ux0, "user/00/trophy/data")
+        if (!dataDir.isDirectory) return emptyList()
+        val candidates = dataDir.listFiles()?.filter { it.isDirectory }.orEmpty()
+        val npcommid = resolveNpComId(vitaRoot, titleId)
+        return if (npcommid != null) {
+            candidates.filter { it.name.equals(npcommid, ignoreCase = true) }
+        } else {
+            candidates
+        }
     }
 
     /** ¿El juego importado traía su TROPHY.TRP dentro de ux0/app/<TITLE>/ ? */
