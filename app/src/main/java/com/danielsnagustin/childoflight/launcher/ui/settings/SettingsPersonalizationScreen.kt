@@ -132,9 +132,29 @@ fun SettingsPersonalizationScreen(vm: LauncherViewModel, onBack: () -> Unit, onN
         // de personalización + editor táctil de abajo.
         onResetCategory = { vm.resetCategory(SettingsCategory.PERSONALIZATION); draft = null },
         resetLabel = "Restablecer solo esta pantalla",
+        dialogs = {
+            if (showResetConfirm) {
+                AlertDialog(
+                    onDismissRequest = { showResetConfirm = false },
+                    title = { Text("¿Restablecer personalización y editor táctil?") },
+                    text = { Text("Se restablecen el tema, el acento, el fondo, el texto, el idioma, la portada y los controles a los valores de fábrica. También se borran los perfiles de control creados por ti; solo quedan los perfiles predefinidos. Esta acción no se puede deshacer.") },
+                    confirmButton = {
+                        TextButton(onClick = { showResetConfirm = false; vm.resetAllCustomization(); draft = null }) { Text("Restablecer") }
+                    },
+                    dismissButton = { TextButton(onClick = { showResetConfirm = false }) { Text("Cancelar") } },
+                )
+            }
+        },
     ) {
-        item {
-            current?.let { ui ->
+        // Ronda 0.2.70 Area 6 (6-P2-4): el contenido se divide en un
+        // item por grupo en vez de uno solo: antes un cambio del
+        // borrador recomponia todos los chips y todas las filas, sin
+        // que el LazyColumn pudiera saltarse nada.
+        val ui = current
+        if (ui == null) {
+            item { Text("Cargando personalización…") }
+        } else {
+            item {
                 PrimaryButton(
                     "Aplicar personalización",
                     // R5-A1-6: homeIntroSeen = max(borrador, actual):
@@ -157,32 +177,50 @@ fun SettingsPersonalizationScreen(vm: LauncherViewModel, onBack: () -> Unit, onN
                     modifier = Modifier.fillMaxWidth(),
                     enabled = hasChanges,
                 ) { Text("Descartar cambios") }
+            }
+            item {
                 EnumChips("Tema", ThemeMode.entries, ui.theme, { it.label }) {
                     update { prefs -> prefs.copy(theme = it) }
                 }
+            }
+            item {
                 EnumChips("Color de acento", AccentColor.entries, ui.accent, { it.label }) {
                     update { prefs -> prefs.copy(accent = it) }
                 }
+            }
+            item {
                 EnumChips("Fondo de la pantalla principal", HomeBackground.entries, ui.homeBackground, { it.label }) {
                     update { prefs -> prefs.copy(homeBackground = it) }
                 }
+            }
+            item {
                 EnumChips("Tamaño de texto", TextSize.entries, ui.textSize, { it.label }) {
                     update { prefs -> prefs.copy(textSize = it) }
                 }
+            }
+            item {
                 EnumChips("Idioma", AppLanguage.entries, ui.language, { it.label }) {
                     update { prefs -> prefs.copy(language = it) }
                 }
                 NoteText("Idioma ES/EN: traduce la portada y la pantalla de importación. Las notas técnicas permanecen en español.")
+            }
+            item {
                 EnumChips("Tamaño de tarjetas", CardSize.entries, ui.cardSize, { it.label }) {
                     update { prefs -> prefs.copy(cardSize = it) }
                 }
+            }
+            item {
                 EnumChips("Transparencia de tarjetas", CardTransparency.entries, ui.cardTransparency, { it.label }) {
                     update { prefs -> prefs.copy(cardTransparency = it) }
                 }
+            }
+            item {
                 EnumChips("Tamaño de iconos", IconSize.entries, ui.iconSize, { it.label }) {
                     update { prefs -> prefs.copy(iconSize = it) }
                 }
                 NoteText("Iconos: hay un solo juego de iconos vectoriales. Este ajuste cambia su tamaño en la portada, no el diseño: no hay otro pack de iconos que elegir.")
+            }
+            item {
                 Text("Orden de secciones en la portada", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                 // R2-P2-04: la ruta real es Ajustes → General →
                 // Secciones (no "Configuración → Secciones").
@@ -219,6 +257,8 @@ fun SettingsPersonalizationScreen(vm: LauncherViewModel, onBack: () -> Unit, onN
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
+            }
+            item {
                 // R6 (evidencia del teléfono, 0.2.55): el editor táctil
                 // solo se abría desde General → Secciones. También
                 // desde aquí: es personalización de los botones del
@@ -230,18 +270,7 @@ fun SettingsPersonalizationScreen(vm: LauncherViewModel, onBack: () -> Unit, onN
                     onClick = { showResetConfirm = true },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Restablecer personalización y editor táctil") }
-                if (showResetConfirm) {
-                    AlertDialog(
-                        onDismissRequest = { showResetConfirm = false },
-                        title = { Text("¿Restablecer personalización y editor táctil?") },
-                        text = { Text("Se restablecen el tema, el acento, el fondo, el texto, el idioma, la portada y los controles a los valores de fábrica. También se borran los perfiles de control creados por ti; solo quedan los perfiles predefinidos. Esta acción no se puede deshacer.") },
-                        confirmButton = {
-                            TextButton(onClick = { showResetConfirm = false; vm.resetAllCustomization(); draft = null }) { Text("Restablecer") }
-                        },
-                        dismissButton = { TextButton(onClick = { showResetConfirm = false }) { Text("Cancelar") } },
-                    )
-                }
-            } ?: Text("Cargando personalización…")
+            }
         }
     }
 }
