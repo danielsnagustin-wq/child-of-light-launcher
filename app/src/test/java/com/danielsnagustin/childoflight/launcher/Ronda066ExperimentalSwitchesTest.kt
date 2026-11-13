@@ -110,4 +110,15 @@ class Ronda066ExperimentalSwitchesTest {
         assertTrue(decoded.first.expAudioSdl)
         assertEquals(settings, decoded.first)
     }
+
+    @Test
+    fun backupRoundTripKeepsSkipShaderPrecompile() {
+        // Ronda 0.2.68 (load-p1): la carga rápida sobrevive a
+        // exportar y restaurar ajustes (SettingsBackup).
+        val settings = LauncherSettings(skipShaderPrecompile = true)
+        val json = encodeSettingsBackup(settings, UiPreferences())
+        val decoded = decodeSettingsBackup(json, LauncherSettings(), UiPreferences()).getOrThrow()
+        assertTrue(decoded.first.skipShaderPrecompile)
+        assertEquals(settings, decoded.first)
+    }
 }
