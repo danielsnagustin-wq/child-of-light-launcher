@@ -594,6 +594,10 @@ class Vita3kConfigGeneratorTest {
         val base = presetSettings(GpuProfileId.G99_RECOMMENDED).copy(anisotropicFiltering = 16)
         val unknown = Vita3kConfigGenerator.generate(base, "/data/vita3k", null)
         assertTrue(unknown.contains("anisotropic-filtering: 8"))
+        // Ronda 0.2.70 (11-P2-3): con máximo desconocido el comentario
+        // ya no dice "(nullx)": distingue el caso nulo.
+        assertTrue(unknown.contains("tope seguro 8x (máximo del dispositivo desconocido)"))
+        assertFalse(unknown.contains("nullx"))
         val max4 = Vita3kConfigGenerator.generate(base, "/data/vita3k", GpuInfo(maxAnisotropy = 4))
         assertTrue(max4.contains("anisotropic-filtering: 4"))
         val max16 = Vita3kConfigGenerator.generate(base, "/data/vita3k", GpuInfo(maxAnisotropy = 16))
