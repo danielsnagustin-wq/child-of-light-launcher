@@ -119,16 +119,20 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
                 if (gpu?.maxAnisotropy != null) {
                     NoteText("Anisotrópico máximo de este teléfono: ${gpu?.maxAnisotropy}x (límite del driver).")
                 }
-                // Ronda 0.2.64 (consenso de 3 auditorías): con Vulkan
-                // la VSync es INERTE — solo alimenta pending_vsync,
-                // que solo consume el renderer OpenGL (pin:
-                // gl/renderer.cpp:759-760); el modo de presentación
-                // Vulkan es fijo (Mailbox > FifoRelaxed > Fifo).
+                // Ronda 0.2.66 (G11-06, parche g11-06-vsync-present-
+                // mode): con Vulkan la VSync YA NO es inerte — elige
+                // el modo de presentación del swapchain en
+                // VKState::create (screen_renderer.cpp): ON = Fifo
+                // (sincronizado con el vsync del panel, sin trabajo
+                // GPU de más en un juego a 30 fps), OFF = Mailbox
+                // (máxima velocidad, como antes). Solo se aplica al
+                // lanzar (el swapchain se crea ahí); cambiarla en
+                // caliente no hace nada hasta el próximo JUGAR.
                 // Ningún preset la pone ON desde 0.2.64 (el modo 60
                 // FPS tampoco: su único mecanismo real es fps-hack).
-                SettingSwitch("V-Sync", "Sincronización vertical. Sin efecto con Vulkan (solo actúa con backend OpenGL).", s.vSync) { vm.saveSettings(s.copy(vSync = it)) }
+                SettingSwitch("V-Sync", "Sincronización vertical. En Vulkan elige el modo de presentación: ON = Fifo (sincronizado con el panel), OFF = Mailbox (máxima velocidad). En OpenGL, la de siempre.", s.vSync) { vm.saveSettings(s.copy(vSync = it)) }
                 if (s.backend == GpuBackend.VULKAN) {
-                    NoteText("Con Vulkan, la VSync no hace nada: ni cuesta frames ni los gana. Solo tiene efecto con el backend OpenGL.")
+                    NoteText("Con Vulkan, la VSync elige el present mode (ON = Fifo, OFF = Mailbox). Se aplica al lanzar el juego, no en caliente.")
                 }
                 // R2-P2-08: sin "ON siempre": el interruptor lo puede
                 // apagar el usuario (los presets lo ponen ON por
