@@ -390,7 +390,7 @@ private fun GameCard(
                     // diseño de Home se mantiene mínimo.
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        "DLCs: ${status.dlcCount} · ${status.firmwareName ?: "firmware no instalado"} · Actualización: ${if (status.updateInstalled) "instalado" else "no instalado"}",
+                        "DLCs: ${status.installedDlcCount} instalados" + (if (status.storedDlcPkgCount > 0) " (+${status.storedDlcPkgCount} en .pkg)" else "") + " · ${status.firmwareName ?: "firmware no instalado"} · Actualización: ${if (status.updateInstalled) "instalado" else "no instalado"}",
                         style = MaterialTheme.typography.bodySmall,
                         color = mutedTextColor(dark),
                     )
