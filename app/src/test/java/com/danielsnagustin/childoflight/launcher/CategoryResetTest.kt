@@ -142,18 +142,26 @@ class CategoryResetTest {
     }
 
     @Test
-    fun audioResetRestoresOnlyAudioFields() {
+    fun audioResetKeepsManualAudioChoices() {
+        // Ronda 0.2.70 (11-P1-4): restablecer Audio YA NO devuelve
+        // volumen/backend/NGS a 100/SDL/ON: presetSettings() nunca los
+        // asigna y son elecciones manuales que aplicar un preset
+        // conserva (mergePresetWithUserChoices).
         val reset = resetCategorySettings(changed, SettingsCategory.AUDIO)
-        assertEquals(100, reset.audioVolume)
-        assertEquals(com.danielsnagustin.childoflight.launcher.model.AudioBackend.SDL, reset.audioBackend)
+        assertEquals(10, reset.audioVolume)
+        assertEquals(com.danielsnagustin.childoflight.launcher.model.AudioBackend.CUBEB, reset.audioBackend)
         assertEquals(4f, reset.resolutionMultiplier, 0.001f)
         assertFalse(reset.cpuOpt)
+        val ngsOff = resetCategorySettings(changed.copy(ngsEnable = false), SettingsCategory.AUDIO)
+        assertFalse(ngsOff.ngsEnable)
     }
 
     @Test
     fun diagnosticsResetRestoresOnlyDiagnosticsFields() {
         val reset = resetCategorySettings(changed, SettingsCategory.DIAGNOSTICS)
-        assertTrue(reset.closeBackgroundApps)
+        // Ronda 0.2.70 (11-P1-4): cerrar apps se conserva (el usuario
+        // lo apagó a propósito en el fixture): ya no se reactiva.
+        assertFalse(reset.closeBackgroundApps)
         assertFalse(reset.safeMode)
         assertTrue(reset.fpsHack)
         assertEquals(10, reset.audioVolume)
@@ -181,6 +189,46 @@ class CategoryResetTest {
         // El resto se conserva (la categoría no toca GPU ni audio).
         assertEquals(4f, reset.resolutionMultiplier, 0.001f)
         assertEquals(10, reset.audioVolume)
+    }
+
+    @Test
+    fun performanceResetKeepsManualAutoRevertAndPerformanceModeOff() {
+        // Ronda 0.2.70 (11-P1-4, test OBLIGATORIO): restablecer
+        // Rendimiento con autoRevertTo1xIfBelow28Fps=false y
+        // performanceMode=false manuales NO los reactiva. Reactivar
+        // el auto-revert en silencio revertiría a 1x tras el próximo
+        // benchmark por debajo de 28 fps sin que el usuario lo pidiera.
+        val manualOff = changed.copy(autoRevertTo1xIfBelow28Fps = false, performanceMode = false)
+        val reset = resetCategorySettings(manualOff, SettingsCategory.PERFORMANCE)
+        assertFalse(reset.autoRevertTo1xIfBelow28Fps)
+        assertFalse(reset.performanceMode)
+        // Las cachés sí vuelven al valor del preset.
+        assertEquals(presetSettings(GpuProfileId.G99_RECOMMENDED).textureCache, reset.textureCache)
+    }
+
+    @Test
+    fun gpuResetKeepsManualTurboMode() {
+        // Ronda 0.2.70 (11-P1-4): el modo turbo es una elección manual
+        // del driver (ningún preset lo enciende): restablecer la GPU
+        // no lo apaga.
+        val reset = resetCategorySettings(changed.copy(turboMode = true), SettingsCategory.GPU)
+        assertTrue(reset.turboMode)
+    }
+
+    @Test
+    fun controlsResetKeepsManualOverlayChoices() {
+        // Ronda 0.2.70 (11-P1-4): restablecer Controles YA NO borra
+        // la opacidad, el neón ni los perfiles con el overlay oculto
+        // que el usuario configuró a mano.
+        val manual = changed.copy(
+            touchOverlayOpacity = 0.5f,
+            touchOverlayNeonGlow = false,
+            touchOverlayHiddenProfileIds = setOf(GpuProfileId.G99_RECOMMENDED.name),
+        )
+        val reset = resetCategorySettings(manual, SettingsCategory.CONTROLS)
+        assertEquals(0.5f, reset.touchOverlayOpacity, 0.001f)
+        assertFalse(reset.touchOverlayNeonGlow)
+        assertEquals(setOf(GpuProfileId.G99_RECOMMENDED.name), reset.touchOverlayHiddenProfileIds)
     }
 
     @Test
