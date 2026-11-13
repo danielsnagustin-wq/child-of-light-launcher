@@ -33,6 +33,12 @@ import org.junit.Test
  * stick 174 dp en 2340x1080 -> 487 px, izquierda 68, arriba 485;
  * salto 87 dp -> 243 px, izquierda 2024, arriba 690. A 1600x720
  * (densidad 1.75) el stick da 304 px, izquierda 75, arriba 333.
+ *
+ * 0.2.68 (neón): el default es la imagen 52710_13_ua6f.png (stick
+ * 177 dp -> 496 px, rombo 60 dp -> 168 px, pausa 50 dp -> 140 px,
+ * zona 120 dp -> 336 px, píldora L 300x143 px, START 374x106 px).
+ * childLayout devuelve ADEMÁS el ancho (widthPx): en las píldoras
+ * el ancho difiere del alto y el test lo comprueba por separado.
  */
 class GamepadOverlayLayoutTest {
 
@@ -78,13 +84,18 @@ class GamepadOverlayLayoutTest {
 
     @Test
     fun childLayoutMatchesControlRectForDefaultLayout() {
-        // Todos los controles del default 0.2.63: el helper es
+        // Todos los controles del default 0.2.68: el helper es
         // controlRect convertido a LayoutParams, en los dos tamaños.
+        // 0.2.68 (neón): ancho y alto se comprueban POR SEPARADO:
+        // en las píldoras el ancho (widthPx) difiere del alto
+        // (sizePx) y el test viejo (solo ancho contra sizePx)
+        // fallaría en L/R/START.
         for (control in defaultTouchLayout()) {
             for ((w, h, d) in listOf(Triple(1600f, 720f, 1.75f), Triple(2340f, 1080f, 2.80f))) {
                 val rect = controlRect(control, w, h, d)
                 val layout = childLayout(control, w, h, d)
-                assertEquals("sizePx de ${control.id} a ${w}x$h", rect.width().toInt().coerceAtLeast(1), layout.sizePx)
+                assertEquals("sizePx de ${control.id} a ${w}x$h", rect.height().toInt().coerceAtLeast(1), layout.sizePx)
+                assertEquals("widthPx de ${control.id} a ${w}x$h", rect.width().toInt().coerceAtLeast(1), layout.widthPx)
                 assertEquals("leftMargin de ${control.id} a ${w}x$h", rect.left.toInt(), layout.leftMargin)
                 assertEquals("topMargin de ${control.id} a ${w}x$h", rect.top.toInt(), layout.topMargin)
             }
@@ -100,29 +111,36 @@ class GamepadOverlayLayoutTest {
     @Test
     fun fractionReproducesVerifiedSizesOnReferencePhone() {
         val stick = defaultTouchLayout().first { it.id == "stick" }
-        val jump = defaultTouchLayout().first { it.id == "btn_jump" }
-        val sword = defaultTouchLayout().first { it.id == "btn_sword" }
-        val pause = defaultTouchLayout().first { it.id == "btn_start" }
-        val circle = defaultTouchLayout().first { it.id == "btn_circle" }
+        val cross = defaultTouchLayout().first { it.id == "btn_cross" }
+        val sq = defaultTouchLayout().first { it.id == "btn_sq" }
+        val pause = defaultTouchLayout().first { it.id == "btn_pause" }
+        val circle = defaultTouchLayout().first { it.id == "btn_circ" }
         val zone = defaultTouchLayout().first { it.id == "igniculus" }
-        // Anclas 0.2.63: los mismos px que con dp (174/87/86/52/41/104).
-        assertEquals(487, childLayout(stick, 2340f, 1080f, 2.80f).sizePx)
-        assertEquals(243, childLayout(jump, 2340f, 1080f, 2.80f).sizePx)
-        assertEquals(240, childLayout(sword, 2340f, 1080f, 2.80f).sizePx)
-        assertEquals(145, childLayout(pause, 2340f, 1080f, 2.80f).sizePx)
-        assertEquals(114, childLayout(circle, 2340f, 1080f, 2.80f).sizePx)
-        assertEquals(291, childLayout(zone, 2340f, 1080f, 2.80f).sizePx)
+        val pillL = defaultTouchLayout().first { it.id == "btn_l" }
+        val pillStart = defaultTouchLayout().first { it.id == "btn_start_pill" }
+        // Anclas 0.2.68 (neón): los mismos px que con dp (177/74/
+        // 50/120) y el ancho de las píldoras (L 300 px, START 374 px).
+        assertEquals(495, childLayout(stick, 2340f, 1080f, 2.80f).sizePx)
+        assertEquals(168, childLayout(cross, 2340f, 1080f, 2.80f).sizePx)
+        assertEquals(168, childLayout(sq, 2340f, 1080f, 2.80f).sizePx)
+        assertEquals(140, childLayout(pause, 2340f, 1080f, 2.80f).sizePx)
+        assertEquals(168, childLayout(circle, 2340f, 1080f, 2.80f).sizePx)
+        assertEquals(336, childLayout(zone, 2340f, 1080f, 2.80f).sizePx)
+        assertEquals(142, childLayout(pillL, 2340f, 1080f, 2.80f).sizePx)
+        assertEquals(300, childLayout(pillL, 2340f, 1080f, 2.80f).widthPx)
+        assertEquals(106, childLayout(pillStart, 2340f, 1080f, 2.80f).sizePx)
+        assertEquals(373, childLayout(pillStart, 2340f, 1080f, 2.80f).widthPx)
     }
 
     @Test
     fun fractionScalesWithGameHeightOnOtherScreens() {
         // A 1600x720 el rect del juego mide 720 px de alto: el stick
-        // en fracción es 0,4511 x 720 = 324 px, NO los 304 px del
-        // modo dp (174 x 1,75). El tamaño sigue al juego, no a la
+        // en fracción es 0,4589 x 720 = 330 px, NO los 304 px del
+        // modo dp (177 x 1,75). El tamaño sigue al juego, no a la
         // densidad: en una pantalla más baja el stick es más
         // pequeño en px, pero ocupa la misma proporción del juego.
         val stick = defaultTouchLayout().first { it.id == "stick" }
-        assertEquals(324, childLayout(stick, 1600f, 720f, 1.75f).sizePx)
+        assertEquals(330, childLayout(stick, 1600f, 720f, 1.75f).sizePx)
         // Sin fracción (perfil guardado, control del usuario): el
         // modo dp no cambia (304 px a 1,75).
         assertEquals(304, childLayout(stick063, 1600f, 720f, 1.75f).sizePx)
