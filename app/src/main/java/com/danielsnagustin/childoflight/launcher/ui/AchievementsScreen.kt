@@ -20,7 +20,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -28,7 +27,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,6 +43,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -54,9 +53,6 @@ import com.danielsnagustin.childoflight.launcher.data.TrophyTrpReader
 import com.danielsnagustin.childoflight.launcher.data.TrpReadResult
 import com.danielsnagustin.childoflight.launcher.model.TrophyProgress
 import com.danielsnagustin.childoflight.launcher.model.trophyProgressPercent
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -139,8 +135,12 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     // R5-A2-3: fondo según el tema (antes el overload sin argumentos
     // fijaba dark=true y la pantalla quedaba oscura con Tema Claro).
     val uiPrefs = LocalUiPreferences.current
+    // Ronda 0.2.70 Area 6 (6-P2-3): el tema oscuro se resuelve UNA vez
+    // por pantalla y se pasa a las filas: antes cada fila llamaba a
+    // isDarkUi entre 4 y 6 veces por recomposicion.
+    val dark = isDarkUi(uiPrefs)
     Box(
-        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush(isDarkUi(uiPrefs), uiPrefs?.homeBackground?.hex)),
+        modifier = Modifier.fillMaxSize().background(premiumBackgroundBrush(dark, uiPrefs?.homeBackground?.hex)),
     ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp).widthIn(max = ContentMaxWidth).align(Alignment.TopCenter),
@@ -164,7 +164,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             "Child of Light",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = cardTextColor(isDarkUi(uiPrefs)),
+                            color = cardTextColor(dark),
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -175,7 +175,7 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (isDarkUi(uiPrefs)) ColIceBlue else cardTextColor(isDarkUi(uiPrefs)),
+                            color = if (dark) ColIceBlue else cardTextColor(dark),
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         PrimaryProgressBar(progress = if (total == 0) 0f else unlocked / total.toFloat())
@@ -271,14 +271,14 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                         Text(
                             "${item.trophy.number}. ${item.displayName}",
                             fontWeight = FontWeight.Bold,
-                            color = if (item.unlocked) Color.White else mutedTextColor(isDarkUi(uiPrefs)),
+                            color = if (item.unlocked) Color.White else mutedTextColor(dark),
                         )
                         Text(
                             item.displayDescription,
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (item.unlocked) ColMutedText else mutedTextColor(isDarkUi(uiPrefs)),
+                            color = if (item.unlocked) ColMutedText else mutedTextColor(dark),
                         )
-                        if (item.trophy.tier != null) Text("Grado: ${item.trophy.tier}", style = MaterialTheme.typography.bodySmall, color = if (item.unlocked) ColMutedText else mutedTextColor(isDarkUi(uiPrefs)))
+                        if (item.trophy.tier != null) Text("Grado: ${item.trophy.tier}", style = MaterialTheme.typography.bodySmall, color = if (item.unlocked) ColMutedText else mutedTextColor(dark))
                         if (item.trophy.onlineRequired) {
                             // R9-P2-03: ColAccent fijo ilegible en tema
                             // claro (~1.7:1 sobre surfaceVariant); en
@@ -296,15 +296,20 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             // cambia, con el texto exacto: si alguna
                             // vez un trofeo lo necesita, NO se puede
                             // desbloquear en Vita.
-                            Text("⚠ Necesita la función online de Vita (enviar Oculi a un amigo), que no existe en esta versión: el trofeo online solo estaba en Xbox One / PC, con los servidores cerrados. Puede no desbloquearse nunca.", style = MaterialTheme.typography.bodySmall, color = if (isDarkUi(uiPrefs)) ColAccent else ColLavenderBlue)
+                            Text("⚠ Necesita la función online de Vita (enviar Oculi a un amigo), que no existe en esta versión: el trofeo online solo estaba en Xbox One / PC, con los servidores cerrados. Puede no desbloquearse nunca.", style = MaterialTheme.typography.bodySmall, color = if (dark) ColAccent else ColLavenderBlue)
                         }
                         item.unlockedAtMillis?.let { at ->
-                            val date = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(at))
-                            Text("Desbloqueado: $date", style = MaterialTheme.typography.bodySmall, color = if (item.unlocked) ColMutedText else mutedTextColor(isDarkUi(uiPrefs)))
+                            val date = formatDateTime(at)
+                            Text("Desbloqueado: $date", style = MaterialTheme.typography.bodySmall, color = if (item.unlocked) ColMutedText else mutedTextColor(dark))
+                        } ?: if (item.unlocked) {
+                            // 7-P2-4: desbloqueado pero el núcleo no
+                            // guardó marca de tiempo: fecha desconocida,
+                            // nunca la fecha de la sincronización.
+                            Text("Desbloqueado: fecha desconocida", style = MaterialTheme.typography.bodySmall, color = if (item.unlocked) ColMutedText else mutedTextColor(dark))
                         }
                     }
                     if (!item.unlocked) {
-                        Text("🔒", style = MaterialTheme.typography.bodyMedium, color = mutedTextColor(isDarkUi(uiPrefs)))
+                        Text("🔒", style = MaterialTheme.typography.bodyMedium, color = mutedTextColor(dark))
                     }
                 }
             }
@@ -390,12 +395,20 @@ private fun TrophyIcon(item: TrophyProgress, modifier: Modifier = Modifier) {
     } else {
         listOf(Color(0xFF9AA5B5), Color(0xFF7C8AA0))
     }
+    // Ronda 0.2.70 Area 6 (6-P2-3): el degradado radial se crea UNA
+    // vez por par de colores, no en cada pasada de dibujo de cada uno
+    // de los 20 iconos. La caja es 56.dp fija: centro y radio son
+    // 28.dp, exactamente los que usaba el dibujado (size / 2).
+    val radiusPx = with(LocalDensity.current) { 28.dp.toPx() }
+    val circleBrush = remember(gradientColors, radiusPx) {
+        Brush.radialGradient(colors = gradientColors, center = Offset(radiusPx, radiusPx), radius = radiusPx)
+    }
     Box(modifier = modifier.size(56.dp), contentAlignment = Alignment.Center) {
         Canvas(modifier = Modifier.fillMaxSize().alpha(iconAlpha)) {
             val radius = size.minDimension / 2f
             val center = Offset(size.width / 2f, size.height / 2f)
             drawCircle(
-                brush = Brush.radialGradient(colors = gradientColors, center = center, radius = radius),
+                brush = circleBrush,
                 radius = radius,
                 center = center,
             )
