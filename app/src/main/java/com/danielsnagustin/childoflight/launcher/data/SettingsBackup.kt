@@ -75,6 +75,11 @@ fun encodeSettingsBackup(settings: LauncherSettings, ui: UiPreferences): String 
     str("memoryMapping", settings.memoryMapping.name)
     bool("textureCache", settings.textureCache)
     bool("shaderCache", settings.shaderCache)
+    // Ronda 0.2.68 (load-p1, hallazgo Codex paso 2): la carga rápida
+    // también va en el backup, como shaderCache: sin ella, exportar
+    // y restaurar ajustes la perdía. La versión NO sube (sigue 1):
+    // los backups viejos sin la clave decodifican con el valor actual.
+    bool("skipShaderPrecompile", settings.skipShaderPrecompile)
     bool("cpuOpt", settings.cpuOpt)
     bool("fpsHack", settings.fpsHack)
     bool("turboMode", settings.turboMode)
@@ -151,6 +156,7 @@ fun decodeSettingsBackup(
         memoryMapping = enumValue(map["memoryMapping"], MemoryMapping.entries.toTypedArray(), current.memoryMapping),
         textureCache = boolValue(map["textureCache"], current.textureCache),
         shaderCache = boolValue(map["shaderCache"], current.shaderCache),
+        skipShaderPrecompile = boolValue(map["skipShaderPrecompile"], current.skipShaderPrecompile),
         cpuOpt = boolValue(map["cpuOpt"], current.cpuOpt),
         fpsHack = boolValue(map["fpsHack"], current.fpsHack),
         turboMode = boolValue(map["turboMode"], current.turboMode),
