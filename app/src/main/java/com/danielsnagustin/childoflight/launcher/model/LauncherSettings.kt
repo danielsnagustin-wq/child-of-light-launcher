@@ -431,7 +431,9 @@ data class LauncherSettings(
      * ignora la clave en silencio y el interruptor no hace nada (ver generador).
      * ON = nuevo manejo de búfer/underrun SDL (sin el pacing del 50% de audio.cpp,
      * umbral max(3x búfer, 40 ms), espera calibrada contra lo que falta por sonar)
-     * + hint de baja latencia en Android. OFF = comportamiento actual del pin.
+     * + anillo Cubeb más grande (40 ms de cola mínima). OFF = comportamiento actual del pin.
+     * (Ronda 0.2.70, 5-P2-1: la baja latencia NO es novedad de este interruptor:
+     * SDL la trae activada por defecto desde 3.2.0 y el pin fija SDL 3.4.16.)
      * Cambiarlo exige relanzar el juego (se lee al iniciar el audio, como el backend).
      * El modo seguro lo fuerza OFF; ningún preset lo enciende; aplicar un preset
      * conserva el valor manual (preserveManualCacheChoices, como hashlessTextureCache).
@@ -737,9 +739,13 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
     )
     // Ronda 0.2.65 (RG-P2-16): el 2x genérico para GPU sin perfil
     // propio (Xclipse, PowerVR, OTHER, UNKNOWN). Mismos valores que
-    // G99_QUALITY (2x, Bilinear, Page Table, sin HUD, Sistema):
-    // el preset es agnóstico al GPU; solo cambia la etiqueta, para
-    // no ofrecer "G99 — Calidad" a quien no tiene un G99 (G-P2-6).
+    // G99_QUALITY (2x, Bilinear, Page Table, sin HUD, Sistema),
+    // SALVO la carga rápida: este preset la deja apagada
+    // (skipShaderPrecompile=false, valor upstream, deliberado y
+    // testeado en GpuProfileTest; la 0.2.68 solo la encendió en los
+    // presets Mali/G99). El preset es agnóstico al GPU; solo cambia
+    // la etiqueta, para no ofrecer "G99 — Calidad" a quien no tiene
+    // un G99 (G-P2-6).
     GpuProfileId.GENERIC_QUALITY -> LauncherSettings(
         activeProfile = profile,
         backend = GpuBackend.VULKAN,
