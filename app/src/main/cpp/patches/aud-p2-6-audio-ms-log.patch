@@ -45,7 +45,7 @@ index 41a50eaa..545bde0b 100644
 +    if (n % 60 == 0) {
 +        const uint64_t total = total_ns.exchange(0, std::memory_order_relaxed);
 +        const uint64_t max = max_ns.exchange(0, std::memory_order_relaxed);
-+        LOG_INFO("[audio-ms] sceAudioOutOutput: media {} us, max {} us (ventana de 60 llamadas)", total / 60000, max / 1000);
++        LOG_INFO("[audio-ms] sceAudioOutOutput port {}: media {} us, max {} us (ventana de 60 llamadas)", port, total / 60000, max / 1000);
 +    }
      return prt->len;
  }
