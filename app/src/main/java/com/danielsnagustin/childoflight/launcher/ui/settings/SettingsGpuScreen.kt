@@ -153,6 +153,16 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
                 }
                 SettingSwitch("High Accuracy Rendering", "Más preciso, mucho más lento. OFF en todos los presets.", s.highAccuracy) { vm.saveSettings(s.copy(highAccuracy = it)) }
                 SettingSwitch("Surface Sync activado", "ON = más preciso. OFF = más rápido (recomendado en G99/Mali).", s.surfaceSyncEnabled) { vm.saveSettings(s.copy(surfaceSyncEnabled = it)) }
+                // Tercera pasada (N-1): interruptor POR JUEGO, OFF por
+                // defecto (= comportamiento actual exacto). Desactiva la
+                // emulación exacta de máscara en Vulkan (hack de
+                // compatibilidad, parche aud3-mask-bit-disable): sin la
+                // imagen de máscara por render target ni pipelines
+                // maskupdate síncronos. Si el juego no usa máscaras, no
+                // cambia nada; pendiente medir en el teléfono si Child
+                // of Light emite programas maskupdate. Se aplica en el
+                // siguiente lanzamiento.
+                SettingSwitch("Desactivar emulación de máscara (por juego)", "Hack de compatibilidad: desactiva la emulación exacta de máscara en Vulkan. OFF = emulación exacta (como siempre). Si el juego no usa máscaras, no cambia nada; pendiente medirlo en el teléfono. Se aplica en el siguiente lanzamiento.", s.disableMaskBit) { vm.saveSettings(s.copy(disableMaskBit = it)) }
                 // Ronda 0.2.65 (RC-P2-1): la nota vieja decía que con
                 // Double Buffer (Mali) la Surface Sync "no funciona":
                 // falso según el pin — perform_surface_sync() solo exige
