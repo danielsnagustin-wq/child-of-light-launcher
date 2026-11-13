@@ -28,6 +28,11 @@ class SettingsBackupTest {
         audioVolume = 42,
         fpsHack = true,
         touchOverlayOpacity = 0.5f,
+        // Ronda 0.2.70 (4-P2-2): el round-trip debe fijar también la
+        // carga rápida y el audio SDL experimental; con el default
+        // false en ambos lados, perderlos en encode/decode no se notaba.
+        skipShaderPrecompile = true,
+        expAudioSdl = true,
     )
     private val ui = UiPreferences(
         accent = AccentColor.TURQUOISE,
