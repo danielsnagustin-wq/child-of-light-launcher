@@ -347,13 +347,27 @@ class SettingsRepository(private val context: Context) {
         // debe obligar a volver a copiar 1.1 GB a Descargas ni a
         // reconfirmar la instalación (igual que applyPreset, M21).
         val current = runCatching { settingsFlow.first() }.getOrNull()
-        save(
-            base.copy(
-                pkgDeliveredToVita3k = current?.pkgDeliveredToVita3k ?: false,
-                pkgInstalledInVita3k = current?.pkgInstalledInVita3k ?: false,
-            ),
-        )
+        save(resetDefaultsWithCurrent(base, current))
     }
+
+/**
+ * Ronda 0.2.70 (11-P2-4): "Restablecer ajustes" YA NO devuelve el
+ * idioma a español, la sesión PSN (simulada) a ON ni "Permitir app
+ * externa" a OFF sin avisar: son elecciones del usuario, no valores
+ * de preset, y aplicar un preset ya las conserva expresamente
+ * (mergePresetWithUserChoices: el idioma "NO es campo de preset").
+ * El reseteo total las conservaba solo para Turnip y la entrega del
+ * .pkg; ahora también estas tres. Pura, testeable en JVM
+ * (ResetToDefaultsTest).
+ */
+internal fun resetDefaultsWithCurrent(base: LauncherSettings, current: LauncherSettings?): LauncherSettings =
+    base.copy(
+        pkgDeliveredToVita3k = current?.pkgDeliveredToVita3k ?: false,
+        pkgInstalledInVita3k = current?.pkgInstalledInVita3k ?: false,
+        gameLanguage = current?.gameLanguage ?: GameLanguage.SPANISH,
+        psnSignedIn = current?.psnSignedIn ?: true,
+        allowExternalVita3k = current?.allowExternalVita3k ?: false,
+    )
 
     suspend fun saveGpuInfo(gpu: GpuInfo): Boolean {
         return safeEdit("info GPU") { p ->
