@@ -12,7 +12,6 @@ import com.danielsnagustin.childoflight.launcher.data.defaultTouchLayout
 import com.danielsnagustin.childoflight.launcher.data.oneHandLayout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
