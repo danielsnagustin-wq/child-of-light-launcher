@@ -100,7 +100,10 @@ class AchievementRepository(private val context: Context) {
             context.achievementsDataStore.data.map { prefs ->
                 val unlocked = decode(prefs[Keys.UNLOCKED] ?: "")
                 TROPHIES_20.map { trophy ->
-                    TrophyProgress(trophy, unlocked.containsKey(trophy.number), unlocked[trophy.number])
+                    // 7-P2-4: un 0 persistido es "fecha desconocida", no
+                    // el 01/01/1970: se expone como null y la UI no
+                    // muestra fecha.
+                    TrophyProgress(trophy, unlocked.containsKey(trophy.number), unlocked[trophy.number]?.takeIf { it > 0 })
                 }
             }.catch { e ->
                 Log.w("ChildOfLight", "DataStore logros ilegible, usando bloqueados: ${e.message}")
@@ -139,8 +142,11 @@ class AchievementRepository(private val context: Context) {
         Log.i("ChildOfLight", "Lista de trofeos 27 -> 20: progreso guardado borrado (versión $storedVersion -> $newVersion).")
     }
 
-    /** Desbloquea un trofeo. Devuelve true solo si estaba bloqueado (es un desbloqueo nuevo). */
-    suspend fun unlock(number: Int, atMillis: Long = System.currentTimeMillis()): Boolean {
+    /** Desbloquea un trofeo. Devuelve true solo si estaba bloqueado (es un desbloqueo nuevo).
+     * [atMillis] null = fecha desconocida (el núcleo no guardó marca):
+     * se persiste como 0 y progressFlow lo vuelve a exponer como null
+     * (ronda 0.2.70, 7-P2-4); la UI muestra "fecha desconocida". */
+    suspend fun unlock(number: Int, atMillis: Long? = null): Boolean {
         if (TROPHIES_20.none { it.number == number }) return false
         migrateTrophyListIfNeeded()
         return unlockMutex.withLock {
@@ -148,7 +154,7 @@ class AchievementRepository(private val context: Context) {
             context.achievementsDataStore.edit { prefs ->
                 val map = decode(prefs[Keys.UNLOCKED] ?: "").toMutableMap()
                 if (!map.containsKey(number)) {
-                    map[number] = atMillis
+                    map[number] = atMillis ?: 0L
                     prefs[Keys.UNLOCKED] = encode(map)
                 }
             }
