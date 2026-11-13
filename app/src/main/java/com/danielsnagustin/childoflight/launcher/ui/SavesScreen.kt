@@ -21,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -96,7 +97,9 @@ fun SavesScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         } else {
             SectionTitle("Archivos de guardado (${status.saves.size})")
             status.saves.forEach { save ->
-                Text("· ${save.name} — ${DownloadsCleanup.formatBytes(save.sizeBytes)}")
+                key(save.name) {
+                    Text("· ${save.name} — ${DownloadsCleanup.formatBytes(save.sizeBytes)}")
+                }
             }
         }
 
