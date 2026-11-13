@@ -317,21 +317,23 @@ data class LauncherSettings(
     val anisotropicFiltering: Int = 1, // 1, 2, 4, 8, 16
     /**
      * R4-P2-8: VSync OFF por defecto DELIBERADO, no un descuido: el
-     * default de upstream en config.h:155 es true, pero con el backend
-     * Vulkan (el de todos los presets) el valor es INERTE: solo
-     * alimenta pending_vsync (renderer/state.h:196-197), que solo
-     * consume el renderer OpenGL (gl/renderer.cpp:759-760), y el modo
-     * de presentación Vulkan es fijo (Mailbox > FifoRelaxed > Fifo,
-     * screen_renderer.cpp:197-218). En Vulkan no cuesta frames ni los
-     * gana: no hace nada (ronda 0.2.64: la justificación anterior,
-     * "en Mali la VSync cuesta frames", era falsa por ese mismo
-     * motivo y se borró). El default false se mantiene porque alinear
-     * con upstream (true) no cambiaría nada en Vulkan y en OpenGL el
-     * usuario lo activa a mano. Ningún preset lleva true desde 0.2.64:
-     * el modo 60 FPS tampoco lo fuerza (su único mecanismo real es
-     * fps-hack). El interruptor en Ajustes → GPU lo cambia a mano en
-     * cualquier momento; la etiqueta de esa pantalla dice que en
-     * Vulkan no tiene efecto.
+     * default de upstream en config.h:155 es true. Ronda 0.2.66
+     * (G11-06, parche g11-06-vsync-present-mode): con el backend
+     * Vulkan (el de todos los presets) la VSync YA NO es inerte —
+     * elige el modo de presentación del swapchain en
+     * VKState::create: ON = Fifo (sincronizado con el vsync del
+     * panel), OFF = Mailbox (máxima velocidad, como antes). Antes
+     * (0.2.64/0.2.65) solo alimentaba pending_vsync
+     * (renderer/state.h:196-197), que solo consume el renderer
+     * OpenGL (gl/renderer.cpp:759-760), y el modo Vulkan era fijo
+     * (Mailbox > FifoRelaxed > Fifo, screen_renderer.cpp:197-218).
+     * El default false se mantiene (Mailbox: máxima velocidad para
+     * un juego a 30 fps; Fifo no ganaría frames y solo añadiría
+     * espera de vsync). Ningún preset lleva true desde 0.2.64: el
+     * modo 60 FPS tampoco lo fuerza (su único mecanismo real es
+     * fps-hack). El interruptor en Ajustes → GPU lo cambia a mano
+     * en cualquier momento; la etiqueta de esa pantalla dice que en
+     * Vulkan elige el present mode.
      */
     val vSync: Boolean = false,
     val asyncPipelineCompilation: Boolean = true,
@@ -351,17 +353,19 @@ data class LauncherSettings(
      */
     val memoryMapping: MemoryMapping = MemoryMapping.PAGE_TABLE,
     /**
-     * Ronda 0.2.65 (R-P1-5): en Vulkan es INERTE. Verificado en el
-     * pin: ningún código Vulkan lee config.texture_cache (el
-     * renderer Vulkan llama a cache_and_bind_texture incondicional,
-     * texture.cpp:130); el único consumo es OpenGL
-     * (gl/sync_state.cpp:420-424), donde OFF es activamente más
-     * lento (re-sube cada textura sin caché). Por eso YA NO
-     * diferencia presets (MALI_PERFORMANCE y G99_RECOMMENDED llevan
-     * el mismo valor) ni la variante low-RAM: en el teléfono no
-     * ahorra nada. La clave se sigue emitiendo en el generador para
-     * el camino OpenGL. El arreglo REAL (leerla en Vulkan) necesita
-     * pin. El interruptor manual se conserva: en OpenGL sí hace algo.
+     * Ronda 0.2.66 (C-01, parche c-01-texture-cache-vulkan): en
+     * Vulkan SÍ tiene efecto — el renderer Vulkan pasa
+     * config.texture_cache a cache_and_bind_texture
+     * (texture.cpp:130): con OFF no se consulta ni se inserta en
+     * texture_lookup (cada textura se vuelve a subir desde la
+     * memoria guest en cada draw: activamente más lento). Antes
+     * (0.2.65, R-P1-5) era INERTE en Vulkan: ningún código Vulkan
+     * leía config.texture_cache y el único consumo era OpenGL
+     * (gl/sync_state.cpp:420-424). Por eso YA NO diferencia presets
+     * (MALI_PERFORMANCE y G99_RECOMMENDED llevan el mismo valor) ni
+     * la variante low-RAM: en el teléfono no ahorra nada apagarla
+     * (al revés: OFF cuesta subidas). La clave se sigue emitiendo
+     * en el generador para los dos backends.
      */
     val textureCache: Boolean = true,
     /**
@@ -378,6 +382,26 @@ data class LauncherSettings(
      * re-etiquetarlo allí). Default ON: es lo correcto. No tocar.
      */
     val shaderCache: Boolean = true,
+    /**
+     * Ronda 0.2.68 (load-p1): "skip-shader-precompile" en config.yml
+     * (clave nueva del parche load-p1-skip-shader-precompile.patch:
+     * config.h + CurrentConfig + copias en settings.cpp + puerta en
+     * app.cpp:281). Con true, el núcleo NO mete los shaders conocidos
+     * en la cola de precompilado al arrancar: el precompilado es
+     * serial en el hilo de render (pin batch.cpp:189-226, un programa
+     * detrás de otro, sin frames presentados mientras tanto) y en este
+     * teléfono costaba T2 92-147 s (reporte 0.2.67) y, con el manifiesto
+     * ya grande tras 7,5 min de juego, el juego "ni siquiera entra".
+     * Con la puerta, se espera que el juego entre en segundos
+     * (pendiente medir T2 en el teléfono) y los shaders se compilan
+     * bajo demanda con la compilación asíncrona de pipelines
+     * (3 hilos, ya activa): sin bloqueo, solo objetos que aparecen
+     * unos frames más tarde. Default false (comportamiento upstream);
+     * los 4 presets Mali/G99 lo llevan en true. Si el usuario lo pone
+     * en false a mano, ese valor manual sobrevive a los presets
+     * (preserveManualCacheChoices, como shaderCache).
+     */
+    val skipShaderPrecompile: Boolean = false,
     // --- CPU ---
     /** cpu-opt en config.yml. El backend Dynarmic es el default de Vita3K; no hay clave cpu-backend en config.h. */
     val cpuOpt: Boolean = true,
@@ -683,7 +707,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         memoryMapping = MemoryMapping.PAGE_TABLE,
         cpuOpt = true, fpsHack = false, fileLoadingDelay = 0,
         showFpsOverlay = false,
-        gpuDriver = GpuDriver.SYSTEM, shaderCache = true, textureCache = true, performanceMode = true,
+        gpuDriver = GpuDriver.SYSTEM, shaderCache = true, skipShaderPrecompile = true, textureCache = true, performanceMode = true,
     )
     GpuProfileId.G99_QUALITY -> LauncherSettings(
         activeProfile = profile,
@@ -709,7 +733,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         // sobre la misma GPU Mali; la medición queda por la vía
         // automática (getFps), sin robar GPU en cada frame medido.
         showFpsOverlay = false,
-        gpuDriver = GpuDriver.SYSTEM, shaderCache = true, textureCache = true, performanceMode = true,
+        gpuDriver = GpuDriver.SYSTEM, shaderCache = true, skipShaderPrecompile = true, textureCache = true, performanceMode = true,
     )
     // Ronda 0.2.65 (RG-P2-16): el 2x genérico para GPU sin perfil
     // propio (Xclipse, PowerVR, OTHER, UNKNOWN). Mismos valores que
@@ -743,16 +767,16 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         surfaceSyncEnabled = false,
         memoryMapping = MemoryMapping.PAGE_TABLE, // Ronda 0.2.66 (G11-01): Page Table por defecto en Mali (antes Double Buffer; ver la nota del campo memoryMapping: es HIPÓTESIS hasta la A/B en teléfono). 0.2.63 (B/C): en el pin (renderer.cpp:748-766) DoubleBuffer y PageTable están SIEMPRE en la máscara soportada y NativeBuffer solo si el driver expone la importación de buffers; no hay ningún fallback especial para Mali. Double Buffer sigue siendo el método por defecto del núcleo (:750) y el de la red de seguridad G11-02.
         cpuOpt = true, fpsHack = false,
-        // Ronda 0.2.65 (R-P1-5): textureCache = true, igual que
-        // G99_RECOMMENDED. En Vulkan la clave es INERTE (ningún
-        // código Vulkan la lee; solo OpenGL, gl/sync_state.cpp:420),
-        // así que el false anterior no ahorraba nada y era la ÚNICA
-        // diferencia con G99_RECOMMENDED: dos presets con etiquetas
-        // distintas y el mismo efecto en el teléfono. El preset
+        // Ronda 0.2.66 (C-01): textureCache = true, igual que
+        // G99_RECOMMENDED. En Vulkan la clave YA tiene efecto
+        // (c-01: OFF re-sube cada textura, texture.cpp:130), así que
+        // el false anterior no ahorraba nada — costaba subidas — y
+        // era la ÚNICA diferencia con G99_RECOMMENDED: dos presets
+        // con etiquetas distintas y el mismo efecto en el teléfono. El preset
         // sigue existiendo como entrada propia para Mali genérico
         // (etiqueta/descripción y defaultProfileFor), pero ya no
         // miente con una diferencia que no existe.
-        textureCache = true, shaderCache = true,
+        textureCache = true, shaderCache = true, skipShaderPrecompile = true,
     )
     GpuProfileId.MALI_BALANCED -> LauncherSettings(
         activeProfile = profile,
@@ -771,7 +795,7 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         surfaceSyncEnabled = false,
         memoryMapping = MemoryMapping.PAGE_TABLE,
         cpuOpt = true, fpsHack = false,
-        textureCache = true, shaderCache = true,
+        textureCache = true, shaderCache = true, skipShaderPrecompile = true,
     )
     GpuProfileId.ADRENO_PERFORMANCE -> LauncherSettings(
         activeProfile = profile,
@@ -801,10 +825,10 @@ fun presetSettings(profile: GpuProfileId): LauncherSettings = when (profile) {
         resolutionMultiplier = 2f,
         screenFilter = ScreenFilter.FXAA,
         anisotropicFiltering = 4,
-        // 0.2.64: SIN vSync = true (antes true): en Vulkan es inerte
-        // (pending_vsync solo lo consume OpenGL) y se contaba como
-        // una de las 6 diferencias con Recomendado sin serlo. El
-        // default false queda.
+        // 0.2.64: SIN vSync = true (antes true): en Vulkan elige el
+        // present mode desde la 0.2.66 (G11-06: ON = Fifo, OFF =
+        // Mailbox) y se contaba como una de las 6 diferencias con
+        // Recomendado sin serlo. El default false queda.
         asyncPipelineCompilation = true,
         highAccuracy = false,
         surfaceSyncEnabled = false,
@@ -848,6 +872,10 @@ private fun presetProfileFields(s: LauncherSettings): List<Any> = listOf(
     s.memoryMapping,
     s.textureCache,
     s.shaderCache,
+    // Ronda 0.2.68 (load-p1, hallazgo Codex paso 2): la carga rápida
+    // ES campo de preset (los presets Mali/G99 la llevan en true):
+    // cambiar solo este interruptor marca "perfil modificado".
+    s.skipShaderPrecompile,
     s.cpuOpt,
     s.fpsHack,
     s.fileLoadingDelay,
@@ -879,11 +907,11 @@ private fun lowRamVariantFields(s: LauncherSettings): List<Any> = listOf(
     s.highAccuracy,
     s.surfaceSyncEnabled,
     s.memoryMapping,
-    // Ronda 0.2.65 (R-P1-5): textureCache FUERA: en Vulkan es
-    // inerte y la variante low-RAM ya no lo toca (antes era su
-    // único cambio sobre G99_RECOMMENDED). shaderCache tampoco
-    // entra: la variante lo deja ON (precompilado que evita
-    // tirones) y nunca lo cambió.
+    // Ronda 0.2.66 (C-01): textureCache FUERA: en Vulkan OFF
+    // re-sube cada textura (más lento) y la variante low-RAM ya no
+    // lo toca (antes era su único cambio sobre G99_RECOMMENDED).
+    // shaderCache tampoco entra: la variante lo deja ON
+    // (precompilado que evita tirones) y nunca lo cambió.
     s.shaderCache,
 )
 
@@ -893,9 +921,10 @@ private fun lowRamVariantFields(s: LauncherSettings): List<Any> = listOf(
  * cambia algo respecto al preset: si el preset ya es conservador de
  * por sí, como MALI_PERFORMANCE, no hay divergencia que registrar).
  * Es la divergencia "conservadora" del primer arranque en un teléfono
- * de 4 GB o menos. Ronda 0.2.65 (R-P1-5): la variante YA NO toca
- * textureCache (inerte en Vulkan): sobre G99_RECOMMENDED la variante
- * es idéntica al preset y NO es divergencia; sobre un preset 2x
+ * de 4 GB o menos. Ronda 0.2.66 (C-01): la variante YA NO toca
+ * textureCache (OFF re-subiría cada textura en Vulkan): sobre
+ * G99_RECOMMENDED la variante es idéntica al preset y NO es
+ * divergencia; sobre un preset 2x
  * (G99_QUALITY, ADRENO_QUALITY_TURNIP) sí lo es, porque baja a 1x
  * con Bilinear. Puro y testeable en JVM.
  */
@@ -910,17 +939,18 @@ fun isLowRamConservativeVariant(settings: LauncherSettings): Boolean {
  * de cachés y overlay del usuario, igual que ya se conservaban
  * audio, modo seguro, cerrar apps, PSN, entrega del .pkg y overlay
  * táctil (ver SettingsRepository.applyPreset). Campos conservados:
- * textureCache, shaderCache, showFpsOverlay, hashlessTextureCache,
+ * textureCache, shaderCache, skipShaderPrecompile (Ronda 0.2.68,
+ * carga rápida), showFpsOverlay, hashlessTextureCache,
  * showCompileShaders y (R5-A2-1) performanceOverlayDetail y
  * performanceOverlayPosition: antes, un detalle o una posición del
  * HUD elegidos a mano volvían a Mínimo/Arriba-izquierda al tocar
  * cualquier preset, sin aviso, y presetProfileFields SÍ los incluía,
  * así que la pérdida era invisible ("Perfil modificado" no salía).
  *
- * DECISIÓN (ronda 0.2.65, R-P1-5: la afirmación anterior de este
+ * DECISIÓN (ronda 0.2.66, C-01: la afirmación anterior de este
  * bloque quedó obsoleta): G99_RECOMMENDED y MALI_PERFORMANCE YA NO
- * se diferencian en textureCache: en Vulkan esa clave es inerte y
- * los dos presets llevan true. Conservar la caché manual sigue
+ * se diferencian en textureCache: en Vulkan la clave tiene efecto
+ * (OFF re-sube cada textura) y los dos presets llevan true. Conservar la caché manual sigue
  * pudiendo borrar una diferencia real en OTROS presets (p. ej.
  * aplicar un preset 2x sobre un estado con textureCache OFF), y
  * eso NO se esconde: la divergencia queda registrada
@@ -946,6 +976,11 @@ fun preserveManualCacheChoices(preset: LauncherSettings, current: LauncherSettin
     return preset.copy(
         textureCache = current.textureCache,
         shaderCache = current.shaderCache,
+        // Ronda 0.2.68 (load-p1): la carga rápida también es un valor
+        // manual que sobrevive al preset, como shaderCache: un preset
+        // no debe encender ni apagar a escondidas una prueba A/B de
+        // carga en curso.
+        skipShaderPrecompile = current.skipShaderPrecompile,
         showFpsOverlay = current.showFpsOverlay,
         // Ronda 0.2.66: el perfil de frames es diagnóstico manual,
         // no valor de preset: un preset no lo apaga en silencio.
@@ -1060,12 +1095,13 @@ fun effectiveSettings(settings: LauncherSettings): LauncherSettings =
  * reiniciar el juego (el hack se fija al crear el renderer).
  *
  * Ronda 0.2.64: el paquete YA NO fuerza vSync = true (antes sí):
- * en Vulkan es inerte (pending_vsync solo lo consume OpenGL) y el
- * único mecanismo real del modo 60 FPS es fps-hack; el valor guardado
- * de VSync se respeta. Double Buffer se mantiene a propósito: es el
- * método por defecto del núcleo (renderer.cpp:750) y el menos
- * dependiente del driver, para que el modo 60 no dependa del método
- * de mapeo que el usuario tuviera puesto. Ronda 0.2.64 (frame pacing):
+ * en Vulkan elige el present mode desde la 0.2.66 (G11-06: ON =
+ * Fifo, OFF = Mailbox) y el único mecanismo real del modo 60 FPS
+ * es fps-hack; el valor guardado de VSync se respeta. Double Buffer
+ * se mantiene a propósito: es el método por defecto del núcleo
+ * (renderer.cpp:750) y el menos dependiente del driver, para que el
+ * modo 60 no dependa del método de mapeo que el usuario tuviera
+ * puesto. Ronda 0.2.64 (frame pacing):
  * el fps-hack está DESCARTADO como causa de la lentitud (el usuario
  * probó OFF y ON con el mismo resultado): no se toca como causa.
  * Ronda 0.2.65 (RC-P2-4): el paquete también fuerza
@@ -1095,8 +1131,9 @@ fun apply60FpsMode(settings: LauncherSettings): LauncherSettings = settings.copy
  * guardados quedan como divergencia conservadora del preset (ver
  * isLowRamConservativeVariant y divergesFromPreset) y el mensaje de
  * detección dice que se aplicó el perfil conservador (1x con
- * Bilinear; ronda 0.2.65: YA NO dice que la caché de texturas quedó
- * OFF, porque la variante ya no la toca — en Vulkan es inerte).
+ * Bilinear; ronda 0.2.66 (C-01): YA NO dice que la caché de texturas quedó
+ * OFF, porque la variante ya no la toca — en Vulkan OFF re-subiría
+ * cada textura (más lento).
  * "Restablecer ajustes", aplicar un preset a mano, "Restablecer esta
  * categoría" y el auto-revert de la prueba de 30 s usan el preset
  * CANÓNICO, nunca lowRam: el mismo preset da siempre los mismos
@@ -1119,15 +1156,16 @@ fun apply60FpsMode(settings: LauncherSettings): LauncherSettings = settings.copy
  * manual es redundante. Page Table además debería ser mejor con
  * poca RAM (menos copias por draw que Double Buffer).
  *
- * Caché (ronda 0.2.65, R-P1-5): la variante YA NO toca
+ * Caché (ronda 0.2.66, C-01): la variante YA NO toca
  * texture-cache. config.yml NO tiene claves de TAMAÑO de caché
  * (verificado en Vita3kConfigGenerator contra config.h: solo existen
  * los booleanos texture-cache y shader-cache), y el booleano
- * texture-cache es INERTE en Vulkan (ningún código Vulkan lo lee;
- * solo OpenGL lo usa): apagarlo no liberaba RAM en el teléfono, así
- * que no era una palanca de memoria baja real. shader-cache queda ON
- * (es el precompilado que evita tirones; su huella en RAM es
- * transitoria y su caché en disco evita recompilar en cada arranque).
+ * texture-cache en Vulkan YA tiene efecto (c-01: OFF re-sube cada
+ * textura): apagarlo no liberaba RAM en el teléfono y costaba
+ * subidas, así que no era una palanca de memoria baja real.
+ * shader-cache queda ON (es el precompilado que evita tirones; su
+ * huella en RAM es transitoria y su caché en disco evita recompilar
+ * en cada arranque).
  */
 fun applyLowRamDefaults(settings: LauncherSettings): LauncherSettings = settings.copy(
     resolutionMultiplier = 1f,
