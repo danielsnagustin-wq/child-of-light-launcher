@@ -302,11 +302,11 @@ class CleanTouchLayoutTest {
         assertEquals(29.9f, stickRect.left, 1f)
         assertTrue("el stick pisa la barra negra", stickRect.left < game.left - 0.01f)
         // El círculo guardado en 1.028 queda con el centro en
-        // 1716,4 px y el borde derecho en 1798,1 px, 124 px dentro
-        // de la barra y 49 px dentro de la vista.
+        // 1716,4 px y el borde derecho en 1782,6 px, 108 px dentro
+        // de la barra y 64 px dentro de la vista.
         val circleRect = controlRect(control(defaultTouchLayout(), "btn_circ"), 1847f, 851f, 2.07f)
         assertEquals(1716.4f, (circleRect.left + circleRect.right) / 2f, 1f)
-        assertEquals(1798.1f, circleRect.right, 1f)
+        assertEquals(1782.6f, circleRect.right, 1f)
         assertTrue("el círculo pisa la barra negra", circleRect.right > game.right + 0.01f)
     }
 
@@ -621,7 +621,7 @@ class CleanTouchLayoutTest {
         // el rect del juego es 1906x1080 centrado (x 217-2123). Los
         // tamaños en dp tienen que rendir como los controles de la
         // imagen 52710_13_ua6f.png (0.2.68, neón): stick 177 dp
-        // (0.212W), orbe dibujado 101 dp (zona 0.145W), botones de cara
+        // (0.212W), orbe dibujado 100,8 dp (zona 0.145W), botones de cara
         // 60 dp de cristal (huella 0.089W), pausa 50 dp. Ver el KDoc de
         // defaultTouchLayout, que documenta la geometría exacta.
         val controls = defaultTouchLayout()
@@ -644,11 +644,11 @@ class CleanTouchLayoutTest {
         assertEquals(140.0f, pauseHeightPx, 1f)
         assertEquals(0.130f, pauseHeightPx / 1080f, 0.01f)
         // Proporciones entre controles, como en la imagen (cara
-        // 0.34, orbe 0.68, pausa 0.28 del stick).
+        // 0.34, orbe 0.57, pausa 0.28 del stick).
         val stick = control(controls, "stick").sizeDp.toFloat()
         assertEquals(0.34f, control(controls, "btn_sq").sizeDp / stick, 0.01f)
         assertEquals(0.34f, control(controls, "btn_cross").sizeDp / stick, 0.01f)
-        assertEquals(0.68f, 0.84f * zone.sizeDp / stick, 0.01f)
+        assertEquals(0.57f, 0.84f * zone.sizeDp / stick, 0.01f)
         assertEquals(0.28f, control(controls, "btn_pause").sizeDp / stick, 0.01f)
         // Botones de cara dibujados: 60 dp x 2.80 = 168 px de
         // diámetro (15,6% de la altura, como en la imagen).
