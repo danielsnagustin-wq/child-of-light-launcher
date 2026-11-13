@@ -59,6 +59,13 @@ fun SettingsCpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
                 // texturas y de shaders ON mientras está activo
                 // (apply60FpsMode), aunque la guardada sea OFF.
                 SettingSwitch("Modo 60 FPS (opcional)", "Intenta 30 → 60 fps con fps-hack y los ajustes rápidos del modo. Fuerza las cachés de texturas y de shaders ON mientras está activo. Puede no hacer nada o hacer que el juego corra al doble de velocidad: compruébalo con el contador de FPS y la música como referencia. Se aplica al reiniciar el juego; apágalo para volver a 30. OFF por defecto.", s.fpsHack) { vm.saveSettings(s.copy(fpsHack = it)) }
+                // Ronda 0.2.70 (11-P2-5): con el modo seguro ON el
+                // interruptor se muestra ON sin efecto (el modo seguro
+                // fuerza fps-hack OFF en los ajustes efectivos). El
+                // valor guardado se conserva al salir del modo seguro.
+                if (s.safeMode) {
+                    NoteText("El modo seguro está activado: el modo 60 FPS está suspendido mientras dure (el modo seguro fuerza la optimización de CPU y apaga el 60 FPS). Tu ajuste se conserva al salir del modo seguro.")
+                }
                 NoteText("Experimental: el juego en Vita es 30 fps por diseño. Si corre al doble de velocidad o no notas cambio, apaga el modo y vuelve a 30 bloqueado y fluido.")
             }
         }
