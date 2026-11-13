@@ -43,6 +43,11 @@ import org.vita3k.emulator.data.NativeTrophyCollection
 import com.danielsnagustin.childoflight.launcher.data.TurnipDriverRepository
 import com.danielsnagustin.childoflight.launcher.data.UiPreferencesRepository
 import com.danielsnagustin.childoflight.launcher.data.Vita3kConfigGenerator
+import com.danielsnagustin.childoflight.launcher.data.RawgCache
+import com.danielsnagustin.childoflight.launcher.online.RawgClient
+import com.danielsnagustin.childoflight.launcher.online.RawgGameDetails
+import java.net.HttpURLConnection
+import java.net.URL
 import com.danielsnagustin.childoflight.launcher.data.backupJsonHasSafeModeEnabled
 import com.danielsnagustin.childoflight.launcher.data.decodeSettingsBackup
 import com.danielsnagustin.childoflight.launcher.data.encodeSettingsBackup
@@ -440,6 +445,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val turnipRepo = TurnipDriverRepository(context)
     private val launcher = Vita3KLauncher(context)
     private val uiRepo = UiPreferencesRepository(context)
+    // Cliente y caché para la ficha RAWG del juego
+    private val rawgClient = RawgClient()
+    private val rawgCache = RawgCache(context.filesDir, context.cacheDir)
     private val sessionManager = SessionManager(context, library, achievementsRepo, touchRepo)
 
     val settingsFlow = settingsRepo.settingsFlow
@@ -877,6 +885,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     // Home usa painterResource como respaldo transitorio.
     private val _coverBitmap = MutableStateFlow<ImageBitmap?>(null)
     val coverBitmap: StateFlow<ImageBitmap?> = _coverBitmap.asStateFlow()
+    // Estado de la ficha RAWG
+    private val _rawgDetails = MutableStateFlow<RawgGameDetails?>(null)
+    val rawgDetails: StateFlow<RawgGameDetails?> = _rawgDetails.asStateFlow()
+    private val _rawgCover = MutableStateFlow<ImageBitmap?>(null)
+    val rawgCover: StateFlow<ImageBitmap?> = _rawgCover.asStateFlow()
+    private val _rawgRefreshing = MutableStateFlow(false)
+    val rawgRefreshing: StateFlow<Boolean> = _rawgRefreshing.asStateFlow()
+    private val rawgRefreshGuard = AtomicBoolean(false)
 
     private val _pendingBenchmark = MutableStateFlow<BenchmarkRun?>(null)
     val pendingBenchmark: StateFlow<BenchmarkRun?> = _pendingBenchmark.asStateFlow()
@@ -946,6 +962,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         refreshStatus()
         refreshLog()
         loadCoverBitmap()
+        // Cargar la ficha RAWG desde la caché (si existe)
+        loadRawgCache()
         // Ronda 0.2.70, P1-5 (a): la captura de trofeos en
         // onDestroy del juego corre DESPUÉS del onResume que
         // consume el pendiente, así que el aviso de store() es el
@@ -1432,6 +1450,80 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 val options = BitmapFactory.Options().apply { inSampleSize = 2 }
                 BitmapFactory.decodeResource(context.resources, R.drawable.col_cover_clean, options)?.asImageBitmap()
             }.getOrNull()
+        }
+    }
+
+    // Refrescar la ficha RAWG desde la API (opcionalmente forzando)
+    fun refreshRawgDetails(title: String = "Child of Light", force: Boolean = false) {
+        if (!force && _rawgDetails.value != null) return
+        if (!rawgRefreshGuard.compareAndSet(false, true)) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                _rawgRefreshing.value = true
+                val apiKey = settingsRepo.settingsFlow.first().rawgApiKey
+                if (apiKey.isBlank()) return@launch   // sin clave no se hace la petición
+
+                val details = rawgClient.findGameDetails(title, apiKey) ?: run {
+                    LauncherLog.append(context, "rawg", "No se pudo descargar la ficha del juego.")
+                    return@launch
+                }
+
+                // Guardar y publicar los detalles
+                rawgCache.saveDetails(title, details)
+                _rawgDetails.value = details
+
+                // Descargar y guardar la portada si está disponible
+                details.backgroundImageUrl?.let { url ->
+                    downloadBytes(url)?.let { bytes ->
+                        rawgCache.saveCover(title, bytes)
+                        val bitmap = runCatching {
+                            val opts = BitmapFactory.Options().apply { inSampleSize = 2 }
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)?.asImageBitmap()
+                        }.getOrNull()
+                        _rawgCover.value = bitmap
+                    }
+                }
+            } finally {
+                _rawgRefreshing.value = false
+                rawgRefreshGuard.set(false)
+            }
+        }
+    }
+
+    // Helper privado para descargar bytes de una URL (sin registrar la URL ni la clave)
+    private fun downloadBytes(urlStr: String): ByteArray? {
+        var connection: HttpURLConnection? = null
+        return try {
+            val url = URL(urlStr)
+            connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 5_000
+                readTimeout = 10_000
+                setRequestProperty("User-Agent", "ChildOfLightLauncher")
+            }
+            if (connection.responseCode != HttpURLConnection.HTTP_OK) return null
+            connection.inputStream.use { it.readBytes() }
+        } catch (e: Exception) {
+            null
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
+    // Cargar la ficha RAWG desde la caché (si está disponible)
+    private fun loadRawgCache(title: String = "Child of Light") {
+        viewModelScope.launch(Dispatchers.IO) {
+            // Detalles
+            _rawgDetails.value = rawgCache.loadDetails(title)
+            // Portada
+            rawgCache.loadCover(title)?.let { bytes ->
+                val bitmap = runCatching {
+                    val opts = BitmapFactory.Options().apply { inSampleSize = 2 }
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)?.asImageBitmap()
+                }.getOrNull()
+                _rawgCover.value = bitmap
+            }
         }
     }
 
