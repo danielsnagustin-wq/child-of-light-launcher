@@ -915,9 +915,9 @@ class GamepadOverlayView @JvmOverloads constructor(
         // botón de pausa o el de círculo) y va LA ÚLTIMA, encima de
         // los controles, para que las hojas se dibujen sobre el
         // cristal. Sin botón de pausa en el perfil, no hay alas.
-        // 0.2.68: el botón de pausa es el PRIMER START del perfil
+        // 0.2.68: el botón de pausa es el de id de fábrica
         // (pauseControlFor): la píldora START posterior no roba
-        // las alas.
+        // las alas; sin pausa visible no hay alas (0.2.70, P2-1).
         pauseWingsControl = pauseControlFor(ordered)
         val pauseControl = pauseWingsControl
         if (pauseControl != null) {
