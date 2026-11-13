@@ -257,9 +257,11 @@ class TouchLayoutTest {
     @Test
     fun defaultLayoutHasStickButtonsAndIgniculus() {
         val layout = defaultTouchLayout()
-        assertEquals(6, layout.size)
+        // 0.2.68 (neón): 10 controles (stick, pausa, L/R, START,
+        // rombo △□○✕ e Igniculus): 8 botones.
+        assertEquals(10, layout.size)
         assertTrue(layout.any { it.kind == "stick" })
-        assertEquals(4, layout.count { it.kind == "button" })
+        assertEquals(8, layout.count { it.kind == "button" })
         assertTrue(layout.any { it.kind == "igniculus" })
         assertTrue(layout.all { it.visible })
     }
@@ -270,17 +272,21 @@ class TouchLayoutTest {
         assertEquals(3, profiles.size)
         assertEquals(listOf("Por defecto G99", "Una mano", "Mando externo + táctil mínimo"), profiles.map { it.name })
         // Una mano lleva los mismos 6 controles, todos visibles;
-        // mando externo oculta stick, espada, salto y círculo, y
-        // deja Start e Igniculus.
+        // mando externo oculta stick, L/R, píldora START y rombo,
+        // y deja pausa e Igniculus.
         val oneHand = profiles[1]
         assertTrue(oneHand.controls.all { it.visible })
         val external = profiles[2]
         assertFalse(external.controls.first { it.id == "stick" }.visible)
-        assertFalse(external.controls.first { it.id == "btn_sword" }.visible)
-        assertFalse(external.controls.first { it.id == "btn_jump" }.visible)
-        assertFalse(external.controls.first { it.id == "btn_circle" }.visible)
+        assertFalse(external.controls.first { it.id == "btn_l" }.visible)
+        assertFalse(external.controls.first { it.id == "btn_r" }.visible)
+        assertFalse(external.controls.first { it.id == "btn_start_pill" }.visible)
+        assertFalse(external.controls.first { it.id == "btn_tri" }.visible)
+        assertFalse(external.controls.first { it.id == "btn_sq" }.visible)
+        assertFalse(external.controls.first { it.id == "btn_circ" }.visible)
+        assertFalse(external.controls.first { it.id == "btn_cross" }.visible)
         assertTrue(external.controls.first { it.id == "igniculus" }.visible)
-        assertTrue(external.controls.first { it.id == "btn_start" }.visible)
+        assertTrue(external.controls.first { it.id == "btn_pause" }.visible)
     }
 
     @Test
@@ -290,7 +296,10 @@ class TouchLayoutTest {
         // identidad usa un color de la identidad actual
         // (#6578B8, azul lavanda) y el legacy se cubre aparte
         // en decodeNormalizesLegacyRedToLavender.
-        val original = defaultTouchLayout().first { it.id == "btn_jump" }.copy(
+        // 0.2.68 (neón): el botón de prueba es la ✕ del rombo
+        // (btn_cross); el round-trip cubre también su
+        // widthFraction (null en los botones cuadrados).
+        val original = defaultTouchLayout().first { it.id == "btn_cross" }.copy(
             colorHex = "#6578B8",
             shape = com.danielsnagustin.childoflight.launcher.data.ControlShape.SQUARE,
             vitaButton = com.danielsnagustin.childoflight.launcher.data.VitaButton.R1,
