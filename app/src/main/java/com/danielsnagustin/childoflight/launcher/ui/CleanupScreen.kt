@@ -16,15 +16,21 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.danielsnagustin.childoflight.launcher.data.ControlProfile
 import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
+import com.danielsnagustin.childoflight.launcher.data.TouchControl
+import com.danielsnagustin.childoflight.launcher.model.GameStatus
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 
 /**
@@ -71,13 +77,25 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     // patrón que showDeleteInstalledPkgConfirm (booleano + AlertDialog).
     var showDeleteUnextractedPkgConfirm by rememberSaveable { mutableStateOf(false) }
 
-    val hiddenButtons = layout.filter { !it.visible }
-    val unusedProfiles = profiles.filter { it.id != activeProfileId }
-    val unusedPresets = GpuProfileId.entries.filter {
-        it != settings?.activeProfile && it !in (uiPrefs?.hiddenPresets ?: emptySet())
+    // Ronda 0.2.70 Area 6 (P1-17): los derivados se memorizan: antes
+    // los 3 filtros se re-ejecutaban en cada recomposicion de la
+    // pantalla. hiddenButtons/unusedProfiles dependen de States, asi
+    // que van con derivedStateOf; unusedPresets depende ademas de
+    // uiPrefs (CompositionLocal, que derivedStateOf no rastrea), asi
+    // que va con remember por sus dos entradas. Cada seccion vive en
+    // un hijo propio: si sus parametros no cambian, Compose la salta
+    // aunque el padre se recomponga.
+    val hiddenButtons by remember { derivedStateOf { layout.filter { !it.visible } } }
+    val unusedProfiles by remember { derivedStateOf { profiles.filter { it.id != activeProfileId } } }
+    val unusedPresets = remember(settings?.activeProfile, uiPrefs?.hiddenPresets) {
+        GpuProfileId.entries.filter {
+            it != settings?.activeProfile && it !in (uiPrefs?.hiddenPresets ?: emptySet())
+        }
     }
-    val turnipUnused = settings?.turnipInstalled == true &&
-        settings?.gpuDriver?.name == "SYSTEM"
+    val turnipUnused = remember(settings) {
+        settings?.turnipInstalled == true &&
+            settings?.gpuDriver?.name == "SYSTEM"
+    }
     // P2-31: respaldos .bak huérfanos (destino existe). Se revisan al
     // entrar en la pantalla; null = aún revisando. Delegated property:
     // los valores derivados se calculan con ?.let (no smart-cast).
@@ -97,111 +115,25 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     ) {
         ScreenHeader("Limpiar no usados", "Todo lo que se borra aquí se puede volver a crear o importar, salvo las partidas guardadas.")
 
-        SectionTitle("Botones táctiles ocultos (${hiddenButtons.size})")
-        if (hiddenButtons.isEmpty()) Text("Ninguno: todos los botones están visibles.")
-        hiddenButtons.forEach { control ->
-            OutlinedButton(
-                onClick = { deleteControlTarget = control.id },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-            ) { Text("🗑 Borrar definitivamente: ${control.label}") }
-        }
-
-        SectionTitle("Perfiles de control sin usar (${unusedProfiles.size})")
-        if (unusedProfiles.isEmpty()) Text("Ninguno: solo queda el perfil activo.")
-        unusedProfiles.forEach { profile ->
-            OutlinedButton(
-                onClick = { deleteProfileTarget = profile.id },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-            ) { Text("🗑 Borrar perfil: ${profile.name}") }
-        }
-
-        SectionTitle("Presets de GPU sin usar (${unusedPresets.size})")
-        NoteText("Ocultarlos de la lista de presets. No se borra código; \"Mostrar todos\" los recupera.")
-        unusedPresets.forEach { preset ->
-            OutlinedButton(
-                onClick = { vm.hideGpuPreset(preset) },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-            ) { Text("Ocultar preset: ${preset.label}") }
-        }
-        // R2-P2-05: deshabilitado cuando ya se muestran todos (no hay
-        // presets ocultos): antes siempre estaba activo y no hacía nada
-        // visible al pulsarlo en ese caso.
-        OutlinedButton(
-            onClick = { vm.showAllGpuPresets() },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = (uiPrefs?.hiddenPresets?.isNotEmpty() == true),
-        ) { Text("Mostrar todos los presets") }
-
-        SectionTitle("Driver Turnip")
-        if (turnipUnused) {
-            Text("Turnip instalado (${settings?.turnipVersion}) pero no se usa: el driver actual es Sistema.", fontWeight = FontWeight.SemiBold)
-            OutlinedButton(onClick = { showDeleteTurnipConfirm = true }, modifier = Modifier.fillMaxWidth()) { Text("🗑 Borrar driver Turnip") }
-        } else if (settings?.turnipInstalled == true) {
-            Text("Turnip en uso (${settings?.turnipVersion}). No se marca como no usado.")
-        } else {
-            Text("No hay driver Turnip instalado.")
-        }
-
-        SectionTitle(".pkg guardado ya instalado")
-        val installedPkgRedundant = status.gameExtracted && status.pkgTitleId != null && status.pkgTitleId == status.extractedTitleId
-        if (!installedPkgRedundant) Text("Ninguno: no hay .pkg guardado del juego extraído.")
-        else {
-            Text("El juego ya está extraído y es el que corre; el .pkg guardado es una copia que ocupa lo mismo otra vez.", fontWeight = FontWeight.SemiBold)
-            OutlinedButton(onClick = { showDeleteInstalledPkgConfirm = true }, modifier = Modifier.fillMaxWidth()) { Text("🗑 Borrar .pkg guardado (${DownloadsCleanup.formatBytes(status.pkgSizeBytes)})") }
-        }
-        NoteText("Solo se borra el .pkg. La licencia (work.bin) no se borra y el juego extraído no se toca.")
-
-        // R6-P1-02(b): .pkg de juego guardado SIN juego extraído. El
-        // botón de arriba solo aparece con el juego extraído, así que
-        // un update importado como juego (JUGAR entra en bucle) no se
-        // podía borrar desde ningún sitio. Este botón usa el gancho
-        // sin puertas de estado (deleteStoredGamePkgAnyState). Ojo: es
-        // también el estado de un .pkg de juego legítimo recién
-        // importado, aún sin instalar: el diálogo avisa de que es la
-        // única copia. Juego y update comparten content_type 0x15 y el
-        // mismo Content ID, así que la app no puede distinguirlos por
-        // el header: la decisión es del usuario, con el aviso claro.
-        SectionTitle(".pkg guardado sin instalar")
-        if (!status.storedGamePkgWithoutExtracted) Text("Ninguno: no hay .pkg de juego guardado sin instalar.")
-        else {
-            Text("Hay un .pkg de juego guardado (${DownloadsCleanup.formatBytes(status.pkgSizeBytes)}) y el juego no está extraído. Si es una actualización que se importó como juego por error, JUGAR entra en bucle: bórralo aquí e importa de nuevo el juego y la actualización por separado.", fontWeight = FontWeight.SemiBold)
-            OutlinedButton(onClick = { showDeleteUnextractedPkgConfirm = true }, modifier = Modifier.fillMaxWidth()) { Text("🗑 Borrar .pkg guardado sin instalar (${DownloadsCleanup.formatBytes(status.pkgSizeBytes)})") }
-        }
-        NoteText("Solo se borra el .pkg. La licencia (work.bin) no se borra. Como el juego no está extraído, este .pkg es la única copia: si es el juego de verdad, tendrás que importarlo de nuevo.")
-
-        // P2-31: respaldos .bak huérfanos: la instalación completó y
-        // el respaldo viejo quedó atrás ocupando espacio (pueden ser
-        // GBs). Solo se borran con confirmación; un .bak cuyo destino
-        // falta no es huérfano y nunca aparece aquí.
-        SectionTitle("Respaldos .bak huérfanos")
-        if (orphanBak == null) Text("Revisando…")
-        else if (orphanCount == 0) Text("Ninguno: no hay respaldos .bak de instalaciones que ya completaron.")
-        else {
-            Text(
-                "Hay $orphanCount respaldo(s) .bak de instalaciones que ya completaron (${DownloadsCleanup.formatBytes(orphanBytes)}): el juego o DLC nuevo ya está en su sitio y el respaldo viejo solo ocupa espacio.",
-                fontWeight = FontWeight.SemiBold,
-            )
-            OutlinedButton(onClick = { showDeleteOrphanBakConfirm = true }, modifier = Modifier.fillMaxWidth()) {
-                Text("🗑 Borrar respaldos .bak (${DownloadsCleanup.formatBytes(orphanBytes)})")
-            }
-        }
-        NoteText("Solo se borran respaldos cuyo juego o DLC ya está instalado en su sitio. Un .bak cuyo destino falta NO se toca: es el único respaldo del juego anterior y se restaura solo si hace falta.")
-
-        SectionTitle("DLCs instalados (${status.dlcCount})")
-        if (status.dlcs.isEmpty()) Text("Ninguno.")
-        status.dlcs.forEach { dlc ->
-            OutlinedButton(
-                onClick = { deleteDlcTarget = dlc.dlcId },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-            ) { Text("🗑 Borrar DLC: ${dlc.dlcId} (${DownloadsCleanup.formatBytes(dlc.sizeBytes)})") }
-        }
-
-        SectionTitle("Borrar en lote")
-        OutlinedButton(onClick = { showBatchConfirm = true }, modifier = Modifier.fillMaxWidth()) {
-            Text("Borrar todo lo no usado de esta pantalla")
-        }
-        NoteText("En lote: borra botones ocultos, perfiles sin usar, oculta presets sin usar y borra el Turnip sin usar. NO borra DLCs ni partidas guardadas: esas siempre se borran una a una con confirmación.")
-
+        HiddenButtonsSection(hiddenButtons, onDeleteRequest = { deleteControlTarget = it })
+        UnusedProfilesSection(unusedProfiles, onDeleteRequest = { deleteProfileTarget = it })
+        UnusedPresetsSection(
+            unusedPresets,
+            showAllEnabled = uiPrefs?.hiddenPresets?.isNotEmpty() == true,
+            onHide = { vm.hideGpuPreset(it) },
+            onShowAll = { vm.showAllGpuPresets() },
+        )
+        TurnipSection(
+            turnipInstalled = settings?.turnipInstalled == true,
+            turnipVersion = settings?.turnipVersion,
+            turnipUnused = turnipUnused,
+            onDeleteRequest = { showDeleteTurnipConfirm = true },
+        )
+        InstalledPkgSection(status, onDeleteRequest = { showDeleteInstalledPkgConfirm = true })
+        UnextractedPkgSection(status, onDeleteRequest = { showDeleteUnextractedPkgConfirm = true })
+        OrphanBakSection(orphanBak, onDeleteRequest = { showDeleteOrphanBakConfirm = true })
+        InstalledDlcsSection(status, onDeleteRequest = { deleteDlcTarget = it })
+        BatchCleanupSection(onBatchRequest = { showBatchConfirm = true })
         BackButton(onBack)
     }
     }
@@ -322,4 +254,201 @@ fun CleanupScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             dismissButton = { TextButton(onClick = { showDeleteInstalledPkgConfirm = false }) { Text("Cancelar") } },
         )
     }
+}
+
+// Ronda 0.2.70 Area 6 (P1-17): cada seccion de Limpieza vive en un
+// hijo propio que solo recibe lo que dibuja. Si sus parametros no
+// cambian, Compose salta la seccion aunque el padre se recomponga por
+// otro flujo; y cada fila lleva su key() estable.
+
+@Composable
+private fun HiddenButtonsSection(
+    hiddenButtons: List<TouchControl>,
+    onDeleteRequest: (String) -> Unit,
+) {
+    SectionTitle("Botones táctiles ocultos (${hiddenButtons.size})")
+    if (hiddenButtons.isEmpty()) Text("Ninguno: todos los botones están visibles.")
+    hiddenButtons.forEach { control ->
+        key(control.id) {
+        OutlinedButton(
+            onClick = { onDeleteRequest(control.id) },
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        ) { Text("🗑 Borrar definitivamente: ${control.label}") }
+        }
+    }
+
+
+}
+
+@Composable
+private fun UnusedProfilesSection(
+    unusedProfiles: List<ControlProfile>,
+    onDeleteRequest: (String) -> Unit,
+) {
+    SectionTitle("Perfiles de control sin usar (${unusedProfiles.size})")
+    if (unusedProfiles.isEmpty()) Text("Ninguno: solo queda el perfil activo.")
+    unusedProfiles.forEach { profile ->
+        key(profile.id) {
+        OutlinedButton(
+            onClick = { onDeleteRequest(profile.id) },
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        ) { Text("🗑 Borrar perfil: ${profile.name}") }
+        }
+    }
+
+
+}
+
+@Composable
+private fun UnusedPresetsSection(
+    unusedPresets: List<GpuProfileId>,
+    showAllEnabled: Boolean,
+    onHide: (GpuProfileId) -> Unit,
+    onShowAll: () -> Unit,
+) {
+    SectionTitle("Presets de GPU sin usar (${unusedPresets.size})")
+    NoteText("Ocultarlos de la lista de presets. No se borra código; \"Mostrar todos\" los recupera.")
+    unusedPresets.forEach { preset ->
+        key(preset) {
+        OutlinedButton(
+            onClick = { onHide(preset) },
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        ) { Text("Ocultar preset: ${preset.label}") }
+        }
+    }
+    // R2-P2-05: deshabilitado cuando ya se muestran todos (no hay
+    // presets ocultos): antes siempre estaba activo y no hacía nada
+    // visible al pulsarlo en ese caso.
+    OutlinedButton(
+        onClick = { onShowAll() },
+        modifier = Modifier.fillMaxWidth(),
+        enabled = showAllEnabled,
+    ) { Text("Mostrar todos los presets") }
+
+
+}
+
+@Composable
+private fun TurnipSection(
+    turnipInstalled: Boolean,
+    turnipVersion: String?,
+    turnipUnused: Boolean,
+    onDeleteRequest: () -> Unit,
+) {
+    SectionTitle("Driver Turnip")
+    if (turnipUnused) {
+        Text("Turnip instalado ($turnipVersion) pero no se usa: el driver actual es Sistema.", fontWeight = FontWeight.SemiBold)
+        OutlinedButton(onClick = { onDeleteRequest() }, modifier = Modifier.fillMaxWidth()) { Text("🗑 Borrar driver Turnip") }
+    } else if (turnipInstalled) {
+        Text("Turnip en uso ($turnipVersion). No se marca como no usado.")
+    } else {
+        Text("No hay driver Turnip instalado.")
+    }
+
+
+}
+
+@Composable
+private fun InstalledPkgSection(
+    status: GameStatus,
+    onDeleteRequest: () -> Unit,
+) {
+    SectionTitle(".pkg guardado ya instalado")
+    val installedPkgRedundant = status.gameExtracted && status.pkgTitleId != null && status.pkgTitleId == status.extractedTitleId
+    if (!installedPkgRedundant) Text("Ninguno: no hay .pkg guardado del juego extraído.")
+    else {
+        Text("El juego ya está extraído y es el que corre; el .pkg guardado es una copia que ocupa lo mismo otra vez.", fontWeight = FontWeight.SemiBold)
+        OutlinedButton(onClick = { onDeleteRequest() }, modifier = Modifier.fillMaxWidth()) { Text("🗑 Borrar .pkg guardado (${DownloadsCleanup.formatBytes(status.pkgSizeBytes)})") }
+    }
+    NoteText("Solo se borra el .pkg. La licencia (work.bin) no se borra y el juego extraído no se toca.")
+
+
+}
+
+@Composable
+private fun UnextractedPkgSection(
+    status: GameStatus,
+    onDeleteRequest: () -> Unit,
+) {
+    // R6-P1-02(b): .pkg de juego guardado SIN juego extraído. El
+    // botón de arriba solo aparece con el juego extraído, así que
+    // un update importado como juego (JUGAR entra en bucle) no se
+    // podía borrar desde ningún sitio. Este botón usa el gancho
+    // sin puertas de estado (deleteStoredGamePkgAnyState). Ojo: es
+    // también el estado de un .pkg de juego legítimo recién
+    // importado, aún sin instalar: el diálogo avisa de que es la
+    // única copia. Juego y update comparten content_type 0x15 y el
+    // mismo Content ID, así que la app no puede distinguirlos por
+    // el header: la decisión es del usuario, con el aviso claro.
+    SectionTitle(".pkg guardado sin instalar")
+    if (!status.storedGamePkgWithoutExtracted) Text("Ninguno: no hay .pkg de juego guardado sin instalar.")
+    else {
+        Text("Hay un .pkg de juego guardado (${DownloadsCleanup.formatBytes(status.pkgSizeBytes)}) y el juego no está extraído. Si es una actualización que se importó como juego por error, JUGAR entra en bucle: bórralo aquí e importa de nuevo el juego y la actualización por separado.", fontWeight = FontWeight.SemiBold)
+        OutlinedButton(onClick = { onDeleteRequest() }, modifier = Modifier.fillMaxWidth()) { Text("🗑 Borrar .pkg guardado sin instalar (${DownloadsCleanup.formatBytes(status.pkgSizeBytes)})") }
+    }
+    NoteText("Solo se borra el .pkg. La licencia (work.bin) no se borra. Como el juego no está extraído, este .pkg es la única copia: si es el juego de verdad, tendrás que importarlo de nuevo.")
+
+
+}
+
+@Composable
+private fun OrphanBakSection(
+    orphanBak: Pair<Int, Long>?,
+    onDeleteRequest: () -> Unit,
+) {
+    val orphanCount = orphanBak?.first ?: 0
+    val orphanBytes = orphanBak?.second ?: 0L
+    // P2-31: respaldos .bak huérfanos: la instalación completó y
+    // el respaldo viejo quedó atrás ocupando espacio (pueden ser
+    // GBs). Solo se borran con confirmación; un .bak cuyo destino
+    // falta no es huérfano y nunca aparece aquí.
+    SectionTitle("Respaldos .bak huérfanos")
+    if (orphanBak == null) Text("Revisando…")
+    else if (orphanCount == 0) Text("Ninguno: no hay respaldos .bak de instalaciones que ya completaron.")
+    else {
+        Text(
+            "Hay $orphanCount respaldo(s) .bak de instalaciones que ya completaron (${DownloadsCleanup.formatBytes(orphanBytes)}): el juego o DLC nuevo ya está en su sitio y el respaldo viejo solo ocupa espacio.",
+            fontWeight = FontWeight.SemiBold,
+        )
+        OutlinedButton(onClick = { onDeleteRequest() }, modifier = Modifier.fillMaxWidth()) {
+            Text("🗑 Borrar respaldos .bak (${DownloadsCleanup.formatBytes(orphanBytes)})")
+        }
+    }
+    NoteText("Solo se borran respaldos cuyo juego o DLC ya está instalado en su sitio. Un .bak cuyo destino falta NO se toca: es el único respaldo del juego anterior y se restaura solo si hace falta.")
+
+
+}
+
+@Composable
+private fun InstalledDlcsSection(
+    status: GameStatus,
+    onDeleteRequest: (String) -> Unit,
+) {
+    // Fusión 0.2.70 (áreas 6×7): el área 7 renombró dlcCount a
+    // installedDlcCount; el hijo extraído por el área 6 traía el
+    // nombre viejo (su hunk no aplicaba por el conflicto y se
+    // resolvió a mano).
+    SectionTitle("DLCs instalados (${status.installedDlcCount})")
+    if (status.dlcs.isEmpty()) Text("Ninguno.")
+    status.dlcs.forEach { dlc ->
+        key(dlc.dlcId) {
+        OutlinedButton(
+            onClick = { onDeleteRequest(dlc.dlcId) },
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        ) { Text("🗑 Borrar DLC: ${dlc.dlcId} (${DownloadsCleanup.formatBytes(dlc.sizeBytes)})") }
+        }
+    }
+
+
+}
+
+@Composable
+private fun BatchCleanupSection(
+    onBatchRequest: () -> Unit,
+) {
+    SectionTitle("Borrar en lote")
+    OutlinedButton(onClick = { onBatchRequest() }, modifier = Modifier.fillMaxWidth()) {
+        Text("Borrar todo lo no usado de esta pantalla")
+    }
+    NoteText("En lote: borra botones ocultos, perfiles sin usar, oculta presets sin usar y borra el Turnip sin usar. NO borra DLCs ni partidas guardadas: esas siempre se borran una a una con confirmación.")
 }
