@@ -236,6 +236,30 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         Thread t = mSDLThread;
         return t != null && t.isAlive();
     }
+
+    /**
+     * Ronda 0.2.70 (Area 10, P1-10): reentrada rapida. Si el hilo SDL
+     * viejo murio DESPUES de que el nuevo onResume llamara nativeResume()
+     * sobre el, nadie vuelve a arrancar SDL_main: handleNativeState no
+     * re-dispara porque mNextNativeState ya es RESUMED. Forzar la
+     * transicion RESUMED de nuevo crea un hilo nuevo. No-op si el hilo
+     * esta vivo, si nunca se llego a RESUMED o si el hilo es null
+     * (entonces lo crea el camino normal de onResume). Lo llama
+     * EmbeddedGameActivity tras su sondeo acotado de onResume.
+     */
+    public static void restartSDLMainIfThreadDead() {
+        if (mSDLThread != null && !mSDLThread.isAlive()
+                && mCurrentNativeState == NativeState.RESUMED
+                && mNextNativeState == NativeState.RESUMED) {
+            // handleNativeState descarta la transicion cuando next == current;
+            // retroceder a PAUSED hace que la rama RESUMED vuelva a correr y
+            // cree un hilo nuevo (la rama ya anula un hilo muerto a null).
+            // Solo se toca el campo de estado: no se llama a nativePause()
+            // ni se toca la superficie.
+            mCurrentNativeState = NativeState.PAUSED;
+            SDLActivity.handleNativeState();
+        }
+    }
     protected static boolean mSDLMainFinished = false;
     protected static boolean mActivityCreated = false;
     private static SDLFileDialogState mFileDialogState = null;
