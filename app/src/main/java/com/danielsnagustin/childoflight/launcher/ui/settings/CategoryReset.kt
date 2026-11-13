@@ -47,10 +47,11 @@ fun resetCategorySettings(current: LauncherSettings, category: SettingsCategory)
             highAccuracy = preset.highAccuracy,
             surfaceSyncEnabled = preset.surfaceSyncEnabled,
             memoryMapping = preset.memoryMapping,
-            // Ronda 0.2.65 (RG-P2-15): el modo turbo es opción de GPU:
-            // restablecer la categoría lo devuelve al valor del preset
-            // (OFF; ningún preset lo enciende).
-            turboMode = preset.turboMode,
+            // Ronda 0.2.70 (11-P1-4): el modo turbo es una elección
+            // manual del driver, no un valor de preset (ningún preset
+            // lo enciende): se conserva desde current, igual que al
+            // aplicar un preset (mergePresetWithUserChoices).
+            turboMode = current.turboMode,
             // El driver sí forma parte del preset (Turnip solo en
             // ADRENO_QUALITY_TURNIP); la info del driver instalado
             // se conserva, igual que en applyPreset (M21).
@@ -76,9 +77,14 @@ fun resetCategorySettings(current: LauncherSettings, category: SettingsCategory)
             fileLoadingDelay = preset.fileLoadingDelay,
         )
         SettingsCategory.AUDIO -> current.copy(
-            audioVolume = preset.audioVolume,
-            audioBackend = preset.audioBackend,
-            ngsEnable = preset.ngsEnable,
+            // Ronda 0.2.70 (11-P1-4): presetSettings() nunca asigna
+            // volumen, backend ni NGS: restablecer Audio los devolvía
+            // a 100/SDL/ON aunque el usuario los hubiera cambiado a
+            // propósito. Se conservan desde current, igual que al
+            // aplicar un preset (mergePresetWithUserChoices).
+            audioVolume = current.audioVolume,
+            audioBackend = current.audioBackend,
+            ngsEnable = current.ngsEnable,
         )
         SettingsCategory.PERFORMANCE -> current.copy(
             // R4-P0-9: textureCache sale del preset CANÓNICO (explícito
@@ -100,19 +106,33 @@ fun resetCategorySettings(current: LauncherSettings, category: SettingsCategory)
             // Ronda 0.2.66: los parches experimentales no son del preset:
             // restablecer Rendimiento apaga el audio SDL experimental.
             expAudioSdl = false,
-            autoRevertTo1xIfBelow28Fps = preset.autoRevertTo1xIfBelow28Fps,
-            performanceMode = preset.performanceMode,
+            // Ronda 0.2.70 (11-P1-4): el auto-revert a 1x y el modo
+            // rendimiento son elecciones manuales que aplicar un preset
+            // conserva expresamente (mergePresetWithUserChoices,
+            // R5-A2-2): restablecer Rendimiento los reactivaba en
+            // silencio. Se conservan desde current.
+            autoRevertTo1xIfBelow28Fps = current.autoRevertTo1xIfBelow28Fps,
+            performanceMode = current.performanceMode,
         )
         SettingsCategory.CONTROLS -> current.copy(
-            hideTouchWhenGamepadConnected = preset.hideTouchWhenGamepadConnected,
-            showTouchOverlayInGame = preset.showTouchOverlayInGame,
-            touchOverlayOpacity = preset.touchOverlayOpacity,
-            touchOverlayNeonGlow = preset.touchOverlayNeonGlow,
-            touchOverlayHiddenProfileIds = preset.touchOverlayHiddenProfileIds,
+            // Ronda 0.2.70 (11-P1-4): presetSettings() nunca asigna
+            // ningún campo de Controles: restablecerlos borraba la
+            // opacidad, el neón y los perfiles ocultos que el usuario
+            // configuró a mano. Se conservan desde current, igual que
+            // al aplicar un preset (mergePresetWithUserChoices).
+            hideTouchWhenGamepadConnected = current.hideTouchWhenGamepadConnected,
+            showTouchOverlayInGame = current.showTouchOverlayInGame,
+            touchOverlayOpacity = current.touchOverlayOpacity,
+            touchOverlayNeonGlow = current.touchOverlayNeonGlow,
+            touchOverlayHiddenProfileIds = current.touchOverlayHiddenProfileIds,
         )
         SettingsCategory.STORAGE -> current
         SettingsCategory.DIAGNOSTICS -> current.copy(
-            closeBackgroundApps = preset.closeBackgroundApps,
+            // Ronda 0.2.70 (11-P1-4): presetSettings() nunca asigna
+            // cerrar apps: restablecer Diagnóstico lo reactivaba en
+            // silencio aunque el usuario lo hubiera apagado. Se
+            // conserva desde current (mergePresetWithUserChoices).
+            closeBackgroundApps = current.closeBackgroundApps,
             safeMode = preset.safeMode,
             // Ronda 0.2.66: el perfil de frames es de Diagnóstico y
             // su default es OFF (el preset no lo define).
