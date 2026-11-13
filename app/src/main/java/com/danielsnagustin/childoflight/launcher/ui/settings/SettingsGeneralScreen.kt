@@ -138,10 +138,10 @@ fun SettingsGeneralScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate:
                 // difiere del preset se dice explícitamente en el
                 // aviso (es el campo que más se conserva a mano al
                 // aplicar un preset, ver preserveManualCacheChoices).
-                // Ronda 0.2.65 (R-P1-5): la caché ya NO es lo que
+                // Ronda 0.2.66 (C-01): la caché ya NO es lo que
                 // hace conservadora a la variante lowRam (en Vulkan
-                // es inerte y la variante no la toca): el sufijo "para
-                // ahorrar memoria" se quitó.
+                // OFF re-subiría cada textura y la variante no la
+                // toca): el sufijo "para ahorrar memoria" se quitó.
                 val profileStatusText: String? = when {
                     isLowRamConservativeVariant(s) -> "Perfil conservador (poca RAM)"
                     divergesFromPreset(s) -> {
