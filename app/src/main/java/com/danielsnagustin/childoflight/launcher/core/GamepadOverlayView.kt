@@ -27,6 +27,7 @@ import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.faceGl
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.glowSdlButtons
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.iconOverrideFor
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.overlayChildOrder
+import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.pauseControlFor
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.pauseWingsLayout
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.stickAxes
 import com.danielsnagustin.childoflight.launcher.core.TouchOverlayMapping.stickAxesFor
@@ -814,10 +815,10 @@ class GamepadOverlayView @JvmOverloads constructor(
             val child = getChildAt(i) as? OverlayControlView ?: continue
             val expected = childLayout(control, width.toFloat(), height.toFloat(), density)
             val params = child.layoutParams as? LayoutParams ?: continue
-            if (params.width != expected.sizePx || params.height != expected.sizePx ||
+            if (params.width != expected.widthPx || params.height != expected.sizePx ||
                 params.leftMargin != expected.leftMargin || params.topMargin != expected.topMargin
             ) {
-                params.width = expected.sizePx
+                params.width = expected.widthPx
                 params.height = expected.sizePx
                 params.leftMargin = expected.leftMargin
                 params.topMargin = expected.topMargin
@@ -899,7 +900,7 @@ class GamepadOverlayView @JvmOverloads constructor(
                 "igniculus" -> ZoneView(context, control)
                 else -> ButtonView(context, control)
             }
-            val params = LayoutParams(layout.sizePx, layout.sizePx)
+            val params = LayoutParams(layout.widthPx, layout.sizePx)
             params.leftMargin = layout.leftMargin
             params.topMargin = layout.topMargin
             addView(child, params)
@@ -907,14 +908,17 @@ class GamepadOverlayView @JvmOverloads constructor(
         mountedControls = ordered
         builtForSize = width to height
         // 0.2.64 (A-2): las alas de la pausa como vista APARTE, más
-        // ancha que el botón (4,4 x de ancho, 1,5 x de alto, centrada
+        // ancha que el botón (4,7 x de ancho, 1,07 x de alto, centrada
         // en él): dentro del botón se recortaban al cuadrado y no
         // podían extenderse como en el mockup. Es una vista sin
         // toque (no consume nada: los toques la atraviesan hacia el
         // botón de pausa o el de círculo) y va LA ÚLTIMA, encima de
         // los controles, para que las hojas se dibujen sobre el
         // cristal. Sin botón de pausa en el perfil, no hay alas.
-        pauseWingsControl = ordered.firstOrNull { it.kind == "button" && it.vitaButton == VitaButton.START }
+        // 0.2.68: el botón de pausa es el PRIMER START del perfil
+        // (pauseControlFor): la píldora START posterior no roba
+        // las alas.
+        pauseWingsControl = pauseControlFor(ordered)
         val pauseControl = pauseWingsControl
         if (pauseControl != null) {
             val pauseLayout = childLayout(pauseControl, width.toFloat(), height.toFloat(), density)
@@ -1340,7 +1344,14 @@ class GamepadOverlayView @JvmOverloads constructor(
         }
 
         private fun drawShapeInto(canvas: Canvas, rect: RectF, paint: Paint) {
-            if (control.shape == ControlShape.SQUARE) {
+            if (control.shape == ControlShape.PILL) {
+                // 0.2.68 (neón): píldora (estadio): radio = mitad
+                // de la altura, como en la imagen (L/R/START). Con
+                // el radio fijo de SQUARE (8 dp) sería un rectángulo
+                // con las puntas apenas redondeadas.
+                val r = rect.height() / 2f
+                canvas.drawRoundRect(rect, r, r, paint)
+            } else if (control.shape == ControlShape.SQUARE) {
                 canvas.drawRoundRect(rect, 8f * density, 8f * density, paint)
             } else {
                 canvas.drawCircle(rect.centerX(), rect.centerY(), rect.width() / 2f, paint)
@@ -1699,6 +1710,20 @@ class GamepadOverlayView @JvmOverloads constructor(
 
         /** Icono del botón (o la etiqueta en plata si no tiene icono diseñado). */
         protected fun drawIconOrLabel(canvas: Canvas, rect: RectF, alpha: Float) {
+            // 0.2.68 (neón): una píldora SIEMPRE dibuja su etiqueta
+            // ("L", "R", "START"), no el icono de su botón: la
+            // píldora START lleva VitaButton.START y su icono sería
+            // la pausa (II). El texto escala con la altura de la
+            // píldora (0,42 x alto, negrita como el resto).
+            if (control.shape == ControlShape.PILL) {
+                if (control.label.isBlank()) return
+                textPaint.alpha = (alpha * 255).toInt()
+                textPaint.textSize = rect.height() * 0.42f
+                val metrics = textPaint.fontMetrics
+                val y = rect.centerY() - (metrics.ascent + metrics.descent) / 2f
+                canvas.drawText(control.label, rect.centerX(), y, textPaint)
+                return
+            }
             val kind = iconFor(control.vitaButton)
             if (kind != null) {
                 // 0.2.63 (A-5): el icono se dibujaba a 0,30 x Ø
@@ -1710,6 +1735,9 @@ class GamepadOverlayView @JvmOverloads constructor(
             }
             if (control.label.isBlank()) return
             textPaint.alpha = (alpha * 255).toInt()
+            // El tamaño fijo de la etiqueta (14 dp) se repone aquí:
+            // una píldora dibujada antes deja textSize escalado.
+            textPaint.textSize = 14f * density
             val metrics = textPaint.fontMetrics
             val y = rect.centerY() - (metrics.ascent + metrics.descent) / 2f
             canvas.drawText(control.label, rect.centerX(), y, textPaint)
@@ -1739,6 +1767,22 @@ class GamepadOverlayView @JvmOverloads constructor(
                 // dibujarse como si lo fuera: fantasma atenuado, sin
                 // icono ni etiqueta, solo para localizarlo.
                 drawGlassBody(canvas, rect, effectiveAlpha() * 0.25f)
+                return
+            }
+            if (control.shape == ControlShape.PILL) {
+                // 0.2.68 (neón): la píldora NO lleva los rombos
+                // genéricos de drawGlassBody (arriba/abajo a 0,92r
+                // con r = ancho/2 caerían fuera de la píldora):
+                // cristal sin adornos + un rombo en cada extremo
+                // del eje horizontal, como en la imagen, y la
+                // etiqueta centrada (drawIconOrLabel, rama PILL).
+                drawGlassBody(canvas, rect, effectiveAlpha(), ornaments = false)
+                drawRipple(canvas, rect, effectiveAlpha())
+                val diamondSize = rect.height() * 0.13f
+                val diamondInset = rect.height() * 0.30f
+                drawDiamondOrnament(canvas, rect.left + diamondInset, rect.centerY(), diamondSize)
+                drawDiamondOrnament(canvas, rect.right - diamondInset, rect.centerY(), diamondSize)
+                drawIconOrLabel(canvas, rect, effectiveAlpha())
                 return
             }
             drawGlassBody(canvas, rect, effectiveAlpha())
@@ -1855,7 +1899,9 @@ class GamepadOverlayView @JvmOverloads constructor(
             // Gota sobre la base, antes del pomo: el pomo queda nitido encima.
             drawRipple(canvas, rect, effectiveAlpha())
             // Pomo del stick: círculo de cristal más pequeño desplazado con el dedo.
-            val knobRadius = radius * 0.34f
+            // 0.2.68 (neón): 0,39 x radio (medido en la imagen:
+            // pomo 0.082W / stick 0.212W = 0,387), no 0,34.
+            val knobRadius = radius * 0.39f
             val cx = rect.centerX() + knobNx * radius * 0.55f
             val cy = rect.centerY() + knobNy * radius * 0.55f
             knobRect.set(cx - knobRadius, cy - knobRadius, cx + knobRadius, cy + knobRadius)
@@ -2487,29 +2533,33 @@ private class PauseWingsView(context: Context) : View(context) {
         }
         for (s in wingSides) {
             // Hoja superior: nace en el borde del círculo y barre
-            // hacia arriba y hacia fuera, con la punta en ~4,15r
-            // (el ancho total de la vista es 4,4 x el botón).
+            // hacia arriba y hacia fuera, con la punta en ~4,55r
+            // (el ancho total de la vista es 4,7 x el botón).
+            // 0.2.68 (neón): hojas más extendidas y más planas que
+            // en 0.2.64 (punta 4,15r -> 4,55r, altura 1,30r ->
+            // 1,10r): en la imagen las alas son más anchas y menos
+            // altas (4,63 x 1,09 del botón).
             upperLeafPath.reset()
             upperLeafPath.apply {
-                moveTo(cx + s * 0.85f * r, cy - 0.65f * r)
-                quadTo(cx + s * 2.40f * r, cy - 1.30f * r, cx + s * 4.15f * r, cy - 0.75f * r)
-                quadTo(cx + s * 2.60f * r, cy - 0.50f * r, cx + s * 0.85f * r, cy - 0.65f * r)
+                moveTo(cx + s * 0.85f * r, cy - 0.55f * r)
+                quadTo(cx + s * 2.65f * r, cy - 1.10f * r, cx + s * 4.55f * r, cy - 0.64f * r)
+                quadTo(cx + s * 2.85f * r, cy - 0.43f * r, cx + s * 0.85f * r, cy - 0.55f * r)
                 close()
             }
             canvas.drawPath(upperLeafPath, ornamentPaint)
             lowerLeafPath.reset()
             lowerLeafPath.apply {
-                moveTo(cx + s * 0.85f * r, cy + 0.65f * r)
-                quadTo(cx + s * 2.40f * r, cy + 1.30f * r, cx + s * 4.15f * r, cy + 0.75f * r)
-                quadTo(cx + s * 2.60f * r, cy + 0.50f * r, cx + s * 0.85f * r, cy + 0.65f * r)
+                moveTo(cx + s * 0.85f * r, cy + 0.55f * r)
+                quadTo(cx + s * 2.65f * r, cy + 1.10f * r, cx + s * 4.55f * r, cy + 0.64f * r)
+                quadTo(cx + s * 2.85f * r, cy + 0.43f * r, cx + s * 0.85f * r, cy + 0.55f * r)
                 close()
             }
             canvas.drawPath(lowerLeafPath, ornamentPaint)
             // Nudito floral donde el ala nace del círculo.
             drawWingDiamond(canvas, cx + s * 0.95f * r, cy, 0.14f * r)
             // Estrellitas en cada punta.
-            drawWingSparkle(canvas, cx + s * 4.15f * r, cy - 0.75f * r, 0.10f * r)
-            drawWingSparkle(canvas, cx + s * 4.15f * r, cy + 0.75f * r, 0.08f * r)
+            drawWingSparkle(canvas, cx + s * 4.55f * r, cy - 0.64f * r, 0.10f * r)
+            drawWingSparkle(canvas, cx + s * 4.55f * r, cy + 0.64f * r, 0.08f * r)
         }
         if (exclude != null) canvas.restore()
     }
