@@ -1,0 +1,62 @@
+diff --git a/app/src/app.cpp b/app/src/app.cpp
+index 37e9b67..f55f610 100644
+--- a/app/src/app.cpp
++++ b/app/src/app.cpp
+@@ -278,7 +278,12 @@ void prepare_game_launch_overlay(EmuEnvState &emuenv) {
+     if (fs::exists(bg_path))
+         renderer.precompile_bg_path = fs_utils::path_to_utf8(bg_path);
+ 
+-    if (renderer::get_shaders_cache_hashs(renderer) && emuenv.cfg.shader_cache) {
++    // Ronda 0.2.68 (load-p1): no precompilar los shaders conocidos cuando
++    // el usuario activa la carga rápida: con compilación asíncrona de
++    // pipelines (3 hilos en este teléfono) los shaders se compilan bajo
++    // demanda durante el juego en vez de bloquear el arranque en negro
++    // durante minutos (precompile serial en batch.cpp:189-226).
++    if (renderer::get_shaders_cache_hashs(renderer) && emuenv.cfg.shader_cache && !emuenv.cfg.skip_shader_precompile) {
+         renderer.precompile_queue = renderer.shaders_cache_hashs;
+         renderer.precompile_progress = 0;
+         renderer.precompile_complete.store(false, std::memory_order_relaxed);
+diff --git a/config/include/config/config.h b/config/include/config/config.h
+index 3d26b74..fed51f4 100644
+--- a/config/include/config/config.h
++++ b/config/include/config/config.h
+@@ -200,6 +200,7 @@ using PhysicalKeyCode = input::PhysicalKeyCode;
+     code(int, "check-for-updates-mode", static_cast<int>(UPDATE_STARTUP_PROMPT), check_for_updates_mode)\
+     code(int, "file-loading-delay", 0, file_loading_delay)                                              \
+     code(bool, "shader-cache", true, shader_cache)                                                      \
++    code(bool, "skip-shader-precompile", false, skip_shader_precompile)                                 \
+     code(bool, "spirv-shader", false, spirv_shader)                                                     \
+     code(bool, "fps-hack", false, fps_hack)                                                             \
+     code(uint64_t, "current-ime-lang", 4, current_ime_lang)                                             \
+diff --git a/config/include/config/state.h b/config/include/config/state.h
+index cb97ded..a6794d9 100644
+--- a/config/include/config/state.h
++++ b/config/include/config/state.h
+@@ -99,6 +99,7 @@ struct Config {
+         bool export_as_png = false;
+         bool fps_hack = false;
+         bool shader_cache = true;
++        bool skip_shader_precompile = false;
+         bool spirv_shader = false;
+         bool texture_cache = true;
+         bool stretch_the_display_area = false;
+diff --git a/config/src/settings.cpp b/config/src/settings.cpp
+index 985857c..7e8cf82 100644
+--- a/config/src/settings.cpp
++++ b/config/src/settings.cpp
+@@ -52,6 +52,7 @@ void copy_global_to_current(Config::CurrentConfig &current, const Config &cfg) {
+     current.export_as_png = cfg.export_as_png;
+     current.fps_hack = cfg.fps_hack;
+     current.shader_cache = cfg.shader_cache;
++    current.skip_shader_precompile = cfg.skip_shader_precompile;
+     current.spirv_shader = cfg.spirv_shader;
+     current.texture_cache = cfg.texture_cache;
+     current.audio_backend = cfg.audio_backend;
+@@ -100,6 +101,7 @@ void copy_current_to_global(Config &cfg, const Config::CurrentConfig &current) {
+     cfg.export_as_png = current.export_as_png;
+     cfg.fps_hack = current.fps_hack;
+     cfg.shader_cache = current.shader_cache;
++    cfg.skip_shader_precompile = current.skip_shader_precompile;
+     cfg.spirv_shader = current.spirv_shader;
+     cfg.texture_cache = current.texture_cache;
+     cfg.audio_backend = current.audio_backend;
