@@ -1,0 +1,39 @@
+diff --git a/renderer/src/vulkan/texture.cpp b/renderer/src/vulkan/texture.cpp
+index 3f7072b..cbcfdea 100644
+--- a/renderer/src/vulkan/texture.cpp
++++ b/renderer/src/vulkan/texture.cpp
+@@ -21,11 +21,13 @@
+ 
+ #include <vulkan/vulkan_format_traits.hpp>
+ 
++#include <atomic>
+ #include <config/state.h>
+ #include <gxm/functions.h>
+ #include <gxm/types.h>
+ #include <renderer/functions.h>
+ #include <util/align.h>
++#include <util/log.h>
+ #include <vkutil/vkutil.h>
+ 
+ namespace renderer::vulkan {
+@@ -199,6 +201,20 @@ void VKTextureCache::prepare_staging_buffer(bool is_configure) {
+ 
+     if (need_wait) {
+         if (staging_buffer->scene_timestamp == current_scene_timestamp) {
++            // Ronda 0.2.70 (aud2 2-P2-3): contador TEMPORAL de entradas en
++            // esta rama: los 16 staging buffers se agotaron dentro de una
++            // escena y el hilo de render hace un submit parcial + espera
++            // infinita a la GPU a mitad de escena. Sin contador no se sabe
++            // si dispara en CoL. Solo cuenta y loguea; NO sube
++            // NB_TEXTURE_STAGING_BUFFERS ni parte la escena. Leer en
++            // vita3k.log: la primera vez + 1 linea cada 100 esperas.
++            // Medicion en telefono pendiente; quitar cuando se mida.
++            static std::atomic<uint64_t> s_mid_scene_staging_waits{ 0 };
++            const uint64_t staging_waits = s_mid_scene_staging_waits.fetch_add(1, std::memory_order_relaxed) + 1;
++            LOG_INFO_ONCE("prepare_staging_buffer: los 16 staging buffers se agotaron dentro de una escena (submit parcial + espera a GPU a mitad de escena)");
++            if (staging_waits % 100 == 0) {
++                LOG_INFO("prepare_staging_buffer: mid-scene staging wait #{}", staging_waits);
++            }
+             assert(current_fence == staging_buffer->waiting_fence);
+             // special case, all the staging buffer are occupied by the current scene
+             // submit the command buffer and wait for it
