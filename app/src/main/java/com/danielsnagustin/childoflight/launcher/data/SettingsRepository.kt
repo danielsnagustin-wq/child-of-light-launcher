@@ -63,6 +63,11 @@ class SettingsRepository(private val context: Context) {
         val MEMORY_MAPPING = stringPreferencesKey("memory_mapping")
         val TEXTURE_CACHE = booleanPreferencesKey("texture_cache")
         val SHADER_CACHE = booleanPreferencesKey("shader_cache")
+        // Ronda 0.2.68 (load-p1, hallazgo Codex paso 1): la carga
+        // rápida necesita su clave DataStore como shaderCache: sin
+        // ella el interruptor se perdía al recargar ajustes (el campo
+        // caía a su default false y no llegaba a config.yml).
+        val SKIP_SHADER_PRECOMPILE = booleanPreferencesKey("skip_shader_precompile")
         val CPU_OPT = booleanPreferencesKey("cpu_opt")
         val FPS_HACK = booleanPreferencesKey("fps_hack")
         val TURBO_MODE = booleanPreferencesKey("turbo_mode")
@@ -141,6 +146,7 @@ class SettingsRepository(private val context: Context) {
             memoryMapping = runCatching { MemoryMapping.valueOf(p[Keys.MEMORY_MAPPING] ?: "PAGE_TABLE") }.getOrDefault(MemoryMapping.PAGE_TABLE),
             textureCache = p[Keys.TEXTURE_CACHE] ?: true,
             shaderCache = p[Keys.SHADER_CACHE] ?: true,
+            skipShaderPrecompile = p[Keys.SKIP_SHADER_PRECOMPILE] ?: false,
             cpuOpt = p[Keys.CPU_OPT] ?: true,
             fpsHack = p[Keys.FPS_HACK] ?: false,
             turboMode = p[Keys.TURBO_MODE] ?: false,
@@ -237,6 +243,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.MEMORY_MAPPING] = settings.memoryMapping.name
             p[Keys.TEXTURE_CACHE] = settings.textureCache
             p[Keys.SHADER_CACHE] = settings.shaderCache
+            p[Keys.SKIP_SHADER_PRECOMPILE] = settings.skipShaderPrecompile
             p[Keys.CPU_OPT] = settings.cpuOpt
             p[Keys.FPS_HACK] = settings.fpsHack
             p[Keys.TURBO_MODE] = settings.turboMode
@@ -310,12 +317,13 @@ class SettingsRepository(private val context: Context) {
         // El estado de entrega del .pkg también se conserva: un preset no
         // es importar un juego nuevo.
         // R4-P1-13: las cachés y el overlay manuales también se
-        // conservan (textureCache, shaderCache, overlay FPS, caché sin
-        // hash, avisos de shaders, detalle y posición del HUD; ver
-        // preserveManualCacheChoices). La divergencia que eso produce
-        // frente al preset queda visible en General como "Perfil
-        // modificado" (ver divergesFromPreset), con la caché de
-        // texturas nombrada explícitamente cuando difiere.
+        // conservan (textureCache, shaderCache, carga rápida,
+        // overlay FPS, caché sin hash, avisos de shaders, detalle y
+        // posición del HUD; ver preserveManualCacheChoices). La
+        // divergencia que eso produce frente al preset queda visible
+        // en General como "Perfil modificado" (ver
+        // divergesFromPreset), con la caché de texturas nombrada
+        // explícitamente cuando difiere.
         // R5-A2-2: el modo rendimiento y el auto-revert a 1x también se
         // conservan AQUÍ, dentro de applyPreset, y ya no en el
         // ViewModel: el auto-revert de la prueba de 30 s (completeBenchmark)
