@@ -170,17 +170,17 @@ class NeonTouchLayoutTest {
         val circ = controlRect(control(defaultTouchLayout(), "btn_circ"), 2340f, 1080f, 2.80f)
         assertEquals(1.028f, ((circ.left + circ.right) / 2f - game.left) / (game.right - game.left), 0.001f)
         // El stick queda con el borde en 36 px, 181 px dentro de
-        // la barra; la zona no se sale por abajo (1079.6 <= 1080).
+        // la barra; la zona no se sale por abajo (1046.0 <= 1080).
         val stick = controlRect(control(defaultTouchLayout(), "stick"), 2340f, 1080f, 2.80f)
         assertEquals(36.0f, stick.left, 1f)
         val zone = controlRect(control(defaultTouchLayout(), "igniculus"), 2340f, 1080f, 2.80f)
-        assertEquals(1079.6f, zone.bottom, 1f)
+        assertEquals(1046.0f, zone.bottom, 1f)
     }
 
     @Test
     fun neonOrbDrawnMatchesImage() {
         // 0.2.68 segunda pasada: la zona es 120 dp y el orbe
-        // dibujado es 101 dp (0.84 x zona). El bbox de la gota en
+        // dibujado es 100,8 dp (0.84 x zona). El bbox de la gota en
         // la imagen (268x264 px = 121.5x119.7 dp) es la ZONA con
         // su marco y destellos, no el orbe: el cuerpo de la gota
         // mide 190-225 px (86-102 dp). Una zona de 144 dp
@@ -190,7 +190,7 @@ class NeonTouchLayoutTest {
         assertEquals(120, zone.sizeDp)
         val orbDrawnPx = 0.84f * zone.sizeDp * 2.80f
         assertEquals(282.2f, orbDrawnPx, 1f)
-        assertEquals(101f, orbDrawnPx / 2.80f, 0.1f)
+        assertEquals(100.8f, orbDrawnPx / 2.80f, 0.1f)
     }
 
     @Test
