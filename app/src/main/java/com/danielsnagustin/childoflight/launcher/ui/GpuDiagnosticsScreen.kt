@@ -213,17 +213,20 @@ fun GpuDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
         // 60 FPS YA NO lo fuerza ON): settings es delegada, así que
         // se captura con let, no con smart cast. Igual que
         // SettingsDiagnosticsScreen.
-        // Ronda 0.2.64: con backend Vulkan la VSync es INERTE (solo la
-        // consume OpenGL): mostrar "— (sin efecto en Vulkan)" en vez
-        // de un "sí" que no significa nada. Y el resumen muestra los
-        // valores EFECTIVOS (frame pacing): mapeo de memoria efectivo
+        // Ronda 0.2.66 (G11-06): con backend Vulkan la VSync elige
+        // el modo de presentación (ON = Fifo, OFF = Mailbox): se
+        // muestra el modo, no "— (sin efecto en Vulkan)" (eso era
+        // verdad hasta la 0.2.65). Y el resumen muestra los valores
+        // EFECTIVOS (frame pacing): mapeo de memoria efectivo
         // (ronda 0.2.66, G11-02: el launcher resuelve el efectivo con
         // la máscara del driver al escribir config.yml; antes el
         // núcleo caía a Double Buffer en silencio si el pedido no
         // estaba soportado) y Surface Sync efectiva.
         val effectiveBackend = settings?.let { resolveBackend(it, g) }
         val vsyncText = if (effectiveBackend == GpuBackend.VULKAN) {
-            "— (sin efecto en Vulkan)"
+            // Ronda 0.2.68 (G11-06): en Vulkan la VSync es el selector
+            // de present mode: ON = Fifo, OFF = Mailbox.
+            if (settings?.let { effectiveSettings(it).vSync } == true) "sí (Fifo)" else "no (Mailbox)"
         } else if (settings?.let { effectiveSettings(it).vSync } == true) {
             "sí"
         } else {
