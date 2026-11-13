@@ -80,21 +80,6 @@ class TurnipDriverRepository(private val context: Context) {
     }
 
     /**
-     * true si hay un zip de driver incluido en assets (ver
-     * BundledTurnipDriver.ASSET_PATH). No abre el zip, solo lista la
-     * carpeta de assets. Sin binario en assets devuelve false y el
-     * launcher sigue con el driver del sistema.
-     */
-    fun bundledAssetPresent(): Boolean {
-        return try {
-            context.assets.list(BundledTurnipDriver.ASSET_DIR)
-                ?.contains(BundledTurnipDriver.EXPECTED_FILE_NAME) == true
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    /**
      * Instala el driver Turnip incluido en assets ("de raíz").
      *
      * Copia el zip de assets a temporal, lo VALIDA (formato
@@ -184,31 +169,66 @@ class TurnipDriverRepository(private val context: Context) {
      * conocidos dentro del vita_fs. Devuelve cuántos archivos borró.
      * Vita3K regenera la caché al jugar (el stutter de la primera
      * partida vuelve temporalmente hasta que se llena de nuevo).
+     *
+     * Ronda 0.2.70 (9-P2-6): los archivos huérfanos de pipeline
+     * cache por versión YA quedan cubiertos por esta limpieza, y
+     * este es el criterio verificado contra el pin (no una
+     * suposición): el .dat vive en
+     * `<vitaRoot>/cache/shaders/<title_id>/<self>/mask-<n>/` con
+     * nombre `pipeline-cache-vk{VERSION}.dat`
+     * (pipeline_cache.cpp:290, 359; `shaders_path = cache_path /
+     * "shaders" / title_id / self_name` con la máscara de g11-05;
+     * `cache_path = <storage_path>/cache` con storage_path =
+     * <filesDir>/vita3k, native_bootstrap.cpp). La versión vigente
+     * es `shader::CURRENT_VERSION = 15` (spirv_recompiler.h:34),
+     * así que el archivo vigente es `pipeline-cache-vk15.dat`. Al
+     * borrar `cache/shaders` ENTERO se borran el vigente y TODOS
+     * los huérfanos de versiones viejas (incluidos los de otras
+     * máscaras y otros títulos): es la rama "o todos" del hallazgo,
+     * y es el comportamiento documentado del botón (el siguiente
+     * arranque recompila). No se hace borrado selectivo por versión:
+     * sería código muerto encima de un borrado total. La prueba
+     * (Ronda070RenderWatchdogTest) fija la regresión con un árbol
+     * falso que incluye vk14/vk15/vk16.
      */
     fun clearShaderCache(): ClearCacheResult {
-        var deletedFiles = 0
-        var deletedDirs = 0
         val vitaRoot = File(context.filesDir, "vita3k")
-        val candidates = listOf(
-            File(vitaRoot, "shader_cache"),
-            File(vitaRoot, "cache/shaders"),
-            // M27: antes se borraba también vita3k/cache/ entero, que es
-            // caché genérica (no solo shaders) pese a lo que decía el
-            // comentario. Ya no se toca.
-        )
-        for (dir in candidates) {
-            if (dir.exists()) {
-                deletedFiles += dir.walkTopDown().count { it.isFile }
-                dir.deleteRecursively()
-                deletedDirs++
-            }
-        }
-        LauncherLog.append(context, "driver", "Caché de shaders limpiada: $deletedFiles archivos en $deletedDirs carpetas")
-        return ClearCacheResult(deletedFiles, deletedDirs)
+        val result = clearShaderCacheIn(vitaRoot)
+        LauncherLog.append(context, "driver", "Caché de shaders limpiada: ${result.deletedFiles} archivos en ${result.deletedDirs} carpetas")
+        return result
     }
 }
 
 data class ClearCacheResult(val deletedFiles: Int, val deletedDirs: Int)
+
+/**
+ * Ronda 0.2.70 (9-P2-6): borrado de la caché de shaders sobre un
+ * vitaRoot dado, sin Context: es [TurnipDriverRepository.clearShaderCache]
+ * extraído para poder probarlo en JVM. Borra `shader_cache` y
+ * `cache/shaders` enteros (con ellos, el pipeline-cache vigente y
+ * todos los huérfanos `pipeline-cache-vk*.dat` de versiones viejas,
+ * que viven dentro de `cache/shaders/<title>/<self>/mask-<n>/`).
+ * No toca `vita3k/cache/` entero (caché genérica, no solo shaders).
+ */
+internal fun clearShaderCacheIn(vitaRoot: File): ClearCacheResult {
+    var deletedFiles = 0
+    var deletedDirs = 0
+    val candidates = listOf(
+        File(vitaRoot, "shader_cache"),
+        File(vitaRoot, "cache/shaders"),
+        // M27: antes se borraba también vita3k/cache/ entero, que es
+        // caché genérica (no solo shaders) pese a lo que decía el
+        // comentario. Ya no se toca.
+    )
+    for (dir in candidates) {
+        if (dir.exists()) {
+            deletedFiles += dir.walkTopDown().count { it.isFile }
+            dir.deleteRecursively()
+            deletedDirs++
+        }
+    }
+    return ClearCacheResult(deletedFiles, deletedDirs)
+}
 
 /** Driver incluido instalado desde assets: nombre guardado + validación. */
 data class BundledInstall(val savedName: String, val info: BundledTurnipDriver.PackageInfo)
