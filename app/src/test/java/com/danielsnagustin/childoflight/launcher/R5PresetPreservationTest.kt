@@ -83,6 +83,22 @@ class R5PresetPreservationTest {
     }
 
     @Test
+    fun preserveManualCacheChoicesKeepsSkipShaderPrecompile() {
+        // Ronda 0.2.68 (load-p1): la carga rápida manual (OFF sobre
+        // un preset Mali que la lleva ON) sobrevive a aplicar un preset.
+        val manual = presetSettings(GpuProfileId.G99_RECOMMENDED).copy(skipShaderPrecompile = false)
+        val applied = preserveManualCacheChoices(presetSettings(GpuProfileId.G99_QUALITY), manual)
+        assertFalse(applied.skipShaderPrecompile)
+        assertEquals(GpuProfileId.G99_QUALITY, applied.activeProfile)
+    }
+
+    @Test
+    fun preservedFieldsDifferWhenOnlySkipShaderPrecompileDiffers() {
+        val current = presetSettings(GpuProfileId.G99_RECOMMENDED).copy(skipShaderPrecompile = false)
+        assertTrue(preservedPresetFieldsDiffer(current, presetSettings(GpuProfileId.G99_RECOMMENDED)))
+    }
+
+    @Test
     fun preservedFieldsDifferIgnoresNonPreservedFields() {
         // La resolución no es un campo preservado: diferir en ella
         // no es "un cambio manual conservado".
