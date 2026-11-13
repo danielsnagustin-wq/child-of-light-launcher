@@ -123,9 +123,17 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
      * llamarlo aquí no cuesta un segundo arranque: el lanzamiento
      * embebido vuelve a llamar a init y sigue igual.
      */
-    private fun ensureCoreInitialized(): Boolean {
+    private suspend fun ensureCoreInitialized(): Boolean {
         if (!Vita3kCoreBridge.available) return false
-        return Vita3kCoreBridge.init(library.vitaRoot.absolutePath) == Vita3kCoreBridge.OK
+        // Ronda 0.2.70 (Área 10, P1-11): el init del instalador es el
+        // tercer camino de init(): también va bajo el Mutex de sesión,
+        // serializado con la destrucción de onDestroy (sin esto, un
+        // instalar justo al salir del juego corría init mientras el
+        // teardown destruía la sesión). La generación además lo cubre
+        // como red (el init con éxito sube la generación).
+        return Vita3kCoreBridge.withSessionLock {
+            Vita3kCoreBridge.init(library.vitaRoot.absolutePath) == Vita3kCoreBridge.OK
+        }
     }
 
     /**
@@ -407,18 +415,4 @@ class EmbeddedPkgInstaller(private val library: GameLibraryRepository) {
         }
     }
 
-    /** ¿Qué .pkg guardados tiene el launcher? (para la UI de instalación). */
-    fun storedGamePkgs(): List<Pair<TitleId, PkgKind>> {
-        val out = mutableListOf<Pair<TitleId, PkgKind>>()
-        for (candidate in TitleId.entries) {
-            // P2-28: buscar en ambos ux0 (el .pkg puede vivir en el antiguo).
-            if (library.findPkgGameFile(candidate.id) != null) {
-                out.add(candidate to PkgKind.GAME)
-            }
-            if (library.findPkgPatchFile(candidate.id) != null) {
-                out.add(candidate to PkgKind.UPDATE)
-            }
-        }
-        return out
-    }
 }
