@@ -199,6 +199,15 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     entry("Carga rápida (sin precompilar shaders)", "carga rapida precompilar shaders arranque negro espera", SettingsCategory.PERFORMANCE),
     entry("Limpiar caché de shaders", "limpiar cache shaders glitches stutter", SettingsCategory.PERFORMANCE),
     entry("Caché de texturas sin hash", "hashless texturas experimental hash", SettingsCategory.PERFORMANCE),
+    // Tercera pasada (A-3): esta entrada NO se filtra con Vulkan
+    // aunque el interruptor esté oculto con ese backend. Filtrar
+    // exigiría el backend EFECTIVO (resolveBackend(settings, gpu):
+    // LauncherSettings + GpuInfo), y searchSettings solo recibe
+    // gpuVendor (el precedente Turnip) ni su único llamador
+    // (SettingsScreen.kt:51) recoge los ajustes: habría que tocar
+    // al llamador fuera del alcance de este arreglo. La entrada se
+    // queda: la nota del destino ya explica que con Vulkan no hay
+    // interruptor y que el control solo aparece con OpenGL.
     entry("Mostrar overlay de FPS", "overlay fps hud mostrar rendimiento", SettingsCategory.PERFORMANCE),
     entry("Detalle del overlay de FPS", "overlay fps detalle minimo bajo medio maximo", SettingsCategory.PERFORMANCE),
     entry("Posición del overlay de FPS", "overlay fps posicion arriba abajo izquierda derecha", SettingsCategory.PERFORMANCE),
