@@ -99,6 +99,8 @@ class SettingsRepository(private val context: Context) {
         // 0.2.63 (E): idioma del juego (sys-lang). Se guarda el
         // nombre del enum; el valor int va en GameLanguage.value.
         val GAME_LANGUAGE = stringPreferencesKey("game_language")
+        // clave opcional de RAWG.io, vacía por defecto
+        val RAWG_API_KEY = stringPreferencesKey("rawg_api_key")
         val PKG_DELIVERED = booleanPreferencesKey("pkg_delivered_to_vita3k")
         val PKG_INSTALLED_IN_VITA3K = booleanPreferencesKey("pkg_installed_in_vita3k")
         val HIDE_TOUCH_GAMEPAD = booleanPreferencesKey("hide_touch_when_gamepad")
@@ -173,6 +175,7 @@ class SettingsRepository(private val context: Context) {
             allowExternalVita3k = p[Keys.ALLOW_EXTERNAL_VITA3K] ?: false,
             psnSignedIn = p[Keys.PSN_SIGNED_IN] ?: true,
             gameLanguage = runCatching { GameLanguage.valueOf(p[Keys.GAME_LANGUAGE] ?: "SPANISH") }.getOrDefault(GameLanguage.SPANISH),
+            rawgApiKey = p[Keys.RAWG_API_KEY] ?: "",
             pkgDeliveredToVita3k = p[Keys.PKG_DELIVERED] ?: false,
             pkgInstalledInVita3k = p[Keys.PKG_INSTALLED_IN_VITA3K] ?: false,
             hideTouchWhenGamepadConnected = p[Keys.HIDE_TOUCH_GAMEPAD] ?: true,
@@ -270,6 +273,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.ALLOW_EXTERNAL_VITA3K] = settings.allowExternalVita3k
             p[Keys.PSN_SIGNED_IN] = settings.psnSignedIn
             p[Keys.GAME_LANGUAGE] = settings.gameLanguage.name
+            p[Keys.RAWG_API_KEY] = settings.rawgApiKey
             p[Keys.PKG_DELIVERED] = settings.pkgDeliveredToVita3k
             p[Keys.PKG_INSTALLED_IN_VITA3K] = settings.pkgInstalledInVita3k
             p[Keys.HIDE_TOUCH_GAMEPAD] = settings.hideTouchWhenGamepadConnected
@@ -508,6 +512,10 @@ internal fun resetDefaultsWithCurrent(base: LauncherSettings, current: LauncherS
         gameLanguage = current?.gameLanguage ?: GameLanguage.SPANISH,
         psnSignedIn = current?.psnSignedIn ?: true,
         allowExternalVita3k = current?.allowExternalVita3k ?: false,
+        // Ronda 0.2.69 (RAWG): la clave RAWG es elección del usuario,
+        // no valor de preset: restablecer no debe borrarla (igual que
+        // mergePresetWithUserChoices la conserva al aplicar un preset).
+        rawgApiKey = current?.rawgApiKey ?: "",
     )
 
 /**
@@ -545,6 +553,8 @@ internal fun mergePresetWithUserChoices(
     // preset se conserva la elección del usuario (si no, cada
     // preset lo devolvería a español sin avisar).
     gameLanguage = current?.gameLanguage ?: GameLanguage.SPANISH,
+    // la llave no es campo de preset, aplicar un preset no debe borrarla (como gameLanguage)
+    rawgApiKey = current?.rawgApiKey ?: "",
     performanceMode = current?.performanceMode ?: true,
     autoRevertTo1xIfBelow28Fps = current?.autoRevertTo1xIfBelow28Fps ?: true,
     pkgDeliveredToVita3k = current?.pkgDeliveredToVita3k ?: false,
