@@ -246,12 +246,15 @@ class TouchOverlayMappingTest {
 
     @Test
     fun stickMayOverhangLeftBlackBarButCenterStaysInside() {
-        // 0.2.58 (R7-P1-05): SOLO el stick pisa la barra negra
-        // lateral como en el mockup. Teléfono 1600x720, densidad
-        // 1.75: el stick guardado en 0.05 queda con el centro en
-        // 228 px (como el mockup, 227 px) y el borde en 65 px, 99 px
+        // 0.2.58 (R7-P1-05): el stick pisa la barra negra lateral
+        // como en el mockup. Teléfono 1600x720, densidad 1.75: el
+        // stick guardado en 0.05 queda con el centro en 228 px
+        // (como el mockup, 227 px) y el borde en 65 px, 99 px
         // dentro de la barra; su centro sigue dentro del rect del
         // juego y nunca se sale de la vista por la izquierda.
+        // 0.2.68 (neón): el clamp ya no es solo para el stick: en
+        // el default neón también L, △, ○, ✕ y R pisan la barra;
+        // este test fija el caso del stick, que no cambia.
         val game = gameRect(1600f, 720f)
         val stick = TouchControl("s", "Stick", "stick", VitaButton.LEFT_STICK, 0.05f, 0.675f, 186, 0.70f)
         val rect = controlRectInGameRect(stick, game, 1.75f)
@@ -277,8 +280,12 @@ class TouchOverlayMappingTest {
         // centro queda en 1.012 del juego (fuera del rect, como en
         // el mockup) y su borde derecho supera gameRight, pero
         // nunca se sale de la vista (tope en el borde derecho).
-        // La relajación es SOLO por id btn_jump, NO por kind
-        // "button": la espada comparte kind y sigue entera dentro.
+        // 0.2.68 (neón): el clamp se generalizó a la vista entera
+        // (controlRectInGameRect ya no relaja solo por id): la
+        // espada comparte kind "button" y sigue entera dentro
+        // POR SU POSICIÓN (0.914), no por una regla por id; el
+        // salto de este test (control construido a mano, 92 dp)
+        // se comporta igual que antes.
         val game = gameRect(1600f, 720f)
         val jump = TouchControl("btn_jump", "Salto", "button", VitaButton.CROSS, 1.012f, 0.752f, 92, 0.80f)
         val rect = controlRectInGameRect(jump, game, 1.75f)
@@ -342,9 +349,10 @@ class TouchOverlayMappingTest {
         val controls = defaultTouchLayout()
         val visible = TouchOverlayMapping.visibleControls(controls)
         assertEquals(controls.size, visible.size)
-        val hidden = controls.map { if (it.id == "btn_jump") it.copy(visible = false) else it }
+        // 0.2.68 (neón): el botón oculto de prueba es la ✕ del rombo.
+        val hidden = controls.map { if (it.id == "btn_cross") it.copy(visible = false) else it }
         assertEquals(controls.size - 1, TouchOverlayMapping.visibleControls(hidden).size)
-        assertTrue(TouchOverlayMapping.visibleControls(hidden).none { it.id == "btn_jump" })
+        assertTrue(TouchOverlayMapping.visibleControls(hidden).none { it.id == "btn_cross" })
         // Perfil con todo borrado/oculto: no hay nada que mostrar.
         assertTrue(TouchOverlayMapping.visibleControls(emptyList()).isEmpty())
     }
