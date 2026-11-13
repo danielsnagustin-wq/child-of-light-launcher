@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
@@ -137,6 +138,15 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
     // abajo lo usan para activarse y para el clamp. El tamaño que
     // usa el arrastre vive dentro de TouchPreview.
     var previewSize by remember { mutableStateOf(IntSize.Zero) }
+    // 0.2.68 (neón): barra negra lateral como fracción del ancho
+    // del juego, desde el aspecto de la pantalla en apaisado
+    // (max/min en dp): la vista previa es el rect del juego y el
+    // editor debe dejar pisar la barra a L, R y ○ como en la
+    // imagen. Los sliders y el arrastre usan este tope.
+    val configuration = LocalConfiguration.current
+    val screenAspect = maxOf(configuration.screenWidthDp, configuration.screenHeightDp).toFloat() /
+        minOf(configuration.screenWidthDp, configuration.screenHeightDp).toFloat().coerceAtLeast(1f)
+    val barFraction = TouchOverlayMapping.barFractionForAspect(screenAspect)
     // R4-P1-4: modo "probar mando" del editor: tocar un botón en la
     // vista previa lo resalta y muestra su etiqueta y su asignación,
     // sin moverlo ni guardar nada. Sin juego en curso no hay SDL que
@@ -216,6 +226,7 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             layout = layout,
             testMode = testMode,
             lastTestedId = lastTestedId,
+            barFraction = barFraction,
             onSelect = { selectedId = it },
             onTested = { lastTestedId = it; selectedId = it },
             onDraggingChanged = { isDragging = it },
@@ -358,20 +369,29 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             // dibuja el juego (fracción del alto del juego si el
             // control la trae, dp si no): el clamp de posición y la
             // vista previa usan ese tamaño, no el sizeDp guardado.
+            // 0.2.68 (neón): el ancho efectivo es el de la píldora
+            // (controlWidthPx); la X se clampa con él.
             val effectiveSizePx = if (previewSize.width > 0 && previewSize.height > 0) {
                 TouchOverlayMapping.controlSizePx(control, previewSize.height.toFloat(), density.density)
             } else {
                 with(density) { control.sizeDp.dp.toPx() }
             }
-            val halfXFrac = if (previewSize.width > 0) (effectiveSizePx / 2f) / previewSize.width else 0f
+            val effectiveWidthPx = if (previewSize.width > 0 && previewSize.height > 0) {
+                TouchOverlayMapping.controlWidthPx(control, previewSize.height.toFloat(), density.density)
+            } else {
+                effectiveSizePx
+            }
+            val halfXFrac = if (previewSize.width > 0) (effectiveWidthPx / 2f) / previewSize.width else 0f
             val halfYFrac = if (previewSize.height > 0) (effectiveSizePx / 2f) / previewSize.height else 0f
-            // 0.2.58 (R7): el slider X del salto llega a 110 % (su
-            // centro de fábrica es 1.012); con el rango 0..100 el
-            // slider mostraría 101 fuera de rango y al moverlo
-            // perdería el valor del mockup. Los demás controles
-            // siguen en 0..100.
-            val xRange = if (control.id == "btn_jump") 0..110 else 0..100
-            SettingSlider("Posición X", (control.xFraction * 100).toInt(), xRange, { updateControl(control.copy(xFraction = TouchLayoutRepository.clampCenterFraction(it / 100f, halfXFrac, if (control.id == "btn_jump") TouchLayoutRepository.JUMP_MAX_X_FRACTION else null))) }, enabled = previewMeasured) { "$it%" }
+            // 0.2.68 (neón): el slider X llega hasta la barra negra
+            // (centro entre half - barra y 1 + barra - half, como el
+            // arrastre): L en -1 %, R en 102 %, ○ en 103 % y el salto
+            // viejo en 101 % caben en el rango. Con el rango 0..100
+            // el slider mostraría esos valores fuera de rango y al
+            // moverlo perdería el valor de fábrica.
+            val barPct = (barFraction * 100).toInt()
+            val xRange = (-barPct - 5)..(100 + barPct + 5)
+            SettingSlider("Posición X", (control.xFraction * 100).toInt(), xRange, { updateControl(control.copy(xFraction = TouchLayoutRepository.clampCenterFraction(it / 100f, halfXFrac, 1f + barFraction - halfXFrac, halfXFrac - barFraction))) }, enabled = previewMeasured) { "$it%" }
             SettingSlider("Posición Y", (control.yFraction * 100).toInt(), 0..100, { updateControl(control.copy(yFraction = TouchLayoutRepository.clampCenterFraction(it / 100f, halfYFrac))) }, enabled = previewMeasured) { "$it%" }
             // 0.2.64 (A-7): el slider muestra el tamaño EFECTIVO en
             // dp en ESTE teléfono (fracción x alto del juego /
@@ -393,9 +413,18 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
             SettingSlider("Tamaño", effectiveSizeDp, 40..260, { newSizeDp ->
                 updateControl(
                     if (control.sizeFraction != null) {
-                        control.copy(sizeDp = newSizeDp, sizeFraction = TouchOverlayMapping.sizeFractionForReferenceDp(newSizeDp))
+                        // 0.2.68 (neón): la píldora conserva su
+                        // aspecto (ancho/alto) al redimensionar.
+                        val newSizeFraction = TouchOverlayMapping.sizeFractionForReferenceDp(newSizeDp)
+                        val newWidthFraction = control.widthFraction?.let { w ->
+                            control.sizeFraction?.let { s -> if (s > 0f) newSizeFraction * (w / s) else w }
+                        }
+                        control.copy(sizeDp = newSizeDp, sizeFraction = newSizeFraction, widthFraction = newWidthFraction)
                     } else {
-                        control.copy(sizeDp = newSizeDp, sizeFraction = null)
+                        val newWidthFraction = control.widthFraction?.let { w ->
+                            if (control.sizeDp > 0) w * newSizeDp.toFloat() / control.sizeDp.toFloat() else w
+                        }
+                        control.copy(sizeDp = newSizeDp, sizeFraction = null, widthFraction = newWidthFraction)
                     },
                 )
             }) { "${it}dp" }
@@ -406,8 +435,35 @@ fun TouchLayoutScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                 ControlShape.entries.forEach { shape ->
                     FilterChip(
                         selected = control.shape == shape,
-                        onClick = { updateControl(control.copy(shape = shape)) },
-                        label = { Text(if (shape == ControlShape.CIRCLE) "Círculo" else "Cuadrado") },
+                        // 0.2.68 (neón): al pasar a Píldora el control
+                        // toma el ancho por defecto (2.1 x el alto);
+                        // al salir de Píldora vuelve a cuadrado (el
+                        // ancho se ignora si la forma no es PILL).
+                        onClick = {
+                            updateControl(
+                                when (shape) {
+                                    ControlShape.PILL -> {
+                                        val aspect = TouchOverlayMapping.PILL_ASPECT_DEFAULT
+                                        // Ancho = 2.1 x alto, en la unidad
+                                        // del control (fracción si la trae,
+                                        // si no la del dp de referencia).
+                                        val width = control.sizeFraction?.let { it * aspect }
+                                            ?: TouchOverlayMapping.sizeFractionForReferenceDp(control.sizeDp) * aspect
+                                        control.copy(shape = shape, widthFraction = width)
+                                    }
+                                    else -> control.copy(shape = shape, widthFraction = null)
+                                },
+                            )
+                        },
+                        label = {
+                            Text(
+                                when (shape) {
+                                    ControlShape.CIRCLE -> "Círculo"
+                                    ControlShape.PILL -> "Píldora"
+                                    else -> "Cuadrado"
+                                },
+                            )
+                        },
                         modifier = Modifier.padding(end = 6.dp),
                     )
                 }
@@ -574,6 +630,9 @@ private fun TouchPreview(
     layout: List<TouchControl>,
     testMode: Boolean,
     lastTestedId: String?,
+    // 0.2.68 (neón): barra negra lateral como fracción del ancho
+    // del juego (la pasa la pantalla): el arrastre puede pisarla.
+    barFraction: Float,
     onSelect: (String) -> Unit,
     onTested: (String) -> Unit,
     onDraggingChanged: (Boolean) -> Unit,
@@ -609,10 +668,18 @@ private fun TouchPreview(
                     // 0.2.64 (A-7): el tamaño dibujado es el efectivo
                     // (fracción del alto de la previa si el control
                     // la trae, dp si no), igual que en el juego.
+                    // 0.2.68 (neón): las píldoras usan su ancho
+                    // (controlWidthPx) y forma de estadio.
                     val density = LocalDensity.current
                     val sizePx = TouchOverlayMapping.controlSizePx(control, previewSize.height.toFloat(), density.density)
+                    val widthPx = TouchOverlayMapping.controlWidthPx(control, previewSize.height.toFloat(), density.density)
                     val size = with(density) { sizePx.toDp() }
-                    val shape = if (control.shape == ControlShape.CIRCLE) CircleShape else RoundedCornerShape(8.dp)
+                    val width = with(density) { widthPx.toDp() }
+                    val shape = when (control.shape) {
+                        ControlShape.CIRCLE -> CircleShape
+                        ControlShape.PILL -> RoundedCornerShape(50)
+                        else -> RoundedCornerShape(8.dp)
+                    }
                     val isTested = testMode && lastTestedId == control.id
                     Box(
                         modifier = Modifier
@@ -620,14 +687,19 @@ private fun TouchPreview(
                                 // B4 (auditoría UI): antes solo había tope
                                 // izquierdo/superior y el botón se salía por
                                 // derecha/abajo (hasta sizePx/2 fuera).
+                                // 0.2.68 (neón): la X usa el ANCHO de la
+                                // píldora, no su alto. La previa no tiene
+                                // barra negra: una píldora de la barra se
+                                // ve pegada a su borde (solo visual; la
+                                // fracción guardada no se toca aquí).
                                 IntOffset(
-                                    x = ((control.xFraction * previewSize.width) - sizePx / 2).toInt()
-                                        .coerceIn(0, (previewSize.width - sizePx).toInt().coerceAtLeast(0)),
+                                    x = ((control.xFraction * previewSize.width) - widthPx / 2).toInt()
+                                        .coerceIn(0, (previewSize.width - widthPx).toInt().coerceAtLeast(0)),
                                     y = ((control.yFraction * previewSize.height) - sizePx / 2).toInt()
                                         .coerceIn(0, (previewSize.height - sizePx).toInt().coerceAtLeast(0)),
                                 )
                             }
-                            .size(size)
+                            .size(width, size)
                             .alpha(control.opacity)
                             .background(
                                 // R4-P1-4: ambas ramas devuelven Brush.
@@ -696,10 +768,17 @@ private fun TouchPreview(
                                         // tope normal el arrastre lo devolvería
                                         // a 0.937 y perdería el arreglo. La Y
                                         // sigue con el tope normal.
+                                        // 0.2.68 (neón): TODOS los controles
+                                        // pueden pisar la barra (L en -0.012,
+                                        // R en 1.016, ○ en 1.028): el tope es
+                                        // el control entero dentro de la VISTA
+                                        // (half - barra .. 1 + barra - half).
+                                        val halfW = (widthPx / 2f) / previewSize.width
                                         val nx = TouchLayoutRepository.clampCenterFraction(
                                             current.xFraction + dragAmount.x / previewSize.width,
-                                            (sizePx / 2f) / previewSize.width,
-                                            if (control.id == "btn_jump") TouchLayoutRepository.JUMP_MAX_X_FRACTION else null,
+                                            halfW,
+                                            1f + barFraction - halfW,
+                                            halfW - barFraction,
                                         )
                                         val ny = TouchLayoutRepository.clampCenterFraction(
                                             current.yFraction + dragAmount.y / previewSize.height,
@@ -716,12 +795,13 @@ private fun TouchPreview(
                         contentAlignment = Alignment.Center,
                     ) {
                         // 0.2.56: orbe interior como en el juego:
-                        // pomo del stick (42% del tamano) y orbe de
-                        // Igniculus (84% de la zona), con el mismo
-                        // cristal. La etiqueta va encima de todo.
+                        // pomo del stick (0,39 del tamano, como en
+                        // el juego 0.2.68) y orbe de Igniculus (84%
+                        // de la zona), con el mismo cristal. La
+                        // etiqueta va encima de todo.
                         if (control.kind == "stick") {
                             Box(
-                                modifier = Modifier.size(size * 0.42f)
+                                modifier = Modifier.size(size * 0.39f)
                                     .background(touchPreviewGlassBrush(parseHex(control.colorHex)), CircleShape)
                                     .border(1.dp, ColIceBlue.copy(alpha = 0.7f), CircleShape),
                             )
