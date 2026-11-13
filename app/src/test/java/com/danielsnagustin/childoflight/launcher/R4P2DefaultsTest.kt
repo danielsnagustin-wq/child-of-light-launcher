@@ -42,6 +42,11 @@ import org.junit.Test
  * zona Igniculus 104 dp, orbe dibujado 87 dp; espada 86 dp y salto
  * 87 dp en default/externo, 77 dp en una mano; pausa 52 dp y
  * círculo 41 dp). Las posiciones no cambian.
+ * 0.2.68 (neón): el default es la imagen 52710_13_ua6f.png tal
+ * cual (stick 177 dp, zona Igniculus 120 dp con orbe dibujado
+ * 101 dp, botones de cara 60 dp, pausa 50 dp); una mano cambia
+ * a 10 controles con anclas de pulgar (stick 174 dp, zona
+ * 104 dp, mismas posiciones) y el externo espeja el neón.
  * R5-A1-8: la paleta ya no lleva el morado
  * rosado #BA68C8; el test endurecido afirma que TODA la paleta
  * está en el conjunto identidad documentado abajo.
@@ -51,46 +56,43 @@ class R4P2DefaultsTest {
     @Test
     fun defaultStickIsBigEnoughForTheThumb() {
         val stick = defaultTouchLayout().first { it.id == "stick" }
-        // 0.2.63 (A-1): 174 dp de diámetro: el círculo de cristal
-        // del mockup (385 px, 45 % de la altura del mockup) a
-        // densidad real 2.80 del teléfono (1080x2340): 174 x 2.80 =
-        // 487 px = 45 % de los 1080 px del rectángulo de juego. La
-        // 0.2.57 usaba densidad 1.75 (la del Galaxy A07, no la de
-        // este teléfono) y salía a 186 dp, un 7 % demasiado grande.
-        assertEquals(174, stick.sizeDp)
+        // 0.2.68 (neón): 177 dp de diámetro: el círculo de cristal
+        // de la imagen (0.212W x 2340 = 496 px, 45,9 % de los 1080
+        // px del rectángulo de juego) a densidad real 2.80 del
+        // teléfono (1080x2340): 177 x 2.80 = 496 px. La 0.2.63 lo
+        // dejaba en 174 dp (487 px) y la 0.2.57 en 186 dp.
+        assertEquals(177, stick.sizeDp)
         assertTrue("el stick sigue siendo usable", stick.sizeDp >= 80)
         // Pegado al borde izquierdo del juego, abajo.
-        assertEquals(0.05f, stick.xFraction, 0.001f)
-        assertEquals(0.675f, stick.yFraction, 0.001f)
+        assertEquals(0.035f, stick.xFraction, 0.001f)
+        assertEquals(0.700f, stick.yFraction, 0.001f)
     }
 
     @Test
     fun defaultIgniculusIsBottomRightWithTheActionGroup() {
         val zone = defaultTouchLayout().first { it.id == "igniculus" }
-        // 0.2.63 (A-1): junto a la espada y el salto, abajo a la
-        // derecha, con su orbe a la medida del mockup (zona de
-        // 104 dp, orbe dibujado a 0.42 x ancho = 87 dp). La 0.2.57
-        // lo dejaba en 115 dp (densidad 1.75, la del Galaxy A07) y
-        // la 0.2.54 en 156 dp de zona (orbe 131 dp), gigantes en el
-        // teléfono.
-        assertEquals(0.82f, zone.xFraction, 0.001f)
-        assertEquals(0.808f, zone.yFraction, 0.001f)
+        // 0.2.68 (neón): junto al rombo, abajo a la derecha, con
+        // su orbe a la medida de la imagen (zona de 120 dp, orbe
+        // dibujado a 0.42 x ancho = 101 dp). La 0.2.63 lo dejaba en
+        // 104 dp de zona (orbe 87 dp) y la 0.2.57 en 115 dp.
+        assertEquals(0.781f, zone.xFraction, 0.001f)
+        assertEquals(0.813f, zone.yFraction, 0.001f)
         assertTrue("Igniculus en la mitad inferior (y > 0.45)", zone.yFraction > 0.45f)
-        assertEquals(104, zone.sizeDp)
+        assertEquals(120, zone.sizeDp)
         assertEquals(0.25f, zone.opacity, 0.001f)
     }
 
     @Test
-    fun builtInSticksAreUnifiedAt174Dp() {
-        // 0.2.63 (A-1): los tres perfiles llevan el stick en 174 dp,
-        // en su posición de fábrica.
-        for (profile in builtInProfiles()) {
-            val stick = profile.controls.first { it.id == "stick" }
-            assertEquals("stick del perfil ${profile.id}", 174, stick.sizeDp)
-        }
-        assertEquals(0.05f, defaultTouchLayout().first { it.id == "stick" }.xFraction, 0.001f)
+    fun builtInStickSizesMatchTheirDesigns() {
+        // 0.2.68 (neón): default y externo llevan el stick en
+        // 177 dp (imagen); una mano es otro diseño y conserva su
+        // stick en 174 dp, en su posición de fábrica.
+        assertEquals(177, defaultTouchLayout().first { it.id == "stick" }.sizeDp)
+        assertEquals(177, externalGamepadLayout().first { it.id == "stick" }.sizeDp)
+        assertEquals(174, oneHandLayout().first { it.id == "stick" }.sizeDp)
+        assertEquals(0.035f, defaultTouchLayout().first { it.id == "stick" }.xFraction, 0.001f)
         assertEquals(0.05f, oneHandLayout().first { it.id == "stick" }.xFraction, 0.001f)
-        assertEquals(0.05f, externalGamepadLayout().first { it.id == "stick" }.xFraction, 0.001f)
+        assertEquals(0.035f, externalGamepadLayout().first { it.id == "stick" }.xFraction, 0.001f)
     }
 
     @Test
@@ -101,8 +103,9 @@ class R4P2DefaultsTest {
         assertEquals(0.80f, oneHand.yFraction, 0.001f)
         assertTrue(oneHand.yFraction > 0.45f)
         val external = externalGamepadLayout().first { it.id == "igniculus" }
-        assertEquals(0.82f, external.xFraction, 0.001f)
-        assertEquals(0.808f, external.yFraction, 0.001f)
+        // 0.2.68 (neón): el externo espeja el default neón.
+        assertEquals(0.781f, external.xFraction, 0.001f)
+        assertEquals(0.813f, external.yFraction, 0.001f)
         assertTrue(external.yFraction > 0.45f)
     }
 
