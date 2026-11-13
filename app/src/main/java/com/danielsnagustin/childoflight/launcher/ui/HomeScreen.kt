@@ -55,6 +55,8 @@ import com.danielsnagustin.childoflight.launcher.model.IconSize
 import com.danielsnagustin.childoflight.launcher.model.TROPHIES_20
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.text.style.TextOverflow
 
 /**
  * Pantalla principal: portada grande + JUGAR/IMPORTAR, Dark Fantasy
@@ -209,6 +211,19 @@ private fun GameCard(
     // dentro de sí (le pasamos el flujo), así solo la tarjeta se
     // recompone con cada %.
     val cover by vm.coverBitmap.collectAsState()
+    val rawgDetails by vm.rawgDetails.collectAsState()
+    val rawgCover by vm.rawgCover.collectAsState()
+    val rawgRefreshing by vm.rawgRefreshing.collectAsState()
+    val settings by vm.settingsFlow.collectAsState(initial = null)
+    val rawgKeyPresent = !settings?.rawgApiKey.isNullOrBlank()
+    // La descarga de los datos de RAWG se realiza bajo demanda al entrar en Home
+    // cuando hay clave API y aún no hay ficha; no bloquea la UI y si falla
+    // la tarjeta sigue mostrando los datos locales sin errores visibles.
+    LaunchedEffect(rawgKeyPresent, rawgDetails) {
+        if (rawgKeyPresent && rawgDetails == null) {
+            vm.refreshRawgDetails()
+        }
+    }
 
     val gameOk = status.gameInstalled
 
@@ -394,6 +409,64 @@ private fun GameCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = mutedTextColor(dark),
                     )
+                    if (rawgDetails != null || rawgKeyPresent) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        val details = rawgDetails
+                        if (details != null) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (rawgCover != null) {
+                                    Image(
+                                        bitmap = rawgCover!!,
+                                        contentDescription = "Imagen de RAWG.io",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(96.dp)
+                                            .clip(RoundedCornerShape(12.dp)),
+                                    )
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    if (details.genres.isNotEmpty()) {
+                                        Text(
+                                            details.genres.joinToString(" · "),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = mutedTextColor(dark),
+                                        )
+                                    }
+                                    if (details.released != null) {
+                                        Text(
+                                            "Lanzamiento: ${details.released}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = mutedTextColor(dark),
+                                        )
+                                    }
+                                    if (!details.description.isNullOrBlank()) {
+                                        Text(
+                                            details.description,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = mutedTextColor(dark),
+                                            maxLines = 3,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SecondaryButton(
+                            if (rawgRefreshing) "Actualizando…" else "Actualizar ficha",
+                            onClick = { vm.refreshRawgDetails(force = true) },
+                            enabled = !rawgRefreshing,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "Datos de RAWG.io",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = mutedTextColor(dark),
+                        )
+                    }
                 } else {
                     PrimaryButton(strings.importGame.uppercase(), onClick = { onNavigate(Screen.IMPORT) })
                 }
