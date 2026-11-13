@@ -193,6 +193,9 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     // --- Rendimiento ---
     entry("Caché de texturas", "cache texturas texture cache ram", SettingsCategory.PERFORMANCE),
     entry("Caché de shaders", "cache shaders shader cache", SettingsCategory.PERFORMANCE),
+    // Ronda 0.2.68 (load-p1): la carga rápida es el interruptor nuevo
+    // de Rendimiento; sin esta entrada el buscador no la encontraba.
+    entry("Carga rápida (sin precompilar shaders)", "carga rapida precompilar shaders arranque negro espera", SettingsCategory.PERFORMANCE),
     entry("Limpiar caché de shaders", "limpiar cache shaders glitches stutter", SettingsCategory.PERFORMANCE),
     entry("Caché de texturas sin hash", "hashless texturas experimental hash", SettingsCategory.PERFORMANCE),
     entry("Mostrar overlay de FPS", "overlay fps hud mostrar rendimiento", SettingsCategory.PERFORMANCE),
