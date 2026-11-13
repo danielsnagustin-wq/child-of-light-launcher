@@ -88,6 +88,10 @@ fun resetCategorySettings(current: LauncherSettings, category: SettingsCategory)
             // preset a mano, ni en el auto-revert de la prueba de 30 s.
             textureCache = preset.textureCache,
             shaderCache = preset.shaderCache,
+            // Ronda 0.2.68 (load-p1): la carga rápida es de Rendimiento
+            // y el reset la devuelve al valor del preset (true en
+            // Mali/G99, false en el resto), como shaderCache.
+            skipShaderPrecompile = preset.skipShaderPrecompile,
             showFpsOverlay = preset.showFpsOverlay,
             performanceOverlayDetail = preset.performanceOverlayDetail,
             performanceOverlayPosition = preset.performanceOverlayPosition,
