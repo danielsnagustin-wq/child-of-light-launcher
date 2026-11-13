@@ -36,6 +36,13 @@ data class DlcInfo(
     /** true si el DLC es un .pkg guardado (ux0/pkg/dlc/), no una carpeta extraída. */
     val isPkg: Boolean = false,
     /**
+     * Ronda 0.2.70, 7-P2-10: true si el .pkg guardado trae el header
+     * ilegible y no se pudo comprobar su región: se lista bajo el
+     * título efectivo por mejor esfuerzo, pero la UI lo marca como
+     * de región desconocida en vez de atribuirlo en silencio.
+     */
+    val regionUnknown: Boolean = false,
+    /**
      * Clave de fusión (P1-2, 2026-11-09): el nombre corto del contenido
      * ("CHILDOFLIGHTDLC1"). El núcleo nombra la carpeta en addcont/ con
      * ese nombre (pin interface.cpp: el Content ID menos sus 20 primeros
@@ -97,6 +104,10 @@ data class GameStatus(
      */
     val licenseInstalledInCore: Boolean = false,
     val dlcs: List<DlcInfo> = emptyList(),
+    /** DLCs realmente extraídos en addcont/ (sin contar .pkg guardados). */
+    val installedDlcCount: Int get() = dlcs.count { !it.isPkg },
+    /** DLCs solo guardados como .pkg (aún no instalados en el núcleo). */
+    val storedDlcPkgCount: Int get() = dlcs.count { it.isPkg },
     val updateInstalled: Boolean = false,
     /**
      * R6-P1-05: true si hay un update .pkg GUARDADO (pkg/patch/<TITLE>.pkg)
