@@ -90,13 +90,13 @@ class RoutedPointerTest {
     @Test
     fun pauseWingsAreWiderThanTheButtonAndCenteredOnIt() {
         // Pausa de 52 dp a 2.80 en 2340x1080: botón 145 px en
-        // (1097, 3); las alas son 4,4 x de ancho y 1,5 x de alto,
+        // (1097, 3); las alas son 4.7 x de ancho y 1.07 x de alto,
         // centradas en el botón.
         val pause = OverlayChildLayout(sizePx = 145, leftMargin = 1097, topMargin = 3)
         val wings = pauseWingsLayout(pause)
-        assertEquals(638, wings.widthPx)
-        assertEquals(217, wings.heightPx)
-        assertEquals(1097 + (145 - 638) / 2, wings.leftMargin)
-        assertEquals(3 + (145 - 217) / 2, wings.topMargin)
+        assertEquals(681, wings.widthPx)
+        assertEquals(155, wings.heightPx)
+        assertEquals(1097 + (145 - 681) / 2, wings.leftMargin)
+        assertEquals(3 + (145 - 155) / 2, wings.topMargin)
     }
 }
