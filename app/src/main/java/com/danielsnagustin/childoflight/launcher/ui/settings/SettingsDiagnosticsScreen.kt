@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -65,7 +66,10 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
     val firmwareStatus by vm.firmwareStatusFlow.collectAsState()
     val embeddedCore by vm.embeddedCoreFlow.collectAsState()
     val s = settings
-    val lastFps = benchmarks.firstOrNull { it.fpsAvg != null }?.fpsAvg
+    // Ronda 0.2.70 Area 6 (6-P2-7): el ultimo FPS es un derivado del
+    // State de benchmarks: con derivedStateOf solo se recalcula cuando
+    // cambia la lista, no en cada recomposicion de la pantalla.
+    val lastFps by remember { derivedStateOf { benchmarks.firstOrNull { it.fpsAvg != null }?.fpsAvg } }
     val recentErrors = remember(safeLogText) { extractRecentErrorLines(safeLogText) }
     // R4-P1-14: textos segun el tema (en Claro, blanco sobre fondo claro no se lee).
     val dark = isDarkUi(LocalUiPreferences.current)
@@ -154,7 +158,7 @@ fun SettingsDiagnosticsScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 SectionTitle("Corrección de errores")
                 NoteText("Mitigaciones del launcher (no reescriben el núcleo del juego). Si algo falla, empieza por el Modo seguro.")
                 SettingSwitch("Cerrar apps en segundo plano antes de jugar", "Best-effort con el permiso del sistema. Libera RAM antes de lanzar.", s.closeBackgroundApps) { vm.saveSettings(s.copy(closeBackgroundApps = it)) }
-                SettingSwitch("Modo seguro", "Fuerza 1x, SDL, High Accuracy OFF, sin caché sin hash, Double Buffer, driver del sistema (neutraliza Turnip) y sin retraso de carga. Para cuando algo falle.", s.safeMode) { vm.setSafeMode(it) }
+                SettingSwitch("Modo seguro", "Fuerza 1x, SDL, High Accuracy OFF, sin caché sin hash, Double Buffer, driver del sistema (neutraliza Turnip), sin retraso de carga, optimización de CPU ON y audio SDL experimental OFF. Para cuando algo falle.", s.safeMode) { vm.setSafeMode(it) }
             }
         }
     }
