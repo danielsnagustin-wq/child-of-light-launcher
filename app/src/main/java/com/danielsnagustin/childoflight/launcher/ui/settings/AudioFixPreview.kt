@@ -18,9 +18,12 @@ fun audioFixTarget(current: LauncherSettings): LauncherSettings = current.copy(
     audioBackend = AudioBackend.SDL,
     ngsEnable = true,
     shaderCache = true,
+    // Ronda 0.2.70 (5-P2-3): "Corregir audio" promete volver a un audio
+    // conocido-bueno: el experimento también se apaga (como el modo seguro).
+    expAudioSdl = false,
 )
 
-/** Las 3 filas que muestra el diálogo de confirmación (antes -> después). */
+/** Las 4 filas que muestra el diálogo de confirmación (antes -> después). */
 fun audioFixChanges(current: LauncherSettings): List<AudioFixChange> {
     val target = audioFixTarget(current)
     fun onOff(value: Boolean) = if (value) "ON" else "OFF"
@@ -39,6 +42,11 @@ fun audioFixChanges(current: LauncherSettings): List<AudioFixChange> {
             "Caché de shaders",
             onOff(current.shaderCache),
             onOff(target.shaderCache),
+        ),
+        AudioFixChange(
+            "Audio experimental (SDL y Cubeb)",
+            onOff(current.expAudioSdl),
+            onOff(target.expAudioSdl),
         ),
     )
 }
