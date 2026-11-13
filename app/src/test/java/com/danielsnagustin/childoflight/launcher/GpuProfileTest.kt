@@ -7,7 +7,6 @@ import com.danielsnagustin.childoflight.launcher.model.GpuInfo
 import com.danielsnagustin.childoflight.launcher.model.GpuProfileId
 import com.danielsnagustin.childoflight.launcher.model.GpuVendor
 import com.danielsnagustin.childoflight.launcher.model.LauncherSettings
-import com.danielsnagustin.childoflight.launcher.model.MemoryMapping
 import com.danielsnagustin.childoflight.launcher.model.apply60FpsMode
 import com.danielsnagustin.childoflight.launcher.model.applyLowRamDefaults
 import com.danielsnagustin.childoflight.launcher.model.applySafeMode
