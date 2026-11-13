@@ -27,7 +27,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
@@ -227,7 +226,7 @@ fun ImportScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             // estable a cada fila).
                             key(dlc.dlcId) {
                                 Text(
-                                    "✓ ${dlc.dlcId} · ${DownloadsCleanup.formatBytes(dlc.sizeBytes)}" + if (dlc.isPkg) " (.pkg)" else "",
+                                    "✓ ${dlc.dlcId} · ${DownloadsCleanup.formatBytes(dlc.sizeBytes)}" + (if (dlc.isPkg) " (.pkg)" else "") + (if (dlc.regionUnknown) " · región desconocida" else ""),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = cardTextColor(dark),
                                 )
