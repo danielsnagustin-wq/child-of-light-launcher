@@ -20,6 +20,7 @@ import com.danielsnagustin.childoflight.launcher.data.SettingsRepository
 import com.danielsnagustin.childoflight.launcher.data.TouchLayoutRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Menú de pausa propio del launcher (Compose, AMOLED #10131D + azul hielo).
@@ -93,7 +94,11 @@ class PauseMenuActivity : ComponentActivity() {
                 .onFailure {
                     LauncherLog.append(this@PauseMenuActivity, "session", "No se pudieron cargar las sesiones en el menú de pausa: ${it.message}")
                 }
-            sessionsReady = true
+            // Tercera pasada (N-4): sessionsReady es MutableState de
+            // Compose: se escribe en Main, no en IO (la escritura
+            // desde IO era benigna — SnapshotMutableState es
+            // thread-safe — pero es una carrera de un frame).
+            withContext(Dispatchers.Main) { sessionsReady = true }
         }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = ColAccent, secondary = ColAccent)) {
