@@ -111,6 +111,13 @@ fun SettingsGpuScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Sc
                 if (displayedAniso != s.anisotropicFiltering) {
                     NoteText("El valor guardado (${s.anisotropicFiltering}x) supera el máximo de este teléfono (${gpu?.maxAnisotropy}x): se usa ${displayedAniso}x.")
                 }
+                // Ronda 0.2.70 (11-P2-3): con máximo desconocido la UI
+                // ofrecía 16x sin avisar de que el generador lo recorta
+                // al tope seguro 8x: se muestra la misma nota que en el
+                // config.yml cuando el valor guardado supera 8x.
+                if (gpu?.maxAnisotropy == null && s.anisotropicFiltering > 8) {
+                    NoteText("El máximo de anisotrópico de este teléfono es desconocido: por seguridad se usa 8x aunque el ajuste guardado sea ${s.anisotropicFiltering}x (tope seguro, ver config.yml).")
+                }
                 // Ronda 0.2.65 (RG-P2-4): el anisotrópico alto multiplica
                 // las lecturas de textura y cuesta FPS en Mali.
                 if (gpu?.vendor == GpuVendor.MALI && s.anisotropicFiltering >= 8) {
