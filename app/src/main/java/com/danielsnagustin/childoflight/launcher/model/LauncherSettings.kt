@@ -6,8 +6,8 @@ package com.danielsnagustin.childoflight.launcher.model
  * Regla de honestidad de este archivo: cada ajuste sabe si tiene una clave
  * real en config.yml de Vita3K (ver Vita3kConfigGenerator) o si es solo del
  * launcher. Los ajustes sin clave verificada en el config.h de Vita3K
- * (master, 2026-11-07) NO se emiten como claves reales en el YAML:
- * se escriben como comentario TODO-VERIFY. Ver el generador.
+ * (master, 2026-11-07) no se emiten en absoluto (no existen en el modelo
+ * de ajustes). Ver el generador.
  */
 
 // ---------------------------------------------------------------------------
@@ -402,6 +402,26 @@ data class LauncherSettings(
      * (preserveManualCacheChoices, como shaderCache).
      */
     val skipShaderPrecompile: Boolean = false,
+    /**
+     * Tercera pasada (N-1): "disable-mask-bit" en config.yml
+     * (clave YA existente en el pin, config.h:139, leída en
+     * settings.cpp:74; el parche
+     * app/src/main/cpp/patches/aud3-mask-bit-disable.patch la honra
+     * en Vulkan, espejo de OpenGL en gl/renderer.cpp:242). Con true,
+     * el núcleo NO crea la imagen RGBA8 de máscara por render target
+     * ni compila síncronos los pipelines maskupdate: es un hack de
+     * compatibilidad, emulación menos exacta del hardware. Con false
+     * (default) el comportamiento es el upstream exacto. OFF por
+     * defecto y NINGÚN preset lo enciende: es un interruptor POR
+     * JUEGO (Ajustes → GPU → Renderizado), no un cambio global. Si
+     * el juego no usa máscaras, no cambia nada: pendiente medir en
+     * el teléfono si Child of Light emite programas maskupdate.
+     * Sin el parche aplicado, el núcleo ignora la clave en
+     * silencio y el interruptor no hace nada (ver generador).
+     * Se lee en el init del núcleo: el cambio aplica en el
+     * siguiente lanzamiento en proceso fresco.
+     */
+    val disableMaskBit: Boolean = false,
     // --- CPU ---
     /** cpu-opt en config.yml. El backend Dynarmic es el default de Vita3K; no hay clave cpu-backend en config.h. */
     val cpuOpt: Boolean = true,
@@ -993,6 +1013,11 @@ fun preserveManualCacheChoices(preset: LauncherSettings, current: LauncherSettin
         // no debe encender ni apagar a escondidas una prueba A/B de
         // carga en curso.
         skipShaderPrecompile = current.skipShaderPrecompile,
+        // Tercera pasada (N-1): la máscara también es un valor manual
+        // POR JUEGO que sobrevive al preset: ningún preset la enciende
+        // y aplicar un preset no debe apagar en silencio una prueba
+        // A/B de máscara en curso.
+        disableMaskBit = current.disableMaskBit,
         showFpsOverlay = current.showFpsOverlay,
         // Ronda 0.2.66: el perfil de frames es diagnóstico manual,
         // no valor de preset: un preset no lo apaga en silencio.
