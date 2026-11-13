@@ -28,15 +28,16 @@ Reglas (ronda 11 / verificación Vita3K+ 2026-11-11):
 |---|---|---|---|
 | `r1-audio-sdl-exp.patch` | Vita3K+ `ff1515a` + `69757af` (audio SDL/Cubeb) + hunk de audio de `570cd24` | `exp-audio-sdl` (OFF) | Adaptado y rebasado sobre los 14 parches F2: `git apply --check` limpio DESPUÉS de ellos (no contra el pin solo: choca con aud-p2-1/aud-p2-5 en los mismos hunks). Iba ÚLTIMO en 0.2.66; desde 0.2.68 va antes de `load-p1-skip-shader-precompile.patch`. |
 | `load-p1-skip-shader-precompile.patch` | Propio (ronda 0.2.68, carga): clave nueva `skip-shader-precompile` + puerta en `prepare_game_launch_overlay` (app.cpp:281) | `skip-shader-precompile` (OFF por defecto; ON en los presets Mali/G99) | Rebasado sobre los 15 parches: `git apply --check` limpio DESPUÉS de ellos (sus hunks en config.h, state.h y settings.cpp van junto a los de aud-p2-1/r1). Va ÚLTIMO en la lista del workflow. |
+| `aud2-p1-12-cubeb-timeout.patch` | Propio (ronda 0.2.70, P1-12): espera acotada en Cubeb `audio_output` (2x duración del búfer + descarte del búfer entrante) y `CUBEB_STATE_ERROR` marca el puerto parado | Ninguno (siempre activo, camino Cubeb) | `git apply --check` limpio DESPUÉS de los 16 parches del workflow (tras `load-p1`). Sin claves nuevas. |
+| `aud2-p2-6-steady-clock.patch` | Propio (ronda 0.2.70, 5-P2-6): pacing OFF con `steady_clock` en vez de `system_clock` | Ninguno (siempre activo) | `git apply --check` limpio DESPUÉS de los 16 parches del workflow (tras `load-p1`, tras `aud2-p1-12`). Sin claves nuevas. |
 
 ### r1-audio-sdl-exp.patch — Audio SDL experimental (R1)
 
 Qué cambia con ON: se salta el pacing del 50% de `AudioState::audio_output`
 (ese sleep es el mecanismo de AUD-P1-1), el umbral SDL pasa a
 `max(3x búfer, 40 ms)`, la espera se calibra contra lo que falta por sonar
-(`play_end_us`, tope 2x la duración del búfer) con despertar por pull, el
-anillo Cubeb crece para 40 ms de cola mínima, y en Android se pide audio
-de baja latencia. Con OFF, cada función conserva su código original
+(`play_end_us`, tope 2x la duración del búfer) con despertar por pull y el
+anillo Cubeb crece para 40 ms de cola mínima. Con OFF, cada función conserva su código original
 verbatim (el parche guarda ambas ramas).
 
 Qué se dejó FUERA del fork a propósito (verificado contra el pin):
@@ -47,8 +48,9 @@ Qué se dejó FUERA del fork a propósito (verificado contra el pin):
   upstream ya los añadió al pin después de la base del fork (el pin ya los
   tiene en `cubeb_audio.cpp:74` y `:21`).
 - El hunk `"1024"` → `"512"` de `570cd24`: el pin ya tiene `"512"` (AUD-P2-1).
-  Solo se toma el hint `ANDROID_LOW_LATENCY_AUDIO "1"`, dentro del mismo
-  interruptor.
+  El hint `ANDROID_LOW_LATENCY_AUDIO "1"` del mismo commit NO se toma desde
+  la ronda 0.2.70 (5-P2-1): ya es el default de SDL desde 3.2.0 (el pin fija
+  SDL 3.4.16) y no cambiaba nada.
 - El lado joysticks de `570cd24` (`SDL_EVENT_JOYSTICK_ADDED` +
   `map_android_half_controllers`, ~60 líneas en `ctrl.cpp`): NO se toma.
   Podría duplicar un mando; el overlay usa su propio camino de entrada.
