@@ -104,10 +104,6 @@ data class GameStatus(
      */
     val licenseInstalledInCore: Boolean = false,
     val dlcs: List<DlcInfo> = emptyList(),
-    /** DLCs realmente extraídos en addcont/ (sin contar .pkg guardados). */
-    val installedDlcCount: Int get() = dlcs.count { !it.isPkg },
-    /** DLCs solo guardados como .pkg (aún no instalados en el núcleo). */
-    val storedDlcPkgCount: Int get() = dlcs.count { it.isPkg },
     val updateInstalled: Boolean = false,
     /**
      * R6-P1-05: true si hay un update .pkg GUARDADO (pkg/patch/<TITLE>.pkg)
@@ -122,6 +118,10 @@ data class GameStatus(
     val saves: List<SaveInfo> = emptyList(),
 ) {
     val dlcCount: Int get() = dlcs.size
+    /** DLCs realmente extraídos en addcont/ (sin contar .pkg guardados). */
+    val installedDlcCount: Int get() = dlcs.count { !it.isPkg }
+    /** DLCs solo guardados como .pkg (aún no instalados en el núcleo). */
+    val storedDlcPkgCount: Int get() = dlcs.count { it.isPkg }
     /** true si hay un .pkg de juego guardado (con o sin licencia). */
     val pkgInstalled: Boolean get() = pkgTitleId != null
     /**
