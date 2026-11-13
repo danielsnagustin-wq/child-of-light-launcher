@@ -294,7 +294,7 @@ class GameLibraryRepository(private val context: Context) {
 
     // Ronda 0.2.55 P1-5: caché de listSaves() (misma idea que
     // DirSizeCache): clave título, marca mtime del directorio de saves.
-    private val savesCache = mutableMapOf<String, Pair<Long, List<SaveInfo>>>()
+    private val savesCache = mutableMapOf<String, Pair<Pair<Long, Long>, List<SaveInfo>>>()
 
     /**
      * R4-P2-5: último resumen de scanStatus registrado en el log.
@@ -890,10 +890,6 @@ class GameLibraryRepository(private val context: Context) {
             }
     }
 
-    /** ¿El juego ya está subido (extraído en ux0/app/ o como .pkg)? Dual: en el ux0 efectivo o en el antiguo. */
-    private fun isGameInstalled(titleId: String): Boolean =
-        (appDir(titleId).exists() && ImportTreeSearch.findEboot(appDir(titleId)) != null) ||
-            findPkgGameFile(titleId) != null
 
     /** ¿El DLC ya está subido (extraído en addcont/ o como .pkg)? Dual: en el ux0 efectivo o en el antiguo. Un nombre con ".bak-" es un respaldo, no un DLC (P2-C1). */
     private fun isDlcInstalled(titleId: String, dlcId: String): Boolean =
@@ -907,9 +903,6 @@ class GameLibraryRepository(private val context: Context) {
         }
     }
 
-    private fun formatSizeMb(bytes: Long): String =
-        if (bytes >= 1_000_000_000L) String.format(Locale.US, "%.2f GB", bytes / 1_000_000_000.0)
-        else "${bytes / 1_000_000} MB"
 
     /**
      * R5-A4-1: bytes libres en la partición de [dir] (StatFs).
@@ -963,11 +956,11 @@ class GameLibraryRepository(private val context: Context) {
         val pkg = findPkgGameFile(titleId)
         val extracted = appDir(titleId).exists() && ImportTreeSearch.findEboot(appDir(titleId)) != null
         if (pkg != null && incomingIsPkg) {
-            return "El juego $titleId ya está subido como .pkg (${formatSizeMb(pkg.length())}). " +
+            return "El juego $titleId ya está subido como .pkg (${DownloadsCleanup.formatBytes(pkg.length())}). " +
                 "Si lo subes de nuevo, se reemplaza el archivo guardado y no ocupa más espacio. ¿Quieres reemplazarlo?"
         }
         if (pkg != null && !incomingIsPkg) {
-            return "El juego $titleId ya está subido como .pkg (${formatSizeMb(pkg.length())}). " +
+            return "El juego $titleId ya está subido como .pkg (${DownloadsCleanup.formatBytes(pkg.length())}). " +
                 "Si lo subes extraído tendrás las dos copias y ocupará más espacio. ¿Seguro que quieres subirlo de todos modos?"
         }
         if (extracted && !incomingIsPkg) {
@@ -1209,7 +1202,6 @@ class GameLibraryRepository(private val context: Context) {
     fun patchDir(titleId: String): File = File(ux0Dir, "patch/$titleId")
     fun saveDir(titleId: String): File = File(ux0Dir, "user/00/savedata/$titleId")
     fun firmwareDir(): File = File(vitaRoot, "firmware")
-    fun driversDir(): File = File(vitaRoot, "drivers/turnip")
 
     // --- Almacenamiento de .pkg (ver PkgHeaderParser) ---
     /** Carpeta de .pkg guardados: ux0/pkg/. El nombre del .pkg original no se conserva: se guarda por Title ID. */
@@ -1291,22 +1283,6 @@ class GameLibraryRepository(private val context: Context) {
     }
 
     /**
-     * ¿El eboot.bin instalado es cargable por el núcleo? Un eboot bien
-     * instalado es un SELF en disco ('S' 'E' 'C' 0x00; pin 3e43bc80,
-     * kernel/src/load_self.cpp:508-509: SCE_MAGIC = 0x00454353) y el
-     * núcleo lo descifra EN MEMORIA al cargarlo; un ELF también vale.
-     * La versión anterior exigía solo ELF y fallaba SIEMPRE con un
-     * juego bien instalado: cada JUGAR reinstalaba el .pkg (reporte
-     * 2026-11-08 21:46: "Eboot sin descifrar" 3 veces en un minuto).
-     * Solo un eboot sin ninguna de las dos magias (instalación
-     * truncada o corrupta) dispara la reinstalación. false también
-     * si no hay eboot.bin.
-     */
-    fun isEbootDecrypted(titleId: String): Boolean {
-        return ebootValidation(titleId).reason == EbootInvalidReason.OK
-    }
-
-    /**
      * .pkg del juego esté donde esté: en el ux0 efectivo o en el
      * antiguo. Tras instalarse el juego, el ux0 efectivo pasa a ser
      * vita/ux0 pero el .pkg sigue en el ux0 antiguo (la migración
@@ -1367,6 +1343,25 @@ class GameLibraryRepository(private val context: Context) {
     )
 
     /** .pkg guardados sin su work.bin (licencia). Sin ella Vita3K no puede instalarlos. Dual: busca en el ux0 efectivo y en el antiguo (P1-5a). */
+    /**
+     * Ronda 0.2.70, 7-P2-8 (decisión DOCUMENTADA, sin extensión del
+     * chequeo a DLCs extraídos): los DLC extraídos (zip/addcont/) NO
+     * se comprueban por licencia porque el núcleo no les pide ninguna
+     * en tiempo de ejecución. Verificado en el pin 3e43bc80:
+     * `get_license` (packages/src/license.cpp) solo carga el .rif
+     * DEL JUEGO (title_id + content_id del juego, llamado una vez en
+     * setup_game_launch, app/src/app.cpp:257) y si falta solo registra
+     * un aviso y sigue con sku_flag por defecto — no bloquea la carga
+     * ni itera los DLCs de addcont/. La licencia de un DLC solo se
+     * usa al INSTALAR su .pkg (create_license/copy_license + el
+     * zRIF/work.bin); un DLC extraído por zip ya trae sus archivos
+     * descifrados y el juego los lee de addcont/ por filesystem, sin
+     * puerta de licencia. Por eso avisar "falta el .rif" de un DLC
+     * extraído sería un falso positivo: no hay ningún .rif que el
+     * núcleo fuera a consultar por él. Los .pkg guardados SÍ se
+     * comprueban abajo (aún no instalados: su licencia decide si se
+     * pueden instalar).
+     */
     fun storedPkgsMissingLicense(): List<MissingPkgLicense> {
         val missing = mutableListOf<MissingPkgLicense>()
         for (candidate in TitleId.entries) {
@@ -1412,9 +1407,9 @@ class GameLibraryRepository(private val context: Context) {
                 // núcleo: installPkgFile lo reinstala sin work.bin vía
                 // findPkgZrif (pin pkg.cpp: el zRIF se busca por el
                 // Content ID del propio .pkg). OJO: NO vale
-                // isLicenseInstalledInCore(title): su fallback
-                // "cualquier .rif en license/<TITLE>/" eximiría todos
-                // los DLCs en cuanto existiera el .rif del juego. Aquí
+                // isLicenseInstalledInCore(title): comprueba el .rif
+                // DEL JUEGO (su Content ID), que eximiría todos los
+                // DLCs en cuanto existiera el .rif del juego. Aquí
                 // solo vale el .rif con el Content ID propio de ESTE
                 // .pkg de DLC (ver isDlcLicenseInstalledInCore). Sin
                 // header legible no hay Content ID que comprobar: se
@@ -1649,19 +1644,19 @@ class GameLibraryRepository(private val context: Context) {
      * el núcleo? El núcleo guarda el .rif en
      * ux0/license/<TITLE>/<CONTENT_ID>.rif (pin license.cpp:99). El
      * Content ID sale del param.sfo instalado
-     * (app/<TITLE>/sce_sys/param.sfo); si el SFO no trae CONTENT_ID,
-     * vale cualquier .rif en la carpeta de ese título (todos los .rif
-     * de license/<TITLE>/ pertenecen a ese título). Solo mira el ux0
+     * (app/<TITLE>/sce_sys/param.sfo). Solo mira el ux0
      * efectivo: el juego extraído vive ahí y su licencia también.
+     *
+     * Ronda 0.2.70, 7-P2-9: si el SFO no trae CONTENT_ID, la
+     * respuesta es false ("desconocido", no "instalado"): el
+     * fallback anterior ("cualquier .rif en la carpeta") aceptaba
+     * el .rif de un DLC como licencia del juego, exactamente la
+     * trampa que el chequeo de DLCs ya evitaba.
      */
     private fun isLicenseInstalledInCore(titleId: String): Boolean {
-        val licenseDir = File(ux0Dir, "license/$titleId")
         val sfo = File(appDir(titleId), "sce_sys/param.sfo")
         val contentId = runCatching { ParamSfo.parse(sfo) }.getOrNull()?.getOrNull()?.contentId?.trim()?.takeIf { it.isNotBlank() }
-        if (contentId != null) {
-            return File(licenseDir, "$contentId.rif").isFile
-        }
-        return licenseDir.listFiles()?.any { it.isFile && it.name.lowercase().endsWith(".rif") } == true
+        return isGameLicenseInstalledInCore(ux0Dir, titleId, contentId)
     }
 
     // R4-P1-12: si el llamador ya resolvió el firmware en este mismo
@@ -1810,9 +1805,14 @@ class GameLibraryRepository(private val context: Context) {
                     // efectivo (no hay juego), no se puede filtrar y
                     // se listan todos.
                     if (title != null && dlcTitle != null && dlcTitle != title) return@forEach
+                    // Ronda 0.2.70, 7-P2-10: si el header es ilegible
+                    // (header == null), NO se puede filtrar por región
+                    // y el DLC se listaba como del título efectivo sin
+                    // decirlo. Se marca de región desconocida (la UI
+                    // lo muestra) en vez de atribuirlo en silencio.
                     val contentKey = header?.contentName?.takeIf { it.isNotBlank() }
                         ?: pkgFile.nameWithoutExtension
-                    storedDlcPkgs.add(DlcInfo(pkgFile.nameWithoutExtension, dlcTitle?.id ?: title?.id ?: "", pkgFile.length(), isPkg = true, contentKey = contentKey))
+                    storedDlcPkgs.add(DlcInfo(pkgFile.nameWithoutExtension, dlcTitle?.id ?: title?.id ?: "", pkgFile.length(), isPkg = true, contentKey = contentKey, regionUnknown = header == null))
                 }
         }
         // Un DLC instalado (carpeta) cuyo .pkg sigue guardado se cuenta
@@ -1888,19 +1888,35 @@ class GameLibraryRepository(private val context: Context) {
 
     fun listSaves(titleId: String): List<SaveInfo> {
         // Ronda 0.2.55 P1-5: la savedata se re-listaba entera
-        // (walkTopDown) en cada escaneo. Caché por (título, mtime del
-        // directorio): los saves solo cambian jugando, y al volver del
-        // juego el ViewModel invalida (noteReturnedFromGame) y al
-        // borrarlos se invalida en deleteSavesOnly. Un cambio de
-        // contenido sin tocar el directorio (núcleo escribiendo en un
-        // archivo existente) queda obsoleto hasta la próxima
-        // invalidación: mismo compromiso que DirSizeCache.
+        // (walkTopDown) en cada escaneo. Caché por (título, huella):
+        // los saves solo cambian jugando, y al volver del juego el
+        // ViewModel invalida (noteReturnedFromGame) y al borrarlos se
+        // invalida en deleteSavesOnly.
+        // Ronda 0.2.70, 7-P2-6: la huella ya no es solo el mtime del
+        // directorio: un cambio de contenido sin tocar el directorio
+        // (el núcleo reescribiendo un archivo existente con otro
+        // tamaño) no lo mueve y dejaba la caché obsoleta. Ahora es
+        // (mtime del directorio, bytes totales): la reescritura con
+        // distinto tamaño invalida. El paseo para la huella es solo
+        // metadatos (length/lastModified, sin leer contenido) y la
+        // caché sigue ahorrando construir + ordenar la lista en cada
+        // escaneo. Un cambio que conserve tamaño Y mtime del
+        // directorio sigue indetectable por esta vía, pero ese caso
+        // ya lo cubre la invalidación al volver del juego.
         val dir = saveDir(titleId)
         if (!dir.exists()) {
             savesCache.remove(titleId)
             return emptyList()
         }
-        val stamp = dir.lastModified()
+        // Ronda 0.2.70, 7-P2-5 (definición explícita, SIN cambio de
+        // conteo): listSaves cuenta TODOS los archivos bajo
+        // savedata/<TITLE>/, no "partidas": un archivo auxiliar del
+        // núcleo inflaría el número si lo hubiera. La etiqueta de la
+        // UI ya dice "archivos" ("Archivos de guardado (N)",
+        // "Partidas guardadas: N archivos"), así que no miente; no
+        // se filtra por nombre/extensión porque no está verificado
+        // en el teléfono qué archivos escribe realmente el juego.
+        val stamp = savesCacheStamp(dir)
         val cached = savesCache[titleId]
         if (cached != null && cached.first == stamp) return cached.second
         val result = dir.walkTopDown().filter { it.isFile }.map {
@@ -2090,7 +2106,7 @@ class GameLibraryRepository(private val context: Context) {
                 }
                 if (sourceSize in 1 until SUSPICIOUS_SMALL_GAME_PKG_BYTES) {
                     return duplicateResult(
-                        "Este .pkg pesa solo ${formatSizeMb(sourceSize)} y el juego completo pesa ~1,14 GB: " +
+                        "Este .pkg pesa solo ${DownloadsCleanup.formatBytes(sourceSize)} y el juego completo pesa ~1,14 GB: " +
                             "parece una ACTUALIZACIÓN, no el juego. Si lo importas como juego, el motor lo instalará " +
                             "en otro sitio y cada JUGAR lo reinstalará sin que el juego arranque. " +
                             "¿Quieres importarlo de todos modos como juego? Para importarlo como actualización, " +
@@ -2156,12 +2172,12 @@ class GameLibraryRepository(private val context: Context) {
                     val actual = dest.length()
                     dest.delete()
                     val expectedText = if (declared > 0) {
-                        "su header declara ${formatSizeMb(declared)}"
+                        "su header declara ${DownloadsCleanup.formatBytes(declared)}"
                     } else {
-                        "el archivo elegido pesa ${formatSizeMb(sourceSizeForTruncation)}"
+                        "el archivo elegido pesa ${DownloadsCleanup.formatBytes(sourceSizeForTruncation)}"
                     }
                     return ImportResult.Rejected(
-                        "El .pkg está incompleto: pesa ${formatSizeMb(actual)} pero $expectedText. " +
+                        "El .pkg está incompleto: pesa ${DownloadsCleanup.formatBytes(actual)} pero $expectedText. " +
                             "Vuelve a descargarlo o copiarlo completo.",
                     )
                 }
@@ -2750,7 +2766,7 @@ class GameLibraryRepository(private val context: Context) {
                 val pupSize = tmp.length()
                 tmp.delete()
                 return ImportResult.Rejected(
-                    "El archivo de firmware parece incompleto (pesa ${formatSizeMb(pupSize)}; " +
+                    "El archivo de firmware parece incompleto (pesa ${DownloadsCleanup.formatBytes(pupSize)}; " +
                         "un PSVUPDAT.PUP real ronda los ${FirmwareResolver.APPROX_PUP_SIZE_TEXT}). Elige el PUP completo.",
                 )
             }
@@ -3363,18 +3379,48 @@ class GameLibraryRepository(private val context: Context) {
 }
 
 /**
+ * Ronda 0.2.70, 7-P2-6: huella de la caché de saves: (mtime del
+ * directorio, bytes totales de sus archivos). El mtime del
+ * directorio solo cambia al crear/borrar/renombrar archivos; una
+ * reescritura de un archivo existente con otro tamaño no lo mueve,
+ * así que el tamaño total es el que invalida ese caso. Puro (solo
+ * File) para poder probarlo en la JVM.
+ */
+internal fun savesCacheStamp(dir: File): Pair<Long, Long> {
+    val files = dir.walkTopDown().filter { it.isFile }.toList()
+    return dir.lastModified() to files.sumOf { it.length() }
+}
+
+/**
+ * Ronda 0.2.70, 7-P2-9: ¿la licencia del JUEGO ya está instalada en
+ * el núcleo? Comprobación EXACTA por Content ID: solo vale el
+ * `<CONTENT_ID>.rif` propio del juego. Sin Content ID conocido
+ * (SFO ilegible o sin CONTENT_ID) devuelve false: aceptar
+ * cualquier .rif en license/<TITLE>/ eximiría el juego con el .rif
+ * de un DLC, que vive en esa misma carpeta. Top-level internal para
+ * testear la lógica pura sin instanciar el repositorio (que pide
+ * Context); la envoltura privada isLicenseInstalledInCore solo
+ * resuelve el Content ID desde el SFO instalado.
+ */
+internal fun isGameLicenseInstalledInCore(ux0Dir: File, titleId: String, contentId: String?): Boolean {
+    if (contentId.isNullOrBlank()) return false
+    return File(ux0Dir, "license/$titleId/$contentId.rif").isFile
+}
+
+/**
  * R7-P1-04 resto (0.2.57): ¿el .rif PROPIO de un DLC ya está
  * instalado en el núcleo? El núcleo guarda cada licencia en
  * ux0/license/<TITLE>/<CONTENT_ID>.rif (pin license.cpp:
  * copy_license deriva título y nombre del Content ID del .rif) y
  * find_pkg_zrif la busca por el Content ID del propio .pkg (pin
  * pkg.cpp). El Content ID del DLC es distinto al del juego, así que
- * la comprobación es EXACTA por ese Content ID: el fallback de
- * isLicenseInstalledInCore ("cualquier .rif en license/<TITLE>/")
- * NO vale aquí, porque el .rif del juego vive en esa misma carpeta
- * y eximiría todos los DLCs. Solo mira el ux0 efectivo, igual que
- * isLicenseInstalledInCore. Top-level internal para testear la
- * lógica pura sin instanciar el repositorio (que pide Context).
+ * la comprobación es EXACTA por ese Content ID: un chequeo por
+ * "cualquier .rif en license/<TITLE>/" NO vale aquí (7-P2-9: ese
+ * fallback ya ni existe para el juego), porque el .rif del juego
+ * vive en esa misma carpeta y eximiría todos los DLCs. Solo mira el
+ * ux0 efectivo, igual que isLicenseInstalledInCore. Top-level
+ * internal para testear la lógica pura sin instanciar el
+ * repositorio (que pide Context).
  */
 internal fun isDlcLicenseInstalledInCore(ux0Dir: File, titleId: String, contentId: String): Boolean =
     File(ux0Dir, "license/$titleId/$contentId.rif").isFile
