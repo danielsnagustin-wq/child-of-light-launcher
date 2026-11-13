@@ -1362,10 +1362,12 @@ class TouchLayoutRepository(private val context: Context) {
          * fábrica. Solo actúa si el perfil es predefinido
          * ("default-g99", "external-gamepad" o "one-hand", cada
          * uno con SU predecessor 0.2.67: el de una mano lleva
-         * otras posiciones y tamaños) Y sus controles son
-         * EXACTAMENTE el layout 0.2.67: si el usuario movió, redimensionó,
-         * remapeó o añadió aunque sea un control, el perfil es
-         * suyo y no se toca. La comparación ignora sizeFraction y
+         * otras posiciones y tamaños) Y sus controles son el
+         * layout 0.2.67 o ese mismo layout con COMO MUCHO un
+         * control borrado (0.2.70, P1-1: un perfil de 5 controles
+         * sin btn_circle, con sizeFraction, tambien migra): si el
+         * usuario movió, redimensionó, remapeó o añadió aunque
+         * sea un control, el perfil es suyo y no se toca. La comparación ignora sizeFraction y
          * widthFraction (el layout 0.2.67 existe guardado con
          * fracción —0.2.64+— y sin ella —pre-0.2.64—), colorHex y
          * visible (como matchesFactoryLayout, 0.2.65 M-P2-4).
@@ -1411,10 +1413,30 @@ class TouchLayoutRepository(private val context: Context) {
         )
 
         private fun matchesNeonPredecessor(controls: List<TouchControl>, snapshot: List<TouchControl>): Boolean {
-            if (snapshot.size != controls.size) return false
-            return snapshot.zip(controls).all { (a, b) ->
-                a.id == b.id &&
-                    a.kind == b.kind &&
+            // 0.2.70 (ronda 0.2.70, area 3, P1-1): coincidencia por
+            // SUBCONJUNTO con como mucho UN control borrado, no por
+            // igualdad de tamano: un perfil predefinido 0.2.67 al
+            // que se le BORRO un control (5 controles, con
+            // sizeFraction) nunca migaba al neon porque 6 != 5.
+            // Cada control presente debe coincidir con la entrada
+            // del predecessor con su MISMO id (busqueda por id, no
+            // por posicion: al borrar un control los demas se
+            // desplazan) y ningun control puede sobrar. Un perfil
+            // editado (un control movido, redimensionado o
+            // remapeado) sigue sin migrar, porque ese control ya
+            // no coincide; y un perfil podado a conciencia (2 o
+            // mas controles borrados, o vacio) tampoco migra: no
+            // se resucita lo borrado a proposito. El control
+            // borrado no resucita como tal: la migracion sustituye
+            // el perfil entero por el neon de fabrica (10
+            // controles), igual que ToCleanLayout ya hacia con el
+            // caso pre-0.2.64 de 5 controles.
+            if (controls.isEmpty() || controls.size < snapshot.size - 1) return false
+            if (controls.size > snapshot.size) return false
+            val byId = snapshot.associateBy { it.id }
+            return controls.all { b ->
+                val a = byId[b.id] ?: return@all false
+                a.kind == b.kind &&
                     a.vitaButton == b.vitaButton &&
                     a.xFraction == b.xFraction &&
                     a.yFraction == b.yFraction &&
@@ -1625,6 +1647,12 @@ class TouchLayoutRepository(private val context: Context) {
                 // 0.2.64 (A-7): la fracción fuera de rango no puede
                 // hacer gigante ni invisible el botón.
                 sizeFraction = parsed.sizeFraction?.takeIf { it.isFinite() }?.coerceIn(0.01f, 1f),
+                // 0.2.70 (ronda 0.2.70, area 3, P2-2): la fracción
+                // de ancho tampoco puede salirse por arriba: un
+                // widthFraction = 5.0 corrupto o editado a mano
+                // dibujaba una pildora de 5400 px. Simetrico a
+                // sizeFraction (el maximo real de fabrica es 0.346).
+                widthFraction = parsed.widthFraction?.takeIf { it.isFinite() }?.coerceIn(0.01f, 1f),
             )
         }
 
