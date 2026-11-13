@@ -217,6 +217,29 @@ class EmbeddedGameActivity : SDLActivity() {
          */
         private const val NO_PRESENT_WARN_AFTER_MS = 10_000L
 
+        /**
+         * Tercera pasada (R-2): detector de pantalla negra EN MITAD
+         * DEL JUEGO, independiente de frame_profile (OFF por
+         * defecto). Sondea el contador de presents cada 1 s tras el
+         * primer present y solo descuenta con la Activity reanudada
+         * (congelar en segundo plano, como la etapa 1). Umbrales
+         * conservadores a propósito: aviso a los 15 s (generoso, por
+         * encima del aviso de 10 s del perfil de frames) y diálogo
+         * solo tras 60 s seguidos sin presents con el juego emulando
+         * (FPS >= 1). 60 s, no 30 s (OpenCode proponía 30 s): una
+         * carga larga dentro de la partida o una precompilación de
+         * shaders en caliente pueden dejar el renderer mudo decenas
+         * de segundos sin estar atascado, y el diálogo ofrece
+         * "Seguir esperando" (rearma), así que un falso positivo
+         * cuesta un toque y nunca mata la partida. El emulador
+         * presenta cada vsync aunque la escena no cambie, así que
+         * "sin presents" con el juego reanudado y emulando es
+         * renderer atascado, no escena quieta.
+         */
+        private const val MID_GAME_NO_PRESENT_WARN_AFTER_MS = 15_000L
+        private const val MID_GAME_NO_PRESENT_DIALOG_AFTER_MS = 60_000L
+        private const val MID_GAME_WATCHDOG_TICK_MS = 1_000L
+
         /** Ronda 0.2.70 (9-P1-7): periodo del sondeo a 4 Hz del perfil de frames. */
         private const val FRAME_PROFILE_POLL_TICK_MS = 250L
 
@@ -349,10 +372,16 @@ class EmbeddedGameActivity : SDLActivity() {
      * entre onResume y onPause. Bandera propia porque android.app.Activity
      * (base de SDLActivity) NO tiene isResumed — eso es de Fragment — y
      * el watchdog y el sondeo de relanzamiento SDL lo usaban como si
-     * existiera (no compilaba). Se pone en true al inicio de onResume
-     * y en false al inicio de onPause; la leen corrutinas de fondo, como
-     * las demás banderas de este archivo.
+     * existiera (no compilaba). Se pone en true tras super.onResume()
+     * (no al inicio de onResume: es super.onResume() quien arranca
+     * el hilo SDL) y en false al inicio de onPause; la leen
+     * corrutinas de fondo, como las demás banderas de este archivo.
+     * @Volatile (tercera pasada, R-6): hoy todos los lectores viven
+     * en Main, pero la bandera es leída por sondeos que pueden
+     * moverse de hilo y el coste de @Volatile aquí es nulo.
+     * Se resetea a false en onDestroy.
      */
+    @Volatile
     private var isActivityResumed: Boolean = false
 
     /**
@@ -380,6 +409,22 @@ class EmbeddedGameActivity : SDLActivity() {
      */
     private var noPresentWarned: Boolean = false
     private var noPresentStreakMs: Long = 0L
+
+    /**
+     * Tercera pasada (R-2): detector de pantalla negra en mitad del
+     * juego. Arranca una sola vez por Activity (primer onResume) y
+     * sondea el contador de presents cada 1 s; solo descuenta con
+     * la Activity reanudada. lastPresentedCount/TimeNs = línea base
+     * del último present visto (-1 = aún sin línea base o contador
+     * desconocido). dialogShown evita re-mostrar el diálogo sobre
+     * la misma racha; "Seguir esperando" lo resetea y rearma.
+     */
+    private var midGameWatchdogStarted: Boolean = false
+    private var midGameNoPresentStreakMs: Long = 0L
+    private var midGameNoPresentWarned: Boolean = false
+    private var midGameNoPresentDialogShown: Boolean = false
+    private var midGameLastPresentedCount: Long = -1L
+    private var midGameLastPresentTimeNs: Long = -1L
 
     /**
      * Ronda 0.2.65 (R-P1-3): true cuando el init del núcleo completó
@@ -1084,6 +1129,10 @@ class EmbeddedGameActivity : SDLActivity() {
         // Ronda 0.2.66 (Fase L): perfil de frames (solo si el
         // ajuste frame_profile está ON).
         maybeStartFrameProfiling()
+        // Tercera pasada (R-2): detector de pantalla negra en mitad
+        // del juego, independiente de frame_profile (siempre activo
+        // tras on_launch; la etapa 2 cubre el "sin primer present").
+        maybeStartMidGameWatchdog()
         // Ronda 0.2.65 (R-P1-18): la prueba de 30 s ya no
         // auto-arranca 5 s después de on_launch. Si el usuario ya
         // confirmó que está jugando, se reanuda el muestreo; si no,
@@ -1169,8 +1218,8 @@ class EmbeddedGameActivity : SDLActivity() {
             if (!isActive || isFinishing) return@launch
             val fps = runCatching { Vita3kCoreBridge.getFps() }.getOrDefault(-1f)
             if (!shouldFireBlackScreenWatchdog(gameRunningSinceMillis, firstFrameLogged, fps)) return@launch
-            appendLogAsync("launch", "Watchdog de pantalla negra: sin on_launch ni FPS entregado mayor que 0 tras ${BLACK_SCREEN_WATCHDOG_TIMEOUT_MS / 1000} s desde el primer onResume; el arranque está atascado y se cierra la Activity")
-            Toast.makeText(this@EmbeddedGameActivity, "El juego no ha arrancado: sin imagen tras 3 minutos.", Toast.LENGTH_LONG).show()
+            appendLogAsync("launch", "Watchdog de pantalla negra: sin on_launch ni FPS entregado mayor que 0 tras ${BLACK_SCREEN_WATCHDOG_TIMEOUT_MS / 1000} s de juego visible desde el primer onResume (el tiempo en segundo plano no cuenta); el arranque está atascado y se cierra la Activity")
+            Toast.makeText(this@EmbeddedGameActivity, "El juego no ha arrancado: sin imagen tras 3 minutos de juego visible.", Toast.LENGTH_LONG).show()
             showBlackScreenDialogAndFinish()
         }
     }
@@ -1187,21 +1236,151 @@ class EmbeddedGameActivity : SDLActivity() {
      * muestra imagen. Si el contador es -1 (sin núcleo o sin parche),
      * tampoco dispara: es "desconocido", no "sin presents", y matar
      * el juego por un contador ausente sería un falso positivo.
-     * Job propio en overlayScope (se cancela en onDestroy); no toca
-     * el bloque del watchdog de arranque.
+     * Tercera pasada (R-1): el plazo congela en segundo plano como
+     * la etapa 1 (mismo sondeo en rebanadas de 1 s con
+     * nextWatchdogRemainingMs y misma espera a estar reanudada
+     * antes de disparar): antes era un delay(180 s) de pared que
+     * mataba cargas legítimas si el usuario se iba a Inicio o
+     * abría el menú de pausa en plena carga. Los contadores se
+     * re-leen justo antes de disparar, tras la espera a primer
+     * plano, para no decidir con una lectura vieja. Job propio en
+     * overlayScope (se cancela en onDestroy); no toca el bloque
+     * del watchdog de arranque.
      */
     private fun maybeStartSecondStageWatchdog() {
         if (secondStageWatchdogStarted) return
         secondStageWatchdogStarted = true
         overlayScope.launch {
-            delay(SECOND_STAGE_WATCHDOG_TIMEOUT_MS)
+            var remainingMs = SECOND_STAGE_WATCHDOG_TIMEOUT_MS
+            while (remainingMs > 0L) {
+                val sliceStartMillis = SystemClock.uptimeMillis()
+                delay(minOf(remainingMs, BLACK_SCREEN_WATCHDOG_SLICE_MS))
+                if (!isActive || isFinishing) return@launch
+                remainingMs = nextWatchdogRemainingMs(
+                    remainingMs,
+                    SystemClock.uptimeMillis() - sliceStartMillis,
+                    isActivityResumed,
+                )
+            }
+            // Igual que la etapa 1: no disparar el diálogo sobre una
+            // Activity parada; esperar a que vuelva (el plazo ya está
+            // agotado) y re-leer los contadores entonces.
+            while (!isActivityResumed) {
+                if (!isActive || isFinishing) return@launch
+                delay(BLACK_SCREEN_WATCHDOG_SLICE_MS)
+            }
             if (!isActive || isFinishing || isDestroyed) return@launch
             val presentedCount = runCatching { Vita3kCoreBridge.getPresentedFrameCount() }.getOrDefault(-1L)
             val lastPresentTimeNs = runCatching { Vita3kCoreBridge.getLastPresentTimeNs() }.getOrDefault(-1L)
             if (!shouldFireSecondStageWatchdog(gameRunningSinceMillis, presentedCount, lastPresentTimeNs)) return@launch
-            appendLogAsync("launch", "Watchdog de segunda etapa: on_launch confirmado pero ningún frame presentado tras ${SECOND_STAGE_WATCHDOG_TIMEOUT_MS / 1000} s; el juego emula sin imagen y se cierra la Activity")
-            Toast.makeText(this@EmbeddedGameActivity, "El juego no ha arrancado: sin imagen tras 3 minutos.", Toast.LENGTH_LONG).show()
+            appendLogAsync("launch", "Watchdog de segunda etapa: on_launch confirmado pero ningún frame presentado tras ${SECOND_STAGE_WATCHDOG_TIMEOUT_MS / 1000} s de juego visible (el tiempo en segundo plano no cuenta); el juego emula sin imagen y se cierra la Activity")
+            Toast.makeText(this@EmbeddedGameActivity, "El juego no ha arrancado: sin imagen tras 3 minutos de juego visible.", Toast.LENGTH_LONG).show()
             showBlackScreenDialogAndFinish()
+        }
+    }
+
+    /**
+     * Tercera pasada (R-2): detector de pantalla negra EN MITAD DEL
+     * JUEGO, independiente de frame_profile (OFF por defecto). Corre
+     * en overlayScope (se cancela en onDestroy) y sondea el contador
+     * de presents cada 1 s: solo descuenta con la Activity reanudada
+     * (en segundo plano el tick se salta sin sumar ni resetear la
+     * racha: congelación, como la etapa 1) y solo si el juego no
+     * está pausado. Sin on_launch aún, no hace nada (lo cubre la
+     * etapa 2); con contador -1, inerte (desconocido, no "sin
+     * presents"). Aviso (Toast + log) a los 15 s de racha; diálogo
+     * con recuperación a los 60 s, con re-chequeo de los contadores
+     * justo antes de mostrarlo. El diálogo NUNCA mata la partida
+     * por sí solo: "Seguir esperando" rearma el detector y "Salir"
+     * cierra; si no se puede mostrar, se rearma sin cerrar nada.
+     */
+    private fun maybeStartMidGameWatchdog() {
+        if (midGameWatchdogStarted) return
+        midGameWatchdogStarted = true
+        overlayScope.launch {
+            while (isActive) {
+                delay(MID_GAME_WATCHDOG_TICK_MS)
+                if (!isActive || isFinishing || isDestroyed) return@launch
+                // Congelar en segundo plano: ni suma ni resetea.
+                if (!isActivityResumed) continue
+                // Sin on_launch aún, la etapa 2 cubre el arranque.
+                if (gameRunningSinceMillis == 0L) continue
+                val presentedCount = runCatching { Vita3kCoreBridge.getPresentedFrameCount() }.getOrDefault(-1L)
+                val lastPresentTimeNs = runCatching { Vita3kCoreBridge.getLastPresentTimeNs() }.getOrDefault(-1L)
+                val fps = runCatching { Vita3kCoreBridge.getFps() }.getOrDefault(-1f)
+                val paused = runCatching { Vita3kCoreBridge.isAppPaused() }.getOrDefault(false)
+                val previousCount = midGameLastPresentedCount
+                val previousTimeNs = midGameLastPresentTimeNs
+                midGameNoPresentStreakMs = nextMidGameNoPresentStreakMs(
+                    midGameNoPresentStreakMs,
+                    previousCount,
+                    presentedCount,
+                    previousTimeNs,
+                    lastPresentTimeNs,
+                    fps,
+                    paused,
+                    MID_GAME_WATCHDOG_TICK_MS,
+                )
+                if (presentedCount >= 0L) {
+                    midGameLastPresentedCount = presentedCount
+                    midGameLastPresentTimeNs = lastPresentTimeNs
+                }
+                if (midGameNoPresentStreakMs == 0L) midGameNoPresentWarned = false
+                if (shouldWarnNoPresent(midGameNoPresentStreakMs, midGameNoPresentWarned, MID_GAME_NO_PRESENT_WARN_AFTER_MS)) {
+                    midGameNoPresentWarned = true
+                    appendLogAsync("frameprof", "El juego emula a ${"%.1f".format(fps)} fps pero no presenta imagen desde hace ${MID_GAME_NO_PRESENT_WARN_AFTER_MS / 1000} s de juego visible: nada llega al panel")
+                    Toast.makeText(this@EmbeddedGameActivity, "El juego corre pero no presenta imagen", Toast.LENGTH_LONG).show()
+                }
+                if (!shouldFireMidGameNoPresentDialog(midGameNoPresentStreakMs, MID_GAME_NO_PRESENT_DIALOG_AFTER_MS, midGameNoPresentDialogShown)) continue
+                midGameNoPresentDialogShown = true
+                // Re-chequeo justo antes del diálogo: un present
+                // entre el tick y este punto cancela el diálogo y
+                // resetea la racha (no se decide con lectura vieja).
+                val freshCount = runCatching { Vita3kCoreBridge.getPresentedFrameCount() }.getOrDefault(-1L)
+                val freshTimeNs = runCatching { Vita3kCoreBridge.getLastPresentTimeNs() }.getOrDefault(-1L)
+                if (freshCount > presentedCount || freshTimeNs > lastPresentTimeNs) {
+                    midGameNoPresentStreakMs = 0L
+                    midGameNoPresentWarned = false
+                    midGameNoPresentDialogShown = false
+                    if (freshCount >= 0L) {
+                        midGameLastPresentedCount = freshCount
+                        midGameLastPresentTimeNs = freshTimeNs
+                    }
+                    continue
+                }
+                if (!isActive || isFinishing || isDestroyed || !isActivityResumed) continue
+                appendLogAsync("frameprof", "Pantalla negra en mitad del juego: el juego emula pero no presenta imagen desde hace ${MID_GAME_NO_PRESENT_DIALOG_AFTER_MS / 1000} s de juego visible; se ofrece recuperación")
+                showMidGameNoPresentDialog()
+            }
+        }
+    }
+
+    /**
+     * Tercera pasada (R-2): diálogo de recuperación del detector de
+     * mitad de partida. "Seguir esperando" rearma el detector
+     * (racha a 0, aviso y diálogo reseteados: si sigue atascado,
+     * volverá a avisar a los 15 s y a preguntar a los 60 s) y
+     * "Salir" cierra la Activity. Cancelable: descartarlo equivale
+     * a seguir esperando. Si no se puede mostrar, se rearma sin
+     * cerrar nada: un diálogo fallido nunca mata la partida.
+     */
+    private fun showMidGameNoPresentDialog() {
+        val rearm = {
+            midGameNoPresentStreakMs = 0L
+            midGameNoPresentWarned = false
+            midGameNoPresentDialogShown = false
+        }
+        runCatching {
+            AlertDialog.Builder(this)
+                .setTitle("El juego no muestra imagen")
+                .setMessage("El juego sigue corriendo pero no presenta imagen desde hace 1 minuto de juego visible (el tiempo en segundo plano no cuenta). A veces una carga larga tarda: puedes seguir esperando o salir al inicio e intentarlo de nuevo.")
+                .setPositiveButton("Seguir esperando") { _, _ -> rearm() }
+                .setNegativeButton("Salir") { _, _ -> finish() }
+                .setCancelable(true)
+                .setOnCancelListener { rearm() }
+                .show()
+        }.onFailure {
+            rearm()
         }
     }
 
@@ -1215,7 +1394,7 @@ class EmbeddedGameActivity : SDLActivity() {
         runCatching {
             AlertDialog.Builder(this)
                 .setTitle("El juego no ha arrancado")
-                .setMessage("Pasaron 3 minutos sin que el juego confirmara el arranque ni entregara imágenes. Puede que el arranque se haya quedado atascado (por ejemplo, cargando el juego o en la precompilación de shaders (si la tienes activada)). Puedes intentarlo de nuevo desde el inicio.")
+                .setMessage("Pasaron 3 minutos de juego visible sin que el juego confirmara el arranque ni entregara imágenes (el tiempo en segundo plano no cuenta). Puede que el arranque se haya quedado atascado (por ejemplo, cargando el juego o en la precompilación de shaders (si la tienes activada)). Puedes intentarlo de nuevo desde el inicio.")
                 .setPositiveButton("Salir") { _, _ -> finish() }
                 .setCancelable(false)
                 .show()
@@ -1761,6 +1940,13 @@ class EmbeddedGameActivity : SDLActivity() {
      * por qué.
      */
     private fun openPauseMenu() {
+        // Tercera pasada (R-5): guarda propia, dentro de la función:
+        // cubre a los tres llamadores a la vez (dispatchKeyEvent,
+        // onBackPressed y openPauseMenuFromController, que conserva
+        // su guarda en el hilo SDL como defensa en profundidad).
+        // Sin ella, abrir el menú sobre una Activity en finish()
+        // pierde el resultado en silencio.
+        if (!isAliveForUiWork(isFinishing, isDestroyed)) return
         // R5-A3-5: el clear de USER también se verifica: si el núcleo
         // lo rechaza (fase distinta de Running) con el juego pausado,
         // queda en el log en vez de perderse en silencio.
@@ -1865,6 +2051,11 @@ class EmbeddedGameActivity : SDLActivity() {
     }
 
     override fun onDestroy() {
+        // Tercera pasada (R-6): la bandera de reanudada queda en
+        // false al destruirse (onPause ya la limpia en el camino
+        // normal; esto cubre finish() en onCreate, donde onPause no
+        // llega a correr con ella en true).
+        isActivityResumed = false
         // Ronda 0.2.66 (Fase L): quitar el callback de Choreographer
         // y el oyente de FrameMetrics antes de cancelar el ámbito
         // (el callback retendría la Activity).
@@ -2133,3 +2324,47 @@ internal fun shouldWarnNoPresent(
 ): Boolean {
     return !alreadyWarned && streakMs >= warnAfterMs
 }
+
+/**
+ * Tercera pasada (R-2): decisión pura del detector de pantalla
+ * negra EN MITAD DEL JUEGO. Un tick (ms) solo suma a la racha si
+ * el contador de presents es conocido (>= 0), el juego NO está
+ * pausado, ya hay línea base (previousCount >= 0), NI el contador
+ * NI el timestamp de present avanzaron, y el juego emula (FPS
+ * finito >= 1.0: "emula pero no presenta"). En cualquier otro
+ * caso la racha se resetea a 0, SALVO pausa (congela: devuelve la
+ * racha tal cual, sin sumar ni resetear) y contador desconocido
+ * (-1: inerte, resetea a 0 para no arrastrar una racha vieja).
+ * El primer tick válido solo establece la línea base (0). Pura,
+ * probada en JVM (TerceraPasadaWatchdogTest).
+ */
+internal fun nextMidGameNoPresentStreakMs(
+    streakMs: Long,
+    previousCount: Long,
+    currentCount: Long,
+    previousTimeNs: Long,
+    currentTimeNs: Long,
+    emulatedFps: Float,
+    isPaused: Boolean,
+    tickMs: Long,
+): Long {
+    if (currentCount < 0L) return 0L
+    if (isPaused) return streakMs
+    if (previousCount < 0L) return 0L
+    if (currentCount > previousCount || currentTimeNs > previousTimeNs) return 0L
+    if (!emulatedFps.isFinite() || emulatedFps < 1f) return 0L
+    return streakMs + tickMs
+}
+
+/**
+ * Tercera pasada (R-2): decisión pura del diálogo de recuperación
+ * de mitad de partida. Solo si la racha alcanzó el umbral de
+ * diálogo y aún no se mostró en esta racha ("Seguir esperando"
+ * resetea dialogShown y rearma). Pura, probada en JVM
+ * (TerceraPasadaWatchdogTest).
+ */
+internal fun shouldFireMidGameNoPresentDialog(
+    streakMs: Long,
+    dialogAfterMs: Long,
+    dialogShown: Boolean,
+): Boolean = !dialogShown && streakMs >= dialogAfterMs
