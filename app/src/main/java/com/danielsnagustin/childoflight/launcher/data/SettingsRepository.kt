@@ -68,6 +68,10 @@ class SettingsRepository(private val context: Context) {
         // ella el interruptor se perdía al recargar ajustes (el campo
         // caía a su default false y no llegaba a config.yml).
         val SKIP_SHADER_PRECOMPILE = booleanPreferencesKey("skip_shader_precompile")
+        // Tercera pasada (N-1): la máscara necesita su clave DataStore
+        // como skipShaderPrecompile: sin ella el interruptor se perdía
+        // al recargar ajustes.
+        val DISABLE_MASK_BIT = booleanPreferencesKey("disable_mask_bit")
         val CPU_OPT = booleanPreferencesKey("cpu_opt")
         val FPS_HACK = booleanPreferencesKey("fps_hack")
         val TURBO_MODE = booleanPreferencesKey("turbo_mode")
@@ -149,6 +153,7 @@ class SettingsRepository(private val context: Context) {
             textureCache = p[Keys.TEXTURE_CACHE] ?: true,
             shaderCache = p[Keys.SHADER_CACHE] ?: true,
             skipShaderPrecompile = p[Keys.SKIP_SHADER_PRECOMPILE] ?: false,
+            disableMaskBit = p[Keys.DISABLE_MASK_BIT] ?: false,
             cpuOpt = p[Keys.CPU_OPT] ?: true,
             fpsHack = p[Keys.FPS_HACK] ?: false,
             turboMode = p[Keys.TURBO_MODE] ?: false,
@@ -246,6 +251,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.MEMORY_MAPPING] = settings.memoryMapping.name
             p[Keys.TEXTURE_CACHE] = settings.textureCache
             p[Keys.SHADER_CACHE] = settings.shaderCache
+            p[Keys.DISABLE_MASK_BIT] = settings.disableMaskBit
             p[Keys.SKIP_SHADER_PRECOMPILE] = settings.skipShaderPrecompile
             p[Keys.CPU_OPT] = settings.cpuOpt
             p[Keys.FPS_HACK] = settings.fpsHack
