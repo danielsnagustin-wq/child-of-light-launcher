@@ -4,7 +4,6 @@ import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.data.PkgHeaderParser
-import com.danielsnagustin.childoflight.launcher.model.PkgKind
 import com.danielsnagustin.childoflight.launcher.model.TitleId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
