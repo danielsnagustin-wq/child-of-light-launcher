@@ -312,4 +312,67 @@ class SessionRepositoryTest {
         assertEquals(2, second.first)
         assertTrue(second.second > first.second)
     }
+
+    // --- Trofeos del núcleo por sesión (ronda 0.2.70, P1-6) ---
+
+    private fun liveTrophyDir(vitaRoot: File, npcommid: String = "NPWR06875_00"): File {
+        val dir = File(vitaRoot, "ux0/user/00/trophy/data/$npcommid")
+        dir.mkdirs()
+        return dir
+    }
+
+    @Test
+    fun snapshotAndRestoreTrophyDataRoundTrip() {
+        val r = repo()
+        val vitaRoot = File(tmp.root, "vita3k")
+        val live = liveTrophyDir(vitaRoot)
+        File(live, "TROPUSR.DAT").writeText("TROFEOS-A")
+        File(live, "TROPCONF.SFM").writeText("CONF")
+
+        r.snapshotTrophyData("PCSE00480", "s1")
+        assertEquals("TROFEOS-A", File(r.sessionDir("s1"), "trophy/NPWR06875_00/TROPUSR.DAT").readText())
+
+        // La viva cambia (otra sesión jugó) y al restaurar vuelve lo guardado.
+        File(live, "TROPUSR.DAT").writeText("TROFEOS-B")
+        File(live, "EXTRA.PNG").writeText("X")
+        r.restoreTrophyData("PCSE00480", "s1")
+        assertEquals("TROFEOS-A", File(live, "TROPUSR.DAT").readText())
+        assertEquals("CONF", File(live, "TROPCONF.SFM").readText())
+        assertFalse(File(live, "EXTRA.PNG").exists())
+    }
+
+    @Test
+    fun restoreWithNoStoredTrophyClearsLive() {
+        // La sesión no tiene trofeos guardados: la viva queda vacía
+        // para no heredar el TROPUSR.DAT de la sesión anterior.
+        val r = repo()
+        val vitaRoot = File(tmp.root, "vita3k")
+        val live = liveTrophyDir(vitaRoot)
+        File(live, "TROPUSR.DAT").writeText("TROFEOS-A")
+        r.restoreTrophyData("PCSE00480", "s1")
+        assertFalse(File(live, "TROPUSR.DAT").exists())
+    }
+
+    @Test
+    fun snapshotWithNoLiveTrophyKeepsStored() {
+        // Análogo H1 de la savedata: si la viva no existe, la copia
+        // guardada de la sesión NO se toca.
+        val r = repo()
+        val stored = File(r.sessionDir("s1"), "trophy/NPWR06875_00")
+        stored.mkdirs()
+        File(stored, "TROPUSR.DAT").writeText("VIEJO")
+        r.snapshotTrophyData("PCSE00480", "s1")
+        assertEquals("VIEJO", File(stored, "TROPUSR.DAT").readText())
+    }
+
+    @Test
+    fun clearLiveTrophyDataRemovesLiveDir() {
+        val r = repo()
+        val vitaRoot = File(tmp.root, "vita3k")
+        val live = liveTrophyDir(vitaRoot)
+        File(live, "TROPUSR.DAT").writeText("TROFEOS-A")
+        r.clearLiveTrophyData("PCSE00480")
+        assertFalse(File(live, "TROPUSR.DAT").exists())
+        assertFalse(live.exists())
+    }
 }
