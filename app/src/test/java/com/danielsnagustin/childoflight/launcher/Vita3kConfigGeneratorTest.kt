@@ -162,6 +162,27 @@ class Vita3kConfigGeneratorTest {
     }
 
     @Test
+    fun disableMaskBitDefaultsOffAndEmitsWhenEnabled() {
+        // Tercera pasada (N-1): la clave YA existe en el pin
+        // (config.h:139) y el parche aud3-mask-bit-disable la honra
+        // en Vulkan. Default OFF = comportamiento upstream exacto;
+        // ON se emite y pasa el validador (si el validador no la
+        // conociera, writeConfig regeneraría defaults y el
+        // interruptor no llegaría nunca al núcleo, como AUD-P0-1).
+        val yamlDefault = Vita3kConfigGenerator.generate(presetSettings(GpuProfileId.G99_RECOMMENDED), "/data/vita3k")
+        assertTrue(yamlDefault.contains("disable-mask-bit: false"))
+        val yamlOn = Vita3kConfigGenerator.generate(
+            LauncherSettings(disableMaskBit = true), "/data/vita3k",
+        )
+        assertTrue(yamlOn.contains("disable-mask-bit: true"))
+        val problems = Vita3kConfigGenerator.validateGeneratedConfig(yamlOn)
+        assertTrue(
+            "el validador no debe mencionar disable-mask-bit: $problems",
+            problems.none { it.contains("disable-mask-bit") },
+        )
+    }
+
+    @Test
     fun surfaceSyncEnabledInvertsDisableFlag() {
         val yaml = Vita3kConfigGenerator.generate(
             LauncherSettings(surfaceSyncEnabled = true), "/data/vita3k",
@@ -536,6 +557,7 @@ class Vita3kConfigGeneratorTest {
             "show-compile-shaders" to "bool",
             "show-welcome" to "bool",
             "skip-shader-precompile" to "bool", // Ronda 0.2.68 load-p1
+            "disable-mask-bit" to "bool", // Tercera pasada N-1
             "psn-signed-in" to "int",
             // 0.2.63 (E): sys-lang es INT en el pin (config.h:172:
             // code(int, "sys-lang", ...)); el generador lo emite
