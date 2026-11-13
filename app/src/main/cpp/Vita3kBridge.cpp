@@ -365,3 +365,25 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetTr
     LOGW("nativeGetTrophyCollections STUB: núcleo no embebido");
     return stub_empty_trophy_collection_array(env);
 }
+
+// --- Tercera pasada (L-1): contadores de present ---
+// Mismo contrato que runtime_bridge.cpp en launcher/ (Modo 1):
+// sin núcleo, -1 = desconocido (el wrapper Kotlin lo trata igual
+// que el fallback por UnsatisfiedLinkError). El stub es un target
+// aparte (Modo 2, solo Vita3kBridge.cpp): no hay duplicado con
+// launcher/, que solo se compila en Modo 1.
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetPresentedFrameCount(
+    JNIEnv * /* env */, jobject /* thiz */) {
+    LOGI("nativeGetPresentedFrameCount STUB (TODO-ETAPA2): sin núcleo, -1");
+    return -1;
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeGetLastPresentTimeNs(
+    JNIEnv * /* env */, jobject /* thiz */) {
+    LOGI("nativeGetLastPresentTimeNs STUB (TODO-ETAPA2): sin núcleo, -1");
+    return -1;
+}
+
