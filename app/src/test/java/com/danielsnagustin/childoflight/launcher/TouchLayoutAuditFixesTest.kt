@@ -68,7 +68,10 @@ class TouchLayoutAuditFixesTest {
         val raw = "btn_a|A|button|CROSS|1.5|-0.2|-10|2.0|#8CCBEB|CIRCLE|true|ANALOG|DIRECT_TOUCH|9.9"
         val decoded = TouchLayoutRepository.decodeControl(raw)
         assertNotNull(decoded)
-        assertEquals(1.0f, decoded!!.xFraction, 0.001f)
+        // 0.2.68 (neón): la x corrupta (1.5) cae al tope de barra
+        // 1.1, no a 1.0: L (-0.012), ○ (1.028) y R (1.016) viven
+        // sobre las barras y el tope es simétrico [-0.1, 1.1].
+        assertEquals(1.1f, decoded!!.xFraction, 0.001f)
         assertEquals(0.0f, decoded.yFraction, 0.001f)
         assertEquals(16, decoded.sizeDp)
         assertEquals(1.0f, decoded.opacity, 0.001f)
@@ -87,13 +90,14 @@ class TouchLayoutAuditFixesTest {
     fun decodeProfileDedupesDuplicateControlIds() {
         // Dos controles con el mismo id: borrar/editar uno afectaba
         // a los dos. Al leer se queda el primero.
-        val first = defaultTouchLayout().first { it.id == "btn_jump" }
+        // 0.2.68 (neón): el botón de prueba es la ✕ del rombo.
+        val first = defaultTouchLayout().first { it.id == "btn_cross" }
         val second = first.copy(label = "Duplicado")
         val profile = ControlProfile("p1", "Test", false, listOf(first, second))
         val decoded = TouchLayoutRepository.decodeProfile(TouchLayoutRepository.encodeProfile(profile))
         assertNotNull(decoded)
         assertEquals(1, decoded!!.controls.size)
-        assertEquals("Salto", decoded.controls[0].label)
+        assertEquals("Cruz", decoded.controls[0].label)
     }
 
     @Test
@@ -109,21 +113,27 @@ class TouchLayoutAuditFixesTest {
     }
 
     @Test
-    fun clampCenterFractionJumpKeepsMockupPosition() {
-        // 0.2.58 (R7): el salto admite x hasta 1.1 en el editor
-        // (arrastre y slider X): su centro de fábrica es 1.012
-        // (mockup, sobre la barra negra derecha). Sin maxFraction
-        // el editor lo devolvería a 1 - half y perdería el arreglo.
-        val half = 0.0639f // 87 dp en el teléfono (121.8 px / 1905.9 px)
-        assertEquals(1.012f, TouchLayoutRepository.clampCenterFraction(1.012f, half, TouchLayoutRepository.JUMP_MAX_X_FRACTION), 0.001f)
+    fun clampCenterFractionCrossKeepsNeonPosition() {
+        // 0.2.68 (neón): la cruz (✕) admite x hasta 1.1 en el
+        // editor (arrastre y slider X): su centro de fábrica es
+        // 0.959 (imagen, sobre la barra negra derecha en el
+        // rombo). Sin maxFraction el editor la devolvería a
+        // 1 - half y perdería el diseño.
+        val half = 0.0441f // 60 dp en el teléfono (84.0 px / 1905.9 px)
+        assertEquals(0.959f, TouchLayoutRepository.clampCenterFraction(0.959f, half, TouchLayoutRepository.JUMP_MAX_X_FRACTION), 0.001f)
         assertEquals(1.1f, TouchLayoutRepository.clampCenterFraction(1.5f, half, TouchLayoutRepository.JUMP_MAX_X_FRACTION), 0.001f)
-        assertEquals(0.9361f, TouchLayoutRepository.clampCenterFraction(1.012f, half), 0.001f)
-        // El round-trip de fábrica sobrevive a encode/decode: el
-        // perfil migrado a 1.012 no se deshace al releerlo.
-        val jump = defaultTouchLayout().first { it.id == "btn_jump" }
-        val decoded = TouchLayoutRepository.decodeControl(TouchLayoutRepository.encodeControl(jump))
-        assertNotNull(decoded)
-        assertEquals(1.012f, decoded!!.xFraction, 0.001f)
+        assertEquals(0.9559f, TouchLayoutRepository.clampCenterFraction(0.959f, half), 0.001f)
+        // El round-trip de fábrica sobrevive a encode/decode: las
+        // posiciones sobre las barras no se deshacen al releer el
+        // perfil guardado. 0.2.68: el clamp de decodeControl era
+        // [0, 1] salvo btn_jump y movía L a 0.0 y ○/R a 1.0 en cada
+        // carga; ahora el tope es simétrico [-0.1, 1.1].
+        for ((id, x) in listOf("btn_cross" to 0.959f, "btn_circ" to 1.028f, "btn_l" to -0.012f, "btn_r" to 1.016f)) {
+            val control = defaultTouchLayout().first { it.id == id }
+            val decoded = TouchLayoutRepository.decodeControl(TouchLayoutRepository.encodeControl(control))
+            assertNotNull(decoded)
+            assertEquals(x, decoded!!.xFraction, 0.001f)
+        }
     }
 
     @Test
