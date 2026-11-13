@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!--
       Child of Light Launcher.
-      Sin permisos de red ni de ubicación. Todo el trabajo es local:
+      Sin permisos de red ni de ubicación. Todo el trabajo es local SALVO la ficha del juego opcional de RAWG.io, que solo usa red si el usuario escribe su propia clave en Ajustes -> General (sin clave no hay ninguna llamada de red).
       importar la copia del usuario (SAF), guardarla en el almacenamiento
       privado de la app y escribir config.yml para Vita3K.
       No se incluye juego, firmware ni claves.
@@ -16,6 +16,8 @@
     <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
     <!-- Copia de .pkg a Descargas en API 28 (en API 29+ se usa MediaStore, sin permiso). -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <!-- Permiso de Internet: solo necesario para la ficha opcional de RAWG.io; sin clave de API no se realiza ninguna llamada de red. -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Visibilidad de paquetes (Android 11+): sin <queries>, el sistema
          oculta Vita3K y getLaunchIntentForPackage/getPackageInfo devuelven
