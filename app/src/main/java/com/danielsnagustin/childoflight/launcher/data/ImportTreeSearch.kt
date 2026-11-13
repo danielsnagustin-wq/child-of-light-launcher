@@ -75,19 +75,10 @@ object ImportTreeSearch {
                     "La carpeta \"${titleDir.name}\" no es un Title ID de Child of Light.",
                 ),
             )
-        val sceSys = findChildIgnoreCase(titleDir, "sce_sys")?.takeIf { it.isDirectory }
-        val sfo = sceSys?.let { findChildIgnoreCase(it, "param.sfo")?.takeIf { f -> f.isFile } }
-        val rawTitle = sfo?.let { ParamSfo.parse(it).getOrNull()?.titleId?.trim() }
-        if (!rawTitle.isNullOrEmpty()) {
-            val sfoTitle = TitleId.fromString(rawTitle)
-            if (sfoTitle == null) {
-                return Result.failure(
-                    IllegalArgumentException(
-                        "El juego dentro de la carpeta ${folderTitle.id} no es Child of Light: " +
-                            "su param.sfo dice $rawTitle. El contenido manda sobre el nombre de la carpeta.",
-                    ),
-                )
-            }
+        // Ronda 0.2.70 (8-P2-4): la lectura del SFO vive solo en
+        // sfoTitleId; no re-leerla aquí en el camino común.
+        val sfoTitle = sfoTitleId(titleDir)
+        if (sfoTitle != null) {
             if (sfoTitle != folderTitle) {
                 return Result.failure(
                     IllegalArgumentException(
@@ -97,6 +88,21 @@ object ImportTreeSearch {
                     ),
                 )
             }
+            return Result.success(folderTitle)
+        }
+        // sfoTitleId devuelve null sin SFO o con un TITLE_ID que no es
+        // un TitleId válido: solo en ese segundo caso se re-lee el
+        // título crudo, para mantener el mensaje exacto de antes.
+        val sceSys = findChildIgnoreCase(titleDir, "sce_sys")?.takeIf { it.isDirectory }
+        val sfo = sceSys?.let { findChildIgnoreCase(it, "param.sfo")?.takeIf { f -> f.isFile } }
+        val rawTitle = sfo?.let { ParamSfo.parse(it).getOrNull()?.titleId?.trim() }
+        if (!rawTitle.isNullOrEmpty()) {
+            return Result.failure(
+                IllegalArgumentException(
+                    "El juego dentro de la carpeta ${folderTitle.id} no es Child of Light: " +
+                        "su param.sfo dice $rawTitle. El contenido manda sobre el nombre de la carpeta.",
+                ),
+            )
         }
         return Result.success(folderTitle)
     }
