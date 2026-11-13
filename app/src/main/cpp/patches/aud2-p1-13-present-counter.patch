@@ -1,0 +1,39 @@
+diff --git a/renderer/src/vulkan/renderer.cpp b/renderer/src/vulkan/renderer.cpp
+index 8f4f85f..440e30c 100644
+--- a/renderer/src/vulkan/renderer.cpp
++++ b/renderer/src/vulkan/renderer.cpp
+@@ -38,6 +38,7 @@
+ #include <overlay/display_manager.h>
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <mutex>
+ #include <string_view>
+ #include <unordered_set>
+@@ -1230,7 +1231,26 @@ void VKState::render_frame(DisplayState &display, const GxmState &gxm, MemState
+         vk::ImageView surface_handle = surface_cache.sourcing_color_surface_for_presentation(
+             frame.base, frame.pitch, viewport);
+ 
++        // Ronda 0.2.70 (aud2 P1-13): instrumentacion TEMPORAL del fallback
++        // de presentacion. Si sourcing devuelve nullptr, el frame se copia
++        // por CPU (memcpy de pitch * height * 4 a staging + copyBufferToImage)
++        // en cada frame presentado. Sin contador no se sabe si dispara en
++        // CoL (sospecha: superficie de presentacion no RGBA8, ver
++        // surface_cache.cpp:1501-1560). Solo cuenta y loguea; NO cambia el
++        // camino de presentacion, ni el memcpy, ni el lock, ni los timeouts.
++        // Leer en vita3k.log: la primera vez + 1 linea cada 600 fallbacks
++        // con el ratio frente a frames presentados. Medicion en telefono
++        // pendiente; quitar cuando se mida.
++        static std::atomic<uint64_t> s_present_fallback_frames{ 0 };
++        static std::atomic<uint64_t> s_present_total_frames{ 0 };
++        const uint64_t presented_total = s_present_total_frames.fetch_add(1, std::memory_order_relaxed) + 1;
++
+         if (!surface_handle) {
++            const uint64_t fallback_count = s_present_fallback_frames.fetch_add(1, std::memory_order_relaxed) + 1;
++            LOG_INFO_ONCE("render_frame: present fallback (memcpy CPU) tomado; la superficie de presentacion no es reutilizable");
++            if (fallback_count % 600 == 0) {
++                LOG_INFO("render_frame: present fallback (memcpy CPU) {} / {} frames presentados", fallback_count, presented_total);
++            }
+             vkutil::Image &vita_surface = screen_renderer.vita_surface[screen_renderer.swapchain_image_idx];
+             if (frame.image_size.x != vita_surface.width || frame.image_size.y != vita_surface.height) {
+                 // re-create the image
