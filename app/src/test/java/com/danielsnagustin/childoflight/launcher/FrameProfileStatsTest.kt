@@ -163,6 +163,49 @@ class FrameProfileStatsTest {
     }
 
     @Test
+    fun summaryLineIsSafeToCallFromABackgroundThreadWhileRecording() {
+        // Ronda 0.2.70 (2-P2-6): summaryLine() se calcula ahora en
+        // Dispatchers.IO (sobrecarga perezosa de appendLogAsync), no en
+        // Main: debe ser seguro llamarlo desde un hilo de fondo mientras
+        // otro hilo sigue registrando ticks de vsync.
+        val errors = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
+        val lines = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val startGate = java.util.concurrent.CountDownLatch(1)
+        val doneGate = java.util.concurrent.CountDownLatch(2)
+        val writer = Thread {
+            try {
+                startGate.await()
+                var t = 1_000_000_000L
+                repeat(500) {
+                    t += 16_600_000L
+                    FrameProfileStats.recordVsync(t, nowMillis = 10_000L + it * 16L)
+                }
+            } catch (e: Throwable) {
+                errors.compareAndSet(null, e)
+            } finally {
+                doneGate.countDown()
+            }
+        }
+        val reader = Thread {
+            try {
+                startGate.await()
+                repeat(100) { lines.add(FrameProfileStats.summaryLine()) }
+            } catch (e: Throwable) {
+                errors.compareAndSet(null, e)
+            } finally {
+                doneGate.countDown()
+            }
+        }
+        writer.start()
+        reader.start()
+        startGate.countDown()
+        assertTrue(doneGate.await(10, java.util.concurrent.TimeUnit.SECONDS))
+        assertEquals(null, errors.get())
+        assertTrue(lines.isNotEmpty())
+        assertTrue(lines.last().contains("[FrameProf]"))
+    }
+
+    @Test
     fun formatSummaryReadsPanelSixtyWhileGameFifteen() {
         // Panel a 60 Hz (vsync p95 16,6) y juego a 15 fps emulados:
         // la lectura dice que el problema no es el panel ni el
