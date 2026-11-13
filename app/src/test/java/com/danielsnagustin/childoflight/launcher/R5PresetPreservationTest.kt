@@ -99,6 +99,15 @@ class R5PresetPreservationTest {
     }
 
     @Test
+    fun preservedFieldsDifferWhenOnlyDisableMaskBitDiffers() {
+        // Tercera pasada (N-1): la máscara también se conserva como
+        // valor manual al aplicar un preset (preserveManualCacheChoices),
+        // así que diferir en ella es un cambio manual conservado.
+        val current = presetSettings(GpuProfileId.G99_RECOMMENDED).copy(disableMaskBit = true)
+        assertTrue(preservedPresetFieldsDiffer(current, presetSettings(GpuProfileId.G99_RECOMMENDED)))
+    }
+
+    @Test
     fun preservedFieldsDifferIgnoresNonPreservedFields() {
         // La resolución no es un campo preservado: diferir en ella
         // no es "un cambio manual conservado".
