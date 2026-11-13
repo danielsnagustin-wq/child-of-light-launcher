@@ -181,9 +181,11 @@ La variante incluida elegida es la estándar Gmem de la R8.
   no se traslada aquí. No se inventa un driver Mali.)
 - **Qué hace el launcher en su lugar para Mali**: driver Vulkan del
   sistema (el del fabricante, el único disponible) + ajustes
-  seguros: Vulkan 1x (960x544), Double Buffer (valor de los
-  presets Mali; el núcleo honra Page Table/Native Buffer cuando su
-  bit está en la máscara, no hay fallback forzado a Double Buffer),
+  seguros: Vulkan 1x (960x544), Page Table por defecto en Mali/G99
+  (valor de los presets desde 0.2.66, G11-01; la red de seguridad
+  G11-02 resuelve el método efectivo por máscara — si Page Table
+  no está soportada, cae a Double Buffer, el método por defecto
+  del núcleo —, no hay fallback forzado a Double Buffer),
   Bilinear (FSR queda como opción manual en Ajustes → GPU, ya no es
   el filtro de ningún preset desde 0.2.65),
   V-Sync OFF, async pipeline ON, high accuracy OFF, Surface Sync
