@@ -292,17 +292,81 @@ class NeonTouchLayoutTest {
     }
 
     @Test
+    fun migrates067DefaultWithoutCircleToNeon() {
+        // 0.2.70 (ronda 0.2.70, area 3, P1-1): el default 0.2.67
+        // al que se le BORRO un control (5 controles, con
+        // sizeFraction, formato 0.2.64+) tambien migra al neon
+        // de 10: antes quedaba atascado para siempre con
+        // espada/salto/Volver porque matchesNeonPredecessor
+        // exigia 6 == 5. El borrado no resucita como tal: el
+        // neon de fabrica no trae btn_circle, btn_sword ni
+        // btn_jump.
+        for (withFractions in listOf(false, true)) {
+            val five = layout067(withFractions).filter { it.id != "btn_circle" }
+            assertEquals(5, five.size)
+            val saved = ControlProfile("default-g99", "Por defecto G99", true, five)
+            val migrated = TouchLayoutRepository.migrateBuiltInProfile(saved)
+            assertEquals(defaultTouchLayout(), migrated.controls)
+            assertEquals(10, migrated.controls.size)
+            assertFalse(migrated.controls.any { it.id == "btn_circle" || it.id == "btn_sword" || it.id == "btn_jump" })
+            assertEquals(migrated, TouchLayoutRepository.migrateBuiltInProfile(migrated))
+        }
+        // Un perfil podado a conciencia (2 o mas controles
+        // borrados) NO migra: no se resucita lo borrado a
+        // proposito.
+        val pruned = layout067(true).filter { it.id == "stick" || it.id == "btn_sword" || it.id == "btn_jump" }
+        val savedPruned = ControlProfile("default-g99", "Por defecto G99", true, pruned)
+        assertEquals(savedPruned, TouchLayoutRepository.migrateBuiltInProfile(savedPruned))
+        // Y un perfil vacio tampoco migra (B10: jugar solo con
+        // mando fisico es valido).
+        val savedEmpty = ControlProfile("default-g99", "Por defecto G99", true, emptyList())
+        assertEquals(savedEmpty, TouchLayoutRepository.migrateBuiltInProfile(savedEmpty))
+    }
+
+    @Test
+    fun decodeControlClampsWidthFraction() {
+        // 0.2.70 (ronda 0.2.70, area 3, P2-2): decodeControl
+        // acota widthFraction por arriba como sizeFraction: un
+        // 5.0 corrupto o editado a mano queda en 1.0 (antes
+        // pasaba intacto y dibujaba una pildora de 5400 px).
+        val huge = "btn_l|L|button|L1|-0.012|0.094|51|0.8|#8CCBEB|PILL|true|ANALOG|DIRECT_TOUCH|1.0|0.05|5.0"
+        val decodedHuge = TouchLayoutRepository.decodeControl(huge)
+        assertNotNull(decodedHuge)
+        assertEquals(1.0f, decodedHuge!!.widthFraction!!, 0.001f)
+        // Por abajo tambien acota, simetrico a sizeFraction.
+        val tiny = "btn_l|L|button|L1|-0.012|0.094|51|0.8|#8CCBEB|PILL|true|ANALOG|DIRECT_TOUCH|1.0|0.05|0.005"
+        val decodedTiny = TouchLayoutRepository.decodeControl(tiny)
+        assertNotNull(decodedTiny)
+        assertEquals(0.01f, decodedTiny!!.widthFraction!!, 0.001f)
+        // Un valor sano sobrevive intacto (round-trip de la
+        // pildora L: 0.278).
+        val pill = control(defaultTouchLayout(), "btn_l")
+        val decodedPill = TouchLayoutRepository.decodeControl(TouchLayoutRepository.encodeControl(pill))
+        assertNotNull(decodedPill)
+        assertEquals(0.278f, decodedPill!!.widthFraction!!, 0.001f)
+    }
+
+    @Test
     fun pauseWingsAttachToFirstStart() {
-        // Las alas se atan al PRIMER botón START: en el default
-        // neón es btn_pause (la píldora START posterior dibuja su
-        // etiqueta, no el icono II).
+        // Las alas se atan al boton de pausa por su id de
+        // fabrica: btn_pause en el default y el externo,
+        // btn_start en una mano (0.2.70, P2-1: antes era el
+        // PRIMER START, asi que sin pausa las alas saltaban a
+        // la pildora START).
         assertEquals("btn_pause", pauseControlFor(defaultTouchLayout())!!.id)
         assertEquals("btn_pause", pauseControlFor(externalGamepadLayout())!!.id)
-        // Sin START no hay alas; con solo la píldora, las alas
-        // van a ella.
+        assertEquals("btn_start", pauseControlFor(oneHandLayout())!!.id)
+        // Sin START no hay alas; con solo la pildora, TAMPOCO:
+        // la pildora START nunca lleva alas.
         assertNull(pauseControlFor(emptyList()))
         val onlyPill = listOf(control(defaultTouchLayout(), "btn_start_pill"))
-        assertEquals("btn_start_pill", pauseControlFor(onlyPill)!!.id)
+        assertNull(pauseControlFor(onlyPill))
+        // Default sin btn_pause (oculto o borrado) y con la
+        // pildora START visible: las alas no saltan a la
+        // pildora, no hay alas.
+        val noPause = defaultTouchLayout().filter { it.id != "btn_pause" }
+        assertTrue(noPause.any { it.id == "btn_start_pill" })
+        assertNull(pauseControlFor(noPause))
         // Las alas de la pausa en el teléfono: 4.7 x 140 = 658 px
         // de ancho por 1.07 x 140 = 149 px de alto; en la imagen
         // son 0.277W x 0.141H = 648 x 152 px (margen para los
