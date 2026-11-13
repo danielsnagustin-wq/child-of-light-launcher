@@ -79,6 +79,11 @@ fun encodeSettingsBackup(settings: LauncherSettings, ui: UiPreferences): String 
     // también va en el backup, como shaderCache: sin ella, exportar
     // y restaurar ajustes la perdía. La versión NO sube (sigue 1):
     // los backups viejos sin la clave decodifican con el valor actual.
+    // Tercera pasada (N-1): la máscara también va en el backup, como
+    // skipShaderPrecompile: sin ella, exportar y restaurar ajustes la
+    // perdía. La versión NO sube (sigue 1): los backups viejos sin la
+    // clave decodifican con el valor actual.
+    bool("disableMaskBit", settings.disableMaskBit)
     bool("skipShaderPrecompile", settings.skipShaderPrecompile)
     bool("cpuOpt", settings.cpuOpt)
     bool("fpsHack", settings.fpsHack)
@@ -159,6 +164,7 @@ fun decodeSettingsBackup(
         textureCache = boolValue(map["textureCache"], current.textureCache),
         shaderCache = boolValue(map["shaderCache"], current.shaderCache),
         skipShaderPrecompile = boolValue(map["skipShaderPrecompile"], current.skipShaderPrecompile),
+        disableMaskBit = boolValue(map["disableMaskBit"], current.disableMaskBit),
         cpuOpt = boolValue(map["cpuOpt"], current.cpuOpt),
         fpsHack = boolValue(map["fpsHack"], current.fpsHack),
         turboMode = boolValue(map["turboMode"], current.turboMode),
