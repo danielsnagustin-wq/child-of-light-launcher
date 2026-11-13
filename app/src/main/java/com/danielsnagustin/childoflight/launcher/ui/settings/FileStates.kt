@@ -96,7 +96,8 @@ fun FileStateSection(
         status.dlcs.forEach { dlc ->
             Text(
                 "• ${dlc.dlcId} — ${DownloadsCleanup.formatBytes(dlc.sizeBytes)}" +
-                    if (dlc.isPkg) " (.pkg guardado, no instalado)" else " (extraído)",
+                    (if (dlc.isPkg) " (.pkg guardado, no instalado)" else " (extraído)") +
+                    (if (dlc.regionUnknown) " · región desconocida" else ""),
                 style = MaterialTheme.typography.bodyMedium,
                 color = cardTextColor(dark),
             )
