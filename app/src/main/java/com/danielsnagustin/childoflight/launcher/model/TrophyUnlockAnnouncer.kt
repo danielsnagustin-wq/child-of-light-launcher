@@ -48,7 +48,7 @@ class TrophyUnlockAnnouncer {
      * anterior que terminó después de uno más reciente) o el número
      * no existe.
      */
-    fun announce(number: Int, atMillis: Long, seq: Long): TrophyProgress? {
+    fun announce(number: Int, atMillis: Long?, seq: Long): TrophyProgress? {
         if (seq <= lastSeq) return null
         val trophy = TROPHIES_20.firstOrNull { it.number == number } ?: return null
         lastSeq = seq
