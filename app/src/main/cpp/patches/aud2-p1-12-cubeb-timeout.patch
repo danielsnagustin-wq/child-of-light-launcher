@@ -1,0 +1,77 @@
+diff --git a/audio/src/impl/cubeb_audio.cpp b/audio/src/impl/cubeb_audio.cpp
+--- a/audio/src/impl/cubeb_audio.cpp
++++ b/audio/src/impl/cubeb_audio.cpp
+@@ -19,6 +19,7 @@
+ #include "util/log.h"
+ 
+ #include <algorithm>
++#include <chrono> // Ronda 0.2.70, aud2-p1-12: steady_clock + wait_until con tope
+ #include <cstdint>
+ 
+ // scales S16LE samples in place, used to push the volume past the 1.0 ceiling cubeb enforces natively
+@@ -82,5 +82,23 @@
+ static void impl_cubeb_state_callback(cubeb_stream *stm, void *user, cubeb_state state) {
+-    // we must give this function as a parameter to cubeb, but we don't care about it
++    // Ronda 0.2.70, aud2-p1-12 (P1-12): ANTES era un no-op que ignoraba el
++    // estado del stream. Si el stream AAudio/AudioTrack entra en error,
++    // cubeb deja de llamar al callback de datos, ningún búfer se libera
++    // jamás y audio_output quedaba bloqueado en el wait para siempre.
++    // Con CUBEB_STATE_ERROR se marca el puerto como parado (stopping es
++    // atómico: audio_output lo comprueba a la entrada y tras la espera)
++    // y se despierta a quien espera, para salir con error en vez de
++    // colgar el hilo del juego. El puerto queda silenciado (el stream
++    // está muerto); pausar/salir o reabrir el puerto lo recupera.
++    // Solo ERROR actúa: STARTED/STOPPED/DRAINED son estados normales.
++    if (state == CUBEB_STATE_ERROR && user != nullptr) {
++        CubebAudioOutPort *port = static_cast<CubebAudioOutPort *>(user);
++        LOG_WARN("Cubeb stream entered error state, stopping audio port");
++        port->stopping = true;
++        {
++            std::lock_guard<std::mutex> lock(port->mutex);
++        }
++        port->cond_var.notify_all();
++    }
+ }
+ 
+ CubebAudioOutPort::~CubebAudioOutPort() {
+@@ -160,13 +160,33 @@
+     if (out_port.stopping)
+         return;
+ 
+-    if (port.nb_buffers_ready == port.audio_buffers.size()) {
+-        port.cond_var.wait(lock);
+-        if (out_port.stopping)
+-            return;
+-    }
+-
+-    assert(port.nb_buffers_ready < port.audio_buffers.size());
++    // Ronda 0.2.70, aud2-p1-12 (P1-12): ANTES la espera era SIN tope
++    // (cond_var.wait): si el callback de cubeb se paraba, el hilo del
++    // juego se colgaba para siempre en sceAudioOutOutput. Ahora la
++    // espera es acotada a 2x la duración del búfer (igual que el camino
++    // SDL de AUD-P2-5) y, si sigue lleno tras el tope, se descarta el
++    // búfer ENTRANTE (se sale sin encolar): no se toca el búfer más
++    // antiguo porque el callback lo lee SIN el mutex y reescribirlo
++    // en caliente sería una carrera de datos. El sonido pierde un
++    // búfer (~10 ms) en vez de colgar el hilo.
++    // (len_microseconds NO se fija en el camino Cubeb — solo SDL lo
++    // hace — así que la duración se calcula del spec del stream.)
++    if (port.nb_buffers_ready == port.audio_buffers.size()) {
++        const uint64_t buffer_us = (port.spec.rate > 0 && port.spec.channels > 0)
++            ? static_cast<uint64_t>(port.len_bytes) * 1000000ULL / (static_cast<uint64_t>(port.spec.channels) * sizeof(uint16_t) * port.spec.rate)
++            : 10000ULL;
++        const auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(buffer_us * 2);
++        while (port.nb_buffers_ready == port.audio_buffers.size() && !out_port.stopping) {
++            if (port.cond_var.wait_until(lock, deadline) == std::cv_status::timeout)
++                break;
++        }
++        if (out_port.stopping)
++            return;
++        if (port.nb_buffers_ready == port.audio_buffers.size()) {
++            // Todavía lleno tras el tope: descartar el búfer entrante.
++            return;
++        }
++    }
+     if (buffer) {
+         // the buffer can be empty to drain the port
+         int next_buffer_pos = (port.next_audio_buffer + port.nb_buffers_ready) % port.audio_buffers.size();
