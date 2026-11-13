@@ -24,6 +24,7 @@ import java.util.zip.ZipOutputStream
  *   active.txt              <- id de la sesión activa (una línea)
  *   <id>/
  *     savedata/             <- copia de ux0/user/00/savedata/<TITLE_ID>/
+ *     trophy/<NPCOMMID>/    <- copia de ux0/user/00/trophy/data/<NPCOMMID>/ (ronda 0.2.70, P1-6)
  *     achievements.txt      <- progreso local "n|epoch;..." (mismo formato que AchievementRepository)
  *     control-profile.txt   <- id del perfil de control activo (una línea)
  * ```
@@ -184,6 +185,93 @@ class SessionRepository(private val vitaRoot: File) {
     /** Borra la savedata guardada de una sesión (su carpeta savedata/), sin tocar la viva. */
     fun clearSessionSavedata(sessionId: String) {
         File(sessionDir(sessionId), "savedata").deleteRecursively()
+    }
+
+    /**
+     * Ronda 0.2.70, P1-6: snapshot del directorio de trofeos del
+     * núcleo (ux0/user/00/trophy/data/<NPCOMMID>/, con TROPUSR.DAT)
+     * a sessions/<id>/trophy/<NPCOMMID>/. Sin esto, el TROPUSR.DAT
+     * era uno solo compartido por todas las sesiones: al cambiar de
+     * sesión, la nueva heredaba en la siguiente sync los trofeos
+     * ganados en la anterior. Mismo patrón de respaldo que
+     * snapshotSavedata (rename a .bak-*, copia, borrado del respaldo
+     * solo si la copia salió bien; si falla, se restaura). Si la
+     * viva no existe, la copia guardada NO se toca (análogo H1 de
+     * la savedata). Los .bak-* huérfanos de un snapshot anterior
+     * interrumpido se borran antes de copiar.
+     */
+    fun snapshotTrophyData(titleId: String, sessionId: String) {
+        val liveDirs = TrophyStoreReader.resolveTrophyDirs(vitaRoot, titleId)
+        if (liveDirs.isEmpty()) return
+        val destRoot = File(sessionDir(sessionId), "trophy")
+        destRoot.mkdirs()
+        destRoot.listFiles()
+            ?.filter { it.name.contains(".bak-") }
+            ?.forEach { it.deleteRecursively() }
+        for (live in liveDirs) {
+            val dest = File(destRoot, live.name)
+            val backup = File(destRoot, live.name + ".bak-" + System.currentTimeMillis())
+            val hadDest = dest.exists()
+            if (hadDest && !dest.renameTo(backup)) {
+                throw IllegalStateException("No se pudo respaldar los trofeos de la sesión.")
+            }
+            try {
+                dest.mkdirs()
+                live.copyRecursively(dest, overwrite = true)
+                if (hadDest) backup.deleteRecursively()
+            } catch (e: Exception) {
+                dest.deleteRecursively()
+                if (hadDest) backup.renameTo(dest)
+                throw e
+            }
+        }
+    }
+
+    /**
+     * Ronda 0.2.70, P1-6: restore del directorio de trofeos de la
+     * sesión a la carpeta viva. Si la sesión no tiene trofeos
+     * guardados, la viva queda VACÍA (se borran sus directorios):
+     * una sesión nueva o sin trofeos no debe heredar el TROPUSR.DAT
+     * de la anterior. Mismo patrón de respaldo que restoreSavedata.
+     * Best-effort desde SessionManager (como los logros): un fallo
+     * aquí nunca bloquea el lanzamiento.
+     */
+    fun restoreTrophyData(titleId: String, sessionId: String) {
+        val storedRoot = File(sessionDir(sessionId), "trophy")
+        val liveDataDir = File(EmbeddedCoreLayout.resolveUx0Dir(vitaRoot), "user/00/trophy/data")
+        val liveDirs = TrophyStoreReader.resolveTrophyDirs(vitaRoot, titleId)
+        if (!storedRoot.isDirectory) {
+            liveDirs.forEach { it.deleteRecursively() }
+            return
+        }
+        val stored = storedRoot.listFiles()?.filter { it.isDirectory }.orEmpty()
+        for (live in liveDirs) {
+            if (stored.none { it.name.equals(live.name, ignoreCase = true) }) {
+                live.deleteRecursively()
+            }
+        }
+        for (src in stored) {
+            val live = File(liveDataDir, src.name)
+            val backup = File(liveDataDir, src.name + ".bak-" + System.currentTimeMillis())
+            val hadLive = live.exists()
+            if (hadLive && !live.renameTo(backup)) {
+                throw IllegalStateException("No se pudo respaldar los trofeos vivos antes de restaurar.")
+            }
+            try {
+                live.mkdirs()
+                src.copyRecursively(live, overwrite = true)
+                if (hadLive) backup.deleteRecursively()
+            } catch (e: Exception) {
+                live.deleteRecursively()
+                if (hadLive) backup.renameTo(live)
+                throw e
+            }
+        }
+    }
+
+    /** Borra los directorios vivos de trofeos del núcleo (sesión nueva: empieza a 0/20). */
+    fun clearLiveTrophyData(titleId: String) {
+        TrophyStoreReader.resolveTrophyDirs(vitaRoot, titleId).forEach { it.deleteRecursively() }
     }
 
     fun savedataStats(sessionId: String): Pair<Int, Long> {
