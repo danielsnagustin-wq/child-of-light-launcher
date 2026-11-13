@@ -7,8 +7,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import com.danielsnagustin.childoflight.launcher.model.GpuBackend
 import com.danielsnagustin.childoflight.launcher.model.PerformanceOverlayDetail
 import com.danielsnagustin.childoflight.launcher.model.PerformanceOverlayPosition
+import com.danielsnagustin.childoflight.launcher.model.resolveBackend
 import com.danielsnagustin.childoflight.launcher.ui.EnumChips
 import com.danielsnagustin.childoflight.launcher.ui.LauncherViewModel
 import com.danielsnagustin.childoflight.launcher.ui.NoteText
@@ -32,6 +34,7 @@ import com.danielsnagustin.childoflight.launcher.ui.SettingSwitch
 @Composable
 fun SettingsPerformanceScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavigate: (Screen) -> Unit) {
     val settings by vm.settingsFlow.collectAsState(initial = null)
+    val gpu by vm.gpuFlow.collectAsState(initial = null)
     val s = settings
     SettingsCategoryScaffold(
         title = "Rendimiento",
@@ -79,11 +82,18 @@ fun SettingsPerformanceScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 SettingSwitch("Carga rápida (sin precompilar shaders)", "skip-shader-precompile en config.yml. Salta el precompilado de shaders al arrancar: se espera que el juego entre en segundos en vez de esperar minutos en negro (pendiente medirlo en el teléfono). Los shaders se compilan bajo demanda durante el juego (compilación asíncrona). Si ves objetos que tardan en aparecer al entrar en una escena nueva, apágalo. Se aplica en el siguiente lanzamiento.", s.skipShaderPrecompile) { vm.saveSettings(s.copy(skipShaderPrecompile = it)) }
                 OutlinedButton(onClick = { vm.clearShaderCache() }, modifier = Modifier.fillMaxWidth()) { Text("Limpiar caché de shaders") }
                 NoteText("Limpia la caché solo si hay glitches. El stutter de la primera partida es normal hasta que la caché se vuelva a llenar.")
-                // Ronda 0.2.65 (R-P1-7): en Vulkan, hashless siempre
-                // está ON en el núcleo (el interruptor no lo apaga):
-                // la promesa de medirlo con la prueba de 30 s ya no
-                // existe; la prueba A/B no puede distinguir nada.
-                SettingSwitch("Caché de texturas sin hash (experimental)", "Solo texturas grandes: el núcleo vigila su memoria en vez de recalcular el hash en cada frame. Puede dar más FPS en escenas con muchas texturas. Si alguna textura se ve incorrecta, apágalo. OFF por defecto. En Vulkan el núcleo lo tiene siempre activado, así que este interruptor no cambia nada con ese backend.", s.hashlessTextureCache) { vm.saveSettings(s.copy(hashlessTextureCache = it)) }
+                // Ronda 0.2.70 (11-P2-1): en Vulkan el interruptor es
+                // inerte (el núcleo lo tiene siempre activado,
+                // renderer.cpp:1046) y su texto prometía FPS y lo negaba
+                // a la vez. Mientras el backend efectivo sea Vulkan el
+                // interruptor se OCULTA y queda solo esta nota; con
+                // OpenGL vuelve a aparecer (el campo del modelo, el
+                // generador y el validador se quedan intactos).
+                if (resolveBackend(s, gpu) == GpuBackend.VULKAN) {
+                    NoteText("Caché de texturas sin hash: en Vulkan el núcleo lo tiene siempre activado, así que no hay interruptor con este backend. Solo aparece con OpenGL.")
+                } else {
+                    SettingSwitch("Caché de texturas sin hash (experimental)", "Solo OpenGL: el núcleo vigila la memoria de las texturas grandes en vez de recalcular el hash en cada frame. Puede dar más FPS en escenas con muchas texturas. Si alguna textura se ve incorrecta, apágalo. OFF por defecto.", s.hashlessTextureCache) { vm.saveSettings(s.copy(hashlessTextureCache = it)) }
+                }
             }
             item {
                 SectionTitle("Overlay de FPS")
@@ -106,7 +116,7 @@ fun SettingsPerformanceScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
             item {
                 SectionTitle("Ajustes Experimentales")
                 NoteText("Solo para probar: pueden romper el sonido o el juego. Todos OFF por defecto. Cambiar uno exige salir del juego y volver a entrar. El modo seguro los apaga todos.")
-                SettingSwitch("Audio SDL experimental", "exp-audio-sdl en config.yml. Nuevo manejo del audio SDL: sin la espera que frena el hilo del juego, con la cola calibrada contra lo que falta por sonar y audio de baja latencia. Si el sonido cruje, se retrasa o se entrecorta, apágalo y vuelve al audio actual.", s.expAudioSdl) { vm.saveSettings(s.copy(expAudioSdl = it)) }
+                SettingSwitch("Audio experimental (SDL y Cubeb)", "exp-audio-sdl en config.yml. Nuevo manejo del audio (SDL y Cubeb): sin la espera que frena el hilo del juego, con la cola calibrada contra lo que falta por sonar. Si el sonido cruje, se retrasa o se entrecorta, apágalo y vuelve al audio actual.", s.expAudioSdl) { vm.saveSettings(s.copy(expAudioSdl = it)) }
                 NoteText("Sin interruptor (aún no se pueden probar en esta compilación): caché de texturas / memoria baja y Double Buffer — sus parches del fork necesitan piezas que el núcleo actual no tiene y van en patches/experimental/ con su plan de portado. El polling del mando con 60 FPS tampoco lleva interruptor: solo actúa con el modo 60 FPS activado (Ajustes → CPU), y sus parches también están pendientes de reescribirse para el núcleo actual.")
             }
         }
