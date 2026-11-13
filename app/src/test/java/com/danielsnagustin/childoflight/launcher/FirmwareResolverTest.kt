@@ -1,11 +1,8 @@
 package com.danielsnagustin.childoflight.launcher
 
-import com.danielsnagustin.childoflight.launcher.core.EmbeddedGameLauncher
 import com.danielsnagustin.childoflight.launcher.data.FirmwareResolver
 import com.danielsnagustin.childoflight.launcher.data.FirmwareStatus
 import com.danielsnagustin.childoflight.launcher.launcher.Vita3KLauncher
-import com.danielsnagustin.childoflight.launcher.model.GameStatus
-import com.danielsnagustin.childoflight.launcher.model.TitleId
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
