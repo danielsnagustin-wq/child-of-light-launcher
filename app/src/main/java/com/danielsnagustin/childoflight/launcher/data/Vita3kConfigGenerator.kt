@@ -151,7 +151,7 @@ object Vita3kConfigGenerator {
             sb.appendLine("# MODO SEGURO activo: 1x, SDL, High Accuracy OFF, driver del sistema (Turnip neutralizado).")
         }
         if (s.fpsHack) {
-            sb.appendLine("# Modo 60 FPS activo: fps-hack + paquete rápido (1x, Double Buffer, cachés ON). El único mecanismo real del modo es fps-hack (VSync no se fuerza: en Vulkan es inerte). Se revierte apagando el interruptor en Ajustes.")
+            sb.appendLine("# Modo 60 FPS activo: fps-hack + paquete rápido (1x, Double Buffer, cachés ON). El único mecanismo real del modo es fps-hack (VSync no se fuerza: en Vulkan elige el present mode y el modo respeta el valor guardado). Se revierte apagando el interruptor en Ajustes.")
         }
         sb.appendLine("# Fuente de claves: config.h del núcleo (pin 3e43bc80, 2026-11-07).")
         sb.appendLine("# No se inventan claves: solo se emiten las verificadas en config.h.")
@@ -167,14 +167,16 @@ object Vita3kConfigGenerator {
         sb.appendLine("# GPU — screen-filter verificado (default \"Bilinear\").")
         sb.appendLine("screen-filter: \"${escapeYamlDoubleQuoted(s.screenFilter.vita3kValue)}\"")
         // v-sync VERIFICADO (config.h:155): bool, default true en
-        // upstream. OJO (0.2.63, B/C P1-2): en Vulkan es INERTE:
-        // solo alimenta pending_vsync (renderer/state.h:197), que
-        // solo consume el renderer OpenGL (gl/renderer.cpp:759-760).
-        // Con backend Vulkan (el del teléfono) activarlo o
-        // desactivarlo NO cambia el rendimiento ni el tearing: no es
-        // causa de lentitud ni arreglo. El launcher lo deja en false
-        // por defecto; en OpenGL sí tiene efecto (el usuario puede
-        // activarlo en Ajustes).
+        // upstream. Ronda 0.2.66 (G11-06, parche g11-06-vsync-present-
+        // mode): en Vulkan YA NO es inerte — VKState::create copia
+        // este valor a ScreenRenderer antes de setup() y elige el
+        // present mode: ON = Fifo (sincronizado con el panel), OFF =
+        // Mailbox (máxima velocidad). Antes (0.2.64/0.2.65) solo
+        // alimentaba pending_vsync (renderer/state.h:197), que solo
+        // consume el renderer OpenGL (gl/renderer.cpp:759-760), y el
+        // modo Vulkan era fijo Mailbox. El launcher lo deja en false
+        // por defecto (Mailbox); en OpenGL sí tiene su efecto de
+        // siempre (el usuario puede activarlo en Ajustes).
         sb.appendLine("v-sync: ${s.vSync}")
         // Ronda 0.2.64 (P2-2 Mali) + 0.2.65 (RC-P2-6): anisotrópico
         // limitado al máximo del dispositivo (GpuInfo.maxAnisotropy,
@@ -220,17 +222,30 @@ object Vita3kConfigGenerator {
         }
         sb.appendLine("# GPU — memory-mapping verificado (renderer.cpp late_init): \"double-buffer\" / \"external-host\" / \"page-table\" / \"native-buffer\" (solo Android); \"off\" = Disabled.")
         sb.appendLine("memory-mapping: \"${escapeYamlDoubleQuoted(effectiveMapping.vita3kValue)}\"")
-        // Ronda 0.2.65 (R-P1-5): texture-cache es INERTE en Vulkan
-        // (ningún código Vulkan lee config.texture_cache;
-        // texture.cpp:130 cachea incondicional). Solo OpenGL la usa
-        // (gl/sync_state.cpp:420-424). Se sigue emitiendo para ese
-        // camino; en el teléfono no hace nada. El arreglo real
-        // (leerla en Vulkan) necesita pin.
+        // Ronda 0.2.66 (C-01, parche c-01-texture-cache-vulkan):
+        // texture-cache SÍ tiene efecto en Vulkan: el renderer pasa
+        // config.texture_cache a cache_and_bind_texture
+        // (texture.cpp:130): con false no se consulta ni se inserta
+        // en texture_lookup (cada draw vuelve a subir la textura).
+        // Antes (0.2.65, R-P1-5) era INERTE en Vulkan y solo OpenGL
+        // la usaba (gl/sync_state.cpp:420-424).
         sb.appendLine("texture-cache: ${s.textureCache}")
-        // Ronda 0.2.65 (R-P1-6): shader-cache en Vulkan solo
-        // controla el precompilado de shaders conocidos al arrancar
-        // (app.cpp:281); la caché en disco se carga/guarda siempre.
+        // Ronda 0.2.66 (C-02, parche c-02-shader-cache-vulkan):
+        // shader-cache en Vulkan controla el precompilado de shaders
+        // conocidos al arrancar (app.cpp:281) Y la lectura/escritura
+        // de los .spv en disco: con false no se lee ni se escribe
+        // caché. Antes (0.2.65, R-P1-6) la caché en disco se
+        // cargaba/guardaba siempre y OFF solo quitaba el precompilado.
         sb.appendLine("shader-cache: ${s.shaderCache}")
+        // Ronda 0.2.68 (load-p1): skip-shader-precompile, clave nueva
+        // del parche load-p1-skip-shader-precompile.patch (config.h +
+        // CurrentConfig + copias + puerta en app.cpp:281). Con true el
+        // núcleo no precompila los shaders conocidos al arrancar: el
+        // precompilado serial costaba T2 92-147 s en este teléfono
+        // (reporte 0.2.67) y el juego "ni siquiera entra" con el
+        // manifiesto ya grande. Los shaders se compilan bajo demanda
+        // con la compilación asíncrona (3 hilos). false = upstream.
+        sb.appendLine("skip-shader-precompile: ${s.skipShaderPrecompile}")
         // --- Driver ---
         // Turnip SOLO si el driver activo es TURNIP: antes bastaba con
         // tenerlo instalado + nombre guardado, así que un usuario que
@@ -425,6 +440,10 @@ object Vita3kConfigGenerator {
      * y writeConfig() regeneraba con defaults en cada lanzamiento),
      * "audio-device-sample-frames" (int, AUD-P2-1, Fase 2) y
      * "exp-audio-sdl" (bool, R1, interruptores experimentales).
+     * Ronda 0.2.68 (load-p1): "skip-shader-precompile" (bool) se añade
+     * aquí al mismo tiempo que a generate(): sin ella, writeConfig()
+     * regeneraría con defaults en cada lanzamiento y la carga rápida
+     * no llegaría nunca al núcleo (misma clase de bug que AUD-P0-1).
      */
     fun validateGeneratedConfig(content: String): List<String> {
         val problems = mutableListOf<String>()
@@ -436,6 +455,9 @@ object Vita3kConfigGenerator {
             "cpu-opt", "fps-hack", "turbo-mode", "ngs-enable", "performance-overlay",
             "hashless-texture-cache", "show-compile-shaders", "show-welcome",
             "exp-audio-sdl",
+            // Ronda 0.2.68 (load-p1): skip-shader-precompile (ver el
+            // comentario de la REGLA DE ORO arriba).
+            "skip-shader-precompile",
         )
         val intRanges = mapOf(
             "anisotropic-filtering" to 1..16,
