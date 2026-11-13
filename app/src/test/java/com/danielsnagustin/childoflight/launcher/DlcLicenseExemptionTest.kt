@@ -1,6 +1,7 @@
 package com.danielsnagustin.childoflight.launcher
 
 import com.danielsnagustin.childoflight.launcher.data.isDlcLicenseInstalledInCore
+import com.danielsnagustin.childoflight.launcher.data.isGameLicenseInstalledInCore
 import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertFalse
@@ -84,6 +85,55 @@ class DlcLicenseExemptionTest {
             putRif(ux0, titleId, gameContentId)
             putRif(ux0, titleId, dlcContentId)
             assertTrue(isDlcLicenseInstalledInCore(ux0, titleId, dlcContentId))
+        } finally {
+            ux0.deleteRecursively()
+        }
+    }
+
+    // --- 7-P2-9: el chequeo del JUEGO ya no acepta cualquier .rif ---
+
+    @Test
+    fun sinContentId_soloRifDelDlc_noEximeAlJuego() {
+        // SFO sin CONTENT_ID + solo el .rif de un DLC en la carpeta:
+        // antes el fallback "cualquier .rif" lo eximía; ahora es false.
+        val ux0 = tempUx0()
+        try {
+            putRif(ux0, titleId, dlcContentId)
+            assertFalse(isGameLicenseInstalledInCore(ux0, titleId, null))
+        } finally {
+            ux0.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun sinContentId_sinRif_noEximeAlJuego() {
+        val ux0 = tempUx0()
+        try {
+            assertFalse(isGameLicenseInstalledInCore(ux0, titleId, null))
+            assertFalse(isGameLicenseInstalledInCore(ux0, titleId, ""))
+            assertFalse(isGameLicenseInstalledInCore(ux0, titleId, "   "))
+        } finally {
+            ux0.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun conContentId_rifPropio_eximeAlJuego() {
+        val ux0 = tempUx0()
+        try {
+            putRif(ux0, titleId, gameContentId)
+            assertTrue(isGameLicenseInstalledInCore(ux0, titleId, gameContentId))
+        } finally {
+            ux0.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun conContentId_soloRifDelDlc_noEximeAlJuego() {
+        val ux0 = tempUx0()
+        try {
+            putRif(ux0, titleId, dlcContentId)
+            assertFalse(isGameLicenseInstalledInCore(ux0, titleId, gameContentId))
         } finally {
             ux0.deleteRecursively()
         }
