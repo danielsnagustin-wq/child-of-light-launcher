@@ -2,7 +2,7 @@ diff --git a/app/src/app.cpp b/app/src/app.cpp
 index 37e9b67..f55f610 100644
 --- a/app/src/app.cpp
 +++ b/app/src/app.cpp
-@@ -278,7 +278,12 @@ void prepare_game_launch_overlay(EmuEnvState &emuenv) {
+@@ -278,7 +278,21 @@ void prepare_game_launch_overlay(EmuEnvState &emuenv) {
      if (fs::exists(bg_path))
          renderer.precompile_bg_path = fs_utils::path_to_utf8(bg_path);
  
@@ -12,6 +12,15 @@ index 37e9b67..f55f610 100644
 +    // pipelines (3 hilos en este teléfono) los shaders se compilan bajo
 +    // demanda durante el juego en vez de bloquear el arranque en negro
 +    // durante minutos (precompile serial en batch.cpp:189-226).
++    // Ronda 0.2.70 (1-P2-4): NO reordenar esta condición para "optimizarla":
++    // get_shaders_cache_hashs() DEBE seguir corriendo antes del chequeo de
++    // skip. Además de llenar shaders_cache_hashs, es la ÚNICA llamada a
++    // PipelineCache::read_pipeline_cache() (shaders.cpp:64), que carga el
++    // pipeline-cache-vk<versión>.dat que usa el camino bajo demanda
++    // (retrieve_pipeline, pipeline_cache.cpp:1037, already_in_cache). Si se
++    // saltara, cada pipeline se compilaría desde cero en juego, y el
++    // manifiesto (retrieve_shader, pipeline_cache.cpp:514) tampoco cargaría
++    // los .spv de disco. Coste por lanzamiento: solo lecturas de fichero.
 +    if (renderer::get_shaders_cache_hashs(renderer) && emuenv.cfg.shader_cache && !emuenv.cfg.skip_shader_precompile) {
          renderer.precompile_queue = renderer.shaders_cache_hashs;
          renderer.precompile_progress = 0;
