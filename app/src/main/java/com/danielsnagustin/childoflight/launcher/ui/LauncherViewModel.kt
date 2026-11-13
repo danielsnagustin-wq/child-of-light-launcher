@@ -308,6 +308,9 @@ internal fun sanitizeVisiblePath(text: String): String =
 internal fun preservedPresetFieldsDiffer(current: LauncherSettings, preset: LauncherSettings): Boolean =
     current.textureCache != preset.textureCache ||
         current.shaderCache != preset.shaderCache ||
+        // Ronda 0.2.68 (load-p1): la carga rápida también se conserva
+        // como valor manual al aplicar un preset.
+        current.skipShaderPrecompile != preset.skipShaderPrecompile ||
         current.showFpsOverlay != preset.showFpsOverlay ||
         current.hashlessTextureCache != preset.hashlessTextureCache ||
         current.showCompileShaders != preset.showCompileShaders ||
@@ -424,6 +427,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * sin dato; con cargado == 2 (pedido pero NO cargado) la máscara
      * es la del sistema y la UI lo dice. Sin dato se usa la máscara
      * clásica como antes.
+     * Ronda 0.2.68 (P0, máscara-1 sin sesión): con driver del sistema
+     * y sin sesión, getCustomDriverSupportInfo devuelve null (mismo
+     * resguardo que la máscara clásica, G-P2-1): el 1 que devolvía el
+     * pin no es la máscara del driver y degradaba Page Table a Double
+     * Buffer en cada primer JUGAR. null aquí → máscara clásica → 0
+     * (desconocida) → se emite el método pedido.
      */
     fun refreshMappingMask() {
         refreshMappingMaskJob?.cancel()
@@ -1419,10 +1428,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // R4-P0-9: la variante conservadora es VISIBLE: el mensaje
             // dice que se aplicó el perfil conservador (1x) para
             // ahorrar memoria (antes decía además que la caché de
-            // texturas quedó OFF; ronda 0.2.65, R-P1-5: la variante
-            // low-RAM ya no toca textureCache — en Vulkan es inerte
-            // — y MALI_PERFORMANCE.textureCache ahora es true, igual
-            // que G99; ver isLowRamConservativeVariant).
+            // texturas quedó OFF; ronda 0.2.66, C-01: la variante
+            // low-RAM ya no toca textureCache — en Vulkan OFF
+            // re-subiría cada textura — y MALI_PERFORMANCE.textureCache
+            // ahora es true, igual que G99; ver
+            // isLowRamConservativeVariant).
             val lowRamNote = if (appliedPreset && lowRam) " Memoria baja (4 GB o menos): perfil conservador (1x) aplicado para ahorrar memoria." else ""
             withContext(Dispatchers.Main) {
                 // Sin Vulkan, el aviso va en el mismo mensaje de detección
@@ -3605,6 +3615,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * y perder los perfiles y posiciones: addTouchControl() solo creaba
      * botones. Ahora la recuperación es un toque: el editor muestra el
      * botón solo cuando falta ese kind.
+     * 0.2.68 segunda pasada: se repone con los valores de fábrica del
+     * perfil ACTIVO, no siempre con los del default: una mano tiene
+     * su propio stick (174 dp en (0.05, 0.70)) y su propia zona
+     * (104 dp en (0.78, 0.80)); con los del default saldría un stick
+     * de 177 dp en (0.035, 0.700) y una zona de 120 dp en (0.781,
+     * 0.813) dentro de una mano. Un perfil personalizado no tiene
+     * fábrica propia y usa el default, como antes.
      */
     fun restoreMissingTouchControl(kind: String) {
         viewModelScope.launch {
@@ -3613,7 +3630,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 _message.value = "Ya existe en este perfil."
                 return@launch
             }
-            val defaults = com.danielsnagustin.childoflight.launcher.data.defaultTouchLayout()
+            val activeId = touchRepo.activeProfileIdFlow.first()
+            val defaults = when (activeId) {
+                "one-hand" -> com.danielsnagustin.childoflight.launcher.data.oneHandLayout()
+                "external-gamepad" -> com.danielsnagustin.childoflight.launcher.data.externalGamepadLayout()
+                else -> com.danielsnagustin.childoflight.launcher.data.defaultTouchLayout()
+            }
             val control = defaults.firstOrNull { it.kind == kind }
             if (control == null) {
                 _message.value = "No hay un control por defecto para ese tipo."
@@ -4269,7 +4291,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             // (DeviceMemory, la misma fuente que Diagnóstico) para
             // cerrar el misterio de los 4 GB sin preguntar.
             // Ronda 0.2.64: el modo 60 FPS YA NO fuerza VSync ON (en
-            // Vulkan es inerte): la línea de abajo ya no lo dice.
+            // Vulkan elige el present mode desde la 0.2.66, G11-06):
+            // la línea de abajo ya no lo dice.
             appendLine("--- Ajustes activos (efectivos) ---")
             val effective = effectiveSettings(settings)
             if (settings.safeMode) {
@@ -4285,7 +4308,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             appendLine("CPU opt (JIT): ${effective.cpuOpt} | FPS hack: ${effective.fpsHack}")
             appendLine("Modo seguro: ${effective.safeMode}")
             appendLine("Driver: ${effective.gpuDriver} | Turnip: ${effective.turnipVersion} (instalado: ${effective.turnipInstalled})")
-            appendLine("Caché de texturas: ${effective.textureCache} | Caché de shaders: ${effective.shaderCache} | Caché sin hash: ${effective.hashlessTextureCache}")
+            appendLine("Caché de texturas: ${effective.textureCache} | Caché de shaders: ${effective.shaderCache} | Carga rápida (sin precompilar): ${effective.skipShaderPrecompile} | Caché sin hash: ${effective.hashlessTextureCache}")
             appendLine("Overlay de FPS: ${effective.showFpsOverlay} (detalle ${effective.performanceOverlayDetail.label}, posición ${effective.performanceOverlayPosition.label}) | Overlay táctil: ${effective.showTouchOverlayInGame}")
             appendLine("Compilar shaders: ${effective.showCompileShaders} | PSN: ${effective.psnSignedIn} | Retraso carga: ${effective.fileLoadingDelay} | Cerrar apps: ${effective.closeBackgroundApps}")
             val totalRamGb = DeviceMemory.totalRamBytes(context)?.let { it / 1_073_741_824.0 }
