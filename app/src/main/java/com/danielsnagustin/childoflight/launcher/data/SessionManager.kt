@@ -24,9 +24,10 @@ import kotlinx.coroutines.sync.withLock
  *
  * REGLA DE SEGURIDAD (se cumple en todos los cambios):
  * antes de cambiar la sesión activa o de crear una vacía, se hace
- * snapshot de la sesión actual (savedata viva + logros locales +
- * perfil de control) en su carpeta. Nunca se sobrescribe sin avisar:
- * el cambio de sesión guarda la actual y luego carga la otra.
+ * snapshot de la sesión actual (savedata viva + trofeos del núcleo
+ * + logros locales + perfil de control) en su carpeta. Nunca se
+ * sobrescribe sin avisar: el cambio de sesión guarda la actual y
+ * luego carga la otra.
  *
  * Orden al activar una sesión (snapshot PRIMERO, restore DESPUÉS):
  * si el usuario importó saves externos a la carpeta viva, el
@@ -274,6 +275,10 @@ class SessionManager(
         _activeSessionId.value = session.id
         // 3. La viva queda vacía (nuevo juego desde cero) y los logros a 0/20.
         if (titleId.isNotBlank()) repo.clearLiveSavedata(titleId)
+        // Ronda 0.2.70, P1-6: la sesión nueva también empieza con el
+        // TROPUSR.DAT vacío (el snapshot de la anterior ya se hizo
+        // arriba, en snapshotActive); sin esto heredaba sus trofeos.
+        if (titleId.isNotBlank()) repo.clearLiveTrophyData(titleId)
         repo.writeSessionExtras(session.id, "", currentProfile)
         achievements.resetAll()
         LauncherLog.append(context, "session", "Nueva sesión creada: \"$cleanName\" (la anterior quedó guardada)")
@@ -629,22 +634,6 @@ class SessionManager(
         }
     }
 
-    /** Borra la savedata viva Y la copia guardada de la sesión activa (para "Borrar saves"). */
-    suspend fun clearActiveSessionSavedata() {
-        try {
-            val active = activeSession ?: return
-            val titleId = installedTitleId() ?: active.titleId
-            repo.clearLiveSavedata(titleId)
-            repo.clearSessionSavedata(active.id)
-            updateSession(active.id) { it.copy(savedataFiles = 0, savedataBytes = 0L) }
-            refresh()
-        } catch (e: Exception) {
-            // Best-effort: el borrado de saves no debe tumbar la corrutina.
-            // P2-41: el fallo queda en el log (antes se tragaba sin rastro).
-            LauncherLog.append(context, "session", "No se pudo borrar la savedata de la sesión activa: ${e.message}")
-        }
-    }
-
     /** Borra TODAS las sesiones (para "Borrar datos del juego"). */
     suspend fun deleteAllSessions() {
         playStartMillis = null
@@ -783,6 +772,13 @@ class SessionManager(
         val titleId = installedTitleId() ?: active.titleId
         if (titleId.isBlank()) return
         val stats = repo.snapshotSavedata(titleId, active.id)
+        // Ronda 0.2.70, P1-6: el TROPUSR.DAT del núcleo también se
+        // snapshottea (si no, era compartido y la sesión siguiente
+        // heredaba los trofeos). Best-effort: un fallo de disco en
+        // los trofeos no debe abortar el snapshot de la savedata.
+        runCatching { repo.snapshotTrophyData(titleId, active.id) }.onFailure {
+            LauncherLog.append(context, "session", "No se pudieron guardar los trofeos del núcleo de la sesión \"${active.name}\": ${it.message}")
+        }
         // R2-P1-11(b): la viva acaba de copiarse: su huella es la del
         // snapshot. Un snapshot posterior sin cambios puede saltarse la
         // copia (ver snapshotActiveIfLiveChanged).
@@ -807,6 +803,11 @@ class SessionManager(
         val previousFingerprint = lastSnapshotFingerprint
         if (liveFingerprint != null && previousFingerprint != null && liveFingerprint == previousFingerprint) {
             // La viva no cambió: solo refrescar logros/perfil/contador.
+            // Los trofeos del núcleo SÍ se snapshottean siempre (son
+            // KBs y pueden haber cambiado sin tocar la savedata).
+            runCatching { repo.snapshotTrophyData(titleId, active.id) }.onFailure {
+                LauncherLog.append(context, "session", "No se pudieron guardar los trofeos del núcleo de la sesión \"${active.name}\": ${it.message}")
+            }
             snapshotExtras(active, active.savedataFiles to active.savedataBytes)
             return
         }
@@ -852,6 +853,15 @@ class SessionManager(
         val titleId = installedTitleId() ?: session.titleId
         if (titleId.isBlank()) return
         repo.restoreSavedata(titleId, session.id)
+        // Ronda 0.2.70, P1-6: restore del TROPUSR.DAT de la sesión
+        // ANTES de lanzar el juego (esta función corre al cambiar o
+        // crear sesión, nunca con el juego en curso). Best-effort
+        // como los logros: un fallo no bloquea el lanzamiento; la
+        // captura de salida ya fue al snapshot de la sesión que se
+        // estaba jugando (snapshotActive antes del cambio).
+        runCatching { repo.restoreTrophyData(titleId, session.id) }.onFailure {
+            LauncherLog.append(context, "session", "No se pudieron restaurar los trofeos del núcleo de la sesión \"${session.name}\": ${it.message}")
+        }
         // R2-P1-11(b): tras el restore la viva ES la copia de la sesión:
         // su huella es la del último snapshot válido, así que un
         // snapshot posterior sin cambios puede saltarse la copia.
