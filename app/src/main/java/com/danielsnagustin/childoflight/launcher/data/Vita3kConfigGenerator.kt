@@ -43,6 +43,9 @@ import java.nio.charset.StandardCharsets
  *   audio-device-sample-frames (int, default 512; 0.2.66, parche
  *   aud-p2-1: tamaño de búfer de dispositivo SDL),
  *   cpu-opt (bool),
+ *   skip-shader-precompile (bool, ronda 0.2.68, load-p1: salta el
+ *   precompilado de shaders conocidos al arrancar; true solo en los
+ *   presets Mali/G99, false en Adreno/genérico por valor upstream),
  *   exp-audio-sdl (bool, OFF por defecto; ronda 0.2.66, parche
  *   experimental R1 en app/src/main/cpp/patches/r1-audio-sdl-exp.patch:
  *   la clave la DEFINE ese parche en config.h del núcleo (CONFIG_INDIVIDUAL),
@@ -190,7 +193,13 @@ object Vita3kConfigGenerator {
         // como mucho 16x.
         val aniso = gpu?.maxAnisotropy?.let { minOf(s.anisotropicFiltering, it) } ?: minOf(s.anisotropicFiltering, 8)
         if (aniso != s.anisotropicFiltering) {
-            sb.appendLine("# Anisotrópico limitado al máximo del dispositivo (${gpu?.maxAnisotropy}x): el ajuste pedía ${s.anisotropicFiltering}x.")
+            // Ronda 0.2.70 (11-P2-3): con máximo desconocido el comentario
+            // decía literalmente "(nullx)": se distingue el caso nulo.
+            if (gpu?.maxAnisotropy == null) {
+                sb.appendLine("# Anisotrópico limitado al tope seguro 8x (máximo del dispositivo desconocido): el ajuste pedía ${s.anisotropicFiltering}x.")
+            } else {
+                sb.appendLine("# Anisotrópico limitado al máximo del dispositivo (${gpu.maxAnisotropy}x): el ajuste pedía ${s.anisotropicFiltering}x.")
+            }
         }
         sb.appendLine("anisotropic-filtering: $aniso")
         sb.appendLine("async-pipeline-compilation: ${s.asyncPipelineCompilation}")
@@ -427,7 +436,7 @@ object Vita3kConfigGenerator {
 
     /**
      * T-P2-4: valida un config.yml YA GENERADO, línea a línea:
-     * claves conocidas (solo las 31 que emite generate()), tipos
+     * claves conocidas (solo las 32 que emite generate()), tipos
      * (bool/int/float/string entrecomillada) y rangos sensatos, sin
      * duplicados. Es la segunda red tras sanitizedSettings(): si
      * esto falla, hay un bug en el generador, no en los ajustes.
