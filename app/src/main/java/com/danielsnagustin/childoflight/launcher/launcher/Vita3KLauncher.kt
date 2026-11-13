@@ -721,7 +721,10 @@ class Vita3KLauncher(private val context: Context) {
         }
         if (settings.closeBackgroundApps) {
             val killed = closeBackgroundApps()
-            LauncherLog.append(context, "launch", "Apps en segundo plano cerradas (best-effort): $killed procesos")
+            // Ronda 0.2.70 (11-P2-6): el número cuenta peticiones de
+            // cierre (killBackgroundProcesses es best-effort del
+            // sistema), no cierres confirmados: el log lo dice así.
+            LauncherLog.append(context, "launch", "Solicitado cerrar $killed procesos en segundo plano (best-effort, sin confirmar)")
         }
         // R4-P0-7: config.yml se escribe UNA sola vez por JUGAR: el
         // llamador ya lo escribió antes del firmware y pasa
@@ -900,6 +903,13 @@ class Vita3KLauncher(private val context: Context) {
      * EmbeddedGameActivity.onDestroy ya hizo su join). El contrato
      * "solo Main" no tenía motivo: ningún JNI aquí exige el hilo
      * principal, solo que el hilo SDL ya terminara.
+     *
+     * Ronda 0.2.70 (1-P2-2): POR DISEÑO, sin cambio de código: en un
+     * arranque en caliente (relanzamiento en el mismo proceso) esto
+     * destruye el renderer entero antes de init, y es necesario para
+     * que el nuevo init re-lea config.yml con los ajustes actuales.
+     * Si el T1 en caliente se midiera alto, este es el primer
+     * sospechoso.
      */
     private suspend fun destroyStaleSessionIfIdle() {
         if (!Vita3kCoreBridge.available || Vita3kCoreBridge.isAppRunning()) return
@@ -979,8 +989,16 @@ class Vita3KLauncher(private val context: Context) {
             // config.yml con los ajustes actuales. Solo sin partida en
             // curso (isAppRunning false); destroySession corre en el hilo
             // principal, por contrato JNI.
-            destroyStaleSessionIfIdle()
-            val initRc = Vita3kCoreBridge.init(library.vitaRoot.absolutePath)
+            // Ronda 0.2.70 (Área 10, P1-11): destroy+init van juntos
+            // bajo el Mutex de sesión de Vita3kCoreBridge, serializados
+            // con la destrucción asíncrona de onDestroy de la Activity
+            // anterior: sin esto, ese job viejo podía destruir la
+            // sesión recién creada por este init. El init además sube
+            // la generación de sesión (doble guarda).
+            val initRc = Vita3kCoreBridge.withSessionLock {
+                destroyStaleSessionIfIdle()
+                Vita3kCoreBridge.init(library.vitaRoot.absolutePath)
+            }
             if (initRc != Vita3kCoreBridge.OK) {
                 // P2-A4b: el -1 no es "código -1" a secas: es "sin núcleo
                 // en esta APK". Se registra qué biblioteca falló.
