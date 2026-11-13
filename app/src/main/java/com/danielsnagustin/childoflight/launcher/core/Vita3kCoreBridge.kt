@@ -651,9 +651,35 @@ object Vita3kCoreBridge {
      * sin JNI o fallo nativo). cargado: 0 = no pedido, 1 = cargado,
      * 2 = pedido pero NO cargado (el núcleo usa el driver del sistema).
      * Con cargado == 2 la UI debe decir "Turnip pedido pero no cargado".
+     *
+     * Ronda 0.2.68 (P0, máscara-1 sin sesión): MISMO resguardo que
+     * getSupportedMemoryMappingMask (G-P2-1, 0.2.65) — que NO estaba
+     * aquí. Con driver del sistema y SIN sesión, el pin devuelve 1
+     * (solo Disabled) porque get_emuenv() es nulo
+     * (native_config.cpp:597-607: sin emuenv cae al valor por defecto
+     * 1 << 0). Ese 1 NO es la máscara del driver: es "aún no hay
+     * sesión". Pero refreshMappingMask() toma supportInfo[0] ANTES que
+     * la máscara clásica, así que el 1 mentiroso llegaba a
+     * _supportedMappingMask y effectiveMappingMethod degradaba Page
+     * Table a Double Buffer en CADA primer JUGAR del proceso
+     * (verificado en el reporte 0.2.67 del teléfono: config.yml con
+     * "máscara 1" y memory-mapping double-buffer aunque el ajuste
+     * pedía page-table; el log del núcleo confirma que el driver SÍ
+     * soporta Double Buffer — y por tanto Page Table, renderer.cpp:
+     * 747-751 — así que el 1 no podía venir de una sesión viva).
+     * Consecuencia: la hipótesis G11-01 (Page Table más rápido en
+     * Mali) era imposible de probar: el primer lanzamiento siempre
+     * corría Double Buffer. Sin sesión NO se pregunta: null =
+     * desconocida, refreshMappingMask cae a la máscara clásica
+     * (también resguardada) → 0 → se emite el método pedido y el
+     * núcleo decide (su fallback a Double Buffer es el de
+     * renderer.cpp:750). Con un driver personalizado el pin enumera
+     * los dispositivos Vulkan directamente (native_config.cpp:809-813)
+     * y no necesita sesión: ese camino sí se pregunta antes de init.
      */
     fun getCustomDriverSupportInfo(customDriverName: String = ""): IntArray? {
         if (!available) return null
+        if (customDriverName.isEmpty() && !isInitialized()) return null
         return try {
             nativeGetCustomDriverSupportInfo(customDriverName)
         } catch (_: UnsatisfiedLinkError) {
