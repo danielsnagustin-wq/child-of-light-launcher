@@ -141,12 +141,19 @@ jobs:
       # alguno no aplica: mejor un build rojo que un parche
       # silenciosamente ausente. Lista EXPLÍCITA en orden de aplicación
       # (el orden importa: aud-p2-1 toca config.h antes que cpu-05, y
-      # hook1/g11-06 comparten screen_renderer.cpp). r1 va penúltimo:
+      # hook1/g11-06 comparten screen_renderer.cpp). r1 va tras g11-05:
       # está rebasado sobre aud-p2-1/aud-p2-5 (mismos hunks en
       # sdl_audio.cpp, config.h, state.h y app_init.cpp); ni antes
-      # que ellos ni encima sin rebase aplica. load-p1 va ÚLTIMO: está
-      # rebasado sobre los 15 (sus hunks en config.h, state.h y
-      # settings.cpp van junto a los de aud-p2-1/r1).
+      # que ellos ni encima sin rebase aplica. load-p1 va tras los
+      # aud2 de rendimiento: está rebasado sobre los 15 + 3 (sus hunks
+      # en config.h, state.h y settings.cpp van junto a los de
+      # aud-p2-1/r1). Ronda 0.2.70: aud2-p1-13/aud2-p2-1/aud2-p2-3
+      # (contadores + sleep, renderer.cpp/batch.cpp/texture.cpp) van
+      # tras r1 y antes de load-p1; aud2-p1-12 (cubeb_audio.cpp),
+      # aud2-p2-6 (audio.cpp) y aud2-render-surface-format
+      # (screen_renderer.cpp) van ÚLTIMOS, tras load-p1: ninguno toca
+      # config.h/state.h/settings.cpp/app.cpp, así que no interfiere
+      # con el rebase de load-p1.
       # app/src/main/cpp/patches/; nunca patches/experimental/.
       # Las rutas dentro de cada .patch son relativas a la raíz del
       # CÓDIGO Vita3K, que vive en el subdirectorio vita3k/ del repo
@@ -154,7 +161,7 @@ jobs:
       # con --directory=vita3k desde la raíz del clon. Sin ese flag
       # el run #509 falló con "No such file or directory" (las rutas
       # kernel/... no existen en la raíz del repo).
-      - name: Apply core patches (0.2.66)
+      - name: Apply core patches (0.2.70)
         run: |
           cd app/src/main/cpp/vita3k
           for patch in \
@@ -173,14 +180,20 @@ jobs:
             aud-p2-6-audio-ms-log.patch \
             g11-05-shader-manifest-per-mask.patch \
             r1-audio-sdl-exp.patch \
-            load-p1-skip-shader-precompile.patch; do
+            aud2-p1-13-present-counter.patch \
+            aud2-p2-1-batch-poll-sleep.patch \
+            aud2-p2-3-staging-counter.patch \
+            load-p1-skip-shader-precompile.patch \
+            aud2-p1-12-cubeb-timeout.patch \
+            aud2-p2-6-steady-clock.patch \
+            aud2-render-surface-format.patch; do
             f="../patches/$patch"
             [ -f "$f" ] || { echo "ERROR: falta el parche $f"; exit 1; }
             git apply --check --directory=vita3k "$f" || { echo "ERROR: el parche $patch no aplica limpio sobre el pin ${VITA3K_PIN}"; exit 1; }
             git apply --directory=vita3k "$f" || { echo "ERROR: git apply falló para $patch"; exit 1; }
             echo "Parche aplicado: $patch"
           done
-          echo "16 parches aplicados sobre ${VITA3K_PIN}."
+          echo "22 parches aplicados sobre ${VITA3K_PIN}."
 
       - name: Cache vcpkg (binaria, como upstream)
         uses: actions/cache@v4
