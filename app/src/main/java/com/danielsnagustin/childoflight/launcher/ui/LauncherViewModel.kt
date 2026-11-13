@@ -2,7 +2,6 @@ package com.danielsnagustin.childoflight.launcher.ui
 
 import android.app.Application
 import android.graphics.BitmapFactory
-import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
@@ -40,6 +39,7 @@ import com.danielsnagustin.childoflight.launcher.data.TrophyStoreScan
 import com.danielsnagustin.childoflight.launcher.data.TrophySyncPending
 import com.danielsnagustin.childoflight.launcher.data.TrophyTrpReader
 import com.danielsnagustin.childoflight.launcher.data.TrpReadResult
+import org.vita3k.emulator.data.NativeTrophyCollection
 import com.danielsnagustin.childoflight.launcher.data.TurnipDriverRepository
 import com.danielsnagustin.childoflight.launcher.data.UiPreferencesRepository
 import com.danielsnagustin.childoflight.launcher.data.Vita3kConfigGenerator
@@ -249,6 +249,8 @@ internal fun restoreSafeModeSnapshot(snapshot: LauncherSettings, current: Launch
         audioBackend = keepIfTouched(current.audioBackend, forced.audioBackend, snapshot.audioBackend),
         ngsEnable = keepIfTouched(current.ngsEnable, forced.ngsEnable, snapshot.ngsEnable),
         shaderCache = keepIfTouched(current.shaderCache, forced.shaderCache, snapshot.shaderCache),
+        // Ronda 0.2.70 (P1-3): restaurar también la opción de CPU optimisation.
+        cpuOpt = keepIfTouched(current.cpuOpt, forced.cpuOpt, snapshot.cpuOpt),
         // P2-14: el modo seguro también apaga fps-hack; al salir, vuelve
         // el valor anterior (salvo que el usuario lo encendiera durante
         // el modo seguro, que se conserva).
@@ -273,15 +275,72 @@ internal fun restoreSafeModeSnapshot(snapshot: LauncherSettings, current: Launch
 
 /**
  * R2-P1-09 (misma lógica para "Corregir audio" → Deshacer): solo se
- * revierten los 3 campos que audioFixTarget sobrescribe (audioBackend,
- * ngsEnable, shaderCache); el resto — incluidos los 5 campos que el
+ * revierten los 4 campos que audioFixTarget sobrescribe (audioBackend,
+ * ngsEnable, shaderCache, expAudioSdl); el resto — incluidos los 5 campos que el
  * snapshot no guarda — se conserva como esté ahora.
  */
+/**
+ * Ronda 0.2.70 (P1-2): calcula los ajustes que deben exportarse cuando
+ * el modo seguro está activado o cuando existe un snapshot pendiente de
+ * “Corregir audio”.  
+ *
+ * - **Base**: si `current.safeMode` es `true` y `safeModeSnapshot` no es
+ *   `null`, la base son los valores guardados en `safeModeSnapshot`; si no,
+ *   la base es `current`. (Con el modo seguro ON los valores reales del
+ *   usuario viven solo en el snapshot; en DataStore están los forzados.)
+ *
+ * - **Audio**: si `audioFixSnapshot` no es `null`: restaurar los 4 campos
+ *   de audio desde el snapshot SOLO cuando el valor del snapshot difiere
+ *   del valor forzado por `audioFixTarget`. Calcula `val fixed =
+ *   audioFixTarget(audioFixSnapshot)` y para cada campo usa el valor del
+ *   snapshot si difiere de `fixed`, si no conserva el de la base. Campos:
+ *   `audioBackend`, `ngsEnable`, `shaderCache`, `expAudioSdl`. Razón: si el snapshot de
+ *   audio se tomó con el modo seguro ON, sus 4 campos ya son los forzados
+ *   y restaurarlos los reintroduciría; la base (snapshot del modo seguro)
+ *   ya guarda el valor real. Si “Corregir audio” se aplicó ANTES del modo
+ *   seguro, el snapshot trae los valores previos al arreglo y sí se
+ *   restauran bien.
+ *   (Fusión 0.2.70: el 4º campo, expAudioSdl, lo añadió el área 5 a
+ *   audioFixTarget; sin él, exportar con "Corregir audio" pendiente
+ *   filtraba el false forzado aunque el usuario lo tuviera ON.)
+ *
+ * - Devolver siempre el resultado con `safeMode = false`.
+ */
+internal fun settingsForExport(
+    current: LauncherSettings,
+    safeModeSnapshot: LauncherSettings?,
+    audioFixSnapshot: LauncherSettings?,
+): LauncherSettings {
+    // Base según modo seguro.
+    val base = if (current.safeMode && safeModeSnapshot != null) safeModeSnapshot else current
+
+    // Si hay snapshot de audio, restaurar los campos sólo cuando difieren
+    // del valor forzado por audioFixTarget.
+    val withAudio = if (audioFixSnapshot != null) {
+        val forced = audioFixTarget(audioFixSnapshot)
+        base.copy(
+            audioBackend = if (audioFixSnapshot.audioBackend != forced.audioBackend) audioFixSnapshot.audioBackend else base.audioBackend,
+            ngsEnable = if (audioFixSnapshot.ngsEnable != forced.ngsEnable) audioFixSnapshot.ngsEnable else base.ngsEnable,
+            shaderCache = if (audioFixSnapshot.shaderCache != forced.shaderCache) audioFixSnapshot.shaderCache else base.shaderCache,
+            // Fusión 0.2.70: el 4º campo de audioFixTarget (área 5): sin
+            // él, exportar con "Corregir audio" pendiente filtraba el
+            // false forzado aunque el usuario lo tuviera ON.
+            expAudioSdl = if (audioFixSnapshot.expAudioSdl != forced.expAudioSdl) audioFixSnapshot.expAudioSdl else base.expAudioSdl,
+        )
+    } else {
+        base
+    }
+
+    // Siempre exportar sin modo seguro.
+    return withAudio.copy(safeMode = false)
+}
+
 internal fun restoreAudioFixSnapshot(snapshot: LauncherSettings, current: LauncherSettings): LauncherSettings =
     current.copy(
         audioBackend = snapshot.audioBackend,
         ngsEnable = snapshot.ngsEnable,
         shaderCache = snapshot.shaderCache,
+        expAudioSdl = snapshot.expAudioSdl,
     )
 
 /**
@@ -740,9 +799,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun clearMessage() { _message.value = null }
 
-    // P2-39: mostrar un aviso al usuario (p. ej. cuando Reportar no
-    // pudo exportar porque los ajustes aún no cargaron).
-    fun showMessage(text: String) { _message.value = text }
     fun clearAlert() {
         _alert.value = null
         // Si se cierra el diálogo de duplicado, el reemplazo pendiente se abandona.
@@ -785,6 +841,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     //   seguidas a Home no pueden desbloquear/anunciar a la vez.
     private val trophySyncSeq = AtomicLong(0L)
     private val trophySyncMutex = Mutex()
+
+    // Ronda 0.2.70, P1-5 (a): aviso de TrophySyncPending.store().
+    // Se registra en init y se quita en onCleared.
+    private val trophyPendingListener: (Array<NativeTrophyCollection>) -> Unit =
+        { syncTrophiesFromGame(fromGame = true) }
+
+    override fun onCleared() {
+        TrophySyncPending.removeListener(trophyPendingListener)
+        super.onCleared()
+    }
 
     private val _trophyScan = MutableStateFlow<TrophyStoreScan?>(null)
     val trophyScan: StateFlow<TrophyStoreScan?> = _trophyScan.asStateFlow()
@@ -880,6 +946,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         refreshStatus()
         refreshLog()
         loadCoverBitmap()
+        // Ronda 0.2.70, P1-5 (a): la captura de trofeos en
+        // onDestroy del juego corre DESPUÉS del onResume que
+        // consume el pendiente, así que el aviso de store() es el
+        // que dispara la sync en esa vuelta (no solo onResume).
+        // Se quita en onCleared; el oyente solo lanza la corrutina
+        // (idempotente: un take() vacío no hace nada).
+        TrophySyncPending.addListener(trophyPendingListener)
         viewModelScope.launch(Dispatchers.IO) { sessionManager.ensureDefaultSession() }
         // 0.2.63 (G): caché del perfil táctil activo + layout para
         // el reporte de bug (ver lastTouchProfileId). Best-effort:
@@ -1723,15 +1796,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 // caché guardada no se toca y su limpieza es un botón
                 // aparte en Rendimiento. El texto viejo decía a la vez
                 // "caché de shaders ON" y "No se toca la caché".
-                _message.value = "Audio corregido: SDL + NGS ON + ajuste de caché de shaders ON. No se borra la caché guardada: el siguiente arranque no se vuelve más lento por esto. Vuelve a lanzar el juego para aplicar el cambio."
+                _message.value = "Audio corregido: SDL + NGS ON + ajuste de caché de shaders ON + audio experimental OFF. No se borra la caché guardada: el siguiente arranque no se vuelve más lento por esto. Vuelve a lanzar el juego para aplicar el cambio."
             }
-            LauncherLog.append(context, "audio", "Corregir audio: SDL + NGS ON (sin tocar la caché de shaders)")
+            LauncherLog.append(context, "audio", "Corregir audio: SDL + NGS ON + audio experimental OFF (sin tocar la caché de shaders)")
         }
     }
 
     /** Restaura los ajustes guardados antes de "Corregir audio" y borra el snapshot.
      * R2-P1-09: restauración por campo (restoreAudioFixSnapshot), igual
-     * que el Modo seguro: solo vuelven los 3 campos de audio; el resto
+     * que el Modo seguro: solo vuelven los 4 campos de audio; el resto
      * — incluidos Turnip y entrega del .pkg, que el snapshot no guarda —
      * se conserva como esté ahora. */
     fun undoFixAudio() {
@@ -1741,7 +1814,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             settingsRepo.save(restoreAudioFixSnapshot(snapshot, current))
             deleteSettingsSnapshot(audioFixSnapshotFile())
             _audioFixSnapshot.value = null
-            _message.value = "Audio restaurado a los valores anteriores a «Corregir audio» (backend, NGS y caché de shaders). Los demás ajustes no se tocaron."
+            _message.value = "Audio restaurado a los valores anteriores a «Corregir audio» (backend, NGS, caché de shaders y audio experimental). Los demás ajustes no se tocaron."
             LauncherLog.append(context, "audio", "Corregir audio deshecho: valores anteriores restaurados")
         }
     }
@@ -2126,7 +2199,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val installNote = when (result.kind) {
                 com.danielsnagustin.childoflight.launcher.model.PkgKind.GAME ->
                     "Pulsa JUGAR: el motor integrado instalará el .pkg y arrancará el juego."
-                else -> "No se pudo instalar en el núcleo ahora mismo: el .pkg queda guardado. Comprueba que tienes instalada la versión con el motor (la APK nativa, no la pequeña) y vuelve a importarlo para reintentarlo. El motivo exacto queda en el reporte de bug."
+                else -> "No se pudo instalar en el núcleo ahora mismo: el .pkg queda guardado. Comprueba que tienes instalada la APK con el motor integrado («child-of-light-launcher-apks-native») y vuelve a importarlo para reintentarlo. El motivo exacto queda en el reporte de bug."
             }
             "$what se guardó como .pkg (${result.titleId.id} · ${DownloadsCleanup.formatBytes(result.sizeBytes)}) en el almacenamiento interno del launcher.\n\n" +
                 installNote
@@ -2553,7 +2626,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     // persiste "Turnip instalado + activo": el zip queda
                     // guardado (se puede reintentar desde Ajustes → GPU)
                     // pero el driver del sistema sigue mandando. Sin
-                    // núcleo aún (APK pequeña), el zip guardado sí se
+                    // núcleo aún (el motor integrado no está en esta instalación), el zip guardado sí se
                     // marca instalado: se instala al lanzar el juego.
                     val coreRejected = Vita3kCoreBridge.available && coreName.isEmpty()
                     settingsRepo.save(
@@ -3110,17 +3183,49 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * embebida (vía externa, primer arranque) no hay nada pendiente
      * y vuelve sin hacer nada.
      *
+     * Ronda 0.2.70, P1-5 (a): además de onResume, esta sync la
+     * dispara el aviso de TrophySyncPending.store() (oyente
+     * registrado en init): la captura en onDestroy corre después
+     * del onResume que consume, así que sin el aviso el popup no
+     * aparecía en esa vuelta. 7-P2-1: el take() vacío se registra
+     * cuando se venía de una partida (fromGame), para distinguir
+     * "sin pendiente" de "la captura aún no corrió"; un take con
+     * colecciones pero 0 desbloqueos también queda en el log.
+     * 7-P2-2: cada colección sincronizada registra su npComId y
+     * las de otro juego se descartan si se conoce el esperado.
+     *
      * R7-P1-06: si en una partida se ganan varios trofeos nuevos, se
      * encolan en orden por número (unlockPopupQueue) y el popup
      * muestra uno tras otro: al descartar uno aparece el siguiente
      * hasta vaciar la cola. Ningún desbloqueo pierde su popup.
      */
-    fun syncTrophiesFromGame() {
+    fun syncTrophiesFromGame(fromGame: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
             trophySyncMutex.withLock {
-                val collections = TrophySyncPending.take() ?: return@withLock
+                val collections = TrophySyncPending.take()
+                if (collections == null) {
+                    // 7-P2-1: solo se registra al volver de una
+                    // partida; en un arranque normal no hay nada
+                    // pendiente y no es noticia (evita spam en el log).
+                    if (fromGame) {
+                        LauncherLog.append(context, "trophies", "Sincronización de trofeos: sin colecciones pendientes al volver del juego (la captura aún no corrió o no hubo trofeos que capturar)")
+                    }
+                    return@withLock
+                }
                 runCatching {
-                    val result = mapNativeTrophies(collections)
+                    val expectedNpComId = runCatching {
+                        _status.value.titleId?.id?.let { TrophyStoreReader.resolveNpComId(library.vitaRoot, it) }
+                    }.getOrNull()
+                    for (collection in collections) {
+                        LauncherLog.append(context, "trophies", "Colección de trofeos del núcleo: npComId=${collection.npComId.ifBlank { "<vacío>" }} totalCount=${collection.totalCount} desbloqueados=${collection.unlockedCount}")
+                    }
+                    val result = mapNativeTrophies(collections, expectedNpComId = expectedNpComId)
+                    for (skippedCollection in result.skippedCollections) {
+                        LauncherLog.append(context, "trophies", "Colección de trofeos descartada: npComId=$skippedCollection no es el del juego instalado (esperado $expectedNpComId)")
+                    }
+                    if (result.unlocked.isEmpty() && result.skippedUnknownNames.isEmpty() && result.skippedCollections.isEmpty()) {
+                        LauncherLog.append(context, "trophies", "Sincronización de trofeos: ${collections.size} colecciones sin ningún trofeo ganado nuevo que mapear")
+                    }
                     for (skipped in result.skippedUnknownNames) {
                         LauncherLog.append(context, "trophies", "Trofeo del núcleo sin correspondencia local, se salta: $skipped")
                     }
@@ -3482,15 +3587,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private fun playUnlockSound() {
-        try {
-            val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            RingtoneManager.getRingtone(context, uri)?.play()
-        } catch (_: Exception) {
-            // Sin sonido si el dispositivo no puede reproducirlo; el popup sigue.
-        }
-    }
-
     fun exportAchievements(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
             val text = achievementsRepo.exportText()
@@ -3830,9 +3926,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             } else {
                 // R6-P2-12: "valores por defecto / del preset": el reset
                 // pone valores del preset donde el preset los define y
-                // defaults de LauncherSettings() donde no (audioVolume,
-                // performanceMode, campos de Controles...). Decir solo
-                // "valores del preset" era impreciso.
+                // defaults de LauncherSettings() donde no. Ronda 0.2.70
+                // (11-P1-4): las elecciones manuales que aplicar un
+                // preset conserva (turbo, audio, auto-revert, modo
+                // rendimiento, controles, cerrar apps) también se
+                // conservan aquí y NO se nombran como restablecidas.
+                // Decir solo "valores del preset" era impreciso.
                 // R6-P2-09: avisar si Turnip se conservó aunque el
                 // preset diga Sistema.
                 "Categoría ${category.title} restablecida a los valores por defecto / del preset ${current.activeProfile.label}.$turnipNote${turnipKeptNote(reset, presetSettings(current.activeProfile))}"
@@ -3852,10 +3951,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 // R5-A2-8: el modo seguro nunca se exporta: una copia
                 // con safeMode=true guardaba los valores forzados
                 // 1x/SDL como ajustes normales sin snapshot, y al
-                // importarla los ajustes previos se perdían. Se
-                // exporta safeMode=false; los valores forzados que
-                // queden en el JSON son solo ajustes normales.
-                val text = encodeSettingsBackup(current.copy(safeMode = false), currentUi)
+                // importarla los ajustes previos se perdían.
+                // Ronda 0.2.70 (P1-2): settingsForExport exporta los
+                // valores previos del snapshot del modo seguro (o los
+                // previos a "Corregir audio" si está pendiente de
+                // deshacer), siempre con safeMode=false; solo si no hay
+                // snapshot se exportan los guardados.
+                val safeSnapshot = if (current.safeMode) readSettingsSnapshot(safeModeSnapshotFile()) else null
+                val audioSnapshot = readSettingsSnapshot(audioFixSnapshotFile())
+                val text = encodeSettingsBackup(settingsForExport(current, safeSnapshot, audioSnapshot), currentUi)
                 context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
                 withContext(Dispatchers.Main) { _message.value = "Copia de seguridad exportada." }
             } catch (e: Exception) {
@@ -4304,7 +4408,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             appendLine("Backend: ${resolveBackend(effective, gpu).label} | Resolución: ${effective.resolutionLabel} | Filtro: ${effective.screenFilter}")
             appendLine("Aniso: ${effective.anisotropicFiltering}x | VSync: ${effective.vSync} | Async: ${effective.asyncPipelineCompilation}")
             appendLine("High Accuracy: ${effective.highAccuracy} | Surface Sync: ${effective.surfaceSyncEnabled} | Memory Mapping: ${effective.memoryMapping}")
-            appendLine("Audio: ${effective.audioBackend} | Volumen: ${effective.audioVolume} | NGS: ${effective.ngsEnable} | Audio SDL experimental: ${effective.expAudioSdl}")
+            appendLine("Audio: ${effective.audioBackend} | Volumen: ${effective.audioVolume} | NGS: ${effective.ngsEnable} | Audio experimental (SDL y Cubeb): ${effective.expAudioSdl}")
             appendLine("CPU opt (JIT): ${effective.cpuOpt} | FPS hack: ${effective.fpsHack}")
             appendLine("Modo seguro: ${effective.safeMode}")
             appendLine("Driver: ${effective.gpuDriver} | Turnip: ${effective.turnipVersion} (instalado: ${effective.turnipInstalled})")
