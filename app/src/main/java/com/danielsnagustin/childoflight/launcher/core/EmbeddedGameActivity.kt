@@ -345,6 +345,17 @@ class EmbeddedGameActivity : SDLActivity() {
     private var watchdogStarted: Boolean = false
 
     /**
+     * Ronda 0.2.70, arreglo del run #637: la Activity está reanudada
+     * entre onResume y onPause. Bandera propia porque android.app.Activity
+     * (base de SDLActivity) NO tiene isResumed — eso es de Fragment — y
+     * el watchdog y el sondeo de relanzamiento SDL lo usaban como si
+     * existiera (no compilaba). Se pone en true al inicio de onResume
+     * y en false al inicio de onPause; la leen corrutinas de fondo, como
+     * las demás banderas de este archivo.
+     */
+    private var isActivityResumed: Boolean = false
+
+    /**
      * Ronda 0.2.70 (Área 10, P1-10): sondeo acotado del hilo SDL tras
      * onResume (reentrada rápida); null = sin sondeo en curso. Se
      * cancela en cada onResume antes de arrancar uno nuevo y con
@@ -1016,6 +1027,9 @@ class EmbeddedGameActivity : SDLActivity() {
     // núcleo es no-op (el puente devuelve false).
     override fun onResume() {
         super.onResume()
+        // Ronda 0.2.70, arreglo del run #637: marcar reanudada antes
+        // de nada (el watchdog y el sondeo SDL leen esta bandera).
+        isActivityResumed = true
         // Ronda 0.2.65 (R-P1-3): guarda mínima del init en frío. Sin
         // sesión, el hilo SDL que arranca super.onResume() moriría
         // con SDL_main -1 y la Activity se cerraría en silencio (ver
@@ -1132,7 +1146,7 @@ class EmbeddedGameActivity : SDLActivity() {
             // la Activity en primer plano: irse a segundo plano (Inicio
             // / Recientes) durante una carga lenta ya no consume el
             // plazo ni mata una carga legítima. Se sondea en rebanadas
-            // de 1 s; solo se descuenta el tiempo con isResumed. No se
+            // de 1 s; solo se descuenta el tiempo con isActivityResumed. No se
             // reestructura el watchdog: mismo launch, mismo timeout.
             var remainingMs = BLACK_SCREEN_WATCHDOG_TIMEOUT_MS
             while (remainingMs > 0L) {
@@ -1142,13 +1156,13 @@ class EmbeddedGameActivity : SDLActivity() {
                 remainingMs = nextWatchdogRemainingMs(
                     remainingMs,
                     SystemClock.uptimeMillis() - sliceStartMillis,
-                    isResumed,
+                    isActivityResumed,
                 )
             }
             // La Activity pudo irse a segundo plano justo al agotarse
             // el plazo: no disparar el diálogo sobre una Activity
             // parada; esperar a que vuelva (el plazo ya está agotado).
-            while (!isResumed) {
+            while (!isActivityResumed) {
                 if (!isActive || isFinishing) return@launch
                 delay(BLACK_SCREEN_WATCHDOG_SLICE_MS)
             }
@@ -1258,7 +1272,7 @@ class EmbeddedGameActivity : SDLActivity() {
             while (isActive) {
                 if (isFinishing || isDestroyed) return@launch
                 // Irse a segundo plano se reintenta en el próximo onResume.
-                if (!isResumed) return@launch
+                if (!isActivityResumed) return@launch
                 // Partida en curso: nada que relanzar; el sondeo termina.
                 val appRunning = Vita3kCoreBridge.isAppRunning()
                 val gameConfirmed = gameRunningSinceMillis != 0L
@@ -1289,6 +1303,9 @@ class EmbeddedGameActivity : SDLActivity() {
     }
 
     override fun onPause() {
+        // Ronda 0.2.70, arreglo del run #637: al pausar ya no está
+        // reanudada (el watchdog congela su plazo hasta que vuelva).
+        isActivityResumed = false
         // R2-P1-11: SOLO se limpia la bandera al salir de verdad
         // (finish() ya llamado, p. ej. desde onActivityResult tras
         // "Salir al inicio"): ir a segundo plano (Inicio, Recientes,
