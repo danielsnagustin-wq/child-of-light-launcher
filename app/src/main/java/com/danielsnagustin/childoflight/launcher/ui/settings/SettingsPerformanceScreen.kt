@@ -80,6 +80,14 @@ fun SettingsPerformanceScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 // frames más tarde. ON por defecto en los presets Mali /
                 // G99. Se aplica en el siguiente lanzamiento.
                 SettingSwitch("Carga rápida (sin precompilar shaders)", "skip-shader-precompile en config.yml. Salta el precompilado de shaders al arrancar: se espera que el juego entre en segundos en vez de esperar minutos en negro (pendiente medirlo en el teléfono). Los shaders se compilan bajo demanda durante el juego (compilación asíncrona). Si ves objetos que tardan en aparecer al entrar en una escena nueva, apágalo. Se aplica en el siguiente lanzamiento.", s.skipShaderPrecompile) { vm.saveSettings(s.copy(skipShaderPrecompile = it)) }
+                // Tercera pasada (A-2): el texto de arriba promete
+                // compilación asíncrona, pero con la compilación
+                // asíncrona OFF la compilación bajo demanda es
+                // síncrona en el hilo de render (pipeline_cache.cpp
+                // del pin): tirones al entrar en escenas nuevas.
+                if (!s.asyncPipelineCompilation) {
+                    NoteText("Con la compilación asíncrona OFF, los shaders se compilan bajo demanda en el hilo de render: tirones al entrar en escenas nuevas. Enciende la compilación asíncrona (GPU y gráficos) para que la carga rápida no bloquee.")
+                }
                 OutlinedButton(onClick = { vm.clearShaderCache() }, modifier = Modifier.fillMaxWidth()) { Text("Limpiar caché de shaders") }
                 NoteText("Limpia la caché solo si hay glitches. El stutter de la primera partida es normal hasta que la caché se vuelva a llenar.")
                 // Ronda 0.2.70 (11-P2-1): en Vulkan el interruptor es
