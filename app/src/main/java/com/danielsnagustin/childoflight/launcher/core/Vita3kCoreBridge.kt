@@ -3,6 +3,9 @@ package com.danielsnagustin.childoflight.launcher.core
 import android.content.Context
 import android.util.Log
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.vita3k.emulator.data.NativeTrophyCollection
 
 /**
@@ -49,6 +52,14 @@ object Vita3kCoreBridge {
      * termine de verdad y reintentar, o reiniciar el proceso.
      */
     const val SESSION_ACTIVE = -4
+
+    /**
+     * Ronda 0.2.70 (Área 10, P1-11): destroySessionIfGeneration con
+     * una generación obsoleta: la sesión actual ya es otra (un JUGAR
+     * nuevo creó una tras la captura) y no se destruyó nada. El
+     * llamador lo registra y sigue; no es un error.
+     */
+    const val SESSION_STALE = -5
 
     /**
      * Bits de motivo de pausa (iguales que NativeLib de upstream).
@@ -147,7 +158,15 @@ object Vita3kCoreBridge {
     fun init(storagePath: String): Int {
         if (!available) return NOT_IMPLEMENTED
         return try {
-            nativeInit(storagePath)
+            val rc = nativeInit(storagePath)
+            // Ronda 0.2.70 (Área 10, P1-11): un init con éxito crea
+            // (o re-crea) la sesión: sube la generación para que una
+            // destrucción pendiente de la sesión anterior sea no-op.
+            // Un init idempotente que devuelve OK sin crear sesión
+            // también sube la generación: la sesión ya es la actual
+            // y la destrucción vieja no debe tocarla.
+            if (rc == OK) sessionGeneration.incrementAndGet()
+            rc
         } catch (_: UnsatisfiedLinkError) {
             NOT_IMPLEMENTED
         }
@@ -260,6 +279,47 @@ object Vita3kCoreBridge {
         }
     }
 
+    /**
+     * Ronda 0.2.70 (Área 10, P1-11): serialización destroy/init a
+     * nivel de proceso + token de generación de sesión. El destroy
+     * asíncrono de onDestroy (EmbeddedGameActivity) y el
+     * destroy+init de tryLaunchEmbedded (Vita3KLauncher) tocaban los
+     * mismos unique_ptr nativos sin ninguna guarda: un destroy viejo
+     * ejecutado después del init nuevo destruía la sesión recién
+     * creada ("Emulator not initialized" y cierre silencioso).
+     *
+     * - [withSessionLock]: Mutex estático que serializa la
+     *   destrucción de onDestroy con el destroy+init del próximo
+     *   JUGAR (ambos caminos lo toman; el init en frío de onCreate
+     *   no lo necesita: sin sesión previa no hay destroy en vuelo).
+     * - Generación: cada init() con éxito sube [sessionGeneration].
+     *   El job de onDestroy captura la generación al salir y destruye
+     *   con [destroySessionIfGeneration]: si ya hay otra generación,
+     *   es no-op (SESSION_STALE). Es la red de seguridad para
+     *   cualquier camino futuro de init que no tome el Mutex, y para
+     *   la ventana entre el fin del destroy viejo y el init nuevo.
+     */
+    private val sessionMutex = Mutex()
+
+    /** Ejecuta [block] con el Mutex de sesión (destroy/init) tomado. */
+    suspend fun <T> withSessionLock(block: suspend () -> T): T = sessionMutex.withLock { block() }
+
+    /** Generación de la sesión actual (0 = aún no hubo ningún init). */
+    private val sessionGeneration = AtomicInteger(0)
+
+    /** Generación de la sesión actual, para capturarla antes de destruir. */
+    fun currentSessionGeneration(): Int = sessionGeneration.get()
+
+    /**
+     * Destruye la sesión solo si sigue siendo la de [generation]
+     * (la capturada por el llamador antes de destruir). Con otra
+     * generación devuelve SESSION_STALE sin tocar nada.
+     */
+    fun destroySessionIfGeneration(generation: Int): Int {
+        if (generation != sessionGeneration.get()) return SESSION_STALE
+        return destroySession()
+    }
+
     // --- Etapa 2 (fundación): prepareFrontend + instalación + sesión ---
     // Todas siguen el mismo contrato: sin .so devuelven el valor de
     // "no implementado" sin llamar a nativo; con .so reenvían a las
@@ -309,6 +369,12 @@ object Vita3kCoreBridge {
             nativeInstallFirmware(pupPath, callback)
         } catch (_: UnsatisfiedLinkError) {
             ""
+        } catch (_: Exception) {
+            // Ronda 0.2.70 (Área 10, 10-P2-5): el puente JNI devuelve
+            // null a un tipo no nulo solo en OOM (launcher_new_empty_
+            // string devuelve nullptr si NewStringUTF falla); sin este
+            // catch, NPE en el llamador. Igual que getTrophyCollections.
+            ""
         }
     }
 
@@ -322,22 +388,15 @@ object Vita3kCoreBridge {
         }
     }
 
-    /** Crea e instala una licencia a partir de un zRIF. */
-    fun createLicense(zrif: String): Boolean {
-        if (!available) return false
-        return try {
-            nativeCreateLicense(zrif)
-        } catch (_: UnsatisfiedLinkError) {
-            false
-        }
-    }
-
     /** Busca el zRIF de un .pkg entre las licencias ya instaladas ("" si no hay). */
     fun findPkgZrif(pkgPath: String): String {
         if (!available) return ""
         return try {
             nativeFindPkgZrif(pkgPath)
         } catch (_: UnsatisfiedLinkError) {
+            ""
+        } catch (_: Exception) {
+            // Ronda 0.2.70 (Área 10, 10-P2-5): null JNI solo en OOM.
             ""
         }
     }
@@ -348,6 +407,9 @@ object Vita3kCoreBridge {
         return try {
             nativeConvertRifToZrif(licensePath)
         } catch (_: UnsatisfiedLinkError) {
+            ""
+        } catch (_: Exception) {
+            // Ronda 0.2.70 (Área 10, 10-P2-5): null JNI solo en OOM.
             ""
         }
     }
@@ -379,26 +441,6 @@ object Vita3kCoreBridge {
             nativeIsAppPaused()
         } catch (_: UnsatisfiedLinkError) {
             false
-        }
-    }
-
-    /** Title ID de la partida en curso ("" si no hay). */
-    fun getRunningAppTitle(): String {
-        if (!available) return ""
-        return try {
-            nativeGetRunningAppTitle()
-        } catch (_: UnsatisfiedLinkError) {
-            ""
-        }
-    }
-
-    /** Máscara de estado del firmware instalado (bits de upstream). */
-    fun getFirmwareInstallStateMask(): Int {
-        if (!available) return 0
-        return try {
-            nativeGetFirmwareInstallStateMask()
-        } catch (_: UnsatisfiedLinkError) {
-            0
         }
     }
 
@@ -436,16 +478,6 @@ object Vita3kCoreBridge {
                 if (!nativeSetPauseReasonEnabled(bit, enabled)) allOk = false
             }
             allOk
-        } catch (_: UnsatisfiedLinkError) {
-            false
-        }
-    }
-
-    /** Bloquea o libera la entrada del juego sin cambiar la pausa. */
-    fun setInputIntercepted(intercepted: Boolean): Boolean {
-        if (!available) return false
-        return try {
-            nativeSetInputIntercepted(intercepted)
         } catch (_: UnsatisfiedLinkError) {
             false
         }
@@ -585,6 +617,9 @@ object Vita3kCoreBridge {
             nativeInstallCustomDriver(zipPath)
         } catch (_: UnsatisfiedLinkError) {
             ""
+        } catch (_: Exception) {
+            // Ronda 0.2.70 (Área 10, 10-P2-5): null JNI solo en OOM.
+            ""
         }
     }
 
@@ -594,6 +629,9 @@ object Vita3kCoreBridge {
         return try {
             nativeGetInstalledCustomDrivers()
         } catch (_: UnsatisfiedLinkError) {
+            emptyArray()
+        } catch (_: Exception) {
+            // Ronda 0.2.70 (Área 10, 10-P2-5): null JNI solo en OOM.
             emptyArray()
         }
     }
@@ -618,7 +656,7 @@ object Vita3kCoreBridge {
      * Disabled=1<<0, DoubleBuffer=1<<1, ExernalHost=1<<2,
      * PageTable=1<<3, NativeBuffer=1<<4. [customDriverName] es el
      * nombre del driver Turnip instalado ("" = driver del sistema).
-     * Devuelve 0 si no hay núcleo, si el JNI no está (APK pequeña) o
+     * Devuelve 0 si no hay núcleo, si el JNI no está (el motor integrado no está en esta instalación) o
      * si el núcleo no la devuelve: 0 = desconocida, la UI no filtra
      * nada (ver MemoryMapping.isSupportedByMask / effectiveMapping-
      * Method en el modelo).
@@ -725,17 +763,13 @@ object Vita3kCoreBridge {
     private external fun nativeInstallArchive(archivePath: String, callback: EmbeddedInstallCallback, forceReinstall: Boolean): Boolean
     private external fun nativeInstallFirmware(pupPath: String, callback: EmbeddedInstallCallback): String
     private external fun nativeCopyLicense(licensePath: String): Boolean
-    private external fun nativeCreateLicense(zrif: String): Boolean
     private external fun nativeFindPkgZrif(pkgPath: String): String
     private external fun nativeConvertRifToZrif(licensePath: String): String
     private external fun nativeIsAppRunning(): Boolean
     private external fun nativeRequestAppQuit(): Boolean
     private external fun nativeIsAppPaused(): Boolean
-    private external fun nativeGetRunningAppTitle(): String
-    private external fun nativeGetFirmwareInstallStateMask(): Int
     private external fun nativeRefreshAppsList()
     private external fun nativeSetPauseReasonEnabled(reasonMask: Int, enabled: Boolean): Boolean
-    private external fun nativeSetInputIntercepted(intercepted: Boolean): Boolean
     private external fun nativeInstallCustomDriver(zipPath: String): String
     private external fun nativeGetInstalledCustomDrivers(): Array<String>
     private external fun nativeRemoveCustomDriver(driverName: String): Boolean
