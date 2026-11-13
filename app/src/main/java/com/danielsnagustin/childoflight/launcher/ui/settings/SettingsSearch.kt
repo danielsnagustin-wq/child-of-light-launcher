@@ -203,7 +203,7 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     entry("Posición del overlay de FPS", "overlay fps posicion arriba abajo izquierda derecha", SettingsCategory.PERFORMANCE),
     entry("Mostrar mensajes de compilación de shaders", "mensajes compilacion shaders avisos", SettingsCategory.PERFORMANCE),
     // Ronda 0.2.66: parches experimentales (sección en Rendimiento).
-    entry("Audio SDL experimental", "audio sdl experimental parche underrun chasquidos latencia retraso", SettingsCategory.PERFORMANCE),
+    entry("Audio experimental (SDL y Cubeb)", "audio experimental sdl cubeb parche underrun chasquidos retraso", SettingsCategory.PERFORMANCE),
     entry("Volver a 1x si baja de 28 fps", "volver 1x 28 fps automatico calidad 2x", SettingsCategory.PERFORMANCE),
     entry("Modo rendimiento del launcher", "modo rendimiento pantalla encendida", SettingsCategory.PERFORMANCE),
     entry("Restablecer esta categoría", "restablecer reset categoria valores preset", SettingsCategory.PERFORMANCE),
