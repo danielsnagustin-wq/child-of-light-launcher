@@ -133,6 +133,7 @@ val SETTINGS_SEARCH_INDEX: List<SearchableSetting> = listOf(
     entry("Permitir app externa", "motor app externa casos especiales", SettingsCategory.GENERAL),
     entry("Sesión PSN (simulada)", "psn sesion simulada dlc activacion", SettingsCategory.GENERAL),
     entry("Idioma del juego", "idioma juego espanol ingles frances aleman italiano", SettingsCategory.GENERAL),
+    entry("Clave de RAWG.io (ficha del juego)", "rawg ficha juego portada generos clave api", SettingsCategory.GENERAL),
     entry("Aviso legal", "legal ubisoft sony licencia", SettingsCategory.GENERAL),
     entry("Ver config.yml generado", "config yml ver generado yaml", SettingsCategory.GENERAL),
     entry("Restablecer ajustes", "restablecer reset preset gpu defecto", SettingsCategory.GENERAL),
