@@ -2,7 +2,9 @@ package com.danielsnagustin.childoflight.launcher
 
 import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
 import com.danielsnagustin.childoflight.launcher.model.DlcInfo
+import com.danielsnagustin.childoflight.launcher.model.GameStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -85,5 +87,33 @@ class DlcMergeTest {
             DlcInfo("CHILDOFLIGHTDLC2", "PCSB00598", 2L, isPkg = true, contentKey = "CHILDOFLIGHTDLC2"),
         )
         assertEquals(2, GameLibraryRepository.mergeDlcLists(extracted, stored).size)
+    }
+
+    @Test
+    fun mergeKeepsRegionUnknownFlag() {
+        // 7-P2-10: un .pkg con header ilegible llega a la fusión
+        // marcado de región desconocida y la marca sobrevive.
+        val stored = listOf(
+            DlcInfo("DLC-HEADER-ROTO", "PCSB00598", 3L, isPkg = true, contentKey = "DLC-HEADER-ROTO", regionUnknown = true),
+        )
+        val merged = GameLibraryRepository.mergeDlcLists(emptyList(), stored)
+        assertEquals(1, merged.size)
+        assertTrue(merged[0].regionUnknown)
+        assertTrue(merged[0].isPkg)
+    }
+
+    @Test
+    fun installedAndStoredDlcCountsSplit() {
+        // 7-P2-7: Home distingue instalados de .pkg guardados con el
+        // mismo criterio que FileStates (isPkg).
+        val status = GameStatus(
+            dlcs = listOf(
+                DlcInfo("CHILDOFLIGHTDLC1", "PCSB00598", 1L),
+                DlcInfo("DLC-GUARDADO", "PCSB00598", 2L, isPkg = true, contentKey = "DLC-GUARDADO"),
+            ),
+        )
+        assertEquals(2, status.dlcCount)
+        assertEquals(1, status.installedDlcCount)
+        assertEquals(1, status.storedDlcPkgCount)
     }
 }
