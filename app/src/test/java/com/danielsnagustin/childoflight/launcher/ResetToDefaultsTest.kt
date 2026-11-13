@@ -43,5 +43,16 @@ class ResetToDefaultsTest {
         assertTrue(reset.psnSignedIn)
         assertFalse(reset.allowExternalVita3k)
         assertFalse(reset.pkgDeliveredToVita3k)
+        assertEquals("", reset.rawgApiKey)
+    }
+
+    @Test
+    fun resetKeepsRawgApiKey() {
+        // Ronda 0.2.69 (RAWG): restablecer no borra la clave RAWG del usuario.
+        val current = presetSettings(GpuProfileId.G99_RECOMMENDED).copy(
+            rawgApiKey = "clave-de-prueba-123",
+        )
+        val reset = resetDefaultsWithCurrent(presetSettings(GpuProfileId.G99_RECOMMENDED), current)
+        assertEquals("clave-de-prueba-123", reset.rawgApiKey)
     }
 }
