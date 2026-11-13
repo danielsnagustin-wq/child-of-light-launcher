@@ -55,7 +55,7 @@ fun SettingsPerformanceScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 // todos los presets llevan texture-cache ON desde 0.2.65
                 // (en Vulkan el núcleo lo ignora y siempre cachea, así
                 // que el interruptor solo tiene efecto con OpenGL).
-                SettingSwitch("Caché de texturas", "texture-cache en config.yml. ON recomendado cuando hay RAM de sobra: sin ella las texturas se recargan al cambiar de escena. En Vulkan el núcleo lo ignora (siempre cachea las texturas), así que este interruptor solo tiene efecto con OpenGL.", s.textureCache) { vm.saveSettings(s.copy(textureCache = it)) }
+                SettingSwitch("Caché de texturas", "texture-cache en config.yml. ON recomendado: sin ella las texturas se vuelven a subir desde la memoria del juego en cada draw. En Vulkan sí tiene efecto desde la 0.2.66 (parche c-01): OFF re-sube cada textura y es más lento. En OpenGL, el de siempre.", s.textureCache) { vm.saveSettings(s.copy(textureCache = it)) }
                 // R2-P2-08: sin "ON siempre": el interruptor lo puede
                 // apagar el usuario (los presets lo ponen ON por
                 // defecto, pero nada lo fuerza).
@@ -65,6 +65,18 @@ fun SettingsPerformanceScreen(vm: LauncherViewModel, onBack: () -> Unit, onNavig
                 // precompilado que evita tirones en escenas nuevas. El
                 // interruptor se etiqueta por lo que hace de verdad.
                 SettingSwitch("Precompilar shaders conocidos al arrancar", "shader-cache en config.yml. En Vulkan solo controla el precompilado al arrancar: el stutter de la primera partida se va cuando la caché se llena. OFF no ahorra disco ni RAM. ON recomendado.", s.shaderCache) { vm.saveSettings(s.copy(shaderCache = it)) }
+                // Ronda 0.2.68 (load-p1): carga rápida. El precompilado
+                // de shaders al arrancar es serial (un programa detrás
+                // de otro, sin imagen mientras tanto) y en este teléfono
+                // costaba 92-147 s hasta el primer frame, y con la caché
+                // ya grande el juego "ni siquiera entra". Con la carga
+                // rápida ON, se espera que el juego entre en segundos
+                // (pendiente medir T2 en el teléfono) y los shaders se
+                // compilan bajo demanda con la compilación asíncrona
+                // (3 hilos): sin bloqueo, solo objetos que aparecen unos
+                // frames más tarde. ON por defecto en los presets Mali /
+                // G99. Se aplica en el siguiente lanzamiento.
+                SettingSwitch("Carga rápida (sin precompilar shaders)", "skip-shader-precompile en config.yml. Salta el precompilado de shaders al arrancar: se espera que el juego entre en segundos en vez de esperar minutos en negro (pendiente medirlo en el teléfono). Los shaders se compilan bajo demanda durante el juego (compilación asíncrona). Si ves objetos que tardan en aparecer al entrar en una escena nueva, apágalo. Se aplica en el siguiente lanzamiento.", s.skipShaderPrecompile) { vm.saveSettings(s.copy(skipShaderPrecompile = it)) }
                 OutlinedButton(onClick = { vm.clearShaderCache() }, modifier = Modifier.fillMaxWidth()) { Text("Limpiar caché de shaders") }
                 NoteText("Limpia la caché solo si hay glitches. El stutter de la primera partida es normal hasta que la caché se vuelva a llenar.")
                 // Ronda 0.2.65 (R-P1-7): en Vulkan, hashless siempre
