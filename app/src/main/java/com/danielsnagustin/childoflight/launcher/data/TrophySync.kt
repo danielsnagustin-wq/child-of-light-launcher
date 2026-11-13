@@ -50,9 +50,11 @@ import org.vita3k.emulator.data.NativeTrophyCollection
  * la UI cuando no esté vacío (ver informe de la ronda).
  *
  * Timestamp: timestampSec * 1000 (epoch millis). Si es 0 o negativo
- * con earned == true (el núcleo no guardó marca de tiempo), se usa
- * el instante de la sincronización ([nowMillis]): el desbloqueo es
- * real (el núcleo dice earned), solo falta su instante exacto.
+ * con earned == true (el núcleo no guardó marca de tiempo), la fecha
+ * queda DESCONOCIDA (unlockedAtMillis == null): no se inventa la fecha
+ * de la sincronización (ronda 0.2.70, 7-P2-4). La UI muestra "fecha
+ * desconocida" en ese caso; el desbloqueo en sí es real (el núcleo
+ * dice earned), solo falta su instante exacto.
  */
 
 /**
@@ -62,13 +64,31 @@ import org.vita3k.emulator.data.NativeTrophyCollection
  * lo vacía. Hilos: lo escribe el hilo principal (onDestroy de
  * EmbeddedGameActivity) y lo lee el hilo IO (syncTrophiesFromGame);
  * el candado serializa ambas.
+ *
+ * Ronda 0.2.70, P1-5: la captura en onDestroy corre DESPUÉS de
+ * MainActivity.onResume (orden real: juego.onPause -> launcher.
+ * onResume -> juego.onDestroy), así que el take() de onResume llega
+ * casi siempre vacío. Por eso store() AVISA a los oyentes
+ * (addListener): el ViewModel se suscribe en su init y dispara
+ * syncTrophiesFromGame() en cuanto aparece un pendiente, no solo en
+ * onResume. MainActivity además re-chequea ~1 s después por si el
+ * aviso se perdiera. Los oyentes se invocan fuera del candado y
+ * nunca tumban el store (un oyente que falle no impide guardar).
  */
 object TrophySyncPending {
     private val lock = Any()
     private var pending: Array<NativeTrophyCollection>? = null
+    private val listeners = mutableSetOf<(Array<NativeTrophyCollection>) -> Unit>()
 
     fun store(collections: Array<NativeTrophyCollection>) {
-        synchronized(lock) { pending = collections }
+        val toNotify: List<(Array<NativeTrophyCollection>) -> Unit>
+        synchronized(lock) {
+            pending = collections
+            toNotify = listeners.toList()
+        }
+        for (listener in toNotify) {
+            runCatching { listener(collections) }
+        }
     }
 
     /** Devuelve las colecciones pendientes y vacía el hueco (null si no hay nada). */
@@ -79,12 +99,23 @@ object TrophySyncPending {
             return taken
         }
     }
+
+    /** Suscribe un aviso cuando store() deja un pendiente nuevo. */
+    fun addListener(listener: (Array<NativeTrophyCollection>) -> Unit) {
+        synchronized(lock) { listeners.add(listener) }
+    }
+
+    fun removeListener(listener: (Array<NativeTrophyCollection>) -> Unit) {
+        synchronized(lock) { listeners.remove(listener) }
+    }
 }
 
-/** Un trofeo ganado según el núcleo, ya mapeado a número local 1..20. */
+/** Un trofeo ganado según el núcleo, ya mapeado a número local 1..20.
+ * [unlockedAtMillis] es null cuando el núcleo no guardó marca de
+ * tiempo (timestampSec <= 0): fecha desconocida, nunca inventada. */
 data class TrophySyncEntry(
     val number: Int,
-    val unlockedAtMillis: Long,
+    val unlockedAtMillis: Long?,
 )
 
 data class TrophySyncResult(
@@ -92,6 +123,8 @@ data class TrophySyncResult(
     val unlocked: List<TrophySyncEntry>,
     /** Nombres del núcleo sin correspondencia local (se saltaron). */
     val skippedUnknownNames: List<String>,
+    /** npComId de colecciones descartadas por no ser de este juego. */
+    val skippedCollections: List<String> = emptyList(),
 )
 
 /**
@@ -151,15 +184,32 @@ internal fun normalizeTrophyName(name: String): String {
  *   registra en skippedUnknownNames (nunca se inventa un mapeo).
  * - El mismo número local en varias colecciones (no debería pasar
  *   con un solo juego) se fusiona en una entrada con el instante
- *   más antiguo: el primer desbloqueo es el que cuenta.
+ *   más antiguo conocido: el primer desbloqueo es el que cuenta;
+ *   si ningún duplicado trae instante, la fecha queda desconocida.
+ * - [expectedNpComId]: si se conoce el <npcommid> del TRP
+ *   empaquetado (TrophyStoreReader.resolveNpComId), una colección
+ *   con npComId distinto y no vacío se descarta entera (7-P2-2) y
+ *   queda en skippedCollections; una colección con npComId vacío
+ *   no se descarta (el puente viejo puede no rellenarlo).
  */
 fun mapNativeTrophies(
     collections: Array<NativeTrophyCollection>,
+    // 7-P2-4: se conserva por compatibilidad con los llamadores, pero
+    // YA NO se usa para sustituir fechas: un timestampSec <= 0 deja
+    // la fecha como desconocida (null), nunca "ahora".
     nowMillis: Long = System.currentTimeMillis(),
+    expectedNpComId: String? = null,
 ): TrophySyncResult {
-    val byNumber = mutableMapOf<Int, Long>()
+    val byNumber = mutableMapOf<Int, Long?>()
     val skipped = mutableListOf<String>()
+    val skippedCollections = mutableListOf<String>()
     for (collection in collections) {
+        if (expectedNpComId != null && collection.npComId.isNotBlank() &&
+            !collection.npComId.equals(expectedNpComId, ignoreCase = true)
+        ) {
+            skippedCollections.add(collection.npComId)
+            continue
+        }
         for (trophy in collection.trophies) {
             if (!trophy.earned) continue
             val name = trophy.name
@@ -171,15 +221,25 @@ fun mapNativeTrophies(
                 skipped.add(if (name.isBlank()) "<sin nombre>" else name)
                 continue
             }
-            val atMillis = if (trophy.timestampSec > 0) trophy.timestampSec * 1000 else nowMillis
+            // 7-P2-4: timestampSec <= 0 -> fecha desconocida (null),
+            // nunca la fecha de la sync.
+            val atMillis: Long? = if (trophy.timestampSec > 0) trophy.timestampSec * 1000 else null
             val previous = byNumber[number]
-            if (previous == null || atMillis < previous) byNumber[number] = atMillis
+            if (number !in byNumber) {
+                byNumber[number] = atMillis
+            } else if (previous == null) {
+                // Ya había un duplicado sin fecha: el instante
+                // conocido (si lo hay) es el primer desbloqueo.
+                if (atMillis != null) byNumber[number] = atMillis
+            } else if (atMillis != null && atMillis < previous) {
+                byNumber[number] = atMillis
+            }
         }
     }
     val unlocked = byNumber.entries
         .sortedBy { it.key }
         .map { TrophySyncEntry(it.key, it.value) }
-    return TrophySyncResult(unlocked, skipped)
+    return TrophySyncResult(unlocked, skipped, skippedCollections)
 }
 
 /**
@@ -190,6 +250,20 @@ fun mapNativeTrophies(
  * del TROPCONF es el de TROPHIES_20. Sin ella, un trophyId 0 por
  * defecto (p. ej. un objeto construido a mano o una colección de
  * otro juego) se convertiría en el nº 1 sin serlo.
+ *
+ * Ronda 0.2.70, 7-P2-3 (SIN cambio de código, decisión
+ * documentada): el paso 4 asume que el orden del TROPCONF real es
+ * el de TROPHIES_20 y eso solo lo confirma el TROPCONF.SFM del
+ * teléfono, que no está en este árbol. Se mantiene el paso 4
+ * porque la evidencia disponible apunta al mismo orden: el orden
+ * de TROPHIES_20 coincide exactamente con el listado oficial de
+ * PSN para Vita (psmania.net, 20/20, verificado en la auditoría
+ * de segunda pasada) y el orden PSN y el orden TROPCONF derivan
+ * del mismo set de trofeos; además los pasos 1-3 (por nombre)
+ * resuelven la inmensa mayoría y el paso 4 solo cubre el resto
+ * cuando la colección está completa (totalCount == 20). Si el
+ * TROPCONF real del teléfono mostrara otro orden, hay que quitar
+ * este paso; hasta entonces, quitarlo perdería mapeos reales.
  */
 private fun numberByTrophyId(collection: NativeTrophyCollection, trophyId: Int): Int? {
     if (collection.totalCount != TROPHIES_20.size) return null
