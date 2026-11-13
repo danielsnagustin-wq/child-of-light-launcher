@@ -650,8 +650,17 @@ private fun TouchPreview(
     // tapaba por completo el botón Start (y parte de Y/X): en
     // la vista previa Start no se podía ni tocar ni arrastrar,
     // porque el toque lo recibía la zona Igniculus.
-    val previewControls = displayLayout.filter { it.visible }
-        .sortedBy { if (it.kind == "igniculus") 0 else 1 }
+    // Ronda 0.2.70 Area 6 (6-P2-5): el filtrado/ordenado y los
+    // degradados se memorizan por layout: antes cada pixel arrastrado
+    // (cada recomposicion de TouchPreview) re-filtraba y re-ordenaba
+    // la lista y re-creaba un Brush por control.
+    val previewControls = remember(displayLayout) {
+        displayLayout.filter { it.visible }
+            .sortedBy { if (it.kind == "igniculus") 0 else 1 }
+    }
+    val previewBrushes = remember(previewControls) {
+        previewControls.associate { it.id to touchPreviewGlassBrush(parseHex(it.colorHex)) }
+    }
     // La altura se adapta a la pantalla (BoxWithConstraints): en
     // horizontal la vista previa fija de 300 dp se comía casi toda
     // la altura y no cabían ni la cabecera ni los botones.
@@ -712,7 +721,7 @@ private fun TouchPreview(
                                 // en el orbe interior (84%), no en toda
                                 // la zona; el borde queda como anillo.
                                 if (control.kind == "igniculus") SolidColor(Color.Transparent)
-                                else touchPreviewGlassBrush(parseHex(control.colorHex)),
+                                else previewBrushes[control.id] ?: touchPreviewGlassBrush(parseHex(control.colorHex)),
                                 shape,
                             )
                             .border(
@@ -802,13 +811,13 @@ private fun TouchPreview(
                         if (control.kind == "stick") {
                             Box(
                                 modifier = Modifier.size(size * 0.39f)
-                                    .background(touchPreviewGlassBrush(parseHex(control.colorHex)), CircleShape)
+                                    .background(previewBrushes[control.id] ?: touchPreviewGlassBrush(parseHex(control.colorHex)), CircleShape)
                                     .border(1.dp, ColIceBlue.copy(alpha = 0.7f), CircleShape),
                             )
                         } else if (control.kind == "igniculus") {
                             Box(
                                 modifier = Modifier.size(size * 0.84f)
-                                    .background(touchPreviewGlassBrush(parseHex(control.colorHex)), CircleShape)
+                                    .background(previewBrushes[control.id] ?: touchPreviewGlassBrush(parseHex(control.colorHex)), CircleShape)
                                     .border(1.dp, ColIceBlue.copy(alpha = 0.7f), CircleShape),
                             )
                         }
