@@ -30,9 +30,7 @@ import androidx.compose.ui.unit.dp
 import com.danielsnagustin.childoflight.launcher.data.DownloadsCleanup
 import com.danielsnagustin.childoflight.launcher.model.GameSession
 import com.danielsnagustin.childoflight.launcher.model.TROPHIES_20
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import androidx.compose.runtime.key
 
 /**
  * Sesiones / partidas múltiples.
@@ -83,6 +81,7 @@ fun SessionsSection(vm: LauncherViewModel) {
     }
     sessions.forEach { session ->
         val isActive = session.id == activeId
+        key(session.id) {
         Card(
             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
             colors = CardDefaults.cardColors(
@@ -98,8 +97,8 @@ fun SessionsSection(vm: LauncherViewModel) {
                 )
                 Text("Juego: ${session.titleId.ifBlank { "—" }}", style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    "Creada: ${formatDate(session.createdAtMillis)} · Última vez: " +
-                        if (session.lastPlayedAtMillis == 0L) "nunca" else formatDate(session.lastPlayedAtMillis),
+                    "Creada: ${formatDateTime(session.createdAtMillis)} · Última vez: " +
+                        if (session.lastPlayedAtMillis == 0L) "nunca" else formatDateTime(session.lastPlayedAtMillis),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text("Tiempo jugado: ${session.playTimeLabel()}", style = MaterialTheme.typography.bodyMedium)
@@ -144,6 +143,7 @@ fun SessionsSection(vm: LauncherViewModel) {
                     ) { Text("Borrar") }
                 }
             }
+        }
         }
     }
 
@@ -240,13 +240,6 @@ fun SessionsSection(vm: LauncherViewModel) {
     }
 }
 
-private fun formatDate(millis: Long): String {
-    return try {
-        SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(millis))
-    } catch (_: Exception) {
-        "—"
-    }
-}
 
 private fun safeFileName(name: String): String {
     val clean = name.map { c -> if (c.isLetterOrDigit() || c == '-' || c == '_') c else '_' }.joinToString("")
