@@ -191,13 +191,6 @@ Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeCopyL
     return JNI_FALSE;
 }
 
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeCreateLicense(
-    JNIEnv * /* env */, jobject /* thiz */, jstring /* zrif */) {
-    LOGW("nativeCreateLicense STUB (TODO-ETAPA2): núcleo no embebido");
-    return JNI_FALSE;
-}
-
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_danielsnagustin_childoflight_launcher_core_Vita3kCoreBridge_nativeFindPkgZrif(
     JNIEnv *env, jobject /* thiz */, jstring /* pkgPath */) {
