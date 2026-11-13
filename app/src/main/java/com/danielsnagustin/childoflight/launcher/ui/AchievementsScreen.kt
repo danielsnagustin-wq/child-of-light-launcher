@@ -306,6 +306,10 @@ fun AchievementsScreen(vm: LauncherViewModel, onBack: () -> Unit) {
                             // guardó marca de tiempo: fecha desconocida,
                             // nunca la fecha de la sincronización.
                             Text("Desbloqueado: fecha desconocida", style = MaterialTheme.typography.bodySmall, color = if (item.unlocked) ColMutedText else mutedTextColor(dark))
+                        } else {
+                            // Sin fecha y bloqueado: nada que mostrar aquí.
+                            // (El `else` es obligatorio: el `if` va como
+                            // expresión a la derecha del `?:`.)
                         }
                     }
                     if (!item.unlocked) {
