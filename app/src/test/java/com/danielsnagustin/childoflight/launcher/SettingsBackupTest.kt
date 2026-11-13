@@ -49,6 +49,15 @@ class SettingsBackupTest {
         assertEquals(ui, decoded.second)
     }
 
+    // La clave RAWG (ronda 0.2.69) debe sobrevivir a exportar e importar la copia de seguridad.
+    @Test
+    fun roundTripKeepsRawgApiKey() {
+        val withKey = LauncherSettings(rawgApiKey = "clave-de-prueba-123")
+        val json = encodeSettingsBackup(withKey, UiPreferences())
+        val decoded = decodeSettingsBackup(json, LauncherSettings(), UiPreferences()).getOrThrow()
+        assertEquals("clave-de-prueba-123", decoded.first.rawgApiKey)
+    }
+
     @Test
     fun missingListKeysKeepCurrentValues() {
         // P2-36: una clave ausente en el backup conserva el valor
