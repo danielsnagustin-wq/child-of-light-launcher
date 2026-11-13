@@ -4,7 +4,7 @@ Launcher de **un solo juego** para Android: Child of Light (PS Vita).
 Tocas el icono, el launcher importa tu copia legal, guarda los ajustes
 y lanza el juego con el núcleo embebido. Sin biblioteca de emulador, sin lista de juegos.
 
-> **Versión:** 0.2.64
+> **Versión:** 0.2.70
 > **minSdk 28 · targetSdk 35 · compileSdk 35** · Kotlin + Jetpack Compose
 > **Procesador objetivo:** MediaTek Helio G99 (Mali-G57 MC2)
 
