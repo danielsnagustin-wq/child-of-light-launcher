@@ -160,8 +160,12 @@ class MainActivity : ComponentActivity() {
             // re-chequeo diferido es el respaldo por si ese aviso
             // se perdiera. Idempotente (un take() vacío no hace
             // nada) y solo si no se reentró al juego entretanto.
+            // R-4 (tercera pasada): 2 s, no 1 s: la captura corre
+            // tras super.onDestroy() y el join del hilo SDL puede
+            // tardar hasta ~1 s, así que el rechequeo de 1 s podía
+            // llegar antes que la captura y hacer take() vacío.
             lifecycleScope.launch {
-                kotlinx.coroutines.delay(1000)
+                kotlinx.coroutines.delay(2000)
                 if (!GameActivityState.gameActivityAlive) {
                     vm.syncTrophiesFromGame(fromGame = true)
                 }
