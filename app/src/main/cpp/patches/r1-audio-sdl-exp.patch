@@ -6,10 +6,10 @@ index 7a06a85..f670bdd 100644
      // dispositivo de la config ANTES de crear el adaptador: el
      // adaptador SDL lo lee en init() y no tiene acceso a la config.
      state.audio.audio_device_sample_frames = state.cfg.current_config.audio_device_sample_frames;
-+    // Launcher 0.2.66, R1: el interruptor experimental de audio SDL se lee en
-+    // AudioState::init (el hint de baja latencia) y en cada salida de audio,
-+    // así que se fija ANTES de init(). Cambiar el interruptor exige relanzar
-+    // (como cambiar de backend), igual que el resto de claves de audio.
++    // Launcher 0.2.66, R1: el interruptor experimental de audio se lee en
++    // late_init y en cada salida de audio, así que se fija ANTES de init().
++    // Cambiar el interruptor exige relanzar (como cambiar de backend),
++    // igual que el resto de claves de audio.
 +    state.audio.exp_audio_sdl = state.cfg.current_config.exp_audio_sdl;
      if (!state.audio.init(state.cfg.current_config.audio_backend)) {
          LOG_WARN("Failed to initialize audio! Audio will not work.");
@@ -162,18 +162,6 @@ index 84f223d..aee4dff 100644
      const int samples_available = port->adapter.get_rest_sample(*port);
      if (samples_available < get_threshold_samples(port->adapter.device_buffer_samples) || additional_amount > 0) {
          port->cond_var.notify_one();
-@@ -68,6 +97,11 @@ bool SDLAudioAdapter::init() {
-     // valor inválido vuelve al 512 de antes.
-     const int sample_frames = (state.audio_device_sample_frames > 0) ? state.audio_device_sample_frames : 512;
-     SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, std::to_string(sample_frames).c_str());
-+    // Launcher 0.2.66, R8-audio (Vita3K+ 570cd24, solo el hunk de audio): con
-+    // exp-audio-sdl ON se pide además audio de baja latencia en Android.
-+    // Con OFF no se toca el hint (comportamiento actual: el pin no lo fija).
-+    if (state.exp_audio_sdl)
-+        SDL_SetHint(SDL_HINT_ANDROID_LOW_LATENCY_AUDIO, "1");
-     device_id = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nullptr);
-     SDL_CHECK_EXT(device_id > 0, false);
-     return true;
 @@ -105,6 +139,52 @@ void SDLAudioAdapter::audio_output(AudioOutPort &out_port, const void *buffer) {
  
      //  Put audio to the port's stream and see how much is left to play.
