@@ -375,6 +375,10 @@ internal fun preservedPresetFieldsDiffer(current: LauncherSettings, preset: Laun
         // Ronda 0.2.68 (load-p1): la carga rápida también se conserva
         // como valor manual al aplicar un preset.
         current.skipShaderPrecompile != preset.skipShaderPrecompile ||
+        // Tercera pasada (N-1): la máscara también se conserva como
+        // valor manual al aplicar un preset (preserveManualCacheChoices);
+        // si difiere del preset, el aviso "Perfil modificado" debe verlo.
+        current.disableMaskBit != preset.disableMaskBit ||
         current.showFpsOverlay != preset.showFpsOverlay ||
         current.hashlessTextureCache != preset.hashlessTextureCache ||
         current.showCompileShaders != preset.showCompileShaders ||
@@ -959,6 +963,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private var downloadsCopiesDirty: Boolean = true
 
     init {
+        // Ronda 0.2.70, R-3 (tercera pasada): el pendiente de trofeos
+        // se persiste a disco (TrophySyncPending): si el proceso muere
+        // con el juego en primer plano (onDestroy no corre), el
+        // próximo arranque reintenta la sync desde el archivo (take()
+        // lo relee y MainActivity.onResume ya llama a
+        // syncTrophiesFromGame). Se fija antes que nada: ningún
+        // store() puede correr antes del init del ViewModel en este
+        // proceso (el juego solo se lanza desde MainActivity, que crea
+        // este ViewModel en onCreate).
+        TrophySyncPending.initPersistence(context.filesDir)
         refreshStatus()
         refreshLog()
         loadCoverBitmap()
@@ -3286,6 +3300,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
      * 7-P2-2: cada colección sincronizada registra su npComId y
      * las de otro juego se descartan si se conoce el esperado.
      *
+     * Ronda 0.2.70, R-3 (tercera pasada): el pendiente también vive
+     * en disco (TrophySyncPending lo persiste en store()): si el
+     * proceso murió con el juego en primer plano, este mismo
+     * take() lo relee en el próximo arranque y la sync desbloquea
+     * lo ganado (unlock() es idempotente: reintentar no duplica ni
+     * re-anuncia). El archivo solo se borra tras una sync con
+     * éxito; si falla, queda para el próximo intento.
+     *
+     *
      * R7-P1-06: si en una partida se ganan varios trofeos nuevos, se
      * encolan en orden por número (unlockPopupQueue) y el popup
      * muestra uno tras otro: al descartar uno aparece el siguiente
@@ -3339,6 +3362,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     }
                 }.onFailure { e ->
                     LauncherLog.append(context, "trophies", "Sincronización de trofeos fallida (el progreso local no cambia): ${e.javaClass.simpleName}: ${e.message}")
+                }.onSuccess {
+                    // R-3 (tercera pasada): ack del pendiente
+                    // persistido: solo tras desbloquear con éxito se
+                    // borra el archivo. Si la sync falló, el archivo
+                    // queda y el próximo arranque (o el rechequeo)
+                    // reintenta. clearPersisted() borra solo si el
+                    // archivo sigue siendo el consumido (huella): un
+                    // store() nuevo entretanto no se pierde.
+                    TrophySyncPending.clearPersisted()
                 }
                 // R7-P2-05: el contador "Logros: X/20" de la sesión
                 // activa se recalcula DESPUÉS de desbloquear (antes
