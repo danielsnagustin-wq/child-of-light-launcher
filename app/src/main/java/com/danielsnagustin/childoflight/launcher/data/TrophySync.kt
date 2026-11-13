@@ -1,6 +1,9 @@
 package com.danielsnagustin.childoflight.launcher.data
 
 import com.danielsnagustin.childoflight.launcher.model.TROPHIES_20
+import java.io.File
+import java.util.Base64
+import org.vita3k.emulator.data.NativeTrophy
 import org.vita3k.emulator.data.NativeTrophyCollection
 
 /**
@@ -71,14 +74,57 @@ import org.vita3k.emulator.data.NativeTrophyCollection
  * casi siempre vacío. Por eso store() AVISA a los oyentes
  * (addListener): el ViewModel se suscribe en su init y dispara
  * syncTrophiesFromGame() en cuanto aparece un pendiente, no solo en
- * onResume. MainActivity además re-chequea ~1 s después por si el
+ * onResume. MainActivity además re-chequea ~2 s después por si el
  * aviso se perdiera. Los oyentes se invocan fuera del candado y
  * nunca tumban el store (un oyente que falle no impide guardar).
+ *
+ * Ronda 0.2.70, R-3 (tercera pasada): el pendiente TAMBIÉN se
+ * persiste a disco (ver [TrophySyncPending.initPersistence]). El
+ * estado ganado NO se puede re-leer del TRP en arranque:
+ * TrophyTrpReader solo lee el TROPCONF (definición: nombres e ids,
+ * sin flags de ganado) y el estado vive en TROPUSR.DAT (binario sin
+ * parser en el repo) o tras el puente JNI, que exige sesión viva.
+ * Por eso lo que sobrevive a la muerte del proceso es la captura ya
+ * hecha: store() la escribe a disco antes de avisar, take() la
+ * relee si la memoria está vacía, y la sync la borra solo tras
+ * desbloquear con éxito (clearPersisted, con huella: si un store()
+ * nuevo pisó el archivo entretanto, no se borra lo nuevo).
  */
 object TrophySyncPending {
     private val lock = Any()
     private var pending: Array<NativeTrophyCollection>? = null
     private val listeners = mutableSetOf<(Array<NativeTrophyCollection>) -> Unit>()
+
+    /**
+     * Directorio donde se persiste el pendiente (filesDir de la app,
+     * fijado por LauncherViewModel.init). Null hasta que se fija: sin
+     * él, store()/take() son solo memoria, como antes (degradación
+     * segura, nunca tira).
+     */
+    @Volatile
+    private var persistDir: File? = null
+
+    /**
+     * Huella (bytes exactos) de la copia de disco consumida por el
+     * último take(): la que clearPersisted() puede borrar. Si un
+     * store() nuevo reescribió el archivo entre take() y el ack, los
+     * bytes ya no coinciden y el archivo nuevo se conserva (su copia
+     * en memoria lo respalda igualmente).
+     */
+    @Volatile
+    private var takenDiskBytes: ByteArray? = null
+
+    /** Fija el directorio de persistencia (llamar en el init del ViewModel, antes de cualquier store()). */
+    fun initPersistence(dir: File) {
+        persistDir = dir
+    }
+
+    /** Solo tests: vacía memoria y persistencia (el objeto es un singleton compartido por todos los tests). */
+    internal fun resetForTest() {
+        synchronized(lock) { pending = null }
+        persistDir = null
+        takenDiskBytes = null
+    }
 
     fun store(collections: Array<NativeTrophyCollection>) {
         val toNotify: List<(Array<NativeTrophyCollection>) -> Unit>
@@ -86,17 +132,55 @@ object TrophySyncPending {
             pending = collections
             toNotify = listeners.toList()
         }
+        // R-3: persistir ANTES de avisar: si el proceso muere entre
+        // store() y unlock(), el próximo arranque reintenta desde el
+        // archivo. Best-effort y nunca tira (ver persistPending).
+        persistPending(collections)
         for (listener in toNotify) {
             runCatching { listener(collections) }
         }
     }
 
-    /** Devuelve las colecciones pendientes y vacía el hueco (null si no hay nada). */
+    /**
+     * Devuelve las colecciones pendientes y vacía el hueco (null si no hay nada).
+     * Si la memoria está vacía, reintenta desde el archivo persistido
+     * (R-3: el proceso murió tras store() y antes de unlock()). El
+     * archivo NO se borra aquí: lo borra clearPersisted() tras una
+     * sync con éxito, para que una muerte entre take() y unlock() no
+     * pierda el reintento.
+     */
     fun take(): Array<NativeTrophyCollection>? {
-        synchronized(lock) {
+        val fromMemory: Array<NativeTrophyCollection>? = synchronized(lock) {
             val taken = pending
             pending = null
-            return taken
+            taken
+        }
+        if (fromMemory != null) {
+            // La copia de disco es la misma que escribió store(): se
+            // guarda su huella para que clearPersisted() solo la borre
+            // si nadie la pisó entretanto. Sin huella (sin archivo),
+            // el ack no borra nada y un reintento posterior es inocuo
+            // (unlock() es idempotente).
+            takenDiskBytes = readPendingBytesOrNull()
+            return fromMemory
+        }
+        return readPersistedPending()
+    }
+
+    /**
+     * Borra el archivo persistido tras una sync con éxito, SOLO si
+     * su contenido sigue siendo el que consumió el último take()
+     * (huella). Si un store() nuevo lo reescribió entretanto, no se
+     * toca: ese pendiente nuevo sigue en memoria y en disco.
+     */
+    fun clearPersisted() {
+        val expected = takenDiskBytes ?: return
+        takenDiskBytes = null
+        val file = pendingFile() ?: return
+        runCatching {
+            if (file.isFile && file.readBytes().contentEquals(expected)) {
+                file.delete()
+            }
         }
     }
 
@@ -108,6 +192,146 @@ object TrophySyncPending {
     fun removeListener(listener: (Array<NativeTrophyCollection>) -> Unit) {
         synchronized(lock) { listeners.remove(listener) }
     }
+
+    private fun pendingFile(): File? = persistDir?.let { File(it, PENDING_FILE_NAME) }
+
+    private fun readPendingBytesOrNull(): ByteArray? {
+        val file = pendingFile() ?: return null
+        return runCatching { file.takeIf { it.isFile }?.readBytes() }.getOrNull()
+    }
+
+    /** Escritura best-effort (temp + rename atómico): nunca tira y nunca deja un archivo a medias visible. */
+    private fun persistPending(collections: Array<NativeTrophyCollection>) {
+        val dir = persistDir ?: return
+        runCatching {
+            val target = File(dir, PENDING_FILE_NAME)
+            val tmp = File(dir, "$PENDING_FILE_NAME.tmp")
+            try {
+                tmp.writeText(encodePending(collections), Charsets.UTF_8)
+                if (!tmp.renameTo(target)) {
+                    target.writeText(encodePending(collections), Charsets.UTF_8)
+                }
+            } finally {
+                runCatching { tmp.delete() }
+            }
+        }
+    }
+
+    private fun readPersistedPending(): Array<NativeTrophyCollection>? {
+        val bytes = readPendingBytesOrNull() ?: return null
+        val decoded = decodePending(String(bytes, Charsets.UTF_8))
+        if (decoded == null) {
+            // Archivo corrupto o de formato desconocido: se descarta
+            // para no reintentarlo en cada arranque. Nunca tira.
+            runCatching { pendingFile()?.delete() }
+            return null
+        }
+        takenDiskBytes = bytes
+        return decoded
+    }
+}
+
+/** Nombre del archivo del pendiente persistido (filesDir de la app). */
+private const val PENDING_FILE_NAME = "trophy-sync-pending.txt"
+
+/** Primera línea del archivo: formato + versión (un lector futuro con otro formato debe rechazarlo). */
+private const val PENDING_MAGIC = "trophy-sync-pending v1"
+
+/** Tope de colecciones en un archivo persistido (el launcher es de un solo juego; más es corrupción). */
+private const val MAX_PENDING_COLLECTIONS = 16
+
+private fun b64(value: String): String =
+    Base64.getEncoder().encodeToString(value.toByteArray(Charsets.UTF_8))
+
+private fun unb64(value: String): String? =
+    runCatching { String(Base64.getDecoder().decode(value), Charsets.UTF_8) }.getOrNull()
+
+/**
+ * Serializa las colecciones a texto (puro JVM, sin org.json: debe
+ * funcionar en los unit tests). Formato por líneas:
+ * `trophy-sync-pending v1`, y por colección una línea
+ * `C<TAB>b64(npComId)<TAB>totalCount<TAB>unlockedCount` seguida de
+ * una línea por trofeo
+ * `T<TAB>trophyId<TAB>b64(name)<TAB>earned 0/1<TAB>timestampSec`.
+ * Solo se guardan los campos que usa la sync (mapNativeTrophies y
+ * el log de syncTrophiesFromGame): npComId, totalCount,
+ * unlockedCount, y por trofeo trophyId, nombre, ganado e instante.
+ * title/iconPath y los contadores por grado no los usa nadie en ese
+ * camino y no se persisten. Base64 para los nombres: un nombre con
+ * tabulador, salto de línea o comillas no puede romper el formato.
+ */
+internal fun encodePending(collections: Array<NativeTrophyCollection>): String {
+    val out = StringBuilder(PENDING_MAGIC).append('\n')
+    for (collection in collections) {
+        out.append("C\t")
+            .append(b64(collection.npComId)).append('\t')
+            .append(collection.totalCount).append('\t')
+            .append(collection.unlockedCount).append('\n')
+        for (trophy in collection.trophies) {
+            out.append("T\t")
+                .append(trophy.trophyId).append('\t')
+                .append(b64(trophy.name)).append('\t')
+                .append(if (trophy.earned) 1 else 0).append('\t')
+                .append(trophy.timestampSec).append('\n')
+        }
+    }
+    return out.toString()
+}
+
+/**
+ * Deserializa lo que escribió [encodePending]. Estricto: cualquier
+ * línea malformada, número no numérico, Base64 inválido, trofeo sin
+ * colección o magia distinta devuelve null (archivo descartado, no
+ * se inventa nada). Nunca tira.
+ */
+internal fun decodePending(text: String): Array<NativeTrophyCollection>? {
+    val lines = text.split('\n')
+    if (lines.isEmpty() || lines[0] != PENDING_MAGIC) return null
+    val collections = mutableListOf<NativeTrophyCollection>()
+    var current: NativeTrophyCollection? = null
+    for (raw in lines.drop(1)) {
+        if (raw.isEmpty()) continue
+        val parts = raw.split('\t')
+        when (parts.getOrNull(0)) {
+            "C" -> {
+                if (parts.size != 4) return null
+                val npComId = unb64(parts[1]) ?: return null
+                val totalCount = parts[2].toIntOrNull() ?: return null
+                val unlockedCount = parts[3].toIntOrNull() ?: return null
+                if (totalCount < 0 || unlockedCount < 0) return null
+                if (collections.size >= MAX_PENDING_COLLECTIONS) return null
+                current = NativeTrophyCollection().apply {
+                    this.npComId = npComId
+                    this.totalCount = totalCount
+                    this.unlockedCount = unlockedCount
+                }
+                collections.add(current)
+            }
+            "T" -> {
+                val owner = current ?: return null
+                if (parts.size != 5) return null
+                val trophyId = parts[1].toIntOrNull() ?: return null
+                val name = unb64(parts[2]) ?: return null
+                val earned = when (parts[3]) {
+                    "0" -> false
+                    "1" -> true
+                    else -> return null
+                }
+                val timestampSec = parts[4].toLongOrNull() ?: return null
+                if (owner.trophies.size >= TrophyTrpReader.MAX_TROPHIES) return null
+                val trophy = NativeTrophy().apply {
+                    this.npComId = owner.npComId
+                    this.trophyId = trophyId
+                    this.name = name
+                    this.earned = earned
+                    this.timestampSec = timestampSec
+                }
+                owner.trophies = owner.trophies + trophy
+            }
+            else -> return null
+        }
+    }
+    return collections.toTypedArray()
 }
 
 /** Un trofeo ganado según el núcleo, ya mapeado a número local 1..20.
