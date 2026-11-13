@@ -322,6 +322,7 @@ class Vita3kConfigGeneratorTest {
         )
         assertTrue(off.contains("psn-signed-in: 0"))
         assertFalse(off.contains("psn-signed-in: 1"))
+        assertFalse(off.contains("psn-signed-in: true"))
     }
 
     @Test
@@ -494,9 +495,9 @@ class Vita3kConfigGeneratorTest {
 
     @Test
     fun everyEmittedLineHasTheYamlTypeTheCoreExpects() {
-        // Regresión: cada línea emitida tiene el tipo YAML que
-        // config.h declara para esa clave. En especial psn-signed-in
-        // es INT (1/0), nunca true/false. No hay validación de
+        // Cada línea emitida tiene el tipo YAML que config.h declara
+        // para esa clave. En especial psn-signed-in es INT (1/0),
+        // nunca true/false. No hay validación de
         // re-lectura YAML en writeConfig (no hay librería YAML en la
         // app): solo este test.
         val expectedTypes = mapOf(
@@ -534,6 +535,7 @@ class Vita3kConfigGeneratorTest {
             "hashless-texture-cache" to "bool",
             "show-compile-shaders" to "bool",
             "show-welcome" to "bool",
+            "skip-shader-precompile" to "bool", // Ronda 0.2.68 load-p1
             "psn-signed-in" to "int",
             // 0.2.63 (E): sys-lang es INT en el pin (config.h:172:
             // code(int, "sys-lang", ...)); el generador lo emite
