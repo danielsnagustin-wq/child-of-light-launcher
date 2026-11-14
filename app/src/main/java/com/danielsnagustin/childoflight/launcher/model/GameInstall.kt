@@ -103,6 +103,22 @@ data class GameStatus(
      * licencia real ya estaba dentro del núcleo.
      */
     val licenseInstalledInCore: Boolean = false,
+    /**
+     * Rebote de JUGAR (2026-11-13): true si el juego está extraído
+     * pero su eboot.bin NO es un SELF válido (magia, tamaño o
+     * estructura). Se calcula en scanStatus() con ebootValidation():
+     * leer la cabecera son ≤133 bytes, barato incluso en cada
+     * escaneo. Con true, JUGAR se bloquea con la explicación en vez
+     * de rebotar en silencio, y Home lo marca como no arranca.
+     */
+    val ebootBroken: Boolean = false,
+    /**
+     * Rebote de JUGAR (2026-11-13): true si el Content ID del SFO
+     * instalado se pudo leer. Sirve para distinguir en el reporte
+     * "licencia no registrada en el núcleo" (SFO legible, sin .rif)
+     * de "sin dato" (SFO ilegible o sin juego extraído).
+     */
+    val licenseContentIdReadable: Boolean = false,
     val dlcs: List<DlcInfo> = emptyList(),
     val updateInstalled: Boolean = false,
     /**
