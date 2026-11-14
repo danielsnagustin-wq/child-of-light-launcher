@@ -147,7 +147,16 @@ class MainActivity : ComponentActivity() {
         // cerrar aquí cortaba el tiempo de lo que se siguiera jugando.
         // En el primer arranque (sin partida) la bandera es false y el
         // comportamiento no cambia: notePlayEnded es no-op sin medición.
-        if (!GameActivityState.gameActivityAlive) {
+        //
+        // Rebote de JUGAR (2026-11-13): un fallo anotado antes de este
+        // onResume (p. ej. onCreate de la Activity del juego) muestra
+        // el diálogo y NO registra sesión: el juego nunca llegó a
+        // correr. Si hay candidato a rebote (onPause del juego lo
+        // anotó), la confirmación llega en su onDestroy, que corre
+        // DESPUÉS de este onResume: se espera 2 s antes de registrar
+        // la "partida" y solo entonces se decide (mismo patrón de
+        // re-chequeo diferido que los trofeos, R-4 tercera pasada).
+        fun recordReturnFromGame() {
             vm.noteReturnedFromGame()
             // Ronda 0.2.57: sincronizar los trofeos ganados en la
             // partida (las colecciones ya se capturaron en
@@ -170,17 +179,20 @@ class MainActivity : ComponentActivity() {
                     vm.syncTrophiesFromGame(fromGame = true)
                 }
             }
+        }
+        fun installPendingAddonsIfAny() {
             // Ronda 0.2.65 (R-P1-4): al volver del juego, instalar los
             // addons que JUGAR dejó pendientes (update/DLCs en .pkg
             // guardados): ya no se instalan antes de arrancar para no
             // retrasar el primer frame. Solo si hay algo pendiente
             // (sin pendiente no se lanza ni la corrutina) y solo si la
-            // partida terminó (esta rama ya lo garantiza: si el juego
-            // sigue vivo, installPendingAddons no toca nada de todos
-            // modos). Corre en IO en segundo plano; si el usuario
-            // pulsa JUGAR mientras sigue instalando, el lanzamiento lo
-            // espera (join) antes de init. El trabajo queda en
-            // addonInstallJob para ese join.
+            // partida terminó (si el juego sigue vivo,
+            // installPendingAddons no toca nada de todos modos). Corre
+            // en IO en segundo plano; si el usuario pulsa JUGAR
+            // mientras sigue instalando, el lanzamiento lo espera
+            // (join) antes de init. El trabajo queda en
+            // addonInstallJob para ese join. También corre al volver
+            // de un rebote: el juego no está en curso y es seguro.
             if (Vita3KLauncher.pendingAddonTitleId != null) {
                 Vita3KLauncher.addonInstallJob = lifecycleScope.launch(Dispatchers.IO) {
                     runCatching {
@@ -191,16 +203,60 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        // P2-A4a: si EmbeddedGameActivity falló su init DESPUÉS de que
-        // launch() devolviera LaunchedEmbedded, el ViewModel ya puso
-        // "Núcleo embebido: juego lanzado". La Activity anota el fallo
-        // en Vita3KLauncher (bandera consumible) y aquí se corrige al
-        // volver, con el motivo exacto. Sin tocar LauncherViewModel.
-        // R4-P2-5: el append de log es I/O de disco y onResume corre en
-        // Main: va por IO (el Toast sí queda en Main, es UI). Antes el
-        // append (con su rotación bajo candado) corría en el hilo
-        // principal en cada vuelta al launcher.
-        Vita3KLauncher.takeEmbeddedLaunchFailure()?.let { reason ->
+        val earlyFailure = Vita3KLauncher.takeEmbeddedLaunchFailure()
+        if (earlyFailure != null) {
+            handleEmbeddedLaunchFailure(earlyFailure)
+            if (!GameActivityState.gameActivityAlive) installPendingAddonsIfAny()
+        } else if (!GameActivityState.gameActivityAlive) {
+            if (Vita3KLauncher.hasBounceCandidate()) {
+                lifecycleScope.launch {
+                    kotlinx.coroutines.delay(2000)
+                    if (!GameActivityState.gameActivityAlive) {
+                        val lateFailure = Vita3KLauncher.takeEmbeddedLaunchFailure()
+                        if (lateFailure != null) {
+                            handleEmbeddedLaunchFailure(lateFailure)
+                        } else {
+                            Vita3KLauncher.clearBounceCandidate()
+                            recordReturnFromGame()
+                        }
+                        installPendingAddonsIfAny()
+                    } else {
+                        Vita3KLauncher.clearBounceCandidate()
+                    }
+                }
+            } else {
+                recordReturnFromGame()
+                installPendingAddonsIfAny()
+            }
+        }
+    }
+
+    /**
+     * Rebote de JUGAR (2026-11-13) + P2-A4a: si EmbeddedGameActivity
+     * falló DESPUÉS de que launch() devolviera LaunchedEmbedded, el
+     * ViewModel ya puso "Núcleo embebido: juego lanzado". La Activity
+     * anota el fallo en Vita3KLauncher (bandera consumible) y aquí se
+     * corrige al volver. Un rebote (la sesión murió justo tras
+     * on_launch sin presentar frames) muestra el diálogo con la
+     * acción que lo resuelve; cualquier otro fallo mantiene el Toast
+     * genérico de antes (el motivo crudo queda solo en el log, nunca
+     * en pantalla).
+     */
+    private fun handleEmbeddedLaunchFailure(reason: String) {
+        if (reason == Vita3KLauncher.BOUNCE_EBOOT || reason == Vita3KLauncher.BOUNCE_UNKNOWN) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                LauncherLog.append(
+                    applicationContext,
+                    "launch",
+                    "El juego no llegó a arrancar (rebote tras on_launch sin presentar frames; eboot no válido=${reason == Vita3KLauncher.BOUNCE_EBOOT})",
+                )
+            }
+            vm.showBounceAlert(reason == Vita3KLauncher.BOUNCE_EBOOT)
+        } else {
+            // R4-P2-5: el append de log es I/O de disco y onResume corre en
+            // Main: va por IO (el Toast sí queda en Main, es UI). Antes el
+            // append (con su rotación bajo candado) corría en el hilo
+            // principal en cada vuelta al launcher.
             lifecycleScope.launch(Dispatchers.IO) {
                 LauncherLog.append(applicationContext, "launch", "El juego no llegó a arrancar: $reason")
             }
