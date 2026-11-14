@@ -817,6 +817,30 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         _pendingDuplicate.value = null
     }
 
+    /**
+     * Rebote de JUGAR (2026-11-13): el juego murió justo tras pulsar
+     * JUGAR sin presentar ningún frame. El diálogo lo dice claro y
+     * ofrece la acción que lo resuelve, sin culpar al usuario: con
+     * el eboot no válido, la salida es reimportar el juego completo
+     * en Importar; sin causa conocida, reintentar (y Reportar como
+     * acción secundaria, que ya rinde el diálogo de RETRY_LAUNCH).
+     */
+    fun showBounceAlert(ebootBroken: Boolean) {
+        if (ebootBroken) {
+            _alert.value = AlertInfo(
+                "El juego no llegó a arrancar: el archivo del juego está dañado o incompleto. " +
+                    "Vuelve a importar el juego completo en Importar.",
+                AlertAction.GO_IMPORT,
+            )
+        } else {
+            _alert.value = AlertInfo(
+                "El juego no llegó a arrancar: se cerró justo después de pulsar JUGAR. " +
+                    "Vuelve a intentarlo; si sigue igual, genera un reporte de bug en Diagnóstico.",
+                AlertAction.RETRY_LAUNCH,
+            )
+        }
+    }
+
     /** Trofeo recién desbloqueado: la UI muestra popup + sonido.
      * BUG 2026-11-08: el popup nombraba el trofeo equivocado (15 en
      * vez de 17) porque dos desbloqueos en vuelo escribían este
@@ -3092,6 +3116,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                             outcome.reason.contains("Falta la licencia (work.bin)") -> AlertAction.GO_IMPORT
                             outcome.reason.contains("motor integrado") -> AlertAction.RETRY_LAUNCH
                             outcome.reason.contains("El juego no está instalado") -> AlertAction.GO_IMPORT
+                            // Rebote de JUGAR (2026-11-13): el eboot
+                            // roto sin .pkg bloquea con "Vuelve a
+                            // importar el juego completo en Importar":
+                            // la acción es ir a Importar, no "Entendido".
+                            outcome.reason.contains("Vuelve a importar el juego completo") -> AlertAction.GO_IMPORT
                             else -> null
                         }
                         _alert.value = AlertInfo(outcome.reason, action)
@@ -4428,8 +4457,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     // borrado tras un JUGAR con éxito (la licencia real ya está
     // registrada en el núcleo): el campo licenseInstalledInCore se
     // calcula en scanStatus() mirando ux0/license/<TITLE>/<CONTENT_ID>.rif.
+    // Rebote de JUGAR (2026-11-13): "sin dato" mentía por exceso:
+    // con el juego extraído y el SFO legible, no hay .rif registrado
+    // para ese Content ID, y eso es "no registrada en el núcleo",
+    // distinto de no poder comprobar nada (SFO ilegible o sin juego).
     private fun licenseLine(status: GameStatus): String = when {
         status.gameExtracted && status.licenseInstalledInCore -> "Licencia: instalada en el núcleo"
+        status.gameExtracted && status.licenseContentIdReadable -> "Licencia: no registrada en el núcleo"
         status.pkgInstalled -> "Licencia work.bin: ${status.pkgLicensePresent}"
         else -> "Licencia: sin dato"
     }
