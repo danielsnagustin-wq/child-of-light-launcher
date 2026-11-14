@@ -1653,10 +1653,19 @@ class GameLibraryRepository(private val context: Context) {
      * el .rif de un DLC como licencia del juego, exactamente la
      * trampa que el chequeo de DLCs ya evitaba.
      */
-    private fun isLicenseInstalledInCore(titleId: String): Boolean {
+    /**
+     * Rebote de JUGAR (2026-11-13): Content ID del SFO instalado
+     * (null si no se puede leer). Se usa para distinguir en el
+     * reporte "licencia no registrada" (SFO legible, sin .rif) de
+     * "sin dato" (SFO ilegible).
+     */
+    private fun licenseContentId(titleId: String): String? {
         val sfo = File(appDir(titleId), "sce_sys/param.sfo")
-        val contentId = runCatching { ParamSfo.parse(sfo) }.getOrNull()?.getOrNull()?.contentId?.trim()?.takeIf { it.isNotBlank() }
-        return isGameLicenseInstalledInCore(ux0Dir, titleId, contentId)
+        return runCatching { ParamSfo.parse(sfo) }.getOrNull()?.getOrNull()?.contentId?.trim()?.takeIf { it.isNotBlank() }
+    }
+
+    private fun isLicenseInstalledInCore(titleId: String): Boolean {
+        return isGameLicenseInstalledInCore(ux0Dir, titleId, licenseContentId(titleId))
     }
 
     // R4-P1-12: si el llamador ya resolvió el firmware en este mismo
@@ -1755,6 +1764,19 @@ class GameLibraryRepository(private val context: Context) {
         // quedaba en false aunque el juego corriera. Si hay .pkg
         // guardado, pkgLicense sigue calculándose como antes (arriba).
         val licenseInstalledInCore = extractedTitle?.let { isLicenseInstalledInCore(it.id) } ?: false
+        // Rebote de JUGAR (2026-11-13): si el juego está extraído pero
+        // su eboot no es un SELF válido, el núcleo no lo arranca y cada
+        // JUGAR rebota en silencio. La validación es barata (lee la
+        // cabecera, ≤133 bytes) y se guarda en el estado para que
+        // JUGAR se bloquee con la explicación y Home lo marque.
+        // El motivo exacto queda en el log vía ebootValidation().
+        val ebootBroken = extractedTitle?.let {
+            ebootValidation(it.id).reason != EbootInvalidReason.OK
+        } ?: false
+        // Rebote de JUGAR (2026-11-13): si el SFO instalado se lee,
+        // la licencia "sin dato" del reporte pasa a ser "no registrada
+        // en el núcleo" cuando no hay .rif (dato distinto y honesto).
+        val licenseContentIdReadable = extractedTitle?.let { licenseContentId(it.id) != null } ?: false
         val extractedDlcs = mutableListOf<DlcInfo>()
         if (title != null) {
             // R5-A4-9: los DLCs extraídos se leen de AMBOS ux0 (el
@@ -1875,6 +1897,8 @@ class GameLibraryRepository(private val context: Context) {
             pkgSizeBytes = pkgSize,
             pkgLicensePresent = pkgLicense,
             licenseInstalledInCore = licenseInstalledInCore,
+            ebootBroken = ebootBroken,
+            licenseContentIdReadable = licenseContentIdReadable,
             dlcs = dlcs.sortedBy { it.dlcId },
             updateInstalled = updateInstalled,
             // R6-P1-05: un update .pkg guardado sin instalar (para la
