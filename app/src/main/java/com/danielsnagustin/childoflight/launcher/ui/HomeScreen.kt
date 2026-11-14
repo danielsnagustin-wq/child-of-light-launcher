@@ -396,6 +396,33 @@ private fun GameCard(
                         )
                     }
                 }
+                // Rebote de JUGAR (2026-11-13): el juego está instalado
+                // pero su eboot no es un SELF válido: el núcleo no lo
+                // arranca. Se avisa aquí, en la tarjeta, con la salida
+                // (reimportar el juego completo); JUGAR queda
+                // deshabilitado abajo en vez de rebotar en silencio.
+                if (gameOk && status.ebootBroken) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Box(
+                        modifier = Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(accent.copy(alpha = 0.08f))
+                            .padding(12.dp),
+                    ) {
+                        Column {
+                            Text(
+                                "⚠ El juego no puede arrancar: el archivo del juego está dañado o incompleto.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                // R9-P1-03: acento crudo ilegible en tema claro;
+                                // en claro azul lavanda #6578B8.
+                                color = if (dark) accent else ColLavenderBlue,
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            SecondaryButton("Ir a importar", onClick = { onNavigate(Screen.IMPORT) })
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(16.dp))
                 if (gameOk) {
                     PlayButton(vm, status, launching, strings)
@@ -518,7 +545,7 @@ private fun PlayButton(
         status.titleId?.id,
         settings?.resolutionLabel?.takeIf { it.isNotEmpty() },
     ).joinToString(" · ")
-    PrimaryButtonWithSubtitle(strings.playShort, subtitle, onClick = { vm.play() }, enabled = !launching)
+    PrimaryButtonWithSubtitle(strings.playShort, subtitle, onClick = { vm.play() }, enabled = !launching && !status.ebootBroken)
 }
 
 /**
