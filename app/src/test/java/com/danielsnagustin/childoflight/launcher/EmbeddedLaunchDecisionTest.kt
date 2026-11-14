@@ -157,4 +157,47 @@ class EmbeddedLaunchDecisionTest {
         )
         assertTrue(decision is EmbeddedGameLauncher.Decision.Blocked)
     }
+
+    @Test
+    fun `eboot roto con pkg guardado reinstala el pkg`() {
+        // Rebote de JUGAR (2026-11-13): el eboot no es un SELF válido
+        // y hay .pkg guardado: JUGAR reinstala en vez de rebotar (el
+        // instalador verifica el eboot que deja y falla con el motivo
+        // si sigue mal).
+        val status = GameStatus(
+            titleId = TitleId.EU,
+            extractedTitleId = TitleId.EU,
+            gameInstalled = true,
+            gameExtracted = true,
+            pkgTitleId = TitleId.EU,
+            pkgContentId = "EP0001-PCSB00598_00-CHILD0FLIGHT0001",
+            pkgSizeBytes = 114171057L,
+            pkgLicensePresent = true,
+            ebootBroken = true,
+        )
+        val decision = EmbeddedGameLauncher.decide(status, coreAvailable = true, firmwareReady = true)
+        assertEquals(
+            EmbeddedGameLauncher.Decision.UseEmbeddedPkg("PCSB00598"),
+            decision,
+        )
+    }
+
+    @Test
+    fun `eboot roto sin pkg bloquea con reimportar`() {
+        // Rebote de JUGAR (2026-11-13): el eboot no es un SELF válido
+        // y no hay .pkg que reinstalar: JUGAR se bloquea con la
+        // explicación (reimportar el juego completo), no rebota en
+        // silencio ni ofrece un Reintentar que repite lo mismo.
+        val status = GameStatus(
+            titleId = TitleId.EU,
+            extractedTitleId = TitleId.EU,
+            gameInstalled = true,
+            gameExtracted = true,
+            ebootBroken = true,
+        )
+        val decision = EmbeddedGameLauncher.decide(status, coreAvailable = true, firmwareReady = true)
+        assertTrue(decision is EmbeddedGameLauncher.Decision.Blocked)
+        val reason = (decision as EmbeddedGameLauncher.Decision.Blocked).reason
+        assertTrue(reason.contains("Vuelve a importar el juego completo en Importar"))
+    }
 }
