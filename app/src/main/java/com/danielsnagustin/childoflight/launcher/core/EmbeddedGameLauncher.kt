@@ -89,6 +89,20 @@ object EmbeddedGameLauncher {
                 return Decision.Blocked(Vita3KLauncher.FIRMWARE_BLOCKED_EMBEDDED)
             }
             return when {
+                // Rebote de JUGAR (2026-11-13): el juego está extraído
+                // pero su eboot no es un SELF válido: el núcleo no lo
+                // arranca y cada JUGAR rebotaba en silencio. Con .pkg
+                // guardado, se reinstala (el instalador verifica el
+                // eboot que deja y falla con el motivo si sigue mal);
+                // sin .pkg, se bloquea con la explicación: la salida
+                // es reimportar el juego completo, no reintentar.
+                status.gameExtracted && status.ebootBroken && status.pkgInstalled ->
+                    Decision.UseEmbeddedPkg(titleId)
+                status.gameExtracted && status.ebootBroken ->
+                    Decision.Blocked(
+                        "El juego no puede arrancar: el archivo del juego está dañado o incompleto. " +
+                            "Vuelve a importar el juego completo en Importar.",
+                    )
                 status.gameExtracted -> Decision.UseEmbedded(titleId)
                 // P0-1: el .pkg sin licencia no se instala: el núcleo
                 // dejaría un juego que no arranca sin avisar a nadie.
