@@ -26,6 +26,7 @@ import android.widget.Button
 import android.widget.RelativeLayout
 import android.widget.Toast
 import com.danielsnagustin.childoflight.launcher.data.GameActivityState
+import com.danielsnagustin.childoflight.launcher.data.GameLibraryRepository
 import com.danielsnagustin.childoflight.launcher.data.LauncherLog
 import com.danielsnagustin.childoflight.launcher.data.TrophySyncPending
 import com.danielsnagustin.childoflight.launcher.data.SettingsRepository
@@ -334,6 +335,19 @@ class EmbeddedGameActivity : SDLActivity() {
     private var launchStartedAtMillis: Long = 0L
     /** T2 ya registrado una vez en este lanzamiento (primer frame entregado por el juego, no presentado en pantalla: ver R-P1-1). */
     private var firstFrameLogged: Boolean = false
+    /**
+     * Rebote de JUGAR (2026-11-13): T1 ya publicado una vez en este
+     * lanzamiento (primer frame PRESENTADO, no on_launch: ver
+     * maybeStartFirstFramePoll).
+     */
+    private var t1Logged: Boolean = false
+    /**
+     * Rebote de JUGAR (2026-11-13): true si el usuario pidió salir
+     * al inicio desde el menú de pausa (onActivityResult): esa salida
+     * es voluntaria y nunca es un rebote, aunque la sesión muera sin
+     * haber presentado frames.
+     */
+    private var userExitRequested: Boolean = false
     /**
      * Momento (uptimeMillis) en que el núcleo confirmó el juego en
      * curso (setCurrentGameId, hook on_launch). 0 = aún no confirmado:
@@ -1075,6 +1089,10 @@ class EmbeddedGameActivity : SDLActivity() {
         // Ronda 0.2.70, arreglo del run #637: marcar reanudada antes
         // de nada (el watchdog y el sondeo SDL leen esta bandera).
         isActivityResumed = true
+        // Rebote de JUGAR (2026-11-13): al volver a primer plano no
+        // hay rebote que confirmar: un candidato anotado en onPause
+        // era solo ir a segundo plano (Inicio/Recientes) y se limpia.
+        Vita3KLauncher.clearBounceCandidate()
         // Ronda 0.2.65 (R-P1-3): guarda mínima del init en frío. Sin
         // sesión, el hilo SDL que arranca super.onResume() moriría
         // con SDL_main -1 y la Activity se cerraría en silencio (ver
@@ -1485,6 +1503,24 @@ class EmbeddedGameActivity : SDLActivity() {
         // Ronda 0.2.70, arreglo del run #637: al pausar ya no está
         // reanudada (el watchdog congela su plazo hasta que vuelva).
         isActivityResumed = false
+        // Rebote de JUGAR (2026-11-13): si el juego confirmó on_launch
+        // pero la sesión ya no está en curso y nunca presentó un frame,
+        // la partida murió al arrancar. Solo se anota como CANDIDATO:
+        // ir a segundo plano (Inicio) durante la carga se ve igual, y
+        // solo onDestroy confirma si la Activity muere de verdad (ahí
+        // la sesión ya no puede estar viva por un simple segundo plano).
+        // onResume limpia el candidato al volver a primer plano.
+        if (
+            isBounceCandidate(
+                gameRunningSinceMillis,
+                runCatching { Vita3kCoreBridge.isAppRunning() }.getOrDefault(true),
+                runCatching { Vita3kCoreBridge.getPresentedFrameCount() }.getOrDefault(-1L),
+                userExitRequested,
+                isFinishing,
+            )
+        ) {
+            Vita3KLauncher.noteBounceCandidate()
+        }
         // R2-P1-11: SOLO se limpia la bandera al salir de verdad
         // (finish() ya llamado, p. ej. desde onActivityResult tras
         // "Salir al inicio"): ir a segundo plano (Inicio, Recientes,
@@ -1793,19 +1829,33 @@ class EmbeddedGameActivity : SDLActivity() {
      * (se cancela en onDestroy); sin t0 no registra nada.
      */
     private fun maybeStartFirstFramePoll() {
-        if (launchStartedAtMillis <= 0 || firstFrameLogged) return
+        if (launchStartedAtMillis <= 0 || (firstFrameLogged && t1Logged)) return
         val pollStartedAtMillis = SystemClock.elapsedRealtime()
         overlayScope.launch {
-            while (isActive && !firstFrameLogged) {
+            while (isActive && (!firstFrameLogged || !t1Logged)) {
                 val fps = runCatching { Vita3kCoreBridge.getFps() }.getOrDefault(-1f)
-                if (fps > 0f) {
+                if (fps > 0f && !firstFrameLogged) {
                     firstFrameLogged = true
                     val t2 = SystemClock.elapsedRealtime() - launchStartedAtMillis
                     appendLogAsync("launch", "Primer frame entregado por el juego tras on_launch (T2 ≈ ${t2}ms desde JUGAR; frames entregados, NO presentados en pantalla: no prueba que el juego se vea)")
-                    return@launch
                 }
-                val elapsed = SystemClock.elapsedRealtime() - pollStartedAtMillis
-                delay(if (elapsed < FIRST_FRAME_POLL_FAST_WINDOW_MS) FIRST_FRAME_POLL_FAST_DELAY_MS else 1_000L)
+                // Rebote de JUGAR (2026-11-13): el T1 se publica SOLO
+                // al primer frame PRESENTADO (el título visible), no
+                // en on_launch ni al primer frame entregado: el título
+                // también entrega frames, pero un rebote nunca presenta
+                // ninguno. -1 = sin núcleo; 0 = aún nada presentado.
+                if (!t1Logged) {
+                    val presented = runCatching { Vita3kCoreBridge.getPresentedFrameCount() }.getOrDefault(-1L)
+                    if (presented > 0) {
+                        t1Logged = true
+                        val t1 = SystemClock.elapsedRealtime() - launchStartedAtMillis
+                        appendLogAsync("launch", "T1 (JUGAR → título): ${t1}ms")
+                    }
+                }
+                if (!firstFrameLogged || !t1Logged) {
+                    val elapsed = SystemClock.elapsedRealtime() - pollStartedAtMillis
+                    delay(if (elapsed < FIRST_FRAME_POLL_FAST_WINDOW_MS) FIRST_FRAME_POLL_FAST_DELAY_MS else 1_000L)
+                }
             }
         }
     }
@@ -1880,13 +1930,13 @@ class EmbeddedGameActivity : SDLActivity() {
         // juego (atascado en init/carga); si aparece y la pantalla
         // sigue negra, el juego arrancó pero el render no presenta.
         appendLogAsync("launch", "Núcleo confirmó juego en curso: ${gameId.orEmpty()} (on_launch)")
-        // Ronda 0.2.64 (H-4, T1): JUGAR → título. El t0 viene del
-        // extra del intent (elapsedRealtime, mismo reloj que play()
-        // y el lanzador): si no hay t0, no se registra nada.
-        if (launchStartedAtMillis > 0) {
-            val t1 = SystemClock.elapsedRealtime() - launchStartedAtMillis
-            appendLogAsync("launch", "T1 (JUGAR → título): ${t1}ms")
-        }
+        // Rebote de JUGAR (2026-11-13): el T1 ya NO se registra aquí.
+        // on_launch se dispara al empezar a cargar, ANTES de descifrar
+        // el eboot: un rebote (~1 s, Invalid SELF) dejaba un T1 de
+        // 802-2039 ms que mentía "título" sin que el juego llegara a
+        // correr. El T1 se publica en maybeStartFirstFramePoll, solo
+        // al primer frame PRESENTADO; si la sesión muere antes,
+        // onDestroy registra el T1 como NO VÁLIDO.
         runOnUiThread {
             // Ronda 0.2.70 (Área 10, P1-8): el hilo SDL puede disparar
             // on_launch DESPUÉS de onDestroy (join de 1 s en
@@ -2009,6 +2059,12 @@ class EmbeddedGameActivity : SDLActivity() {
         // app_init.cpp:890-992) y vuelta al inicio. finish() aquí
         // hace que onPause corra con isFinishing=true y limpie
         // GameActivityState.gameActivityAlive.
+        // Rebote de JUGAR (2026-11-13): esta salida es voluntaria y
+        // nunca es un rebote: se marca antes de cerrar para que
+        // onDestroy no anote un fallo si la sesión muere sin haber
+        // presentado frames (p. ej. salir desde el menú de pausa
+        // antes del primer frame).
+        userExitRequested = true
         runCatching {
             if (Vita3kCoreBridge.isAppRunning()) {
                 Vita3kCoreBridge.requestAppQuit()
@@ -2056,6 +2112,45 @@ class EmbeddedGameActivity : SDLActivity() {
         // normal; esto cubre finish() en onCreate, donde onPause no
         // llega a correr con ella en true).
         isActivityResumed = false
+        // Rebote de JUGAR (2026-11-13): la sesión murió sin presentar
+        // ningún frame tras confirmar on_launch. Solo se anota si hubo
+        // candidato en onPause (ir a segundo plano no cuenta: onResume
+        // lo habría limpiado) y la sesión YA no está en curso (si
+        // sigue viva, es un cierre voluntario o un swipe durante la
+        // carga, no un rebote). Va ANTES de pedir el cierre limpio de
+        // abajo: requestAppQuit cambiaría isAppRunning() y ya no se
+        // distinguiría. El T1 queda como NO VÁLIDO en el log (nunca se
+        // publicó uno real: la publicación espera al primer frame
+        // presentado) y MainActivity muestra el diálogo con la acción.
+        val hadBounceCandidate = Vita3KLauncher.takeBounceCandidate()
+        if (
+            isFinishing && hadBounceCandidate && !userExitRequested &&
+            gameRunningSinceMillis != 0L &&
+            !runCatching { Vita3kCoreBridge.isAppRunning() }.getOrDefault(true) &&
+            runCatching { Vita3kCoreBridge.getPresentedFrameCount() }.getOrDefault(-1L) <= 0
+        ) {
+            val ebootBroken = if (currentTitleId.isNotEmpty()) {
+                runCatching {
+                    GameLibraryRepository(this).ebootValidation(currentTitleId).reason !=
+                        GameLibraryRepository.EbootInvalidReason.OK
+                }.getOrDefault(false)
+            } else {
+                false
+            }
+            val sinceLaunchMs = if (launchStartedAtMillis > 0) {
+                SystemClock.elapsedRealtime() - launchStartedAtMillis
+            } else {
+                -1L
+            }
+            LauncherLog.append(
+                this,
+                "launch",
+                "T1 (JUGAR → título): NO VÁLIDO — la sesión terminó a los ${sinceLaunchMs}ms de JUGAR sin presentar ningún frame (rebote)",
+            )
+            Vita3KLauncher.noteEmbeddedLaunchFailed(
+                if (ebootBroken) Vita3KLauncher.BOUNCE_EBOOT else Vita3KLauncher.BOUNCE_UNKNOWN,
+            )
+        }
         // Ronda 0.2.66 (Fase L): quitar el callback de Choreographer
         // y el oyente de FrameMetrics antes de cancelar el ámbito
         // (el callback retendría la Activity).
@@ -2226,6 +2321,31 @@ internal fun shouldFireBlackScreenWatchdog(
     if (gameRunningSinceMillis != 0L) return false
     if (firstFrameLogged) return false
     return fps <= 0f
+}
+
+/**
+ * Rebote de JUGAR (2026-11-13): decisión pura del candidato a
+ * rebote (la usa onPause; onDestroy lo confirma). Es rebote solo si
+ * se cumplen TODAS: el juego confirmó on_launch (gameRunningSince
+ * distinto de 0), la sesión ya no está en curso, nunca se presentó
+ * ningún frame (0, o -1 si el puente no lo sabe), la salida no fue
+ * pedida por el usuario (menú de pausa → "Salir al inicio") y la
+ * Activity no se está cerrando ya (finish() llamado: ese caso es
+ * salida voluntaria, no rebote). Probada en JVM (BounceDetectorTest).
+ */
+internal fun isBounceCandidate(
+    gameRunningSinceMillis: Long,
+    appRunning: Boolean,
+    presentedFrames: Long,
+    userExitRequested: Boolean,
+    finishing: Boolean,
+): Boolean {
+    if (gameRunningSinceMillis == 0L) return false
+    if (appRunning) return false
+    if (presentedFrames > 0) return false
+    if (userExitRequested) return false
+    if (finishing) return false
+    return true
 }
 
 /**
