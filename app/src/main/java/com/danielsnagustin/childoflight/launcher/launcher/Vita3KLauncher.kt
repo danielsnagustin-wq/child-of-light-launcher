@@ -303,6 +303,50 @@ class Vita3KLauncher(private val context: Context) {
         }
 
         /**
+         * Rebote de JUGAR (2026-11-13): motivos de fallo por rebote
+         * (la sesión murió justo tras on_launch sin presentar ningún
+         * frame). Los anota EmbeddedGameActivity.onDestroy y los
+         * consume MainActivity.onResume para mostrar el diálogo con
+         * la acción que lo resuelve, en vez del Toast genérico.
+         */
+        const val BOUNCE_EBOOT = "bounce:eboot"
+        const val BOUNCE_UNKNOWN = "bounce:unknown"
+
+        /**
+         * Rebote de JUGAR (2026-11-13): candidato a rebote anotado por
+         * EmbeddedGameActivity.onPause cuando el juego confirmó
+         * on_launch pero la sesión ya no está en curso y nunca
+         * presentó un frame. Es solo un candidato: ir a segundo plano
+         * (Inicio) durante la carga se ve igual, y solo onDestroy
+         * confirma si la Activity muere de verdad. MainActivity lo
+         * consulta en onResume para esperar 2 s antes de registrar
+         * la "partida" de +0 min. Se limpia al volver al juego
+         * (onResume de la Activity), al confirmarse o al descartarse.
+         */
+        @Volatile
+        private var pendingBounceCandidate: Boolean = false
+
+        /** Anota un candidato a rebote (ver pendingBounceCandidate). */
+        fun noteBounceCandidate() {
+            pendingBounceCandidate = true
+        }
+
+        /** Limpia el candidato a rebote sin consumirlo. */
+        fun clearBounceCandidate() {
+            pendingBounceCandidate = false
+        }
+
+        /** true si hay un candidato a rebote pendiente de confirmar. */
+        fun hasBounceCandidate(): Boolean = pendingBounceCandidate
+
+        /** Devuelve y consume el candidato a rebote. */
+        fun takeBounceCandidate(): Boolean {
+            val had = pendingBounceCandidate
+            pendingBounceCandidate = false
+            return had
+        }
+
+        /**
          * Ronda 0.2.65 (R-P1-4): Title ID con addons (update/DLCs en
          * .pkg guardados) pendientes de instalar DESPUÉS de la partida,
          * no antes de arrancar. Lo pone launchImpl al lanzar el juego
@@ -1157,16 +1201,21 @@ class Vita3KLauncher(private val context: Context) {
                     "El motor integrado no pudo arrancar el juego: $detail. Vuelve a intentarlo; si sigue igual, repórtalo.",
                 )
             }
-            // R6-P0: el núcleo validó el juego (loadGame == 0): el
-            // eboot es válido por definición y el .pkg guardado
-            // (1,14 GB) ya es redundante y se borra solo, SIN la
-            // puerta de ebootValidation (su falso negativo con el
-            // SELF real era lo que dejaba el .pkg para siempre).
+            // Rebote de JUGAR (2026-11-13): el núcleo validó el juego
+            // (loadGame == 0) PERO eso solo dice que la app está
+            // registrada: no abre ni descifra el eboot. El .pkg
+            // guardado (1,14 GB) solo se borra si el eboot ES válido
+            // (puerta de ebootValidation): con un eboot no válido, el
+            // .pkg es la única vía de reinstalación y borrarlo dejaba
+            // al usuario sin arreglo. El falso negativo que motivó
+            // quitar la puerta (R6-P0, igualdad estricta de
+            // self_filesize) ya no existe: selfValidationReason solo
+            // exige self_filesize <= tamaño del archivo.
             // Es el ÚNICO punto donde se borra el .pkg del juego:
             // antes se borraba en el install, antes de saber si el
             // juego arranca. deleteStoredGamePkg registra siempre
             // su decisión en el log. El work.bin se conserva siempre.
-            runCatching { library.deleteStoredGamePkg(titleId, requireValidEboot = false) }
+            runCatching { library.deleteStoredGamePkg(titleId, requireValidEboot = true) }
             // Ronda 0.2.64 (H-2): loadGame validó el juego: la entrada
             // de reintentos de este .pkg se limpia (ya no hay nada que
             // bloquear) y el puntero al .pkg bloqueado se quita.
@@ -1212,6 +1261,10 @@ class Vita3KLauncher(private val context: Context) {
             // sobrevivir a este lanzamiento: si esta Activity falla su
             // init, ella misma anota el fallo nuevo.
             lastEmbeddedLaunchFailure = null
+            // Rebote de JUGAR (2026-11-13): igual para el candidato a
+            // rebote: un candidato viejo no debe sobrevivir a un
+            // lanzamiento nuevo.
+            pendingBounceCandidate = false
             // Ronda 0.2.65 (R-P1-2): guarda anti-relanzamiento. Si el
             // hilo SDL de la partida anterior sigue muriendo (onDestroy
             // solo espera 1 s con join), abrir la Activity nueva ahora
@@ -1270,6 +1323,23 @@ class Vita3KLauncher(private val context: Context) {
         result.onSuccess { library.invalidateInstalledSizes(titleId) }
         result.onFailure {
             LauncherLog.append(context, "pkg", "Reinstalación .pkg embebida falló: ${it.message}")
+        }
+        // Rebote de JUGAR (2026-11-13): igual que en la primera
+        // instalación: la reinstalación declara éxito sin mirar el
+        // eboot que dejó en disco. Verificarlo aquí: si no es válido,
+        // el lanzamiento falla con el motivo exacto en vez de rebotar
+        // en silencio, y el .pkg guardado se conserva.
+        if (result.isSuccess) {
+            val ebootCheck = library.ebootValidation(titleId)
+            if (ebootCheck.reason != GameLibraryRepository.EbootInvalidReason.OK) {
+                LauncherLog.append(context, "pkg", "Reinstalación .pkg dejó un eboot no válido: ${ebootCheck.logLine()}")
+                return Result.failure(
+                    IllegalStateException(
+                        "El juego se reinstaló pero su archivo principal no es válido (${ebootCheck.reason.logName}): " +
+                            "vuelve a importar el juego completo en Importar.",
+                    ),
+                )
+            }
         }
         // P0-1 (2026-11-09): el .pkg ya NO se borra aquí. Se borra
         // después de que loadGame valide el juego, en
@@ -1537,6 +1607,25 @@ class Vita3KLauncher(private val context: Context) {
                 lastBlockedPkgTitleId = titleId.id
             }
             return Result.failure(it)
+        }
+        // Rebote de JUGAR (2026-11-13): la instalación .pkg declaraba
+        // éxito sin mirar el eboot que dejó en disco; un eboot que no
+        // es SELF rebotaba en silencio en cada JUGAR. Verificarlo
+        // aquí, con el motivo exacto: si no es válido, el lanzamiento
+        // falla con la explicación y NO se registra el fallo en el
+        // tope de reintentos (el .pkg en sí instaló bien; reinstalarlo
+        // es la vía de arreglo y el tope lo bloquearía). El .pkg
+        // guardado se conserva: tryLaunchEmbedded ya no lo borra con
+        // un eboot no válido.
+        val ebootCheck = library.ebootValidation(titleId.id)
+        if (ebootCheck.reason != GameLibraryRepository.EbootInvalidReason.OK) {
+            LauncherLog.append(context, "pkg", "Instalación .pkg dejó un eboot no válido: ${ebootCheck.logLine()}")
+            return Result.failure(
+                IllegalStateException(
+                    "El juego se instaló pero su archivo principal no es válido (${ebootCheck.reason.logName}): " +
+                        "vuelve a importar el juego completo en Importar.",
+                ),
+            )
         }
         // P0-1 (2026-11-09): el .pkg ya NO se borra aquí. Se borra
         // después de que loadGame valide el juego, en
